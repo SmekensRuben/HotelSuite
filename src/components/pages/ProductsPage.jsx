@@ -15,6 +15,7 @@ export default function ProductsPage() {
   const { hotelUid } = useHotelContext();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
 
   const today = useMemo(
     () =>
@@ -42,6 +43,16 @@ export default function ProductsPage() {
     };
     loadProducts();
   }, [hotelUid]);
+
+  const filteredProducts = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return products;
+    return products.filter((product) => {
+      const name = String(product.name || "").toLowerCase();
+      const brand = String(product.brand || "").toLowerCase();
+      return name.includes(term) || brand.includes(term);
+    });
+  }, [products, searchTerm]);
 
   const columns = [
     { key: "name", label: t("products.columns.name") },
@@ -85,12 +96,26 @@ export default function ProductsPage() {
           </button>
         </div>
 
+        <div className="max-w-md">
+          <label className="sr-only" htmlFor="products-search">
+            {t("products.filter.label")}
+          </label>
+          <input
+            id="products-search"
+            type="text"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder={t("products.filter.placeholder")}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+          />
+        </div>
+
         {loading ? (
           <p className="text-gray-600">{t("products.loading")}</p>
         ) : (
           <DataListTable
             columns={columns}
-            rows={products}
+            rows={filteredProducts}
             onRowClick={(product) => navigate(`/catalog/products/${product.id}`)}
             emptyMessage={t("products.table.empty")}
           />

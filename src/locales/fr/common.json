@@ -44,7 +44,8 @@
       "edit": "Modifier le produit",
       "delete": "Supprimer",
       "cancel": "Annuler",
-      "backToProducts": "Retour aux produits"
+      "backToProducts": "Retour aux produits",
+      "backToDetail": "Retour au détail"
     },
     "table": {
       "empty": "Aucun produit créé.",
@@ -91,6 +92,10 @@
     "deleteModal": {
       "title": "Supprimer le produit",
       "message": "Voulez-vous vraiment supprimer ce produit ? Cette action est irréversible."
+    },
+    "filter": {
+      "label": "Filtrer les produits",
+      "placeholder": "Rechercher par nom ou marque"
     }
   }
 }

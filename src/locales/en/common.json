@@ -44,7 +44,8 @@
       "edit": "Edit product",
       "delete": "Delete",
       "cancel": "Cancel",
-      "backToProducts": "Back to products"
+      "backToProducts": "Back to products",
+      "backToDetail": "Back to detail"
     },
     "table": {
       "empty": "No products created yet.",
@@ -91,6 +92,10 @@
     "deleteModal": {
       "title": "Delete product",
       "message": "Are you sure you want to delete this product? This action cannot be undone."
+    },
+    "filter": {
+      "label": "Filter products",
+      "placeholder": "Search by name or brand"
     }
   }
 }

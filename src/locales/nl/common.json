@@ -44,7 +44,8 @@
       "edit": "Product bewerken",
       "delete": "Verwijderen",
       "cancel": "Annuleren",
-      "backToProducts": "Terug naar Products"
+      "backToProducts": "Terug naar Products",
+      "backToDetail": "Terug naar detail"
     },
     "table": {
       "empty": "Nog geen producten aangemaakt.",
@@ -91,6 +92,10 @@
     "deleteModal": {
       "title": "Product verwijderen",
       "message": "Ben je zeker dat je dit product wil verwijderen? Deze actie kan niet ongedaan gemaakt worden."
+    },
+    "filter": {
+      "label": "Filter producten",
+      "placeholder": "Zoek op naam of merk"
     }
   }
 }

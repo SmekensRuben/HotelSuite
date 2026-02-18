@@ -88,7 +88,7 @@ export default function DataListTable({ columns, rows, onRowClick, emptyMessage 
               <tr
                 key={row.id}
                 onClick={() => onRowClick && onRowClick(row)}
-                className={onRowClick ? "cursor-pointer hover:bg-red-50 transition-colors" : ""}
+                className={onRowClick ? "cursor-pointer hover:bg-gray-50 transition-colors" : ""}
               >
                 {columns.map((column) => (
                   <td key={`${row.id}-${column.key}`} className="px-4 py-3 text-sm text-gray-700">
