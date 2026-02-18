@@ -1,4 +1,4 @@
-# KitchenPilot
+# HotelSuite
 
 A React + Vite application backed by Firebase. The repository also contains Cloud Functions used for email notifications.
 
