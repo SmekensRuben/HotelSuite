@@ -5,6 +5,10 @@ import LoginPage from "./components/pages/LoginPage.jsx";
 import DashboardPage from "./components/pages/DashboardPage.jsx";
 import ProtectedRoute from "./components/shared/ProtectedRoute.jsx";
 import GeneralSettingsPage from "./components/pages/GeneralSettingsPage.jsx";
+import ProductsPage from "./components/pages/ProductsPage.jsx";
+import ProductCreatePage from "./components/pages/ProductCreatePage.jsx";
+import ProductDetailPage from "./components/pages/ProductDetailPage.jsx";
+import ProductEditPage from "./components/pages/ProductEditPage.jsx";
 import SettingsCatalogPage from "./components/pages/SettingsCatalogPage.jsx";
 
 export default function AppRouter() {
@@ -29,6 +33,34 @@ export default function AppRouter() {
         }
       />
       <Route
+        path="/catalog/products"
+        element={
+          <ProtectedRoute>
+            <ProductsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/products/new"
+        element={
+          <ProtectedRoute>
+            <ProductCreatePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/products/:productId"
+        element={
+          <ProtectedRoute>
+            <ProductDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/products/:productId/edit"
+        element={
+          <ProtectedRoute>
+            <ProductEditPage />
         path="/settings/catalog"
         element={
           <ProtectedRoute>

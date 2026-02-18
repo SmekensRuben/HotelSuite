@@ -10,7 +10,12 @@ import {
   getDoc,
   writeBatch,
   query,
-  where
+  where,
+  serverTimestamp,
+  storage,
+  ref,
+  uploadBytes,
+  getDownloadURL
 } from "../firebaseConfig";
 
 // Simple in-memory cache for indexed products per hotel
@@ -211,4 +216,61 @@ export async function renameOutletInProducts(hotelUid, oldName, newName) {
 
   await rebuildProductMasterIndex(hotelUid);
   clearProductsIndexedCache(hotelUid);
+}
+
+export async function getCatalogProducts(hotelUid) {
+  if (!hotelUid) return [];
+  const productsCol = collection(db, `hotels/${hotelUid}/products`);
+  const snap = await getDocs(productsCol);
+  return snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
+export async function getCatalogProduct(hotelUid, productId) {
+  if (!hotelUid || !productId) return null;
+  const productDoc = doc(db, `hotels/${hotelUid}/products`, productId);
+  const snap = await getDoc(productDoc);
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...snap.data() };
+}
+
+export async function createCatalogProduct(hotelUid, productData, actor) {
+  if (!hotelUid) throw new Error("hotelUid is verplicht!");
+  const productsCol = collection(db, `hotels/${hotelUid}/products`);
+  const payload = {
+    ...productData,
+    active: productData.active ?? true,
+    createdAt: serverTimestamp(),
+    createdBy: actor || "unknown",
+    updatedAt: serverTimestamp(),
+    updatedBy: actor || "unknown",
+  };
+  const docRef = await addDoc(productsCol, payload);
+  return docRef.id;
+}
+
+
+export async function uploadCatalogProductImage(hotelUid, file) {
+  if (!hotelUid || !file) return "";
+  const fileExtension = file.name?.split(".").pop();
+  const safeExtension = fileExtension ? `.${fileExtension}` : "";
+  const filePath = `hotels/${hotelUid}/products/images/${Date.now()}-${Math.random().toString(36).slice(2)}${safeExtension}`;
+  const fileRef = ref(storage, filePath);
+  await uploadBytes(fileRef, file);
+  return getDownloadURL(fileRef);
+}
+
+export async function updateCatalogProduct(hotelUid, productId, productData, actor) {
+  if (!hotelUid || !productId) throw new Error("hotelUid en productId zijn verplicht!");
+  const productDoc = doc(db, `hotels/${hotelUid}/products`, productId);
+  const payload = {
+    ...productData,
+    updatedAt: serverTimestamp(),
+    updatedBy: actor || "unknown",
+  };
+  await updateDoc(productDoc, payload);
+}
+
+export async function deleteCatalogProduct(hotelUid, productId) {
+  if (!hotelUid || !productId) return;
+  await deleteProduct(hotelUid, productId);
 }
