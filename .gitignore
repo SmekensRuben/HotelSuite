@@ -1,6 +1,7 @@
 node_modules
 dist
 *.log
+.env
 build
 src/importexport/serviceAccountKey.json
 src/importexport/dataMigration.js
