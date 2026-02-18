@@ -1,0 +1,21 @@
+{
+  "logout": "Log out",
+  "backToDashboard": "Back to dashboard",
+  "welcome": "Welcome, {{hotel}}!",
+  "loggedIn": "You are logged in.",
+  "checkInTitle": "Breakfast Check-In",
+  "checkInDesc": "Start the check-in process for breakfast guests",
+  "monitorTitle": "Breakfast Monitor",
+  "monitorDesc": "View live breakfast data",
+  "reportTitle": "Reports",
+  "reportDesc": "View and analyze reports and data",
+  "settingsTitle": "Settings",
+  "settingsDesc": "Manage your application settings",
+  "leavePageTitle": "Leave page?",
+  "leavePageMessage": "Your shopping cart will be cleared. Are you sure you want to leave this page?",
+  "logoutConfirm": "Do you want to log out?",
+  "calendar": {
+    "label": "Calendar",
+    "local": "Local Calendar"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "dateRangeLabel": "Plage de dates",
+  "datePresets": {
+    "thisMonth": "Ce mois-ci",
+    "lastMonth": "Mois dernier",
+    "custom": "Personnalisé"
+  },
+  "startDate": "Date de début",
+  "endDate": "Date de fin",
+  "segmentFilterTitle": "Segments de marché",
+  "segmentFilterDropdown": "Sélectionner des segments",
+  "segmentFilterHint": "{{count}} segment(s) sélectionné(s)",
+  "selectAll": "Tout sélectionner",
+  "clearAll": "Tout effacer",
+  "totalSegments": "Total (tous les segments)",
+  "chartTitle": "Performance par segment",
+  "chartSubtitle": "Rooms revenue par segment pour la plage sélectionnée.",
+  "loading": "Chargement des statistiques de réservation...",
+  "noData": "Aucune donnée disponible pour la plage ou les segments sélectionnés.",
+  "noSegments": "Aucun segment de marché trouvé.",
+  "invalidDateRange": "Veuillez sélectionner une plage de dates valide.",
+  "loadError": "Une erreur s'est produite lors du chargement des statistiques de réservation."
+}

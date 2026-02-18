@@ -1,0 +1,58 @@
+{
+  "title": "Lokale kalender",
+  "description": "Plan en bewaak lokale evenementen voor je accommodatie in één overzicht.",
+  "labels": {
+    "titlePrefix": "Lokale planning voor {{hotel}}",
+    "events_one": "{{count}} evenement",
+    "events_other": "{{count}} evenementen",
+    "today": "Vandaag",
+    "noEventsMonth": "Nog geen evenementen deze maand.",
+    "noEvents": "Geen lokale evenementen gepland.",
+    "local": "Lokaal",
+    "noLocation": "Geen locatie",
+    "estimatedVisitors": "Geschat aantal bezoekers: {{count}}"
+  },
+  "views": {
+    "week": "Week",
+    "month": "Maand",
+    "year": "Jaar",
+    "list": "Lijst"
+  },
+  "actions": {
+    "create": "Evenement toevoegen",
+    "today": "Vandaag",
+    "previous": "Vorige",
+    "next": "Volgende"
+  },
+  "form": {
+    "heading": "Nieuw lokaal evenement",
+    "title": "Titel",
+    "description": "Beschrijving",
+    "location": "Locatie",
+    "estimatedVisitors": "Geschat aantal bezoekers",
+    "startDate": "Begindatum",
+    "endDate": "Einddatum",
+    "cancel": "Annuleren",
+    "submit": "Evenement opslaan",
+    "validation": "Vul minstens een titel en begindatum in.",
+    "invalidRange": "De einddatum mag niet vóór de begindatum liggen."
+  },
+  "toast": {
+    "created": "Lokaal evenement toegevoegd",
+    "updated": "Lokaal evenement bijgewerkt",
+    "deleted": "Lokaal evenement verwijderd",
+    "error": "Het evenement kon niet worden opgeslagen. Probeer opnieuw."
+  },
+  "detail": {
+    "title": "Evenementdetails",
+    "subtitle": "Bekijk, bewerk of verwijder het gekozen lokale evenement.",
+    "back": "Terug",
+    "edit": "Evenement bewerken",
+    "delete": "Verwijderen",
+    "deleteConfirm": "Weet je zeker dat je dit evenement wilt verwijderen? Dit kan niet ongedaan worden gemaakt.",
+    "loading": "Evenement laden...",
+    "notFound": "Evenement niet gevonden.",
+    "save": "Evenement bijwerken",
+    "noEndDate": "Geen einddatum opgegeven"
+  }
+}

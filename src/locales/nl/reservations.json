@@ -1,0 +1,99 @@
+{
+  "header": {
+    "menuButton": "Reservaties",
+    "menuTitle": "Menu",
+    "menuSubtitle": "Kies een reservatie-overzicht",
+    "madeReservationsLabel": "Ingevoerde reservaties",
+    "madeReservationsDescription": "Bekijk de ingevoerde reservaties",
+    "segmentComparisonLabel": "Segment vergelijking"
+  },
+  "page": {
+    "tag": "Reservaties",
+    "title": "Ingevoerde reservaties",
+    "description": "Overzicht van ingevoerde reservaties per datum. Kies een datumbereik om de tabel te bekijken of importeer een nieuw CSV bestand.",
+    "compactHint": "Compact overzicht",
+    "noData": "Geen data beschikbaar"
+  },
+  "filters": {
+    "title": "Filters",
+    "datePreset": "Datum filter",
+    "startDate": "Startdatum",
+    "endDate": "Einddatum",
+    "arrivalStart": "Aankomst vanaf",
+    "arrivalEnd": "Aankomst tot",
+    "departureStart": "Vertrek vanaf",
+    "departureEnd": "Vertrek tot",
+    "weekday": "Weekdag",
+    "weekdayAny": "Alle weekdagen",
+    "weekdays": {
+      "monday": "Maandag",
+      "tuesday": "Dinsdag",
+      "wednesday": "Woensdag",
+      "thursday": "Donderdag",
+      "friday": "Vrijdag",
+      "saturday": "Zaterdag",
+      "sunday": "Zondag"
+    },
+    "showGraph": "Toon grafiek",
+    "roomType": "Room type filter",
+    "roomTypeAll": "Alle room types",
+    "roomTypeSelected": "{{count}} geselecteerd",
+    "presets": {
+      "yesterday": "Gisteren",
+      "thisWeek": "Deze week",
+      "thisMonth": "Deze maand",
+      "lastMonth": "Vorige maand",
+      "custom": "Aangepast"
+    },
+    "dateRangeMissing": "Geen datum gekozen"
+  },
+  "summary": {
+    "title": "Samenvatting",
+    "reservations": "Reservaties",
+    "nights": "Nachten",
+    "revenue": "Omzet",
+    "topCompany": "Top company",
+    "topCompanyCount": "{{count}} reservaties",
+    "roomTypeBreakdown": "Verdeling room types",
+    "noRoomTypes": "Geen room types beschikbaar"
+  },
+  "charts": {
+    "dailyTitle": "Dagelijkse trends",
+    "dailySubtitle": "Aantal reservaties, nachten en omzet per dag"
+  },
+  "import": {
+    "title": "Nieuwe reservaties importeren",
+    "date": "Datum",
+    "file": "CSV bestand",
+    "import": "Importeren",
+    "cancel": "Annuleren"
+  },
+  "table": {
+    "title": "Reservaties",
+    "loading": "Laden...",
+    "empty": "Geen reservaties gevonden voor deze selectie.",
+    "footer": "Alle geïmporteerde velden worden opgeslagen in Firebase. De tabel toont de belangrijkste kolommen voor snelle controle."
+  },
+  "columns": {
+    "guest": "Gast",
+    "arrival": "Aankomst",
+    "departure": "Vertrek",
+    "room": "Kamer",
+    "roomType": "Room Type",
+    "rateCode": "Tariefcode",
+    "nights": "Nachten",
+    "shareAmount": "Share Amount",
+    "company": "Company"
+  },
+  "messages": {
+    "loadFailed": "Kon reservaties niet laden.",
+    "selectHotel": "Selecteer eerst een hotel.",
+    "chooseDate": "Kies een datum voor import.",
+    "chooseCsv": "Kies een CSV bestand.",
+    "parsing": "CSV bestand wordt ingelezen...",
+    "imported": "Reservaties geïmporteerd.",
+    "saveFailed": "Opslaan van reservaties mislukt.",
+    "csvError": "CSV kon niet ingelezen worden.",
+    "noRoomTypeMatches": "Geen reservaties voor de gekozen room types."
+  }
+}

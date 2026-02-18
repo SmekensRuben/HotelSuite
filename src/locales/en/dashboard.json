@@ -1,0 +1,23 @@
+{
+  "dateRangeLabel": "Date range",
+  "datePresets": {
+    "thisMonth": "This month",
+    "lastMonth": "Last month",
+    "custom": "Custom"
+  },
+  "startDate": "Start date",
+  "endDate": "End date",
+  "segmentFilterTitle": "Market segments",
+  "segmentFilterDropdown": "Select segments",
+  "segmentFilterHint": "{{count}} segment(s) selected",
+  "selectAll": "Select all",
+  "clearAll": "Clear all",
+  "totalSegments": "Total (all segments)",
+  "chartTitle": "Market segment performance",
+  "chartSubtitle": "Rooms revenue per segment for the selected date range.",
+  "loading": "Loading reservation statistics...",
+  "noData": "No data available for the selected range or segments.",
+  "noSegments": "No market segments found.",
+  "invalidDateRange": "Please select a valid date range.",
+  "loadError": "Something went wrong while loading reservation statistics."
+}

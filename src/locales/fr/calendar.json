@@ -1,0 +1,58 @@
+{
+  "title": "Calendrier local",
+  "description": "Planifiez et suivez les événements locaux de votre établissement en un coup d'œil.",
+  "labels": {
+    "titlePrefix": "Planification locale pour {{hotel}}",
+    "events_one": "{{count}} évènement",
+    "events_other": "{{count}} évènements",
+    "today": "Aujourd'hui",
+    "noEventsMonth": "Aucun évènement prévu ce mois-ci.",
+    "noEvents": "Aucun évènement local planifié.",
+    "local": "Local",
+    "noLocation": "Pas de lieu",
+    "estimatedVisitors": "Visiteurs estimés : {{count}}"
+  },
+  "views": {
+    "week": "Semaine",
+    "month": "Mois",
+    "year": "Année",
+    "list": "Liste"
+  },
+  "actions": {
+    "create": "Ajouter un évènement",
+    "today": "Aujourd'hui",
+    "previous": "Précédent",
+    "next": "Suivant"
+  },
+  "form": {
+    "heading": "Nouvel évènement local",
+    "title": "Titre",
+    "description": "Description",
+    "location": "Lieu",
+    "estimatedVisitors": "Visiteurs estimés",
+    "startDate": "Date de début",
+    "endDate": "Date de fin",
+    "cancel": "Annuler",
+    "submit": "Enregistrer l'évènement",
+    "validation": "Ajoutez au minimum un titre et une date de début.",
+    "invalidRange": "La date de fin ne peut pas être antérieure à la date de début."
+  },
+  "toast": {
+    "created": "Évènement local ajouté",
+    "updated": "Évènement local mis à jour",
+    "deleted": "Évènement local supprimé",
+    "error": "Impossible d'enregistrer l'évènement. Veuillez réessayer."
+  },
+  "detail": {
+    "title": "Détails de l'évènement",
+    "subtitle": "Consultez, modifiez ou supprimez l'évènement local sélectionné.",
+    "back": "Retour",
+    "edit": "Modifier l'évènement",
+    "delete": "Supprimer",
+    "deleteConfirm": "Êtes-vous sûr de vouloir supprimer cet évènement ? Cette action est irréversible.",
+    "loading": "Chargement de l'évènement...",
+    "notFound": "Évènement introuvable.",
+    "save": "Mettre à jour l'évènement",
+    "noEndDate": "Aucune date de fin indiquée"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "KitchenPilot Price Sync",
+  "description": "Vergelijk webshopprijzen van Sligro en HANOS met Firebase.",
+  "version": "2.0.0",
+  "action": {
+    "default_title": "KitchenPilot Price Sync",
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab",
+    "tabs"
+  ],
+  "host_permissions": [
+    "*://*.sligro.nl/*",
+    "*://*.sligro.be/*",
+    "*://*.hanos.nl/*",
+    "*://*.hanos.be/*"
+  ]
+}

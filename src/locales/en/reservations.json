@@ -1,0 +1,99 @@
+{
+  "header": {
+    "menuButton": "Reservations",
+    "menuTitle": "Menu",
+    "menuSubtitle": "Choose a reservation overview",
+    "madeReservationsLabel": "Made Reservations",
+    "madeReservationsDescription": "View the entered reservations",
+    "segmentComparisonLabel": "Segment Comparison"
+  },
+  "page": {
+    "tag": "Reservations",
+    "title": "Made Reservations",
+    "description": "Overview of entered reservations per date. Choose a date range to view the table or import a new CSV file.",
+    "compactHint": "Compact overview",
+    "noData": "No data available"
+  },
+  "filters": {
+    "title": "Filters",
+    "datePreset": "Date filter",
+    "startDate": "Start date",
+    "endDate": "End date",
+    "arrivalStart": "Arrival start",
+    "arrivalEnd": "Arrival end",
+    "departureStart": "Departure start",
+    "departureEnd": "Departure end",
+    "weekday": "Weekday",
+    "weekdayAny": "All weekdays",
+    "weekdays": {
+      "monday": "Monday",
+      "tuesday": "Tuesday",
+      "wednesday": "Wednesday",
+      "thursday": "Thursday",
+      "friday": "Friday",
+      "saturday": "Saturday",
+      "sunday": "Sunday"
+    },
+    "showGraph": "Show graph",
+    "roomType": "Room type filter",
+    "roomTypeAll": "All room types",
+    "roomTypeSelected": "{{count}} selected",
+    "presets": {
+      "yesterday": "Yesterday",
+      "thisWeek": "This Week",
+      "thisMonth": "This Month",
+      "lastMonth": "Last Month",
+      "custom": "Custom"
+    },
+    "dateRangeMissing": "No date chosen"
+  },
+  "summary": {
+    "title": "Summary",
+    "reservations": "Reservations",
+    "nights": "Nights",
+    "revenue": "Revenue",
+    "topCompany": "Top company",
+    "topCompanyCount": "{{count}} reservations",
+    "roomTypeBreakdown": "Room type distribution",
+    "noRoomTypes": "No room types available"
+  },
+  "charts": {
+    "dailyTitle": "Daily trends",
+    "dailySubtitle": "Reservations, nights and revenue per day"
+  },
+  "import": {
+    "title": "Import new reservations",
+    "date": "Date",
+    "file": "CSV file",
+    "import": "Import",
+    "cancel": "Cancel"
+  },
+  "table": {
+    "title": "Reservations",
+    "loading": "Loading...",
+    "empty": "No reservations found for this selection.",
+    "footer": "All imported fields are stored in Firebase. The table shows the key columns for a quick review."
+  },
+  "columns": {
+    "guest": "Guest",
+    "arrival": "Arrival",
+    "departure": "Departure",
+    "room": "Room",
+    "roomType": "Room Type",
+    "rateCode": "Rate Code",
+    "nights": "Nights",
+    "shareAmount": "Share Amount",
+    "company": "Company"
+  },
+  "messages": {
+    "loadFailed": "Could not load reservations.",
+    "selectHotel": "Select a hotel first.",
+    "chooseDate": "Choose a date for import.",
+    "chooseCsv": "Select a CSV file.",
+    "parsing": "Reading CSV file...",
+    "imported": "Reservations imported.",
+    "saveFailed": "Saving reservations failed.",
+    "csvError": "CSV could not be read.",
+    "noRoomTypeMatches": "No reservations for the selected room types."
+  }
+}

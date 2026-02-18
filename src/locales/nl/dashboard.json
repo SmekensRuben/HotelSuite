@@ -1,0 +1,23 @@
+{
+  "dateRangeLabel": "Datumrange",
+  "datePresets": {
+    "thisMonth": "Deze maand",
+    "lastMonth": "Vorige maand",
+    "custom": "Aangepast"
+  },
+  "startDate": "Startdatum",
+  "endDate": "Einddatum",
+  "segmentFilterTitle": "Market segments",
+  "segmentFilterDropdown": "Selecteer segmenten",
+  "segmentFilterHint": "{{count}} segment(en) geselecteerd",
+  "selectAll": "Alles selecteren",
+  "clearAll": "Alles wissen",
+  "totalSegments": "Totaal (alle segmenten)",
+  "chartTitle": "Market segment prestaties",
+  "chartSubtitle": "Rooms revenue per segment voor de gekozen datumrange.",
+  "loading": "Reservation statistics worden geladen...",
+  "noData": "Geen data beschikbaar voor de gekozen range of segmenten.",
+  "noSegments": "Geen market segments gevonden.",
+  "invalidDateRange": "Kies een geldige datumrange.",
+  "loadError": "Er ging iets mis bij het laden van reservation statistics."
+}

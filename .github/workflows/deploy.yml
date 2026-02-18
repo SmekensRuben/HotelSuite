@@ -1,0 +1,38 @@
+name: Build & Deploy to GoDaddy
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: {}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build
+        run: npm run build   # pas aan als je build script/map anders is
+
+      - name: Deploy via FTPS
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.SERVER_HOST }}        # bv. IP of geldige host
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASS }}
+          port: ${{ secrets.SERVER_PORT }}          # 21
+          protocol: ftps                            # evt. tijdelijk 'ftp' om te testen
+          local-dir: ./dist/                        # of ./build/
+          server-dir: ${{ secrets.SERVER_DIR }}     # bv. public_html/emmelydeprijck.be/
+          log-level: minimal
+
+          # Belangrijk: verwijder oude hashed JS/CSS
+          dangerous-clean-slate: false

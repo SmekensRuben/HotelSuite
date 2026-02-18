@@ -1,0 +1,21 @@
+{
+  "logout": "Afmelden",
+  "backToDashboard": "Terug naar dashboard",
+  "welcome": "Welkom, {{hotel}}!",
+  "loggedIn": "Je bent ingelogd.",
+  "checkInTitle": "Ontbijt Check-In",
+  "checkInDesc": "Start het incheckproces voor gasten",
+  "monitorTitle": "Ontbijtmonitor",
+  "monitorDesc": "Bekijk live gegevens van het ontbijt",
+  "reportTitle": "Rapportage",
+  "reportDesc": "Bekijk en analyseer gegevens",
+  "settingsTitle": "Instellingen",
+  "settingsDesc": "Beheer je applicatie-instellingen",
+  "leavePageTitle": "Pagina verlaten?",
+  "leavePageMessage": "Je winkelwagen wordt leeggemaakt. Weet je zeker dat je de pagina wilt verlaten?",
+  "logoutConfirm": "Wil je uitloggen?",
+  "calendar": {
+    "label": "Kalender",
+    "local": "Lokale kalender"
+  }
+}

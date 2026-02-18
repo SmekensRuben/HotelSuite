@@ -1,0 +1,17 @@
+{
+  "name": "sligro-chrome-ext",
+  "version": "1.0.0",
+  "description": "Sligro article uploader voor Firestore",
+  "main": "src/popup.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "firebase": "^10.11.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0",
+    "vite-plugin-static-copy": "^3.1.1"
+  }
+}

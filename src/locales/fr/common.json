@@ -1,0 +1,21 @@
+{
+  "logout": "Se déconnecter",
+  "backToDashboard": "Retour au tableau de bord",
+  "welcome": "Bienvenue, {{hotel}} !",
+  "loggedIn": "Vous êtes connecté.",
+  "checkInTitle": "Enregistrement Petit-Déjeuner",
+  "checkInDesc": "Démarrer l'enregistrement des clients du petit-déjeuner",
+  "monitorTitle": "Moniteur Petit-Déjeuner",
+  "monitorDesc": "Voir les données du petit-déjeuner en temps réel",
+  "reportTitle": "Rapports",
+  "reportDesc": "Consulter et analyser les données",
+  "settingsTitle": "Paramètres",
+  "settingsDesc": "Gérer les paramètres de l'application",
+  "leavePageTitle": "Quitter la page ?",
+  "leavePageMessage": "Votre panier sera vidé. Êtes-vous sûr de vouloir quitter la page ?",
+  "logoutConfirm": "Voulez-vous vous déconnecter ?",
+  "calendar": {
+    "label": "Calendrier",
+    "local": "Calendrier local"
+  }
+}

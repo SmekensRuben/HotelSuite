@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="nl">
+  <head>
+    <meta charset="utf-8" />
+    <title>KitchenPilot prijsvergelijker</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="popup">
+      <header class="header">
+        <div class="logo">
+          <span class="logo-mark">KP</span>
+          <div>
+            <p class="title">KitchenPilot prijsvergelijker</p>
+            <p class="subtitle">Vergelijk webshopprijzen met Firebase</p>
+          </div>
+        </div>
+      </header>
+
+      <section id="loginSection" class="card">
+        <h2 class="section-title">Inloggen</h2>
+        <form id="loginForm" class="auth-form">
+          <label class="field">
+            <span class="field-label">E-mailadres</span>
+            <input
+              id="loginEmail"
+              type="email"
+              class="field-input"
+              autocomplete="email"
+              required
+            />
+          </label>
+          <label class="field">
+            <span class="field-label">Wachtwoord</span>
+            <input
+              id="loginPassword"
+              type="password"
+              class="field-input"
+              autocomplete="current-password"
+              required
+            />
+          </label>
+          <button id="loginBtn" type="submit" class="primary-btn full-width">Inloggen</button>
+          <span id="loginError" class="field-helper error hidden"></span>
+        </form>
+      </section>
+
+      <section id="accountSection" class="card hidden">
+        <div class="account-info">
+          <div>
+            <p class="account-label">Ingelogd als</p>
+            <p id="accountEmail" class="account-email"></p>
+          </div>
+          <button id="logoutBtn" type="button" class="secondary-btn">Uitloggen</button>
+        </div>
+      </section>
+
+      <section id="controlsSection" class="controls card hidden">
+        <label class="field">
+          <span class="field-label">Hotel</span>
+          <select id="hotelSelect" class="field-input" disabled>
+            <option value="" disabled selected>Log in om hotels te laden</option>
+          </select>
+          <span id="hotelStatus" class="field-helper"></span>
+        </label>
+        <label class="field">
+          <span class="field-label">Webshop</span>
+          <select id="webshopSelect" class="field-input">
+            <option value="" disabled selected>Maak een keuze</option>
+            <option value="sligro">Sligro</option>
+            <option value="hanos">HANOS</option>
+          </select>
+        </label>
+        <button id="loadPricesBtn" type="button" class="primary-btn">Load prices</button>
+      </section>
+
+      <p id="status" class="status"></p>
+
+      <section id="results" class="results hidden">
+        <div class="results-header">
+          <span>Webshop</span>
+          <span>Firebase</span>
+        </div>
+        <div id="resultRows" class="results-rows"></div>
+      </section>
+    </div>
+
+    <script type="module" src="./popup.js"></script>
+  </body>
+</html>

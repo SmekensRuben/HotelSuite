@@ -1,0 +1,58 @@
+{
+  "title": "Local Calendar",
+  "description": "Plan and monitor local events for your property in a single view.",
+  "labels": {
+    "titlePrefix": "Local planning for {{hotel}}",
+    "events_one": "{{count}} event",
+    "events_other": "{{count}} events",
+    "today": "Today",
+    "noEventsMonth": "No events planned this month yet.",
+    "noEvents": "No local events scheduled.",
+    "local": "Local",
+    "noLocation": "No location",
+    "estimatedVisitors": "Estimated visitors: {{count}}"
+  },
+  "views": {
+    "week": "Week",
+    "month": "Month",
+    "year": "Year",
+    "list": "List"
+  },
+  "actions": {
+    "create": "Add event",
+    "today": "Today",
+    "previous": "Previous",
+    "next": "Next"
+  },
+  "form": {
+    "heading": "New local event",
+    "title": "Title",
+    "description": "Description",
+    "location": "Location",
+    "estimatedVisitors": "Estimated visitors",
+    "startDate": "Start date",
+    "endDate": "End date",
+    "cancel": "Cancel",
+    "submit": "Save event",
+    "validation": "Please provide at least a title and start date.",
+    "invalidRange": "The end date cannot be before the start date."
+  },
+  "toast": {
+    "created": "Local event added",
+    "updated": "Local event updated",
+    "deleted": "Local event removed",
+    "error": "Unable to save the event. Please try again."
+  },
+  "detail": {
+    "title": "Event details",
+    "subtitle": "Review, edit or delete the selected local event.",
+    "back": "Back",
+    "edit": "Edit event",
+    "delete": "Delete",
+    "deleteConfirm": "Are you sure you want to delete this event? This action cannot be undone.",
+    "loading": "Loading event...",
+    "notFound": "Event not found.",
+    "save": "Update event",
+    "noEndDate": "No end date provided"
+  }
+}
