@@ -8,6 +8,7 @@ import GeneralSettingsPage from "./components/pages/GeneralSettingsPage.jsx";
 import ProductsPage from "./components/pages/ProductsPage.jsx";
 import ProductCreatePage from "./components/pages/ProductCreatePage.jsx";
 import ProductDetailPage from "./components/pages/ProductDetailPage.jsx";
+import ProductEditPage from "./components/pages/ProductEditPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -51,6 +52,14 @@ export default function AppRouter() {
         element={
           <ProtectedRoute>
             <ProductDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/products/:productId/edit"
+        element={
+          <ProtectedRoute>
+            <ProductEditPage />
           </ProtectedRoute>
         }
       />

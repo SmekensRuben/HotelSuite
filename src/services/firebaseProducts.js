@@ -11,7 +11,11 @@ import {
   writeBatch,
   query,
   where,
-  serverTimestamp
+  serverTimestamp,
+  storage,
+  ref,
+  uploadBytes,
+  getDownloadURL
 } from "../firebaseConfig";
 
 // Simple in-memory cache for indexed products per hotel
@@ -242,4 +246,31 @@ export async function createCatalogProduct(hotelUid, productData, actor) {
   };
   const docRef = await addDoc(productsCol, payload);
   return docRef.id;
+}
+
+
+export async function uploadCatalogProductImage(hotelUid, file) {
+  if (!hotelUid || !file) return "";
+  const fileExtension = file.name?.split(".").pop();
+  const safeExtension = fileExtension ? `.${fileExtension}` : "";
+  const filePath = `hotels/${hotelUid}/products/images/${Date.now()}-${Math.random().toString(36).slice(2)}${safeExtension}`;
+  const fileRef = ref(storage, filePath);
+  await uploadBytes(fileRef, file);
+  return getDownloadURL(fileRef);
+}
+
+export async function updateCatalogProduct(hotelUid, productId, productData, actor) {
+  if (!hotelUid || !productId) throw new Error("hotelUid en productId zijn verplicht!");
+  const productDoc = doc(db, `hotels/${hotelUid}/products`, productId);
+  const payload = {
+    ...productData,
+    updatedAt: serverTimestamp(),
+    updatedBy: actor || "unknown",
+  };
+  await updateDoc(productDoc, payload);
+}
+
+export async function deleteCatalogProduct(hotelUid, productId) {
+  if (!hotelUid || !productId) return;
+  await deleteProduct(hotelUid, productId);
 }
