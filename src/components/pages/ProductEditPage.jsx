@@ -115,6 +115,7 @@ export default function ProductEditPage() {
                 onSubmit={handleUpdate}
                 savingLabel={t("products.actions.saving")}
                 submitLabel={t("products.actions.saveChanges")}
+                showImagePreview={false}
               />
             </Card>
           </>

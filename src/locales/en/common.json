@@ -95,7 +95,11 @@
     },
     "filter": {
       "label": "Filter products",
-      "placeholder": "Search by name or brand"
+      "placeholder": "Search by name or brand",
+      "category": "Filter by category",
+      "subcategory": "Filter by subcategory",
+      "allCategories": "All categories",
+      "allSubcategories": "All subcategories"
     }
   }
 }

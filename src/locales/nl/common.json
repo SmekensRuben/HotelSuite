@@ -95,7 +95,11 @@
     },
     "filter": {
       "label": "Filter producten",
-      "placeholder": "Zoek op naam of merk"
+      "placeholder": "Zoek op naam of merk",
+      "category": "Filter op categorie",
+      "subcategory": "Filter op subcategorie",
+      "allCategories": "Alle categorieën",
+      "allSubcategories": "Alle subcategorieën"
     }
   }
 }

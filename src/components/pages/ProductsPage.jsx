@@ -16,6 +16,8 @@ export default function ProductsPage() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("");
+  const [selectedSubcategory, setSelectedSubcategory] = useState("");
 
   const today = useMemo(
     () =>
@@ -44,15 +46,46 @@ export default function ProductsPage() {
     loadProducts();
   }, [hotelUid]);
 
+  const categories = useMemo(() => {
+    const values = new Set(
+      products
+        .map((product) => String(product.category || "").trim())
+        .filter(Boolean)
+    );
+    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  }, [products]);
+
+  const subcategories = useMemo(() => {
+    const values = new Set(
+      products
+        .filter((product) => !selectedCategory || String(product.category || "") === selectedCategory)
+        .map((product) => String(product.subcategory || "").trim())
+        .filter(Boolean)
+    );
+    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  }, [products, selectedCategory]);
+
+  useEffect(() => {
+    if (selectedSubcategory && !subcategories.includes(selectedSubcategory)) {
+      setSelectedSubcategory("");
+    }
+  }, [selectedSubcategory, subcategories]);
+
   const filteredProducts = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    if (!term) return products;
     return products.filter((product) => {
       const name = String(product.name || "").toLowerCase();
       const brand = String(product.brand || "").toLowerCase();
-      return name.includes(term) || brand.includes(term);
+      const category = String(product.category || "");
+      const subcategory = String(product.subcategory || "");
+
+      const matchesTerm = !term || name.includes(term) || brand.includes(term);
+      const matchesCategory = !selectedCategory || category === selectedCategory;
+      const matchesSubcategory = !selectedSubcategory || subcategory === selectedSubcategory;
+
+      return matchesTerm && matchesCategory && matchesSubcategory;
     });
-  }, [products, searchTerm]);
+  }, [products, searchTerm, selectedCategory, selectedSubcategory]);
 
   const columns = [
     { key: "name", label: t("products.columns.name") },
@@ -96,18 +129,56 @@ export default function ProductsPage() {
           </button>
         </div>
 
-        <div className="max-w-md">
-          <label className="sr-only" htmlFor="products-search">
-            {t("products.filter.label")}
-          </label>
-          <input
-            id="products-search"
-            type="text"
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder={t("products.filter.placeholder")}
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
-          />
+        <div className="grid gap-3 md:grid-cols-3">
+          <div>
+            <label className="sr-only" htmlFor="products-search">
+              {t("products.filter.label")}
+            </label>
+            <input
+              id="products-search"
+              type="text"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder={t("products.filter.placeholder")}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            />
+          </div>
+          <div>
+            <label className="sr-only" htmlFor="products-category-filter">
+              {t("products.filter.category")}
+            </label>
+            <select
+              id="products-category-filter"
+              value={selectedCategory}
+              onChange={(event) => setSelectedCategory(event.target.value)}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            >
+              <option value="">{t("products.filter.allCategories")}</option>
+              {categories.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="sr-only" htmlFor="products-subcategory-filter">
+              {t("products.filter.subcategory")}
+            </label>
+            <select
+              id="products-subcategory-filter"
+              value={selectedSubcategory}
+              onChange={(event) => setSelectedSubcategory(event.target.value)}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            >
+              <option value="">{t("products.filter.allSubcategories")}</option>
+              {subcategories.map((subcategory) => (
+                <option key={subcategory} value={subcategory}>
+                  {subcategory}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {loading ? (
