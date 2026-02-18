@@ -10,7 +10,8 @@ import {
   getDoc,
   writeBatch,
   query,
-  where
+  where,
+  serverTimestamp
 } from "../firebaseConfig";
 
 // Simple in-memory cache for indexed products per hotel
@@ -211,4 +212,34 @@ export async function renameOutletInProducts(hotelUid, oldName, newName) {
 
   await rebuildProductMasterIndex(hotelUid);
   clearProductsIndexedCache(hotelUid);
+}
+
+export async function getCatalogProducts(hotelUid) {
+  if (!hotelUid) return [];
+  const productsCol = collection(db, `hotels/${hotelUid}/products`);
+  const snap = await getDocs(productsCol);
+  return snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
+export async function getCatalogProduct(hotelUid, productId) {
+  if (!hotelUid || !productId) return null;
+  const productDoc = doc(db, `hotels/${hotelUid}/products`, productId);
+  const snap = await getDoc(productDoc);
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...snap.data() };
+}
+
+export async function createCatalogProduct(hotelUid, productData, actor) {
+  if (!hotelUid) throw new Error("hotelUid is verplicht!");
+  const productsCol = collection(db, `hotels/${hotelUid}/products`);
+  const payload = {
+    ...productData,
+    active: productData.active ?? true,
+    createdAt: serverTimestamp(),
+    createdBy: actor || "unknown",
+    updatedAt: serverTimestamp(),
+    updatedBy: actor || "unknown",
+  };
+  const docRef = await addDoc(productsCol, payload);
+  return docRef.id;
 }
