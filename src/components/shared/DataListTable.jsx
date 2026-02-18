@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 function getComparableValue(row, column) {
   const raw = column.sortValue ? column.sortValue(row) : row[column.key];
@@ -8,7 +9,9 @@ function getComparableValue(row, column) {
   return raw;
 }
 
-export default function DataListTable({ columns, rows, onRowClick, emptyMessage = "Geen resultaten." }) {
+export default function DataListTable({ columns, rows, onRowClick, emptyMessage }) {
+  const { t } = useTranslation("common");
+  const resolvedEmptyMessage = emptyMessage || t("products.table.empty");
   const defaultSortColumn = columns.find((column) => column.sortable !== false);
   const [sortConfig, setSortConfig] = useState(
     defaultSortColumn ? { key: defaultSortColumn.key, direction: "asc" } : null
@@ -58,6 +61,7 @@ export default function DataListTable({ columns, rows, onRowClick, emptyMessage 
                         type="button"
                         onClick={() => handleSort(column.key)}
                         className="inline-flex items-center gap-1 hover:text-gray-700"
+                        aria-label={t("products.table.sortBy", { column: column.label })}
                       >
                         <span>{column.label}</span>
                         <span className="text-[10px]">
@@ -76,7 +80,7 @@ export default function DataListTable({ columns, rows, onRowClick, emptyMessage 
             {sortedRows.length === 0 && (
               <tr>
                 <td className="px-4 py-6 text-sm text-gray-500" colSpan={columns.length}>
-                  {emptyMessage}
+                  {resolvedEmptyMessage}
                 </td>
               </tr>
             )}

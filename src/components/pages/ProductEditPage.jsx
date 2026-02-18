@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
@@ -10,6 +11,7 @@ import { getCatalogProduct, updateCatalogProduct } from "../../services/firebase
 
 export default function ProductEditPage() {
   const navigate = useNavigate();
+  const { t } = useTranslation("common");
   const { productId } = useParams();
   const { hotelUid } = useHotelContext();
   const [product, setProduct] = useState(null);
@@ -53,15 +55,15 @@ export default function ProductEditPage() {
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div>
-          <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
-          <h1 className="text-3xl font-semibold">Product bewerken</h1>
+          <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
+          <h1 className="text-3xl font-semibold">{t("products.edit.title")}</h1>
         </div>
 
         {loading ? (
-          <p className="text-gray-600">Product laden...</p>
+          <p className="text-gray-600">{t("products.loading")}</p>
         ) : !product ? (
           <Card>
-            <p className="text-gray-600">Product niet gevonden.</p>
+            <p className="text-gray-600">{t("products.notFound")}</p>
           </Card>
         ) : (
           <Card>
@@ -69,8 +71,8 @@ export default function ProductEditPage() {
               hotelUid={hotelUid}
               initialData={product}
               onSubmit={handleUpdate}
-              savingLabel="Opslaan..."
-              submitLabel="Wijzigingen opslaan"
+              savingLabel={t("products.actions.saving")}
+              submitLabel={t("products.actions.saveChanges")}
             />
           </Card>
         )}

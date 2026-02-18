@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { uploadCatalogProductImage } from "../../services/firebaseProducts";
 
 const defaultState = {
@@ -34,6 +35,7 @@ function toFormState(initialData) {
 }
 
 export default function ProductFormFields({ hotelUid, initialData, onSubmit, savingLabel, submitLabel }) {
+  const { t } = useTranslation("common");
   const [formState, setFormState] = useState(() => toFormState(initialData));
   const [saving, setSaving] = useState(false);
   const [imageFile, setImageFile] = useState(null);
@@ -45,8 +47,7 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
 
   const previewUrl = useMemo(() => {
     if (!imageFile) return formState.imageUrl || "";
-    const objectUrl = URL.createObjectURL(imageFile);
-    return objectUrl;
+    return URL.createObjectURL(imageFile);
   }, [imageFile, formState.imageUrl]);
 
   useEffect(() => {
@@ -97,8 +98,9 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
 
   return (
     <form onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2">
+      <h2 className="sm:col-span-2 text-lg font-semibold text-gray-900">{t("products.sections.identity")}</h2>
       <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-        Naam *
+        {t("products.fields.name")} *
         <input
           required
           value={formState.name}
@@ -107,7 +109,7 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
         />
       </label>
       <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-        Merk
+        {t("products.fields.brand")}
         <input
           value={formState.brand}
           onChange={(event) => updateField("brand", event.target.value)}
@@ -115,7 +117,7 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
         />
       </label>
       <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700 sm:col-span-2">
-        Beschrijving
+        {t("products.fields.description")}
         <textarea
           value={formState.description}
           onChange={(event) => updateField("description", event.target.value)}
@@ -128,10 +130,10 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
           checked={formState.active}
           onChange={(event) => updateField("active", event.target.checked)}
         />
-        Actief
+        {t("products.fields.active")}
       </label>
       <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700 sm:col-span-2">
-        Product afbeelding
+        {t("products.fields.image")}
         <input
           type="file"
           accept="image/*"
@@ -139,13 +141,17 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
           className="rounded border border-gray-300 px-3 py-2 text-sm"
         />
         {previewUrl && (
-          <img src={previewUrl} alt="Product preview" className="mt-2 h-32 w-32 rounded object-cover border border-gray-200" />
+          <img
+            src={previewUrl}
+            alt="Product preview"
+            className="mt-2 h-32 w-32 rounded object-cover border border-gray-200"
+          />
         )}
       </label>
 
-      <h2 className="sm:col-span-2 text-lg font-semibold text-gray-900 mt-2">Classification</h2>
+      <h2 className="sm:col-span-2 text-lg font-semibold text-gray-900 mt-2">{t("products.sections.classification")}</h2>
       <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-        Categorie
+        {t("products.fields.category")}
         <input
           value={formState.category}
           onChange={(event) => updateField("category", event.target.value)}
@@ -153,7 +159,7 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
         />
       </label>
       <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-        Subcategorie
+        {t("products.fields.subcategory")}
         <input
           value={formState.subcategory}
           onChange={(event) => updateField("subcategory", event.target.value)}
@@ -161,9 +167,9 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
         />
       </label>
 
-      <h2 className="sm:col-span-2 text-lg font-semibold text-gray-900 mt-2">Units & Normalisation</h2>
+      <h2 className="sm:col-span-2 text-lg font-semibold text-gray-900 mt-2">{t("products.sections.units")}</h2>
       <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-        Base Unit
+        {t("products.fields.baseUnit")}
         <input
           value={formState.baseUnit}
           onChange={(event) => updateField("baseUnit", event.target.value)}
@@ -171,7 +177,7 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
         />
       </label>
       <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-        Base Qty Per Unit
+        {t("products.fields.baseQtyPerUnit")}
         <input
           type="number"
           step="0.01"
@@ -182,9 +188,9 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
         />
       </label>
 
-      <h2 className="sm:col-span-2 text-lg font-semibold text-gray-900 mt-2">Identifiers</h2>
+      <h2 className="sm:col-span-2 text-lg font-semibold text-gray-900 mt-2">{t("products.sections.identifiers")}</h2>
       <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-        GTIN
+        {t("products.fields.gtin")}
         <input
           value={formState.gtin}
           onChange={(event) => updateField("gtin", event.target.value)}
@@ -192,7 +198,7 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
         />
       </label>
       <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-        Internal SKU
+        {t("products.fields.internalSku")}
         <input
           value={formState.internalSku}
           onChange={(event) => updateField("internalSku", event.target.value)}
@@ -200,9 +206,9 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
         />
       </label>
 
-      <h2 className="sm:col-span-2 text-lg font-semibold text-gray-900 mt-2">Storage & Operationally</h2>
+      <h2 className="sm:col-span-2 text-lg font-semibold text-gray-900 mt-2">{t("products.sections.storage")}</h2>
       <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-        Storage Type
+        {t("products.fields.storageType")}
         <input
           value={formState.storageType}
           onChange={(event) => updateField("storageType", event.target.value)}
@@ -210,7 +216,7 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
         />
       </label>
       <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-        Allergens (komma gescheiden)
+        {t("products.fields.allergens")}
         <input
           value={formState.allergens}
           onChange={(event) => updateField("allergens", event.target.value)}
@@ -218,7 +224,7 @@ export default function ProductFormFields({ hotelUid, initialData, onSubmit, sav
         />
       </label>
       <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700 sm:col-span-2">
-        Notes
+        {t("products.fields.notes")}
         <textarea
           value={formState.notes}
           onChange={(event) => updateField("notes", event.target.value)}

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Plus } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
@@ -10,6 +11,7 @@ import { getCatalogProducts } from "../../services/firebaseProducts";
 
 export default function ProductsPage() {
   const navigate = useNavigate();
+  const { t } = useTranslation("common");
   const { hotelUid } = useHotelContext();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -42,14 +44,15 @@ export default function ProductsPage() {
   }, [hotelUid]);
 
   const columns = [
-    { key: "name", label: "Naam" },
-    { key: "brand", label: "Merk" },
-    { key: "category", label: "Categorie" },
-    { key: "subcategory", label: "Subcategorie" },
-    { key: "baseUnit", label: "Base Unit" },
+    { key: "name", label: t("products.columns.name") },
+    { key: "brand", label: t("products.columns.brand") },
+    { key: "category", label: t("products.columns.category") },
+    { key: "subcategory", label: t("products.columns.subcategory") },
+    { key: "baseUnit", label: t("products.columns.baseUnit") },
     {
       key: "active",
-      label: "Status",
+      label: t("products.columns.status"),
+      sortValue: (product) => (product.active !== false ? 1 : 0),
       render: (product) => (
         <span
           className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${
@@ -58,7 +61,7 @@ export default function ProductsPage() {
               : "bg-gray-200 text-gray-700"
           }`}
         >
-          {product.active !== false ? "Actief" : "Inactief"}
+          {product.active !== false ? t("products.status.active") : t("products.status.inactive")}
         </span>
       ),
     },
@@ -70,26 +73,26 @@ export default function ProductsPage() {
       <PageContainer className="space-y-6">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
-            <h1 className="text-3xl font-semibold">Products</h1>
-            <p className="text-gray-600 mt-1">Overzicht van alle producten.</p>
+            <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
+            <h1 className="text-3xl font-semibold">{t("products.title")}</h1>
+            <p className="text-gray-600 mt-1">{t("products.subtitle")}</p>
           </div>
           <button
             onClick={() => navigate("/catalog/products/new")}
             className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919]"
           >
-            <Plus className="h-4 w-4" /> Nieuw product
+            <Plus className="h-4 w-4" /> {t("products.actions.new")}
           </button>
         </div>
 
         {loading ? (
-          <p className="text-gray-600">Products laden...</p>
+          <p className="text-gray-600">{t("products.loading")}</p>
         ) : (
           <DataListTable
             columns={columns}
             rows={products}
             onRowClick={(product) => navigate(`/catalog/products/${product.id}`)}
-            emptyMessage="Nog geen products aangemaakt."
+            emptyMessage={t("products.table.empty")}
           />
         )}
       </PageContainer>

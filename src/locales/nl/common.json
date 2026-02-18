@@ -17,5 +17,80 @@
   "calendar": {
     "label": "Kalender",
     "local": "Lokale kalender"
+  },
+  "products": {
+    "catalog": "Catalog",
+    "title": "Products",
+    "subtitle": "Overzicht van alle producten.",
+    "loading": "Producten laden...",
+    "notFound": "Product niet gevonden.",
+    "columns": {
+      "name": "Naam",
+      "brand": "Merk",
+      "category": "Categorie",
+      "subcategory": "Subcategorie",
+      "baseUnit": "Basiseenheid",
+      "status": "Status"
+    },
+    "status": {
+      "active": "Actief",
+      "inactive": "Inactief"
+    },
+    "actions": {
+      "new": "Nieuw product",
+      "create": "Product aanmaken",
+      "saveChanges": "Wijzigingen opslaan",
+      "saving": "Opslaan...",
+      "edit": "Product bewerken",
+      "delete": "Verwijderen",
+      "cancel": "Annuleren",
+      "backToProducts": "Terug naar Products"
+    },
+    "table": {
+      "empty": "Nog geen producten aangemaakt.",
+      "sortBy": "Sorteer op {{column}}"
+    },
+    "create": {
+      "title": "Nieuw Product"
+    },
+    "edit": {
+      "title": "Product bewerken"
+    },
+    "detail": {
+      "title": "Product detail",
+      "noImage": "Geen afbeelding geüpload"
+    },
+    "sections": {
+      "identity": "Identity",
+      "classification": "Classification",
+      "units": "Units & Normalisation",
+      "identifiers": "Identifiers",
+      "storage": "Storage & Operationally",
+      "audit": "Audit / Metadata"
+    },
+    "fields": {
+      "name": "Naam",
+      "brand": "Merk",
+      "description": "Beschrijving",
+      "active": "Actief",
+      "image": "Product afbeelding",
+      "category": "Categorie",
+      "subcategory": "Subcategorie",
+      "baseUnit": "Base Unit",
+      "baseQtyPerUnit": "Base Qty Per Unit",
+      "gtin": "GTIN",
+      "internalSku": "Internal SKU",
+      "storageType": "Storage Type",
+      "allergens": "Allergenen (komma gescheiden)",
+      "notes": "Notities",
+      "createdAt": "Aangemaakt op",
+      "createdBy": "Aangemaakt door",
+      "updatedAt": "Gewijzigd op",
+      "updatedBy": "Gewijzigd door"
+    },
+    "deleteModal": {
+      "title": "Product verwijderen",
+      "message": "Ben je zeker dat je dit product wil verwijderen? Deze actie kan niet ongedaan gemaakt worden."
+    }
   }
 }

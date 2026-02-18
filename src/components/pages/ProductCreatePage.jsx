@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
@@ -10,6 +11,7 @@ import { createCatalogProduct } from "../../services/firebaseProducts";
 
 export default function ProductCreatePage() {
   const navigate = useNavigate();
+  const { t } = useTranslation("common");
   const { hotelUid } = useHotelContext();
 
   const today = useMemo(
@@ -39,16 +41,16 @@ export default function ProductCreatePage() {
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div>
-          <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
-          <h1 className="text-3xl font-semibold">Nieuw Product</h1>
+          <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
+          <h1 className="text-3xl font-semibold">{t("products.create.title")}</h1>
         </div>
 
         <Card>
           <ProductFormFields
             hotelUid={hotelUid}
             onSubmit={handleCreate}
-            savingLabel="Opslaan..."
-            submitLabel="Product aanmaken"
+            savingLabel={t("products.actions.saving")}
+            submitLabel={t("products.actions.create")}
           />
         </Card>
       </PageContainer>
