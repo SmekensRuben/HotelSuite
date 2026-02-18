@@ -9,6 +9,7 @@ import ProductsPage from "./components/pages/ProductsPage.jsx";
 import ProductCreatePage from "./components/pages/ProductCreatePage.jsx";
 import ProductDetailPage from "./components/pages/ProductDetailPage.jsx";
 import ProductEditPage from "./components/pages/ProductEditPage.jsx";
+import SettingsCatalogPage from "./components/pages/SettingsCatalogPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -60,6 +61,10 @@ export default function AppRouter() {
         element={
           <ProtectedRoute>
             <ProductEditPage />
+        path="/settings/catalog"
+        element={
+          <ProtectedRoute>
+            <SettingsCatalogPage />
           </ProtectedRoute>
         }
       />

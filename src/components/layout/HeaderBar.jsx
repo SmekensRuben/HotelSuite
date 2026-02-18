@@ -21,6 +21,11 @@ export default function HeaderBar({ today, onLogout }) {
       action: () => navigate("/settings/general"),
       icon: Settings2,
     },
+    {
+      label: "Settings Catalog",
+      action: () => navigate("/settings/catalog"),
+      icon: Settings2,
+    },
   ];
 
   const catalogMenuItems = [
