@@ -61,6 +61,10 @@ export default function AppRouter() {
         element={
           <ProtectedRoute>
             <ProductEditPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/settings/catalog"
         element={
           <ProtectedRoute>
