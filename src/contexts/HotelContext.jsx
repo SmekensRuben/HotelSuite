@@ -38,6 +38,7 @@ export function HotelProvider({ children }) {
     getSelectedHotelUid() || null
   );
   const [loading, setLoading] = useState(true);
+  const [permissionsLoading, setPermissionsLoading] = useState(true);
   const [roles, setRoles] = useState([]);
   const [rolePermissions, setRolePermissions] = useState(ROLE_PERMISSIONS);
   const [userData, setUserData] = useState(null);
@@ -54,6 +55,7 @@ export function HotelProvider({ children }) {
 
   const loadHotelSettings = async (uid, data) => {
     if (!uid) return;
+    setPermissionsLoading(true);
 
     const userRoles = data?.roles?.[uid] || data?.roles || [];
     setRoles(Array.isArray(userRoles) ? userRoles : []);
@@ -123,6 +125,8 @@ export function HotelProvider({ children }) {
       } catch (rolesError) {
         console.error(`Kon roles voor hotel ${uid} niet laden:`, rolesError);
         setRolePermissions(ROLE_PERMISSIONS);
+      } finally {
+        setPermissionsLoading(false);
       }
     } catch (err) {
       console.error("Fout bij laden van hotelinstellingen:", err);
@@ -130,6 +134,7 @@ export function HotelProvider({ children }) {
       setLanguage("nl");
       setLightspeedShiftRolloverHour(4);
       setRolePermissions(ROLE_PERMISSIONS);
+      setPermissionsLoading(false);
     }
   };
 
@@ -138,6 +143,7 @@ export function HotelProvider({ children }) {
       if (!user?.uid) {
         setRoles([]);
         setRolePermissions(ROLE_PERMISSIONS);
+        setPermissionsLoading(false);
         setHotelUids([]);
         setUserData(null);
         persistSelectedHotelUid(null);
@@ -153,6 +159,7 @@ export function HotelProvider({ children }) {
           console.error("Gebruikersprofiel niet gevonden in database.");
           setRoles([]);
           setRolePermissions(ROLE_PERMISSIONS);
+          setPermissionsLoading(false);
           setLoading(false);
           return;
         }
@@ -166,6 +173,7 @@ export function HotelProvider({ children }) {
           console.error("hotelUids ontbreken in gebruikersprofiel.");
           setRoles([]);
           setRolePermissions(ROLE_PERMISSIONS);
+          setPermissionsLoading(false);
           setLoading(false);
           return;
         }
@@ -185,6 +193,7 @@ export function HotelProvider({ children }) {
         console.error("Fout bij laden van gebruikersgegevens:", err);
         setRoles([]);
         setRolePermissions(ROLE_PERMISSIONS);
+        setPermissionsLoading(false);
         setHotelUids([]);
         setLoading(false);
       }
@@ -220,6 +229,7 @@ export function HotelProvider({ children }) {
         hotelUids,
         language,
         loading,
+        permissionsLoading,
         roles,
         rolePermissions,
         selectHotel,
