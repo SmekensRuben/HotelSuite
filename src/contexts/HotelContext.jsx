@@ -91,14 +91,12 @@ export function HotelProvider({ children }) {
             return permissionAccumulator;
           }
 
-          const normalizedFeature = feature === "product" ? "products" : feature;
-
-          if (!permissionAccumulator[normalizedFeature]) {
-            permissionAccumulator[normalizedFeature] = [];
+          if (!permissionAccumulator[feature]) {
+            permissionAccumulator[feature] = [];
           }
 
-          if (!permissionAccumulator[normalizedFeature].includes(action)) {
-            permissionAccumulator[normalizedFeature].push(action);
+          if (!permissionAccumulator[feature].includes(action)) {
+            permissionAccumulator[feature].push(action);
           }
           return permissionAccumulator;
         }, {});
