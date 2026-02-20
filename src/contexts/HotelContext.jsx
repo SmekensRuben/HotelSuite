@@ -54,6 +54,10 @@ export function HotelProvider({ children }) {
 
   const loadHotelSettings = async (uid, data) => {
     if (!uid) return;
+
+    const userRoles = data?.roles?.[uid] || data?.roles || [];
+    setRoles(Array.isArray(userRoles) ? userRoles : []);
+
     try {
       const settingsRef = doc(db, `hotels/${uid}/settings`, uid);
       const settingsSnap = await getDoc(settingsRef);
@@ -70,60 +74,61 @@ export function HotelProvider({ children }) {
       setPosProvider(settings.posProvider || "lightspeed");
       setOrderMode(settings.orderMode || "ingredient");
 
-      const userRoles = data?.roles?.[uid] || data?.roles || [];
-      setRoles(Array.isArray(userRoles) ? userRoles : []);
+      try {
+        const loadedRoles = await getRoles(uid);
+        const customPermissions = loadedRoles.reduce((accumulator, role) => {
+          const roleName = String(role.name || "").trim();
+          const roleId = String(role.id || "").trim();
+          const permissions = Array.isArray(role.permissions) ? role.permissions : [];
 
-      const loadedRoles = await getRoles(uid);
-      const customPermissions = loadedRoles.reduce((accumulator, role) => {
-        const roleName = String(role.name || "").trim();
-        const roleId = String(role.id || "").trim();
-        const permissions = Array.isArray(role.permissions) ? role.permissions : [];
+          if ((!roleName && !roleId) || permissions.length === 0) {
+            return accumulator;
+          }
 
-        if ((!roleName && !roleId) || permissions.length === 0) {
-          return accumulator;
-        }
+          const mapped = permissions.reduce((permissionAccumulator, permissionKey) => {
+            const [rawFeature, rawAction] = String(permissionKey || "").split(".");
+            const feature = String(rawFeature || "").trim().toLowerCase();
+            const action = String(rawAction || "").trim().toLowerCase();
+            if (!feature || !action) {
+              return permissionAccumulator;
+            }
 
-        const mapped = permissions.reduce((permissionAccumulator, permissionKey) => {
-          const [rawFeature, rawAction] = String(permissionKey || "").split(".");
-          const feature = String(rawFeature || "").trim().toLowerCase();
-          const action = String(rawAction || "").trim().toLowerCase();
-          if (!feature || !action) {
+            if (!permissionAccumulator[feature]) {
+              permissionAccumulator[feature] = [];
+            }
+
+            if (!permissionAccumulator[feature].includes(action)) {
+              permissionAccumulator[feature].push(action);
+            }
             return permissionAccumulator;
+          }, {});
+
+          if (roleName) {
+            accumulator[roleName] = mapped;
+            accumulator[roleName.toLowerCase()] = mapped;
           }
 
-          if (!permissionAccumulator[feature]) {
-            permissionAccumulator[feature] = [];
+          if (roleId) {
+            accumulator[roleId] = mapped;
+            accumulator[roleId.toLowerCase()] = mapped;
           }
 
-          if (!permissionAccumulator[feature].includes(action)) {
-            permissionAccumulator[feature].push(action);
-          }
-          return permissionAccumulator;
+          return accumulator;
         }, {});
 
-        if (roleName) {
-          accumulator[roleName] = mapped;
-          accumulator[roleName.toLowerCase()] = mapped;
-        }
-
-        if (roleId) {
-          accumulator[roleId] = mapped;
-          accumulator[roleId.toLowerCase()] = mapped;
-        }
-
-        return accumulator;
-      }, {});
-
-      setRolePermissions({
-        ...ROLE_PERMISSIONS,
-        ...customPermissions,
-      });
+        setRolePermissions({
+          ...ROLE_PERMISSIONS,
+          ...customPermissions,
+        });
+      } catch (rolesError) {
+        console.error(`Kon roles voor hotel ${uid} niet laden:`, rolesError);
+        setRolePermissions(ROLE_PERMISSIONS);
+      }
     } catch (err) {
       console.error("Fout bij laden van hotelinstellingen:", err);
       setHotelName("Hotel");
       setLanguage("nl");
       setLightspeedShiftRolloverHour(4);
-      setRoles([]);
       setRolePermissions(ROLE_PERMISSIONS);
     }
   };
