@@ -10,6 +10,8 @@ import ProductCreatePage from "./components/pages/ProductCreatePage.jsx";
 import ProductDetailPage from "./components/pages/ProductDetailPage.jsx";
 import ProductEditPage from "./components/pages/ProductEditPage.jsx";
 import SettingsCatalogPage from "./components/pages/SettingsCatalogPage.jsx";
+import UserManagementPage from "./components/pages/UserManagementPage.jsx";
+import UserDetailPage from "./components/pages/UserDetailPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -69,6 +71,22 @@ export default function AppRouter() {
         element={
           <ProtectedRoute>
             <SettingsCatalogPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/users"
+        element={
+          <ProtectedRoute>
+            <UserManagementPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/users/:userId"
+        element={
+          <ProtectedRoute>
+            <UserDetailPage />
           </ProtectedRoute>
         }
       />
