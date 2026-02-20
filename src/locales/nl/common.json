@@ -21,85 +21,85 @@
   "products": {
     "catalog": "Catalog",
     "title": "Products",
-    "subtitle": "Overview of all products.",
-    "loading": "Loading products...",
-    "notFound": "Product not found.",
+    "subtitle": "Overzicht van alle producten.",
+    "loading": "Producten laden...",
+    "notFound": "Product niet gevonden.",
     "columns": {
-      "name": "Name",
-      "brand": "Brand",
-      "category": "Category",
-      "subcategory": "Subcategory",
-      "baseUnit": "Base Unit",
+      "name": "Naam",
+      "brand": "Merk",
+      "category": "Categorie",
+      "subcategory": "Subcategorie",
+      "baseUnit": "Basiseenheid",
       "status": "Status"
     },
     "status": {
-      "active": "Active",
-      "inactive": "Inactive"
+      "active": "Actief",
+      "inactive": "Inactief"
     },
     "actions": {
-      "new": "New product",
-      "create": "Create product",
-      "saveChanges": "Save changes",
-      "saving": "Saving...",
-      "edit": "Edit product",
-      "delete": "Delete",
-      "cancel": "Cancel",
-      "backToProducts": "Back to products",
-      "backToDetail": "Back to detail"
+      "new": "Nieuw product",
+      "create": "Product aanmaken",
+      "saveChanges": "Wijzigingen opslaan",
+      "saving": "Opslaan...",
+      "edit": "Product bewerken",
+      "delete": "Verwijderen",
+      "cancel": "Annuleren",
+      "backToProducts": "Terug naar Products",
+      "backToDetail": "Terug naar detail"
     },
     "table": {
-      "empty": "No products created yet.",
-      "sortBy": "Sort by {{column}}"
+      "empty": "Nog geen producten aangemaakt.",
+      "sortBy": "Sorteer op {{column}}"
     },
     "create": {
-      "title": "New product"
+      "title": "Nieuw Product"
     },
     "edit": {
-      "title": "Edit product"
+      "title": "Product bewerken"
     },
     "detail": {
       "title": "Product detail",
-      "noImage": "No image uploaded"
+      "noImage": "Geen afbeelding geüpload"
     },
     "sections": {
       "identity": "Identity",
       "classification": "Classification",
       "units": "Units & Normalisation",
       "identifiers": "Identifiers",
-      "storage": "Storage & Operational",
+      "storage": "Storage & Operationally",
       "audit": "Audit / Metadata"
     },
     "fields": {
-      "name": "Name",
-      "brand": "Brand",
-      "description": "Description",
-      "active": "Active",
-      "image": "Product image",
-      "category": "Category",
-      "subcategory": "Subcategory",
+      "name": "Naam",
+      "brand": "Merk",
+      "description": "Beschrijving",
+      "active": "Actief",
+      "image": "Product afbeelding",
+      "category": "Categorie",
+      "subcategory": "Subcategorie",
       "baseUnit": "Base Unit",
       "baseQtyPerUnit": "Base Qty Per Unit",
       "gtin": "GTIN",
       "internalSku": "Internal SKU",
       "storageType": "Storage Type",
-      "allergens": "Allergens (comma separated)",
-      "notes": "Notes",
-      "createdAt": "Created At",
-      "createdBy": "Created By",
-      "updatedAt": "Updated At",
-      "updatedBy": "Updated By"
+      "allergens": "Allergenen (komma gescheiden)",
+      "notes": "Notities",
+      "createdAt": "Aangemaakt op",
+      "createdBy": "Aangemaakt door",
+      "updatedAt": "Gewijzigd op",
+      "updatedBy": "Gewijzigd door"
     },
     "deleteModal": {
-      "title": "Delete product",
-      "message": "Are you sure you want to delete this product? This action cannot be undone."
+      "title": "Product verwijderen",
+      "message": "Ben je zeker dat je dit product wil verwijderen? Deze actie kan niet ongedaan gemaakt worden."
     },
     "filter": {
-      "label": "Filter products",
-      "placeholder": "Search by name or brand",
-      "category": "Filter by category",
-      "subcategory": "Filter by subcategory",
-      "allCategories": "All categories",
-      "allSubcategories": "All subcategories"
+      "label": "Filter producten",
+      "placeholder": "Zoek op naam of merk",
+      "category": "Filter op categorie",
+      "subcategory": "Filter op subcategorie",
+      "allCategories": "Alle categorieën",
+      "allSubcategories": "Alle subcategorieën"
     }
   }
 }

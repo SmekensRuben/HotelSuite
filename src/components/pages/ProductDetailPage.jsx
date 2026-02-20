@@ -10,6 +10,7 @@ import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { deleteCatalogProduct, getCatalogProduct } from "../../services/firebaseProducts";
 import { getUserDisplayName } from "../../services/firebaseUserManagement";
+import { usePermission } from "../../hooks/usePermission";
 
 function formatDate(value) {
   if (!value) return "-";
@@ -32,6 +33,8 @@ export default function ProductDetailPage() {
   const { t } = useTranslation("common");
   const { productId } = useParams();
   const { hotelUid } = useHotelContext();
+  const canEditProducts = usePermission("products", "edit");
+  const canDeleteProducts = usePermission("products", "delete");
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [createdByName, setCreatedByName] = useState("-");
@@ -79,7 +82,7 @@ export default function ProductDetailPage() {
   }, [product]);
 
   const handleDeleteProduct = async () => {
-    if (!hotelUid || !productId) return;
+    if (!hotelUid || !productId || !canDeleteProducts) return;
     await deleteCatalogProduct(hotelUid, productId);
     setShowDeleteModal(false);
     navigate("/catalog/products");
@@ -98,7 +101,12 @@ export default function ProductDetailPage() {
             <button
               type="button"
               onClick={() => navigate(`/catalog/products/${productId}/edit`)}
-              className="inline-flex items-center justify-center rounded border border-gray-300 p-2 text-gray-700 hover:bg-gray-100"
+              disabled={!canEditProducts}
+              className={`inline-flex items-center justify-center rounded border p-2 ${
+                canEditProducts
+                  ? "border-gray-300 text-gray-700 hover:bg-gray-100"
+                  : "border-gray-200 text-gray-400 cursor-not-allowed"
+              }`}
               title={t("products.actions.edit")}
             >
               <Pencil className="h-4 w-4" />
@@ -106,7 +114,12 @@ export default function ProductDetailPage() {
             <button
               type="button"
               onClick={() => setShowDeleteModal(true)}
-              className="inline-flex items-center justify-center rounded border border-red-200 p-2 text-red-700 hover:bg-red-50"
+              disabled={!canDeleteProducts}
+              className={`inline-flex items-center justify-center rounded border p-2 ${
+                canDeleteProducts
+                  ? "border-red-200 text-red-700 hover:bg-red-50"
+                  : "border-gray-200 text-gray-400 cursor-not-allowed"
+              }`}
               title={t("products.actions.delete")}
             >
               <Trash2 className="h-4 w-4" />
@@ -234,7 +247,12 @@ export default function ProductDetailPage() {
           <button
             type="button"
             onClick={handleDeleteProduct}
-            className="px-4 py-2 rounded bg-red-600 text-white hover:bg-red-700"
+            disabled={!canDeleteProducts}
+            className={`px-4 py-2 rounded ${
+              canDeleteProducts
+                ? "bg-red-600 text-white hover:bg-red-700"
+                : "bg-gray-300 text-gray-500 cursor-not-allowed"
+            }`}
           >
             {t("products.actions.delete")}
           </button>
