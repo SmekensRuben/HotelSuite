@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useHotelContext } from "contexts/HotelContext";
 import { db, doc, getDoc } from "../../firebaseConfig";
-import { Package, Settings2 } from "lucide-react";
+import { Package, Settings2, Users } from "lucide-react";
 
 export default function HeaderBar({ today, onLogout }) {
   const navigate = useNavigate();
@@ -25,6 +25,11 @@ export default function HeaderBar({ today, onLogout }) {
       label: "Settings Catalog",
       action: () => navigate("/settings/catalog"),
       icon: Settings2,
+    },
+    {
+      label: "User Management",
+      action: () => navigate("/settings/users"),
+      icon: Users,
     },
   ];
 
