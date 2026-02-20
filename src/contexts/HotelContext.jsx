@@ -76,27 +76,43 @@ export function HotelProvider({ children }) {
       const loadedRoles = await getRoles(uid);
       const customPermissions = loadedRoles.reduce((accumulator, role) => {
         const roleName = String(role.name || "").trim();
+        const roleId = String(role.id || "").trim();
         const permissions = Array.isArray(role.permissions) ? role.permissions : [];
 
-        if (!roleName || permissions.length === 0) {
+        if ((!roleName && !roleId) || permissions.length === 0) {
           return accumulator;
         }
 
         const mapped = permissions.reduce((permissionAccumulator, permissionKey) => {
-          const [feature, action] = String(permissionKey || "").split(".");
+          const [rawFeature, rawAction] = String(permissionKey || "").split(".");
+          const feature = String(rawFeature || "").trim().toLowerCase();
+          const action = String(rawAction || "").trim().toLowerCase();
           if (!feature || !action) {
             return permissionAccumulator;
           }
 
-          if (!permissionAccumulator[feature]) {
-            permissionAccumulator[feature] = [];
+          const normalizedFeature = feature === "product" ? "products" : feature;
+
+          if (!permissionAccumulator[normalizedFeature]) {
+            permissionAccumulator[normalizedFeature] = [];
           }
 
-          permissionAccumulator[feature].push(action);
+          if (!permissionAccumulator[normalizedFeature].includes(action)) {
+            permissionAccumulator[normalizedFeature].push(action);
+          }
           return permissionAccumulator;
         }, {});
 
-        accumulator[roleName] = mapped;
+        if (roleName) {
+          accumulator[roleName] = mapped;
+          accumulator[roleName.toLowerCase()] = mapped;
+        }
+
+        if (roleId) {
+          accumulator[roleId] = mapped;
+          accumulator[roleId.toLowerCase()] = mapped;
+        }
+
         return accumulator;
       }, {});
 
