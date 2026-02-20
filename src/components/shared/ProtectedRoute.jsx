@@ -3,10 +3,10 @@ import { useHotelContext } from "../../contexts/HotelContext";
 import { usePermission } from "../../hooks/usePermission";
 
 export default function ProtectedRoute({ children, feature, action = "view" }) {
-  const { hotelUid, loading } = useHotelContext();
+  const { hotelUid, loading, permissionsLoading } = useHotelContext();
   const hasAccess = feature ? usePermission(feature, action) : true;
 
-  if (loading) {
+  if (loading || permissionsLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-gray-600">
         ⏳ Bezig met controleren...
