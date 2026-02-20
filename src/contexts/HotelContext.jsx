@@ -5,6 +5,8 @@ import {
   getSelectedHotelUid,
   setSelectedHotelUid as persistSelectedHotelUid,
 } from "utils/hotelUtils";
+import { getRoles } from "../services/firebaseRoles";
+import { ROLE_PERMISSIONS } from "../constants/roles";
 
 const HotelContext = createContext();
 
@@ -37,6 +39,7 @@ export function HotelProvider({ children }) {
   );
   const [loading, setLoading] = useState(true);
   const [roles, setRoles] = useState([]);
+  const [rolePermissions, setRolePermissions] = useState(ROLE_PERMISSIONS);
   const [userData, setUserData] = useState(null);
   const [lightspeedShiftRolloverHour, setLightspeedShiftRolloverHour] = useState(4);
   const [posProvider, setPosProvider] = useState("lightspeed");
@@ -69,12 +72,45 @@ export function HotelProvider({ children }) {
 
       const userRoles = data?.roles?.[uid] || data?.roles || [];
       setRoles(Array.isArray(userRoles) ? userRoles : []);
+
+      const loadedRoles = await getRoles(uid);
+      const customPermissions = loadedRoles.reduce((accumulator, role) => {
+        const roleName = String(role.name || "").trim();
+        const permissions = Array.isArray(role.permissions) ? role.permissions : [];
+
+        if (!roleName || permissions.length === 0) {
+          return accumulator;
+        }
+
+        const mapped = permissions.reduce((permissionAccumulator, permissionKey) => {
+          const [feature, action] = String(permissionKey || "").split(".");
+          if (!feature || !action) {
+            return permissionAccumulator;
+          }
+
+          if (!permissionAccumulator[feature]) {
+            permissionAccumulator[feature] = [];
+          }
+
+          permissionAccumulator[feature].push(action);
+          return permissionAccumulator;
+        }, {});
+
+        accumulator[roleName] = mapped;
+        return accumulator;
+      }, {});
+
+      setRolePermissions({
+        ...ROLE_PERMISSIONS,
+        ...customPermissions,
+      });
     } catch (err) {
       console.error("Fout bij laden van hotelinstellingen:", err);
       setHotelName("Hotel");
       setLanguage("nl");
       setLightspeedShiftRolloverHour(4);
       setRoles([]);
+      setRolePermissions(ROLE_PERMISSIONS);
     }
   };
 
@@ -82,6 +118,7 @@ export function HotelProvider({ children }) {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
       if (!user?.uid) {
         setRoles([]);
+        setRolePermissions(ROLE_PERMISSIONS);
         setHotelUids([]);
         setUserData(null);
         persistSelectedHotelUid(null);
@@ -96,6 +133,7 @@ export function HotelProvider({ children }) {
         if (!userSnap.exists()) {
           console.error("Gebruikersprofiel niet gevonden in database.");
           setRoles([]);
+          setRolePermissions(ROLE_PERMISSIONS);
           setLoading(false);
           return;
         }
@@ -108,6 +146,7 @@ export function HotelProvider({ children }) {
         if (!hotels.length) {
           console.error("hotelUids ontbreken in gebruikersprofiel.");
           setRoles([]);
+          setRolePermissions(ROLE_PERMISSIONS);
           setLoading(false);
           return;
         }
@@ -126,6 +165,7 @@ export function HotelProvider({ children }) {
       } catch (err) {
         console.error("Fout bij laden van gebruikersgegevens:", err);
         setRoles([]);
+        setRolePermissions(ROLE_PERMISSIONS);
         setHotelUids([]);
         setLoading(false);
       }
@@ -162,6 +202,7 @@ export function HotelProvider({ children }) {
         language,
         loading,
         roles,
+        rolePermissions,
         selectHotel,
         lightspeedShiftRolloverHour,
         posProvider,

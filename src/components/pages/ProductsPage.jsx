@@ -8,11 +8,13 @@ import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getCatalogProducts } from "../../services/firebaseProducts";
+import { usePermission } from "../../hooks/usePermission";
 
 export default function ProductsPage() {
   const navigate = useNavigate();
   const { t } = useTranslation("common");
   const { hotelUid } = useHotelContext();
+  const canCreateProducts = usePermission("products", "create");
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -121,12 +123,14 @@ export default function ProductsPage() {
             <h1 className="text-3xl font-semibold">{t("products.title")}</h1>
             <p className="text-gray-600 mt-1">{t("products.subtitle")}</p>
           </div>
-          <button
-            onClick={() => navigate("/catalog/products/new")}
-            className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919]"
-          >
-            <Plus className="h-4 w-4" /> {t("products.actions.new")}
-          </button>
+          {canCreateProducts && (
+            <button
+              onClick={() => navigate("/catalog/products/new")}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919]"
+            >
+              <Plus className="h-4 w-4" /> {t("products.actions.new")}
+            </button>
+          )}
         </div>
 
         <div className="grid gap-3 md:grid-cols-3">
