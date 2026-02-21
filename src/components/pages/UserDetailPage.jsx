@@ -65,9 +65,11 @@ export default function UserDetailPage() {
       setLastName(user.lastName || "");
       setEmail(user.email || "");
 
-      const hotelUids = Array.isArray(user.hotelUids)
-        ? user.hotelUids
-        : [user.hotelUid].filter(Boolean);
+      const hotelUids = Array.isArray(user.hotelUid)
+        ? user.hotelUid
+        : Array.isArray(user.hotelUids)
+          ? user.hotelUids
+          : [user.hotelUid].filter(Boolean);
       setHotelUidsInput(hotelUids.join(", "));
 
       const loadedPermissions = Array.isArray(user.permissions) ? unique(user.permissions) : [];
@@ -109,7 +111,7 @@ export default function UserDetailPage() {
       lastName: lastName.trim(),
       email: email.trim(),
       hotelUids,
-      hotelUid: hotelUids[0] || "",
+      hotelUid: hotelUids,
       permissions: unique([...selectedPermissions, ...customPermissions]),
     };
 
