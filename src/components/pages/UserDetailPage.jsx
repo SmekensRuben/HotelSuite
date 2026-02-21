@@ -103,15 +103,14 @@ export default function UserDetailPage() {
     setSaving(true);
     setMessage("");
 
-    const hotelUids = normalizeCsvToArray(hotelUidsInput);
+    const hotelUid = normalizeCsvToArray(hotelUidsInput);
     const customPermissions = normalizeCsvToArray(customPermissionsInput);
 
     const payload = {
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       email: email.trim(),
-      hotelUids,
-      hotelUid: hotelUids,
+      hotelUid,
       permissions: unique([...selectedPermissions, ...customPermissions]),
     };
 
