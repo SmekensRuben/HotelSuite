@@ -5,6 +5,7 @@ import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSettings, setSettings } from "../../services/firebaseSettings";
+import { usePermission } from "../../hooks/usePermission";
 
 function sortByName(items) {
   return [...items].sort((firstItem, secondItem) =>
@@ -14,6 +15,9 @@ function sortByName(items) {
 
 export default function SettingsCatalogPage() {
   const { hotelUid } = useHotelContext();
+  const canCreateSettings = usePermission("settings", "create");
+  const canUpdateSettings = usePermission("settings", "update");
+  const canDeleteSettings = usePermission("settings", "delete");
   const [loading, setLoading] = useState(true);
   const [savingCategory, setSavingCategory] = useState(false);
   const [savingSubcategory, setSavingSubcategory] = useState(false);
@@ -127,7 +131,7 @@ export default function SettingsCatalogPage() {
   const handleAddCategory = async (event) => {
     event.preventDefault();
     const cleanedName = categoryName.trim();
-    if (!hotelUid || !cleanedName) return;
+    if (!canCreateSettings || !hotelUid || !cleanedName) return;
 
     setSavingCategory(true);
     setMessage("");
@@ -151,7 +155,7 @@ export default function SettingsCatalogPage() {
     event.preventDefault();
     const cleanedName = subcategoryName.trim();
 
-    if (!hotelUid || !cleanedName || !subcategoryCategoryId) {
+    if (!canCreateSettings || !hotelUid || !cleanedName || !subcategoryCategoryId) {
       setMessage("Please select one category for this subcategory.");
       return;
     }
@@ -183,7 +187,7 @@ export default function SettingsCatalogPage() {
 
   const handleSaveCategoryEdit = async () => {
     const cleanedName = editingCategoryName.trim();
-    if (!hotelUid || !editingCategoryId || !cleanedName) return;
+    if (!canUpdateSettings || !hotelUid || !editingCategoryId || !cleanedName) return;
 
     const nextCategories = categories.map((category) =>
       category.id === editingCategoryId ? { ...category, name: cleanedName } : category
@@ -197,7 +201,7 @@ export default function SettingsCatalogPage() {
   };
 
   const handleDeleteCategory = async (categoryId) => {
-    if (!hotelUid || !categoryId) return;
+    if (!canDeleteSettings || !hotelUid || !categoryId) return;
 
     const linkedSubcategories = subcategories.filter(
       (subcategory) => subcategory.categoryId === categoryId
@@ -233,6 +237,7 @@ export default function SettingsCatalogPage() {
   const handleSaveSubcategoryEdit = async () => {
     const cleanedName = editingSubcategoryName.trim();
     if (
+      !canUpdateSettings ||
       !hotelUid ||
       !editingSubcategoryId ||
       !cleanedName ||
@@ -261,7 +266,7 @@ export default function SettingsCatalogPage() {
   };
 
   const handleDeleteSubcategory = async (subcategoryId) => {
-    if (!hotelUid || !subcategoryId) return;
+    if (!canDeleteSettings || !hotelUid || !subcategoryId) return;
 
     const shouldDelete = window.confirm("Delete this subcategory?");
     if (!shouldDelete) return;
@@ -284,7 +289,7 @@ export default function SettingsCatalogPage() {
       <PageContainer className="space-y-6">
         <div>
           <p className="text-sm text-gray-500 uppercase tracking-wide">Settings</p>
-          <h1 className="text-3xl font-semibold">Settings Catalog</h1>
+          <h1 className="text-3xl font-semibold">Catalog Settings</h1>
         </div>
 
         <Card>
@@ -300,7 +305,7 @@ export default function SettingsCatalogPage() {
               />
               <button
                 type="submit"
-                disabled={savingCategory}
+                disabled={!canCreateSettings || savingCategory}
                 className="bg-[#b41f1f] text-white px-4 py-2 rounded font-semibold shadow hover:bg-[#961919] transition-colors disabled:opacity-60"
               >
                 {savingCategory ? "Adding..." : "Add category"}
@@ -335,7 +340,8 @@ export default function SettingsCatalogPage() {
                           <button
                             type="button"
                             onClick={handleSaveCategoryEdit}
-                            className="text-xs px-2 py-1 rounded bg-green-600 text-white"
+                            disabled={!canUpdateSettings}
+                            className="text-xs px-2 py-1 rounded bg-green-600 text-white disabled:opacity-60"
                           >
                             Save
                           </button>
@@ -351,22 +357,26 @@ export default function SettingsCatalogPage() {
                           </button>
                         </>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => startCategoryEdit(category)}
-                          className="text-xs px-2 py-1 rounded border"
-                        >
-                          Edit
-                        </button>
+                        canUpdateSettings && (
+                          <button
+                            type="button"
+                            onClick={() => startCategoryEdit(category)}
+                            className="text-xs px-2 py-1 rounded border"
+                          >
+                            Edit
+                          </button>
+                        )
                       )}
 
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteCategory(category.id)}
-                        className="text-xs px-2 py-1 rounded bg-red-600 text-white"
-                      >
-                        Delete
-                      </button>
+                      {canDeleteSettings && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCategory(category.id)}
+                          className="text-xs px-2 py-1 rounded bg-red-600 text-white"
+                        >
+                          Delete
+                        </button>
+                      )}
                     </div>
                   </li>
                 ))}
@@ -400,7 +410,7 @@ export default function SettingsCatalogPage() {
               </select>
               <button
                 type="submit"
-                disabled={savingSubcategory || sortedCategories.length === 0}
+                disabled={!canCreateSettings || savingSubcategory || sortedCategories.length === 0}
                 className="bg-[#b41f1f] text-white px-4 py-2 rounded font-semibold shadow hover:bg-[#961919] transition-colors disabled:opacity-60 sm:col-span-1"
               >
                 {savingSubcategory ? "Adding..." : "Add subcategory"}
@@ -460,7 +470,8 @@ export default function SettingsCatalogPage() {
                                   <button
                                     type="button"
                                     onClick={handleSaveSubcategoryEdit}
-                                    className="text-xs px-2 py-1 rounded bg-green-600 text-white"
+                                    disabled={!canUpdateSettings}
+                                    className="text-xs px-2 py-1 rounded bg-green-600 text-white disabled:opacity-60"
                                   >
                                     Save
                                   </button>
@@ -477,6 +488,7 @@ export default function SettingsCatalogPage() {
                                   </button>
                                 </>
                               ) : (
+                                canUpdateSettings && (
                                 <button
                                   type="button"
                                   onClick={() => startSubcategoryEdit(subcategory)}
@@ -484,15 +496,18 @@ export default function SettingsCatalogPage() {
                                 >
                                   Edit
                                 </button>
+                                )
                               )}
 
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteSubcategory(subcategory.id)}
-                                className="text-xs px-2 py-1 rounded bg-red-600 text-white"
-                              >
-                                Delete
-                              </button>
+                              {canDeleteSettings && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteSubcategory(subcategory.id)}
+                                  className="text-xs px-2 py-1 rounded bg-red-600 text-white"
+                                >
+                                  Delete
+                                </button>
+                              )}
                             </div>
                           </li>
                         ))}
