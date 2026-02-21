@@ -11,6 +11,7 @@ export default function HeaderBar({ today, onLogout }) {
   const { t } = useTranslation(["common", "reservations"]);
   const { hotelUid, hotelUids = [], selectHotel } = useHotelContext();
   const canViewProducts = usePermission("products", "read");
+  const canViewSettings = usePermission("settings", "read");
   const canViewUsers = usePermission("users", "read");
   const [hotels, setHotels] = useState([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -23,11 +24,13 @@ export default function HeaderBar({ today, onLogout }) {
       label: "General Settings",
       action: () => navigate("/settings/general"),
       icon: Settings2,
+      visible: canViewSettings,
     },
     {
-      label: "Settings Catalog",
+      label: "Catalog Settings",
       action: () => navigate("/settings/catalog"),
       icon: Settings2,
+      visible: canViewSettings,
     },
     {
       label: "User Management",
@@ -175,47 +178,49 @@ export default function HeaderBar({ today, onLogout }) {
             </div>
           )}
 
-          <div ref={settingsMenuRef} className="flex justify-end w-full sm:w-auto">
-            <div className="relative w-full sm:w-auto">
-              <button
-                onClick={() => {
-                  setIsSettingsOpen((prev) => !prev);
-                  setIsCatalogOpen(false);
-                }}
-                className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
-                style={{ minHeight: 44 }}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="uppercase tracking-wide">Settings</span>
-                </div>
-                <span className="ml-3 text-base">▾</span>
-              </button>
-              {isSettingsOpen && (
-                <div className="absolute left-0 mt-2 w-64 rounded-lg shadow-xl ring-1 ring-black/5 z-30 overflow-hidden bg-white text-gray-900">
-                  <div className="py-2">
-                    {settingsMenuItems.map((item) => {
-                      const Icon = item.icon;
-                      return (
-                        <button
-                          key={item.label}
-                          onClick={() => {
-                            item.action();
-                            setIsSettingsOpen(false);
-                          }}
-                          className="w-full px-4 py-2 flex items-center gap-3 hover:bg-gray-100 transition-colors text-left"
-                        >
-                          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100">
-                            {Icon && <Icon className="h-4 w-4" />}
-                          </span>
-                          <span className="text-sm font-semibold">{item.label}</span>
-                        </button>
-                      );
-                    })}
+          {settingsMenuItems.length > 0 && (
+            <div ref={settingsMenuRef} className="flex justify-end w-full sm:w-auto">
+              <div className="relative w-full sm:w-auto">
+                <button
+                  onClick={() => {
+                    setIsSettingsOpen((prev) => !prev);
+                    setIsCatalogOpen(false);
+                  }}
+                  className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
+                  style={{ minHeight: 44 }}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="uppercase tracking-wide">Settings</span>
                   </div>
-                </div>
-              )}
+                  <span className="ml-3 text-base">▾</span>
+                </button>
+                {isSettingsOpen && (
+                  <div className="absolute left-0 mt-2 w-64 rounded-lg shadow-xl ring-1 ring-black/5 z-30 overflow-hidden bg-white text-gray-900">
+                    <div className="py-2">
+                      {settingsMenuItems.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <button
+                            key={item.label}
+                            onClick={() => {
+                              item.action();
+                              setIsSettingsOpen(false);
+                            }}
+                            className="w-full px-4 py-2 flex items-center gap-3 hover:bg-gray-100 transition-colors text-left"
+                          >
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100">
+                              {Icon && <Icon className="h-4 w-4" />}
+                            </span>
+                            <span className="text-sm font-semibold">{item.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </header>

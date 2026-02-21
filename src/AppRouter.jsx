@@ -29,7 +29,7 @@ export default function AppRouter() {
       <Route
         path="/settings/general"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute feature="settings" action="read">
             <GeneralSettingsPage />
           </ProtectedRoute>
         }
@@ -69,7 +69,7 @@ export default function AppRouter() {
       <Route
         path="/settings/catalog"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute feature="settings" action="read">
             <SettingsCatalogPage />
           </ProtectedRoute>
         }

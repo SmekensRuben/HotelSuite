@@ -5,6 +5,7 @@ import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { getAllUsers } from "../../services/firebaseUserManagement";
+import { usePermission } from "../../hooks/usePermission";
 
 function formatHotelUid(user) {
   const userHotelUids = Array.isArray(user.hotelUid) ? user.hotelUid.filter(Boolean) : [];
@@ -18,6 +19,7 @@ function formatPermissions(user) {
 
 export default function UserManagementPage() {
   const navigate = useNavigate();
+  const canUpdateUsers = usePermission("users", "update");
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -107,7 +109,7 @@ export default function UserManagementPage() {
           <DataListTable
             columns={columns}
             rows={rows}
-            onRowClick={(user) => navigate(`/settings/users/${user.id}`)}
+            onRowClick={canUpdateUsers ? (user) => navigate(`/settings/users/${user.id}`) : undefined}
             emptyMessage="Geen gebruikers gevonden."
           />
         )}
