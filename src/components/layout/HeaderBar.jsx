@@ -12,6 +12,7 @@ export default function HeaderBar({ today, onLogout }) {
   const { hotelUid, hotelUids = [], selectHotel } = useHotelContext();
   const canViewProducts = usePermission("products", "read");
   const canViewSettings = usePermission("settings", "read");
+  const canViewUsers = usePermission("users", "read");
   const [hotels, setHotels] = useState([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
@@ -35,7 +36,7 @@ export default function HeaderBar({ today, onLogout }) {
       label: "User Management",
       action: () => navigate("/settings/users"),
       icon: Users,
-      visible: canViewSettings,
+      visible: canViewUsers,
     },
   ].filter((item) => item.visible !== false);
 

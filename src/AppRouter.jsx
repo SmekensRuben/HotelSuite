@@ -77,7 +77,7 @@ export default function AppRouter() {
       <Route
         path="/settings/users"
         element={
-          <ProtectedRoute feature="settings" action="read">
+          <ProtectedRoute feature="users" action="read">
             <UserManagementPage />
           </ProtectedRoute>
         }
@@ -85,7 +85,7 @@ export default function AppRouter() {
       <Route
         path="/settings/users/:userId"
         element={
-          <ProtectedRoute feature="settings" action="update">
+          <ProtectedRoute feature="users" action="update">
             <UserDetailPage />
           </ProtectedRoute>
         }

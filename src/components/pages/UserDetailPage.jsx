@@ -21,7 +21,7 @@ function unique(values) {
 export default function UserDetailPage() {
   const navigate = useNavigate();
   const { userId } = useParams();
-  const canUpdateSettings = usePermission("settings", "update");
+  const canUpdateUsers = usePermission("users", "update");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [firstName, setFirstName] = useState("");
@@ -52,7 +52,7 @@ export default function UserDetailPage() {
 
   useEffect(() => {
     const loadUser = async () => {
-      if (!canUpdateSettings || !userId) return;
+      if (!canUpdateUsers || !userId) return;
 
       setLoading(true);
       const user = await getUserById(userId);
@@ -84,7 +84,7 @@ export default function UserDetailPage() {
     };
 
     loadUser();
-  }, [canUpdateSettings, knownPermissionKeys, userId]);
+  }, [canUpdateUsers, knownPermissionKeys, userId]);
 
   const togglePermission = (permissionKey) => {
     setSelectedPermissions((previous) =>
@@ -96,7 +96,7 @@ export default function UserDetailPage() {
 
   const handleSave = async (event) => {
     event.preventDefault();
-    if (!canUpdateSettings || !userId) return;
+    if (!canUpdateUsers || !userId) return;
 
     setSaving(true);
     setMessage("");
@@ -231,7 +231,7 @@ export default function UserDetailPage() {
             <div className="flex items-center gap-3">
               <button
                 type="submit"
-                disabled={!canUpdateSettings || saving}
+                disabled={!canUpdateUsers || saving}
                 className="inline-flex items-center rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {saving ? "Opslaan..." : "Opslaan"}

@@ -19,7 +19,7 @@ function formatPermissions(user) {
 
 export default function UserManagementPage() {
   const navigate = useNavigate();
-  const canUpdateSettings = usePermission("settings", "update");
+  const canUpdateUsers = usePermission("users", "update");
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -109,7 +109,7 @@ export default function UserManagementPage() {
           <DataListTable
             columns={columns}
             rows={rows}
-            onRowClick={canUpdateSettings ? (user) => navigate(`/settings/users/${user.id}`) : undefined}
+            onRowClick={canUpdateUsers ? (user) => navigate(`/settings/users/${user.id}`) : undefined}
             emptyMessage="Geen gebruikers gevonden."
           />
         )}
