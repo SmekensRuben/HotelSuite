@@ -4,12 +4,17 @@ import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { auth, signOut } from "../../firebaseConfig";
 import { getUserById, updateUser } from "../../services/firebaseUserManagement";
+import { listAllPermissionKeys, PERMISSION_CATALOG } from "../../constants/permissionCatalog";
 
 function normalizeCsvToArray(value) {
   return value
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function unique(values) {
+  return Array.from(new Set(values));
 }
 
 export default function UserDetailPage() {
@@ -21,8 +26,11 @@ export default function UserDetailPage() {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [hotelUidsInput, setHotelUidsInput] = useState("");
-  const [permissionsInput, setPermissionsInput] = useState("");
+  const [selectedPermissions, setSelectedPermissions] = useState([]);
+  const [customPermissionsInput, setCustomPermissionsInput] = useState("");
   const [message, setMessage] = useState("");
+
+  const knownPermissionKeys = useMemo(() => listAllPermissionKeys(), []);
 
   const today = useMemo(
     () =>
@@ -62,15 +70,29 @@ export default function UserDetailPage() {
         : [user.hotelUid].filter(Boolean);
       setHotelUidsInput(hotelUids.join(", "));
 
-      setPermissionsInput(
-        Array.isArray(user.permissions) ? user.permissions.join(", ") : ""
+      const loadedPermissions = Array.isArray(user.permissions) ? unique(user.permissions) : [];
+      setSelectedPermissions(
+        loadedPermissions.filter((permission) => knownPermissionKeys.includes(permission))
+      );
+      setCustomPermissionsInput(
+        loadedPermissions
+          .filter((permission) => !knownPermissionKeys.includes(permission))
+          .join(", ")
       );
 
       setLoading(false);
     };
 
     loadUser();
-  }, [userId]);
+  }, [knownPermissionKeys, userId]);
+
+  const togglePermission = (permissionKey) => {
+    setSelectedPermissions((previous) =>
+      previous.includes(permissionKey)
+        ? previous.filter((permission) => permission !== permissionKey)
+        : [...previous, permissionKey]
+    );
+  };
 
   const handleSave = async (event) => {
     event.preventDefault();
@@ -80,6 +102,7 @@ export default function UserDetailPage() {
     setMessage("");
 
     const hotelUids = normalizeCsvToArray(hotelUidsInput);
+    const customPermissions = normalizeCsvToArray(customPermissionsInput);
 
     const payload = {
       firstName: firstName.trim(),
@@ -87,7 +110,7 @@ export default function UserDetailPage() {
       email: email.trim(),
       hotelUids,
       hotelUid: hotelUids[0] || "",
-      permissions: normalizeCsvToArray(permissionsInput),
+      permissions: unique([...selectedPermissions, ...customPermissions]),
     };
 
     await updateUser(userId, payload);
@@ -165,13 +188,43 @@ export default function UserDetailPage() {
               />
             </label>
 
+            <div className="space-y-3 rounded-lg border border-gray-200 p-4">
+              <h2 className="text-sm font-semibold text-gray-800">Permissions per entity</h2>
+              {Object.entries(PERMISSION_CATALOG).map(([feature, actions]) => (
+                <div key={feature} className="space-y-2">
+                  <p className="text-sm font-medium capitalize text-gray-700">{feature}</p>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    {actions.map((action) => {
+                      const permissionKey = `${feature}.${action}`;
+                      const isChecked = selectedPermissions.includes(permissionKey);
+
+                      return (
+                        <label
+                          key={permissionKey}
+                          className="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => togglePermission(permissionKey)}
+                            className="h-4 w-4 rounded border-gray-300 text-[#b41f1f] focus:ring-[#b41f1f]/30"
+                          />
+                          <span>{action}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
             <label className="block text-sm font-medium text-gray-700">
-              Permissions (comma separated)
+              Extra permissions (optioneel, comma separated)
               <input
                 type="text"
-                value={permissionsInput}
-                onChange={(event) => setPermissionsInput(event.target.value)}
-                placeholder="products.view, products.create"
+                value={customPermissionsInput}
+                onChange={(event) => setCustomPermissionsInput(event.target.value)}
+                placeholder="feature.action"
                 className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
               />
             </label>
