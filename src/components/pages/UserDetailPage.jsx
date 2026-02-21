@@ -12,24 +12,6 @@ function normalizeCsvToArray(value) {
     .filter(Boolean);
 }
 
-function normalizeRolesByHotel(rawRolesByHotel) {
-  return rawRolesByHotel
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .reduce((accumulator, line) => {
-      const [hotelUidPart, rolesPart] = line.split(":");
-      const hotelUid = String(hotelUidPart || "").trim();
-      const roles = normalizeCsvToArray(rolesPart || "");
-
-      if (hotelUid && roles.length > 0) {
-        accumulator[hotelUid] = roles;
-      }
-
-      return accumulator;
-    }, {});
-}
-
 export default function UserDetailPage() {
   const navigate = useNavigate();
   const { userId } = useParams();
@@ -39,8 +21,7 @@ export default function UserDetailPage() {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [hotelUidsInput, setHotelUidsInput] = useState("");
-  const [rolesInput, setRolesInput] = useState("");
-  const [rolesByHotelInput, setRolesByHotelInput] = useState("");
+  const [permissionsInput, setPermissionsInput] = useState("");
   const [message, setMessage] = useState("");
 
   const today = useMemo(
@@ -81,20 +62,9 @@ export default function UserDetailPage() {
         : [user.hotelUid].filter(Boolean);
       setHotelUidsInput(hotelUids.join(", "));
 
-      if (Array.isArray(user.roles)) {
-        setRolesInput(user.roles.join(", "));
-        setRolesByHotelInput("");
-      } else if (user.roles && typeof user.roles === "object") {
-        const roleMapLines = Object.entries(user.roles)
-          .filter(([, values]) => Array.isArray(values))
-          .map(([hotelUid, values]) => `${hotelUid}: ${values.join(", ")}`);
-
-        setRolesInput("");
-        setRolesByHotelInput(roleMapLines.join("\n"));
-      } else {
-        setRolesInput("");
-        setRolesByHotelInput("");
-      }
+      setPermissionsInput(
+        Array.isArray(user.permissions) ? user.permissions.join(", ") : ""
+      );
 
       setLoading(false);
     };
@@ -110,8 +80,6 @@ export default function UserDetailPage() {
     setMessage("");
 
     const hotelUids = normalizeCsvToArray(hotelUidsInput);
-    const globalRoles = normalizeCsvToArray(rolesInput);
-    const rolesByHotel = normalizeRolesByHotel(rolesByHotelInput);
 
     const payload = {
       firstName: firstName.trim(),
@@ -119,10 +87,7 @@ export default function UserDetailPage() {
       email: email.trim(),
       hotelUids,
       hotelUid: hotelUids[0] || "",
-      roles:
-        Object.keys(rolesByHotel).length > 0
-          ? rolesByHotel
-          : globalRoles,
+      permissions: normalizeCsvToArray(permissionsInput),
     };
 
     await updateUser(userId, payload);
@@ -137,7 +102,9 @@ export default function UserDetailPage() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h1 className="text-3xl font-semibold">User Detail</h1>
-            <p className="text-gray-600 mt-1">Werk gebruikersgegevens, hotelUid en rollen bij.</p>
+            <p className="text-gray-600 mt-1">
+              Werk gebruikersgegevens, hotelUid en permissies bij.
+            </p>
           </div>
           <button
             type="button"
@@ -151,7 +118,10 @@ export default function UserDetailPage() {
         {loading ? (
           <p className="text-gray-600">Gebruiker laden...</p>
         ) : (
-          <form onSubmit={handleSave} className="space-y-4 rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <form
+            onSubmit={handleSave}
+            className="space-y-4 rounded-xl border border-gray-200 bg-white p-6 shadow-sm"
+          >
             <div className="grid gap-4 md:grid-cols-2">
               <label className="text-sm font-medium text-gray-700">
                 First name
@@ -196,23 +166,12 @@ export default function UserDetailPage() {
             </label>
 
             <label className="block text-sm font-medium text-gray-700">
-              Roles (global, comma separated)
+              Permissions (comma separated)
               <input
                 type="text"
-                value={rolesInput}
-                onChange={(event) => setRolesInput(event.target.value)}
-                placeholder="admin, manager"
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
-              />
-            </label>
-
-            <label className="block text-sm font-medium text-gray-700">
-              Roles per hotel (optional, one line per hotel: hotelUid: role1, role2)
-              <textarea
-                value={rolesByHotelInput}
-                onChange={(event) => setRolesByHotelInput(event.target.value)}
-                placeholder={"hotel-a: admin, manager\nhotel-b: staff"}
-                rows={4}
+                value={permissionsInput}
+                onChange={(event) => setPermissionsInput(event.target.value)}
+                placeholder="products.view, products.create"
                 className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
               />
             </label>

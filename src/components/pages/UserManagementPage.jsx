@@ -14,20 +14,8 @@ function formatHotelUid(user) {
   return userHotelUids.join(", ") || "-";
 }
 
-function formatRoles(user) {
-  if (Array.isArray(user.roles)) {
-    return user.roles.join(", ") || "-";
-  }
-
-  if (user.roles && typeof user.roles === "object") {
-    const roleGroups = Object.entries(user.roles)
-      .filter(([, values]) => Array.isArray(values) && values.length > 0)
-      .map(([hotelUid, values]) => `${hotelUid}: ${values.join(", ")}`);
-
-    return roleGroups.join(" | ") || "-";
-  }
-
-  return "-";
+function formatPermissions(user) {
+  return Array.isArray(user.permissions) ? user.permissions.join(", ") || "-" : "-";
 }
 
 export default function UserManagementPage() {
@@ -79,7 +67,7 @@ export default function UserManagementPage() {
       filteredUsers.map((user) => ({
         ...user,
         hotelUidLabel: formatHotelUid(user),
-        rolesLabel: formatRoles(user),
+        permissionsLabel: formatPermissions(user),
       })),
     [filteredUsers]
   );
@@ -89,7 +77,7 @@ export default function UserManagementPage() {
     { key: "lastName", label: "Last name" },
     { key: "email", label: "Email" },
     { key: "hotelUidLabel", label: "Hotel UID", sortable: false },
-    { key: "rolesLabel", label: "Roles", sortable: false },
+    { key: "permissionsLabel", label: "Permissions", sortable: false },
   ];
 
   return (

@@ -12,8 +12,6 @@ import ProductEditPage from "./components/pages/ProductEditPage.jsx";
 import SettingsCatalogPage from "./components/pages/SettingsCatalogPage.jsx";
 import UserManagementPage from "./components/pages/UserManagementPage.jsx";
 import UserDetailPage from "./components/pages/UserDetailPage.jsx";
-import RolesPage from "./components/pages/RolesPage.jsx";
-import RoleFormPage from "./components/pages/RoleFormPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -89,30 +87,6 @@ export default function AppRouter() {
         element={
           <ProtectedRoute>
             <UserDetailPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/settings/roles"
-        element={
-          <ProtectedRoute>
-            <RolesPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/settings/roles/new"
-        element={
-          <ProtectedRoute>
-            <RoleFormPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/settings/roles/:roleId/edit"
-        element={
-          <ProtectedRoute>
-            <RoleFormPage />
           </ProtectedRoute>
         }
       />
