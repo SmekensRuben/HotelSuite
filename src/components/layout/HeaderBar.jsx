@@ -10,8 +10,8 @@ export default function HeaderBar({ today, onLogout }) {
   const navigate = useNavigate();
   const { t } = useTranslation(["common", "reservations"]);
   const { hotelUid, hotelUids = [], selectHotel } = useHotelContext();
-  const canViewProducts = usePermission("products", "view");
-  const canViewUsers = usePermission("users", "view");
+  const canViewProducts = usePermission("products", "read");
+  const canViewUsers = usePermission("users", "read");
   const [hotels, setHotels] = useState([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);

@@ -37,7 +37,7 @@ export default function AppRouter() {
       <Route
         path="/catalog/products"
         element={
-          <ProtectedRoute feature="products" action="view">
+          <ProtectedRoute feature="products" action="read">
             <ProductsPage />
           </ProtectedRoute>
         }
@@ -53,7 +53,7 @@ export default function AppRouter() {
       <Route
         path="/catalog/products/:productId"
         element={
-          <ProtectedRoute feature="products" action="view">
+          <ProtectedRoute feature="products" action="read">
             <ProductDetailPage />
           </ProtectedRoute>
         }
@@ -61,7 +61,7 @@ export default function AppRouter() {
       <Route
         path="/catalog/products/:productId/edit"
         element={
-          <ProtectedRoute feature="products" action="edit">
+          <ProtectedRoute feature="products" action="update">
             <ProductEditPage />
           </ProtectedRoute>
         }
@@ -77,7 +77,7 @@ export default function AppRouter() {
       <Route
         path="/settings/users"
         element={
-          <ProtectedRoute feature="users" action="view">
+          <ProtectedRoute feature="users" action="read">
             <UserManagementPage />
           </ProtectedRoute>
         }
@@ -85,7 +85,7 @@ export default function AppRouter() {
       <Route
         path="/settings/users/:userId"
         element={
-          <ProtectedRoute feature="users" action="edit">
+          <ProtectedRoute feature="users" action="update">
             <UserDetailPage />
           </ProtectedRoute>
         }

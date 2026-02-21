@@ -1,6 +1,6 @@
 export const PERMISSION_CATALOG = {
-  products: ["view", "create", "edit", "delete"],
-  users: ["view", "create", "edit", "delete"],
+  products: ["create", "read", "update", "delete"],
+  users: ["create", "read", "update", "delete"],
 };
 
 export function listAllPermissionKeys() {
