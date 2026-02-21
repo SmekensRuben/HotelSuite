@@ -7,9 +7,7 @@ import { auth, signOut } from "../../firebaseConfig";
 import { getAllUsers } from "../../services/firebaseUserManagement";
 
 function formatHotelUid(user) {
-  const userHotelUids = Array.isArray(user.hotelUids)
-    ? user.hotelUids.filter(Boolean)
-    : [user.hotelUid].filter(Boolean);
+  const userHotelUids = Array.isArray(user.hotelUid) ? user.hotelUid.filter(Boolean) : [];
 
   return userHotelUids.join(", ") || "-";
 }

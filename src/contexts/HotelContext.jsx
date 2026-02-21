@@ -107,10 +107,9 @@ export function HotelProvider({ children }) {
         const data = userSnap.data();
         setUserData(data);
 
-        let hotels = data?.hotelUids || data?.hotelUid || [];
-        hotels = Array.isArray(hotels) ? hotels : [hotels].filter(Boolean);
+        const hotels = Array.isArray(data?.hotelUid) ? data.hotelUid : [];
         if (!hotels.length) {
-          console.error("hotelUids ontbreken in gebruikersprofiel.");
+          console.error("hotelUid ontbreekt in gebruikersprofiel.");
           setPermissions([]);
           setPermissionsLoading(false);
           setLoading(false);

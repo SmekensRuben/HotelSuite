@@ -65,12 +65,8 @@ export default function UserDetailPage() {
       setLastName(user.lastName || "");
       setEmail(user.email || "");
 
-      const hotelUids = Array.isArray(user.hotelUid)
-        ? user.hotelUid
-        : Array.isArray(user.hotelUids)
-          ? user.hotelUids
-          : [user.hotelUid].filter(Boolean);
-      setHotelUidsInput(hotelUids.join(", "));
+      const hotelUid = Array.isArray(user.hotelUid) ? user.hotelUid : [];
+      setHotelUidsInput(hotelUid.join(", "));
 
       const loadedPermissions = Array.isArray(user.permissions) ? unique(user.permissions) : [];
       setSelectedPermissions(
