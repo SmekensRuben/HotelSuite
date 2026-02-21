@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useHotelContext } from "contexts/HotelContext";
 import { db, doc, getDoc } from "../../firebaseConfig";
-import { Package, Settings2, ShieldCheck, Users } from "lucide-react";
+import { Package, Settings2, Users } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
 
 export default function HeaderBar({ today, onLogout }) {
@@ -11,6 +11,7 @@ export default function HeaderBar({ today, onLogout }) {
   const { t } = useTranslation(["common", "reservations"]);
   const { hotelUid, hotelUids = [], selectHotel } = useHotelContext();
   const canViewProducts = usePermission("products", "view");
+  const canViewUsers = usePermission("users", "view");
   const [hotels, setHotels] = useState([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
@@ -32,13 +33,9 @@ export default function HeaderBar({ today, onLogout }) {
       label: "User Management",
       action: () => navigate("/settings/users"),
       icon: Users,
+      visible: canViewUsers,
     },
-    {
-      label: "Roles",
-      action: () => navigate("/settings/roles"),
-      icon: ShieldCheck,
-    },
-  ];
+  ].filter((item) => item.visible !== false);
 
   const catalogMenuItems = [
     {

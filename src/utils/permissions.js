@@ -1,24 +1,16 @@
-// src/utils/permissions.js
-import { ROLE_PERMISSIONS } from '../constants/roles';
-
-export function hasPermission(user, feature, action, rolePermissions = {}) {
-  if (!user || !user.roles) return false;
+export function hasPermission(user, feature, action) {
+  if (!user || !Array.isArray(user.permissions)) return false;
 
   const normalizedFeature = String(feature || "").trim().toLowerCase();
   const normalizedAction = String(action || "").trim().toLowerCase();
 
-  return user.roles.some(role => {
-    const roleKey = String(role || "").trim();
-    const normalizedRoleKey = roleKey.toLowerCase();
+  if (!normalizedFeature || !normalizedAction) return false;
 
-    const roleConfig =
-      rolePermissions[roleKey] ||
-      rolePermissions[normalizedRoleKey] ||
-      ROLE_PERMISSIONS[roleKey] ||
-      ROLE_PERMISSIONS[normalizedRoleKey] ||
-      {};
+  const permissionKey = `${normalizedFeature}.${normalizedAction}`;
+  const wildcardKey = `${normalizedFeature}.*`;
 
-    const featurePerms = roleConfig[normalizedFeature] || roleConfig[feature] || [];
-    return featurePerms.includes(normalizedAction) || featurePerms.includes(action);
+  return user.permissions.some((permission) => {
+    const normalizedPermission = String(permission || "").trim().toLowerCase();
+    return normalizedPermission === permissionKey || normalizedPermission === wildcardKey;
   });
 }
