@@ -33,7 +33,7 @@ export default function ProductDetailPage() {
   const { t } = useTranslation("common");
   const { productId } = useParams();
   const { hotelUid } = useHotelContext();
-  const canEditProducts = usePermission("products", "edit");
+  const canEditProducts = usePermission("products", "update");
   const canDeleteProducts = usePermission("products", "delete");
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);

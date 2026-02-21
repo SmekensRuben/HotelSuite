@@ -2,7 +2,7 @@ import { Navigate } from "react-router-dom";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { usePermission } from "../../hooks/usePermission";
 
-export default function ProtectedRoute({ children, feature, action = "view" }) {
+export default function ProtectedRoute({ children, feature, action = "read" }) {
   const { hotelUid, loading, permissionsLoading } = useHotelContext();
   const hasAccess = feature ? usePermission(feature, action) : true;
 

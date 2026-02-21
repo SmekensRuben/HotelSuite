@@ -12,8 +12,6 @@ import ProductEditPage from "./components/pages/ProductEditPage.jsx";
 import SettingsCatalogPage from "./components/pages/SettingsCatalogPage.jsx";
 import UserManagementPage from "./components/pages/UserManagementPage.jsx";
 import UserDetailPage from "./components/pages/UserDetailPage.jsx";
-import RolesPage from "./components/pages/RolesPage.jsx";
-import RoleFormPage from "./components/pages/RoleFormPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -39,7 +37,7 @@ export default function AppRouter() {
       <Route
         path="/catalog/products"
         element={
-          <ProtectedRoute feature="products" action="view">
+          <ProtectedRoute feature="products" action="read">
             <ProductsPage />
           </ProtectedRoute>
         }
@@ -55,7 +53,7 @@ export default function AppRouter() {
       <Route
         path="/catalog/products/:productId"
         element={
-          <ProtectedRoute feature="products" action="view">
+          <ProtectedRoute feature="products" action="read">
             <ProductDetailPage />
           </ProtectedRoute>
         }
@@ -63,7 +61,7 @@ export default function AppRouter() {
       <Route
         path="/catalog/products/:productId/edit"
         element={
-          <ProtectedRoute feature="products" action="edit">
+          <ProtectedRoute feature="products" action="update">
             <ProductEditPage />
           </ProtectedRoute>
         }
@@ -79,7 +77,7 @@ export default function AppRouter() {
       <Route
         path="/settings/users"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute feature="users" action="read">
             <UserManagementPage />
           </ProtectedRoute>
         }
@@ -87,32 +85,8 @@ export default function AppRouter() {
       <Route
         path="/settings/users/:userId"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute feature="users" action="update">
             <UserDetailPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/settings/roles"
-        element={
-          <ProtectedRoute>
-            <RolesPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/settings/roles/new"
-        element={
-          <ProtectedRoute>
-            <RoleFormPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/settings/roles/:roleId/edit"
-        element={
-          <ProtectedRoute>
-            <RoleFormPage />
           </ProtectedRoute>
         }
       />

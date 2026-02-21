@@ -57,16 +57,13 @@ export async function updateUser(userId, payload) {
   }
 }
 
-export async function updateUserRoles(userId, hotelUid, roles) {
+export async function updateUserPermissions(userId, permissions) {
   const userRef = doc(db, "users", userId);
-  const payload = hotelUid
-    ? { [`roles.${hotelUid}`]: roles }
-    : { roles };
 
   try {
-    await updateDoc(userRef, payload);
+    await updateDoc(userRef, { permissions });
   } catch (error) {
-    console.error("Kon gebruikersrollen niet bijwerken:", error);
+    console.error("Kon gebruikerspermissies niet bijwerken:", error);
     throw error;
   }
 }

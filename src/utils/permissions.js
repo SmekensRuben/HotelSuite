@@ -1,24 +1,35 @@
-// src/utils/permissions.js
-import { ROLE_PERMISSIONS } from '../constants/roles';
+function normalizePermissionAction(action) {
+  const normalized = String(action || "").trim().toLowerCase();
 
-export function hasPermission(user, feature, action, rolePermissions = {}) {
-  if (!user || !user.roles) return false;
+  if (normalized === "view") return "read";
+  if (normalized === "edit") return "update";
+
+  return normalized;
+}
+
+export function hasPermission(user, feature, action) {
+  if (!user || !Array.isArray(user.permissions)) return false;
 
   const normalizedFeature = String(feature || "").trim().toLowerCase();
-  const normalizedAction = String(action || "").trim().toLowerCase();
+  const normalizedAction = normalizePermissionAction(action);
 
-  return user.roles.some(role => {
-    const roleKey = String(role || "").trim();
-    const normalizedRoleKey = roleKey.toLowerCase();
+  if (!normalizedFeature || !normalizedAction) return false;
 
-    const roleConfig =
-      rolePermissions[roleKey] ||
-      rolePermissions[normalizedRoleKey] ||
-      ROLE_PERMISSIONS[roleKey] ||
-      ROLE_PERMISSIONS[normalizedRoleKey] ||
-      {};
+  const permissionKey = `${normalizedFeature}.${normalizedAction}`;
+  const wildcardKey = `${normalizedFeature}.*`;
 
-    const featurePerms = roleConfig[normalizedFeature] || roleConfig[feature] || [];
-    return featurePerms.includes(normalizedAction) || featurePerms.includes(action);
+  return user.permissions.some((permission) => {
+    const [permissionFeature, permissionAction] = String(permission || "")
+      .trim()
+      .toLowerCase()
+      .split(".");
+
+    if (!permissionFeature || !permissionAction) return false;
+
+    const normalizedPermissionKey = `${permissionFeature}.${normalizePermissionAction(
+      permissionAction
+    )}`;
+
+    return normalizedPermissionKey === permissionKey || normalizedPermissionKey === wildcardKey;
   });
 }
