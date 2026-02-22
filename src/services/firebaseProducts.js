@@ -20,11 +20,31 @@ import {
 
 // Simple in-memory cache for indexed products per hotel
 const productsIndexedCache = {};
+const entityProductsCache = {};
 
 export function clearProductsIndexedCache(hotelUid) {
   if (hotelUid) {
     delete productsIndexedCache[hotelUid];
   }
+}
+
+function getEntityCacheKey(hotelUid, entityCollection) {
+  return `${hotelUid}:${entityCollection}`;
+}
+
+function clearEntityProductsCache(hotelUid, entityCollection) {
+  if (!hotelUid) return;
+
+  if (entityCollection) {
+    delete entityProductsCache[getEntityCacheKey(hotelUid, entityCollection)];
+    return;
+  }
+
+  Object.keys(entityProductsCache).forEach((key) => {
+    if (key.startsWith(`${hotelUid}:`)) {
+      delete entityProductsCache[key];
+    }
+  });
 }
 
 async function refreshSalesSnapshotsForProduct(hotelUid, lightspeedId) {
@@ -228,9 +248,15 @@ export async function getSupplierProducts(hotelUid) {
 
 async function getEntityProducts(hotelUid, entityCollection) {
   if (!hotelUid) return [];
+  const cacheKey = getEntityCacheKey(hotelUid, entityCollection);
+  if (entityProductsCache[cacheKey]) {
+    return entityProductsCache[cacheKey];
+  }
   const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
   const snap = await getDocs(productsCol);
-  return snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  const products = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  entityProductsCache[cacheKey] = products;
+  return products;
 }
 
 export async function getCatalogProduct(hotelUid, productId) {
@@ -289,10 +315,12 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
       }
     }
     await setDoc(productRef, payload);
+    clearEntityProductsCache(hotelUid, entityCollection);
     return supplierProductId;
   }
 
   const docRef = await addDoc(productsCol, payload);
+  clearEntityProductsCache(hotelUid, entityCollection);
   return docRef.id;
 }
 
@@ -334,6 +362,7 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
     ...(includeSupplierPriceTimestamp ? { priceUpdatedOn: serverTimestamp() } : {}),
   };
   await updateDoc(productDoc, payload);
+  clearEntityProductsCache(hotelUid, entityCollection);
 }
 
 export async function deleteCatalogProduct(hotelUid, productId) {
@@ -348,4 +377,5 @@ async function deleteEntityProduct(hotelUid, productId, entityCollection) {
   if (!hotelUid || !productId) return;
   const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
   await deleteDoc(productDoc);
+  clearEntityProductsCache(hotelUid, entityCollection);
 }
