@@ -50,6 +50,7 @@ export default function ProductFormFields({
   savingLabel,
   submitLabel,
   showImagePreview = true,
+  uploadImage = uploadCatalogProductImage,
 }) {
   const { t } = useTranslation("common");
   const [formState, setFormState] = useState(() => toFormState(initialData));
@@ -85,7 +86,7 @@ export default function ProductFormFields({
 
     let imageUrl = formState.imageUrl || "";
     if (imageFile) {
-      imageUrl = await uploadCatalogProductImage(hotelUid, imageFile);
+      imageUrl = await uploadImage(hotelUid, imageFile);
     }
 
     const payload = {

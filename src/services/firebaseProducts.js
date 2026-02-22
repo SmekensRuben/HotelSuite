@@ -219,23 +219,47 @@ export async function renameOutletInProducts(hotelUid, oldName, newName) {
 }
 
 export async function getCatalogProducts(hotelUid) {
+  return getEntityProducts(hotelUid, "catalogproducts");
+}
+
+export async function getSupplierProducts(hotelUid) {
+  return getEntityProducts(hotelUid, "supplierproducts");
+}
+
+async function getEntityProducts(hotelUid, entityCollection) {
   if (!hotelUid) return [];
-  const productsCol = collection(db, `hotels/${hotelUid}/products`);
+  const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
   const snap = await getDocs(productsCol);
   return snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
 }
 
 export async function getCatalogProduct(hotelUid, productId) {
+  return getEntityProduct(hotelUid, productId, "catalogproducts");
+}
+
+export async function getSupplierProduct(hotelUid, productId) {
+  return getEntityProduct(hotelUid, productId, "supplierproducts");
+}
+
+async function getEntityProduct(hotelUid, productId, entityCollection) {
   if (!hotelUid || !productId) return null;
-  const productDoc = doc(db, `hotels/${hotelUid}/products`, productId);
+  const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
   const snap = await getDoc(productDoc);
   if (!snap.exists()) return null;
   return { id: snap.id, ...snap.data() };
 }
 
 export async function createCatalogProduct(hotelUid, productData, actor) {
+  return createEntityProduct(hotelUid, productData, actor, "catalogproducts");
+}
+
+export async function createSupplierProduct(hotelUid, productData, actor) {
+  return createEntityProduct(hotelUid, productData, actor, "supplierproducts");
+}
+
+async function createEntityProduct(hotelUid, productData, actor, entityCollection) {
   if (!hotelUid) throw new Error("hotelUid is verplicht!");
-  const productsCol = collection(db, `hotels/${hotelUid}/products`);
+  const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
   const payload = {
     ...productData,
     active: productData.active ?? true,
@@ -250,18 +274,34 @@ export async function createCatalogProduct(hotelUid, productData, actor) {
 
 
 export async function uploadCatalogProductImage(hotelUid, file) {
+  return uploadEntityProductImage(hotelUid, file, "catalogproducts");
+}
+
+export async function uploadSupplierProductImage(hotelUid, file) {
+  return uploadEntityProductImage(hotelUid, file, "supplierproducts");
+}
+
+async function uploadEntityProductImage(hotelUid, file, entityCollection) {
   if (!hotelUid || !file) return "";
   const fileExtension = file.name?.split(".").pop();
   const safeExtension = fileExtension ? `.${fileExtension}` : "";
-  const filePath = `hotels/${hotelUid}/products/images/${Date.now()}-${Math.random().toString(36).slice(2)}${safeExtension}`;
+  const filePath = `hotels/${hotelUid}/${entityCollection}/images/${Date.now()}-${Math.random().toString(36).slice(2)}${safeExtension}`;
   const fileRef = ref(storage, filePath);
   await uploadBytes(fileRef, file);
   return getDownloadURL(fileRef);
 }
 
 export async function updateCatalogProduct(hotelUid, productId, productData, actor) {
+  return updateEntityProduct(hotelUid, productId, productData, actor, "catalogproducts");
+}
+
+export async function updateSupplierProduct(hotelUid, productId, productData, actor) {
+  return updateEntityProduct(hotelUid, productId, productData, actor, "supplierproducts");
+}
+
+async function updateEntityProduct(hotelUid, productId, productData, actor, entityCollection) {
   if (!hotelUid || !productId) throw new Error("hotelUid en productId zijn verplicht!");
-  const productDoc = doc(db, `hotels/${hotelUid}/products`, productId);
+  const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
   const payload = {
     ...productData,
     updatedAt: serverTimestamp(),
@@ -271,6 +311,15 @@ export async function updateCatalogProduct(hotelUid, productId, productData, act
 }
 
 export async function deleteCatalogProduct(hotelUid, productId) {
+  return deleteEntityProduct(hotelUid, productId, "catalogproducts");
+}
+
+export async function deleteSupplierProduct(hotelUid, productId) {
+  return deleteEntityProduct(hotelUid, productId, "supplierproducts");
+}
+
+async function deleteEntityProduct(hotelUid, productId, entityCollection) {
   if (!hotelUid || !productId) return;
-  await deleteProduct(hotelUid, productId);
+  const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
+  await deleteDoc(productDoc);
 }

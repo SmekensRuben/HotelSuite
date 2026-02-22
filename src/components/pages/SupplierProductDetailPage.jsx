@@ -8,7 +8,7 @@ import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { deleteCatalogProduct, getCatalogProduct } from "../../services/firebaseProducts";
+import { deleteSupplierProduct, getSupplierProduct } from "../../services/firebaseProducts";
 import { getUserDisplayName } from "../../services/firebaseUserManagement";
 import { usePermission } from "../../hooks/usePermission";
 
@@ -28,13 +28,13 @@ function DetailField({ label, value }) {
   );
 }
 
-export default function ProductDetailPage() {
+export default function SupplierProductDetailPage() {
   const navigate = useNavigate();
   const { t } = useTranslation("common");
   const { productId } = useParams();
   const { hotelUid } = useHotelContext();
-  const canEditProducts = usePermission("catalogproducts", "update");
-  const canDeleteProducts = usePermission("catalogproducts", "delete");
+  const canEditProducts = usePermission("supplierproducts", "update");
+  const canDeleteProducts = usePermission("supplierproducts", "delete");
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [createdByName, setCreatedByName] = useState("-");
@@ -61,7 +61,7 @@ export default function ProductDetailPage() {
     const loadProduct = async () => {
       if (!hotelUid || !productId) return;
       setLoading(true);
-      const data = await getCatalogProduct(hotelUid, productId);
+      const data = await getSupplierProduct(hotelUid, productId);
       setProduct(data);
       setLoading(false);
     };
@@ -83,9 +83,9 @@ export default function ProductDetailPage() {
 
   const handleDeleteProduct = async () => {
     if (!hotelUid || !productId || !canDeleteProducts) return;
-    await deleteCatalogProduct(hotelUid, productId);
+    await deleteSupplierProduct(hotelUid, productId);
     setShowDeleteModal(false);
-    navigate("/catalog/products");
+    navigate("/catalog/supplier-products");
   };
 
   return (
@@ -95,12 +95,12 @@ export default function ProductDetailPage() {
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
-            <h1 className="text-3xl font-semibold">{t("products.detail.title")}</h1>
+            <h1 className="text-3xl font-semibold">Supplier Product Detail</h1>
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => navigate(`/catalog/products/${productId}/edit`)}
+              onClick={() => navigate(`/catalog/supplier-products/${productId}/edit`)}
               disabled={!canEditProducts}
               className={`inline-flex items-center justify-center rounded border p-2 ${
                 canEditProducts
@@ -126,7 +126,7 @@ export default function ProductDetailPage() {
             </button>
             <button
               type="button"
-              onClick={() => navigate("/catalog/products")}
+              onClick={() => navigate("/catalog/supplier-products")}
               className="px-4 py-2 rounded border border-gray-300 font-semibold text-gray-700"
             >
               {t("products.actions.backToProducts")}

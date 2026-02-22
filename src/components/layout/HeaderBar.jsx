@@ -10,7 +10,8 @@ export default function HeaderBar({ today, onLogout }) {
   const navigate = useNavigate();
   const { t } = useTranslation(["common", "reservations"]);
   const { hotelUid, hotelUids = [], selectHotel } = useHotelContext();
-  const canViewProducts = usePermission("products", "read");
+  const canViewCatalogProducts = usePermission("catalogproducts", "read");
+  const canViewSupplierProducts = usePermission("supplierproducts", "read");
   const canViewSettings = usePermission("settings", "read");
   const canViewUsers = usePermission("users", "read");
   const [hotels, setHotels] = useState([]);
@@ -42,10 +43,16 @@ export default function HeaderBar({ today, onLogout }) {
 
   const catalogMenuItems = [
     {
-      label: "Products",
+      label: "Catalog Products",
       action: () => navigate("/catalog/products"),
       icon: Package,
-      visible: canViewProducts,
+      visible: canViewCatalogProducts,
+    },
+    {
+      label: "Supplier Products",
+      action: () => navigate("/catalog/supplier-products"),
+      icon: Package,
+      visible: canViewSupplierProducts,
     },
   ].filter((item) => item.visible !== false);
 

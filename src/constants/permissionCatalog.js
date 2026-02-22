@@ -1,5 +1,6 @@
 export const PERMISSION_CATALOG = {
-  products: ["create", "read", "update", "delete"],
+  catalogproducts: ["create", "read", "update", "delete"],
+  supplierproducts: ["create", "read", "update", "delete"],
   settings: ["create", "read", "update", "delete"],
   users: ["create", "read", "update", "delete"],
 };

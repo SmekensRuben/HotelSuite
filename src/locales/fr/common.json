@@ -20,7 +20,7 @@
   },
   "products": {
     "catalog": "Catalogue",
-    "title": "Produits",
+    "title": "Catalog Products",
     "subtitle": "Vue d'ensemble de tous les produits.",
     "loading": "Chargement des produits...",
     "notFound": "Produit introuvable.",
@@ -58,7 +58,7 @@
       "title": "Modifier le produit"
     },
     "detail": {
-      "title": "Détail du produit",
+      "title": "Catalog Product Detail",
       "noImage": "Aucune image téléchargée"
     },
     "sections": {

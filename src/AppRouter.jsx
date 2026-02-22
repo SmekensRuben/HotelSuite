@@ -9,6 +9,10 @@ import ProductsPage from "./components/pages/ProductsPage.jsx";
 import ProductCreatePage from "./components/pages/ProductCreatePage.jsx";
 import ProductDetailPage from "./components/pages/ProductDetailPage.jsx";
 import ProductEditPage from "./components/pages/ProductEditPage.jsx";
+import SupplierProductsPage from "./components/pages/SupplierProductsPage.jsx";
+import SupplierProductCreatePage from "./components/pages/SupplierProductCreatePage.jsx";
+import SupplierProductDetailPage from "./components/pages/SupplierProductDetailPage.jsx";
+import SupplierProductEditPage from "./components/pages/SupplierProductEditPage.jsx";
 import SettingsCatalogPage from "./components/pages/SettingsCatalogPage.jsx";
 import UserManagementPage from "./components/pages/UserManagementPage.jsx";
 import UserDetailPage from "./components/pages/UserDetailPage.jsx";
@@ -37,7 +41,7 @@ export default function AppRouter() {
       <Route
         path="/catalog/products"
         element={
-          <ProtectedRoute feature="products" action="read">
+          <ProtectedRoute feature="catalogproducts" action="read">
             <ProductsPage />
           </ProtectedRoute>
         }
@@ -45,7 +49,7 @@ export default function AppRouter() {
       <Route
         path="/catalog/products/new"
         element={
-          <ProtectedRoute feature="products" action="create">
+          <ProtectedRoute feature="catalogproducts" action="create">
             <ProductCreatePage />
           </ProtectedRoute>
         }
@@ -53,7 +57,7 @@ export default function AppRouter() {
       <Route
         path="/catalog/products/:productId"
         element={
-          <ProtectedRoute feature="products" action="read">
+          <ProtectedRoute feature="catalogproducts" action="read">
             <ProductDetailPage />
           </ProtectedRoute>
         }
@@ -61,8 +65,40 @@ export default function AppRouter() {
       <Route
         path="/catalog/products/:productId/edit"
         element={
-          <ProtectedRoute feature="products" action="update">
+          <ProtectedRoute feature="catalogproducts" action="update">
             <ProductEditPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/supplier-products"
+        element={
+          <ProtectedRoute feature="supplierproducts" action="read">
+            <SupplierProductsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/supplier-products/new"
+        element={
+          <ProtectedRoute feature="supplierproducts" action="create">
+            <SupplierProductCreatePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/supplier-products/:productId"
+        element={
+          <ProtectedRoute feature="supplierproducts" action="read">
+            <SupplierProductDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/supplier-products/:productId/edit"
+        element={
+          <ProtectedRoute feature="supplierproducts" action="update">
+            <SupplierProductEditPage />
           </ProtectedRoute>
         }
       />
