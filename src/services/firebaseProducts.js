@@ -270,6 +270,19 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
     updatedBy: actor || "unknown",
     ...(includeSupplierPriceTimestamp ? { priceUpdatedOn: serverTimestamp() } : {}),
   };
+
+  if (includeSupplierPriceTimestamp) {
+    const supplierId = String(productData.supplierId || "").trim();
+    const supplierSku = String(productData.supplierSku || "").trim();
+    if (!supplierId || !supplierSku) {
+      throw new Error("supplierId en supplierSku zijn verplicht voor supplier products");
+    }
+    const supplierProductId = `${supplierId}_${supplierSku}`;
+    const productRef = doc(productsCol, supplierProductId);
+    await setDoc(productRef, payload);
+    return supplierProductId;
+  }
+
   const docRef = await addDoc(productsCol, payload);
   return docRef.id;
 }

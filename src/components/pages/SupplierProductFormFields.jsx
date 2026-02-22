@@ -148,7 +148,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
           ? null
           : Number(formState.pricePerBaseUnit) || 0,
       pricePerPurchaseUnit: formState.hasVariants
-        ? firstComputedVariant?.pricePerPurchaseUnit || 0
+        ? null
         : isPerPurchaseUnit
           ? Number(formState.pricePerPurchaseUnit) || 0
           : null,
