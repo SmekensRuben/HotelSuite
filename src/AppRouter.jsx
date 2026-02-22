@@ -13,6 +13,10 @@ import SupplierProductsPage from "./components/pages/SupplierProductsPage.jsx";
 import SupplierProductCreatePage from "./components/pages/SupplierProductCreatePage.jsx";
 import SupplierProductDetailPage from "./components/pages/SupplierProductDetailPage.jsx";
 import SupplierProductEditPage from "./components/pages/SupplierProductEditPage.jsx";
+import SuppliersPage from "./components/pages/SuppliersPage.jsx";
+import SupplierCreatePage from "./components/pages/SupplierCreatePage.jsx";
+import SupplierDetailPage from "./components/pages/SupplierDetailPage.jsx";
+import SupplierEditPage from "./components/pages/SupplierEditPage.jsx";
 import SettingsCatalogPage from "./components/pages/SettingsCatalogPage.jsx";
 import UserManagementPage from "./components/pages/UserManagementPage.jsx";
 import UserDetailPage from "./components/pages/UserDetailPage.jsx";
@@ -99,6 +103,38 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="supplierproducts" action="update">
             <SupplierProductEditPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/suppliers"
+        element={
+          <ProtectedRoute feature="supplierproducts" action="read">
+            <SuppliersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/suppliers/new"
+        element={
+          <ProtectedRoute feature="supplierproducts" action="create">
+            <SupplierCreatePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/suppliers/:supplierId"
+        element={
+          <ProtectedRoute feature="supplierproducts" action="read">
+            <SupplierDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/suppliers/:supplierId/edit"
+        element={
+          <ProtectedRoute feature="supplierproducts" action="update">
+            <SupplierEditPage />
           </ProtectedRoute>
         }
       />

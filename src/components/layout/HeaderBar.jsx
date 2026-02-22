@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useHotelContext } from "contexts/HotelContext";
 import { db, doc, getDoc } from "../../firebaseConfig";
-import { Package, Settings2, Users } from "lucide-react";
+import { Package, Settings2, Truck, Users } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
 
 export default function HeaderBar({ today, onLogout }) {
@@ -52,6 +52,12 @@ export default function HeaderBar({ today, onLogout }) {
       label: "Supplier Products",
       action: () => navigate("/catalog/supplier-products"),
       icon: Package,
+      visible: canViewSupplierProducts,
+    },
+    {
+      label: "Suppliers",
+      action: () => navigate("/catalog/suppliers"),
+      icon: Truck,
       visible: canViewSupplierProducts,
     },
   ].filter((item) => item.visible !== false);
