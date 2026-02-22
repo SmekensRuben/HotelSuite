@@ -18,11 +18,10 @@ const corsHeaders = {
 };
 
 exports.sendTestMail = functions.https.onRequest(async (req, res) => {
-  // Zet altijd CORS headers (ook bij error/return!)
   Object.entries(corsHeaders).forEach(([k, v]) => res.set(k, v));
 
   if (req.method === "OPTIONS") {
-    res.status(204).send(""); // Preflight response
+    res.status(204).send("");
     return;
   }
 
@@ -31,6 +30,7 @@ exports.sendTestMail = functions.https.onRequest(async (req, res) => {
     res.status(400).json({ error: "Missing fields" });
     return;
   }
+
   try {
     await transporter.sendMail({
       from: "breakfastpilotapp@gmail.com",
@@ -47,10 +47,13 @@ exports.sendTestMail = functions.https.onRequest(async (req, res) => {
 function getMeiliConfig() {
   const host = functions.config().meili?.host || process.env.MEILI_HOST;
   const apiKey = functions.config().meili?.key || process.env.MEILI_API_KEY;
-  const indexUid = functions.config().meili?.index || process.env.MEILI_INDEX || "catalogproducts";
+  const indexUid =
+    functions.config().meili?.index || process.env.MEILI_INDEX || "catalogproducts";
 
   if (!host || !apiKey) {
-    throw new Error("Missing Meilisearch config. Set meili.host and meili.key (or MEILI_HOST/MEILI_API_KEY).");
+    throw new Error(
+      "Missing Meilisearch config. Set meili.host and meili.key (or MEILI_HOST/MEILI_API_KEY)."
+    );
   }
 
   return {
@@ -62,32 +65,71 @@ function getMeiliConfig() {
 
 async function meiliRequest(path, { method = "GET", body } = {}) {
   const { host, apiKey } = getMeiliConfig();
-  const response = await fetch(`${host}${path}`, {
+
+  const res = await fetch(`${host}${path}`, {
     method,
     headers: {
-      "Authorization": `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Meili request failed (${response.status}): ${text}`);
-  }
-
-  return response;
+  return res;
 }
 
+async function meiliJson(path, opts) {
+  const res = await meiliRequest(path, opts);
+  const text = await res.text();
+
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch (e) {
+    data = text;
+  }
+
+  if (!res.ok) {
+    const msg = typeof data === "string" ? data : JSON.stringify(data ?? {});
+    const err = new Error(`Meili request failed (${res.status}): ${msg}`);
+    err.status = res.status;
+    err.body = data;
+    throw err;
+  }
+
+  return data;
+}
+
+let ensuredIndexUids = new Set();
+
 async function ensureIndex(indexUid) {
-  const response = await meiliRequest("/indexes", {
+  if (ensuredIndexUids.has(indexUid)) return;
+
+  const checkRes = await meiliRequest(`/indexes/${encodeURIComponent(indexUid)}`, {
+    method: "GET",
+  });
+
+  if (checkRes.status === 200) {
+    ensuredIndexUids.add(indexUid);
+    return;
+  }
+
+  if (checkRes.status !== 404) {
+    const text = await checkRes.text();
+    throw new Error(`Index check failed (${checkRes.status}): ${text}`);
+  }
+
+  const createRes = await meiliRequest("/indexes", {
     method: "POST",
     body: { uid: indexUid, primaryKey: "id" },
   });
 
-  if (response.status === 202 || response.status === 201) {
-    return;
+  if (![201, 202, 409].includes(createRes.status)) {
+    const text = await createRes.text();
+    throw new Error(`Index create failed (${createRes.status}): ${text}`);
   }
+
+  ensuredIndexUids.add(indexUid);
 }
 
 exports.syncCatalogProductsToMeili = functions.firestore
@@ -99,9 +141,16 @@ exports.syncCatalogProductsToMeili = functions.firestore
     await ensureIndex(indexUid);
 
     if (!change.after.exists) {
-      await meiliRequest(`/indexes/${indexUid}/documents/${productId}`, {
-        method: "DELETE",
-      });
+      const res = await meiliRequest(
+        `/indexes/${encodeURIComponent(indexUid)}/documents/${encodeURIComponent(productId)}`,
+        { method: "DELETE" }
+      );
+
+      if (![200, 202, 404].includes(res.status)) {
+        const text = await res.text();
+        throw new Error(`Delete failed (${res.status}): ${text}`);
+      }
+
       return;
     }
 
@@ -109,11 +158,23 @@ exports.syncCatalogProductsToMeili = functions.firestore
     const document = {
       id: productId,
       hotelUid,
-      ...productData,
+      name: productData.name ?? "",
+      brand: productData.brand ?? "",
     };
 
-    await meiliRequest(`/indexes/${indexUid}/documents`, {
-      method: "POST",
-      body: [document],
-    });
+    const result = await meiliJson(
+      `/indexes/${encodeURIComponent(indexUid)}/documents`,
+      {
+        method: "POST",
+        body: [document],
+      }
+    );
+
+    if (result?.taskUid !== undefined) {
+      functions.logger.info("Meili upsert enqueued", {
+        indexUid,
+        productId,
+        taskUid: result.taskUid,
+      });
+    }
   });
