@@ -108,8 +108,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
           pricePerPurchaseUnit,
           isComplete: perBaseUnit > 0 && packages > 0,
         };
-      })
-      ;
+      });
   }, [formState.variants, formState.pricePerBaseUnit]);
 
   const handleSubmit = async (event) => {
@@ -205,7 +204,14 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
           Pricing Model
           <select
             value={formState.pricingModel}
-            onChange={(event) => updateField("pricingModel", event.target.value)}
+            onChange={(event) => {
+              const nextPricingModel = event.target.value;
+              setFormState((prev) => ({
+                ...prev,
+                pricingModel: nextPricingModel,
+                hasVariants: nextPricingModel === "Per Base Unit" ? prev.hasVariants : false,
+              }));
+            }}
             className="rounded border border-gray-300 px-3 py-2 text-sm"
           >
             <option value="Per Purchase Unit">Per Purchase Unit</option>
@@ -213,16 +219,28 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
           </select>
         </label>
 
-        <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 sm:col-span-2">
+        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
+          Base Unit
           <input
-            type="checkbox"
-            checked={formState.hasVariants}
-            onChange={(event) => updateField("hasVariants", event.target.checked)}
+            value={formState.baseUnit}
+            onChange={(event) => updateField("baseUnit", event.target.value)}
+            className="rounded border border-gray-300 px-3 py-2 text-sm"
           />
-          Has Variants
         </label>
 
-        {formState.hasVariants ? (
+
+        {formState.pricingModel === "Per Base Unit" && (
+          <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 sm:col-span-2">
+            <input
+              type="checkbox"
+              checked={formState.hasVariants}
+              onChange={(event) => updateField("hasVariants", event.target.checked)}
+            />
+            Has Variants
+          </label>
+        )}
+
+        {formState.pricingModel === "Per Base Unit" && formState.hasVariants ? (
           <>
             <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
               Price Per Base Unit *
@@ -243,7 +261,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
                   pricePerPurchaseUnit: 0,
                 };
                 return (
-                  <div key={`${index}-${variant.perBaseUnit}-${variant.packages}`} className="grid gap-3 sm:grid-cols-2 border border-gray-200 rounded-lg p-3 bg-white">
+                  <div key={index} className="grid gap-3 sm:grid-cols-2 border border-gray-200 rounded-lg p-3 bg-white">
                     <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
                       Weight (perBaseUnit) *
                       <input
@@ -349,14 +367,6 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
       </SectionCard>
 
       <SectionCard title="Linking & Metadata">
-        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          Base Unit
-          <input
-            value={formState.baseUnit}
-            onChange={(event) => updateField("baseUnit", event.target.value)}
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
-          />
-        </label>
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           Catalog Product ID
           <input
