@@ -253,11 +253,11 @@ export async function createCatalogProduct(hotelUid, productData, actor) {
   return createEntityProduct(hotelUid, productData, actor, "catalogproducts");
 }
 
-export async function createSupplierProduct(hotelUid, productData, actor) {
-  return createEntityProduct(hotelUid, productData, actor, "supplierproducts");
+export async function createSupplierProduct(hotelUid, productData, actor, options = {}) {
+  return createEntityProduct(hotelUid, productData, actor, "supplierproducts", options);
 }
 
-async function createEntityProduct(hotelUid, productData, actor, entityCollection) {
+async function createEntityProduct(hotelUid, productData, actor, entityCollection, options = {}) {
   if (!hotelUid) throw new Error("hotelUid is verplicht!");
   const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
   const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
@@ -279,6 +279,15 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
     }
     const supplierProductId = `${supplierId}_${supplierSku}`;
     const productRef = doc(productsCol, supplierProductId);
+    if (!options.overwriteExisting) {
+      const existingSnap = await getDoc(productRef);
+      if (existingSnap.exists()) {
+        const error = new Error("Supplier product bestaat al");
+        error.code = "supplier-product-exists";
+        error.productId = supplierProductId;
+        throw error;
+      }
+    }
     await setDoc(productRef, payload);
     return supplierProductId;
   }
