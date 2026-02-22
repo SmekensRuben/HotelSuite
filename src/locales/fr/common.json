@@ -45,7 +45,9 @@
       "delete": "Supprimer",
       "cancel": "Annuler",
       "backToProducts": "Retour aux produits",
-      "backToDetail": "Retour au détail"
+      "backToDetail": "Retour au détail",
+      "import": "Importer",
+      "export": "Exporter"
     },
     "table": {
       "empty": "Aucun produit créé.",
@@ -100,6 +102,21 @@
       "subcategory": "Filtrer par sous-catégorie",
       "allCategories": "Toutes les catégories",
       "allSubcategories": "Toutes les sous-catégories"
+    },
+    "export": {
+      "title": "Exporter les produits du catalogue",
+      "message": "Voulez-vous exporter un modèle vide ou la liste complète ?",
+      "template": "Exporter un modèle vide",
+      "full": "Exporter la liste complète"
+    },
+    "import": {
+      "title": "Importer des produits du catalogue",
+      "message": "Que faire des produits du catalogue existants avec le même documentId ?",
+      "overwrite": "Écraser avec le même documentId",
+      "skip": "Ignorer le même documentId",
+      "invalidFile": "Fichier d’import invalide. Utilisez un fichier CSV avec des produits.",
+      "failed": "Échec de l’import. Veuillez réessayer.",
+      "result": "Import terminé : {{imported}} importés, {{skipped}} ignorés."
     }
   }
 }

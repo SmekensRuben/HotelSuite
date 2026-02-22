@@ -45,7 +45,9 @@
       "delete": "Delete",
       "cancel": "Cancel",
       "backToProducts": "Back to products",
-      "backToDetail": "Back to detail"
+      "backToDetail": "Back to detail",
+      "import": "Import",
+      "export": "Export"
     },
     "table": {
       "empty": "No products created yet.",
@@ -100,6 +102,21 @@
       "subcategory": "Filter by subcategory",
       "allCategories": "All categories",
       "allSubcategories": "All subcategories"
+    },
+    "export": {
+      "title": "Export Catalog Products",
+      "message": "Do you want to export an empty template or the full list?",
+      "template": "Export empty template",
+      "full": "Export full list"
+    },
+    "import": {
+      "title": "Import Catalog Products",
+      "message": "How should existing Catalog Products with the same documentId be handled?",
+      "overwrite": "Overwrite with same documentId",
+      "skip": "Skip matching documentId",
+      "invalidFile": "Invalid import file. Use a CSV file with products.",
+      "failed": "Import failed. Please try again.",
+      "result": "Import completed: {{imported}} imported, {{skipped}} skipped."
     }
   }
 }

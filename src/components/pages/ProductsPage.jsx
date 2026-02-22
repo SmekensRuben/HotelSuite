@@ -1,25 +1,115 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
+import Modal from "../shared/Modal";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getCatalogProducts } from "../../services/firebaseProducts";
+import { getCatalogProducts, importCatalogProducts } from "../../services/firebaseProducts";
 import { usePermission } from "../../hooks/usePermission";
+
+const CSV_HEADERS = [
+  "documentId",
+  "name",
+  "brand",
+  "description",
+  "active",
+  "category",
+  "subcategory",
+  "baseUnit",
+  "baseQtyPerUnit",
+  "gtin",
+  "internalSku",
+  "storageType",
+  "allergens",
+  "notes",
+  "imageUrl",
+];
+
+const EXPORT_TEMPLATE_ROW = {
+  documentId: "",
+  name: "",
+  brand: "",
+  description: "",
+  active: "true",
+  category: "",
+  subcategory: "",
+  baseUnit: "",
+  baseQtyPerUnit: "1",
+  gtin: "",
+  internalSku: "",
+  storageType: "",
+  allergens: "",
+  notes: "",
+  imageUrl: "",
+};
+
+function parseCsvLine(line, delimiter) {
+  const cells = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === delimiter && !inQuotes) {
+      cells.push(cell);
+      cell = "";
+    } else {
+      cell += char;
+    }
+  }
+
+  cells.push(cell);
+  return cells;
+}
+
+function detectDelimiter(line) {
+  const countOutsideQuotes = (delimiter) => {
+    let inQuotes = false;
+    let count = 0;
+    for (let i = 0; i < line.length; i += 1) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          i += 1;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (!inQuotes && char === delimiter) {
+        count += 1;
+      }
+    }
+    return count;
+  };
+
+  return countOutsideQuotes(";") > countOutsideQuotes(",") ? ";" : ",";
+}
 
 export default function ProductsPage() {
   const navigate = useNavigate();
   const { t } = useTranslation("common");
   const { hotelUid } = useHotelContext();
+  const fileInputRef = useRef(null);
   const canCreateProducts = usePermission("catalogproducts", "create");
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedSubcategory, setSelectedSubcategory] = useState("");
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [pendingImportProducts, setPendingImportProducts] = useState([]);
+  const [busy, setBusy] = useState(false);
 
   const today = useMemo(
     () =>
@@ -31,6 +121,14 @@ export default function ProductsPage() {
     []
   );
 
+  const loadProducts = async () => {
+    if (!hotelUid) return;
+    setLoading(true);
+    const result = await getCatalogProducts(hotelUid);
+    setProducts(result);
+    setLoading(false);
+  };
+
   const handleLogout = async () => {
     await signOut(auth);
     sessionStorage.clear();
@@ -38,13 +136,6 @@ export default function ProductsPage() {
   };
 
   useEffect(() => {
-    const loadProducts = async () => {
-      if (!hotelUid) return;
-      setLoading(true);
-      const result = await getCatalogProducts(hotelUid);
-      setProducts(result);
-      setLoading(false);
-    };
     loadProducts();
   }, [hotelUid]);
 
@@ -113,6 +204,165 @@ export default function ProductsPage() {
     },
   ];
 
+  const downloadCsv = (rows, filename) => {
+    const escapeCsv = (value) => {
+      const strValue = String(value ?? "");
+      if (strValue.includes('"') || strValue.includes(",") || strValue.includes("\n")) {
+        return `"${strValue.replace(/"/g, '""')}"`;
+      }
+      return strValue;
+    };
+
+    const headerLine = CSV_HEADERS.join(",");
+    const rowLines = rows.map((row) => CSV_HEADERS.map((header) => escapeCsv(row[header])).join(","));
+    const csvContent = [headerLine, ...rowLines].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
+  const normalizeExportRow = (row) => ({
+    documentId: row.documentId || row.id || "",
+    name: row.name || "",
+    brand: row.brand || "",
+    description: row.description || "",
+    active: row.active !== false ? "true" : "false",
+    category: row.category || "",
+    subcategory: row.subcategory || "",
+    baseUnit: row.baseUnit || "",
+    baseQtyPerUnit: row.baseQtyPerUnit ?? "",
+    gtin: row.gtin || "",
+    internalSku: row.internalSku || "",
+    storageType: row.storageType || "",
+    allergens: Array.isArray(row.allergens) ? row.allergens.join("|") : row.allergens || "",
+    notes: row.notes || "",
+    imageUrl: row.imageUrl || "",
+  });
+
+  const handleExportTemplate = () => {
+    downloadCsv([EXPORT_TEMPLATE_ROW], "catalog-products-template.csv");
+    setShowExportModal(false);
+  };
+
+  const handleExportFullList = () => {
+    const rows = products.map((product) => normalizeExportRow({ documentId: product.id, ...product }));
+    downloadCsv(rows, "catalog-products-full.csv");
+    setShowExportModal(false);
+  };
+
+  const handleImportButton = () => {
+    if (!busy) fileInputRef.current?.click();
+  };
+
+  const handleImportFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      const raw = await file.text();
+      const normalizedRaw = raw.replace(/^\uFEFF/, "");
+      const lines = normalizedRaw.split(/\r?\n/).filter((line) => line.trim() !== "");
+      if (lines.length < 2) {
+        window.alert(t("products.import.invalidFile"));
+        return;
+      }
+
+      const delimiter = detectDelimiter(lines[0]);
+      const headers = parseCsvLine(lines[0], delimiter).map((header) => header.replace(/^\uFEFF/, "").trim());
+      const importedProducts = lines
+        .slice(1)
+        .map((line) => {
+          const values = parseCsvLine(line, delimiter);
+          const row = {};
+          headers.forEach((header, index) => {
+            row[header] = values[index] ?? "";
+          });
+
+          const baseQtyPerUnitRaw = row.baseQtyPerUnit?.trim() || "";
+          const normalizedBaseQtyPerUnit = baseQtyPerUnitRaw.replace(",", ".");
+          const parsedBaseQtyPerUnit = Number(normalizedBaseQtyPerUnit);
+
+          return {
+            documentId: row.documentId?.trim(),
+            name: row.name?.trim(),
+            brand: row.brand?.trim(),
+            description: row.description?.trim(),
+            active: String(row.active || "").trim().toLowerCase() !== "false",
+            category: row.category?.trim(),
+            subcategory: row.subcategory?.trim(),
+            baseUnit: row.baseUnit?.trim(),
+            baseQtyPerUnit:
+              normalizedBaseQtyPerUnit === "" || Number.isNaN(parsedBaseQtyPerUnit)
+                ? undefined
+                : parsedBaseQtyPerUnit,
+            gtin: row.gtin?.trim(),
+            internalSku: row.internalSku?.trim(),
+            storageType: row.storageType?.trim(),
+            allergens: row.allergens
+              ? row.allergens
+                  .split("|")
+                  .map((item) => item.trim())
+                  .filter(Boolean)
+              : [],
+            notes: row.notes?.trim(),
+            imageUrl: row.imageUrl?.trim(),
+          };
+        })
+        .filter((product) => product.documentId);
+
+      if (importedProducts.length === 0) {
+        window.alert(t("products.import.invalidFile"));
+        return;
+      }
+
+      setPendingImportProducts(importedProducts);
+      setShowImportModal(true);
+    } catch (error) {
+      console.error("Failed to parse import file", error);
+      window.alert(t("products.import.invalidFile"));
+    }
+  };
+
+  const submitImport = async (onExisting) => {
+    if (!hotelUid || pendingImportProducts.length === 0) return;
+
+    const actor =
+      sessionStorage.getItem("userEmail") ||
+      sessionStorage.getItem("userName") ||
+      auth.currentUser?.email ||
+      "unknown";
+
+    setBusy(true);
+    try {
+      const result = await importCatalogProducts(hotelUid, pendingImportProducts, {
+        onExisting,
+        actor,
+      });
+      setShowImportModal(false);
+      setPendingImportProducts([]);
+      await loadProducts();
+      window.alert(
+        t("products.import.result", {
+          imported: result.imported,
+          skipped: result.skipped,
+        })
+      );
+    } catch (error) {
+      console.error("Failed to import products", error);
+      window.alert(t("products.import.failed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
@@ -123,18 +373,43 @@ export default function ProductsPage() {
             <h1 className="text-3xl font-semibold">{t("products.title")}</h1>
             <p className="text-gray-600 mt-1">{t("products.subtitle")}</p>
           </div>
-          <button
-            onClick={() => navigate("/catalog/products/new")}
-            disabled={!canCreateProducts}
-            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow ${
-              canCreateProducts
-                ? "bg-[#b41f1f] text-white hover:bg-[#961919]"
-                : "bg-gray-300 text-gray-500 cursor-not-allowed"
-            }`}
-          >
-            <Plus className="h-4 w-4" /> {t("products.actions.new")}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleImportButton}
+              disabled={busy}
+              className="inline-flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {t("products.actions.import")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowExportModal(true)}
+              disabled={busy}
+              className="inline-flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {t("products.actions.export")}
+            </button>
+            <button
+              onClick={() => navigate("/catalog/products/new")}
+              disabled={!canCreateProducts}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow ${
+                canCreateProducts
+                  ? "bg-[#b41f1f] text-white hover:bg-[#961919]"
+                  : "bg-gray-300 text-gray-500 cursor-not-allowed"
+              }`}
+            >
+              <Plus className="h-4 w-4" /> {t("products.actions.new")}
+            </button>
+          </div>
         </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,text/csv"
+          className="hidden"
+          onChange={handleImportFileChange}
+        />
 
         <div className="grid gap-3 md:grid-cols-3">
           <div>
@@ -199,6 +474,56 @@ export default function ProductsPage() {
           />
         )}
       </PageContainer>
+
+      <Modal open={showExportModal} onClose={() => setShowExportModal(false)} title={t("products.export.title")}>
+        <button
+          type="button"
+          onClick={() => setShowExportModal(false)}
+          className="absolute right-4 top-4 rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+          aria-label={t("products.actions.cancel")}
+        >
+          <X className="h-4 w-4" />
+        </button>
+        <p className="mb-4 text-sm text-gray-700">{t("products.export.message")}</p>
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={handleExportTemplate}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            {t("products.export.template")}
+          </button>
+          <button
+            type="button"
+            onClick={handleExportFullList}
+            className="rounded-lg bg-[#b41f1f] px-3 py-2 text-sm font-semibold text-white hover:bg-[#961919]"
+          >
+            {t("products.export.full")}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal open={showImportModal} onClose={() => setShowImportModal(false)} title={t("products.import.title")}>
+        <p className="mb-4 text-sm text-gray-700">{t("products.import.message")}</p>
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => submitImport("overwrite")}
+            disabled={busy}
+            className="rounded-lg bg-[#b41f1f] px-3 py-2 text-sm font-semibold text-white hover:bg-[#961919] disabled:opacity-50"
+          >
+            {t("products.import.overwrite")}
+          </button>
+          <button
+            type="button"
+            onClick={() => submitImport("skip")}
+            disabled={busy}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {t("products.import.skip")}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }
