@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Download, Plus, Upload } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
@@ -46,6 +46,54 @@ const EXPORT_TEMPLATE_ROW = {
   notes: "",
   imageUrl: "",
 };
+
+function parseCsvLine(line, delimiter) {
+  const cells = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === delimiter && !inQuotes) {
+      cells.push(cell);
+      cell = "";
+    } else {
+      cell += char;
+    }
+  }
+
+  cells.push(cell);
+  return cells;
+}
+
+function detectDelimiter(line) {
+  const countOutsideQuotes = (delimiter) => {
+    let inQuotes = false;
+    let count = 0;
+    for (let i = 0; i < line.length; i += 1) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          i += 1;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (!inQuotes && char === delimiter) {
+        count += 1;
+      }
+    }
+    return count;
+  };
+
+  return countOutsideQuotes(";") > countOutsideQuotes(",") ? ";" : ",";
+}
 
 export default function ProductsPage() {
   const navigate = useNavigate();
@@ -159,7 +207,7 @@ export default function ProductsPage() {
   const downloadCsv = (rows, filename) => {
     const escapeCsv = (value) => {
       const strValue = String(value ?? "");
-      if (strValue.includes("\"") || strValue.includes(",") || strValue.includes("\n")) {
+      if (strValue.includes('"') || strValue.includes(",") || strValue.includes("\n")) {
         return `"${strValue.replace(/"/g, '""')}"`;
       }
       return strValue;
@@ -210,9 +258,7 @@ export default function ProductsPage() {
   };
 
   const handleImportButton = () => {
-    if (!busy) {
-      fileInputRef.current?.click();
-    }
+    if (!busy) fileInputRef.current?.click();
   };
 
   const handleImportFileChange = async (event) => {
@@ -222,65 +268,55 @@ export default function ProductsPage() {
 
     try {
       const raw = await file.text();
-      const lines = raw.split(/\r?\n/).filter((line) => line.trim() !== "");
+      const normalizedRaw = raw.replace(/^\uFEFF/, "");
+      const lines = normalizedRaw.split(/\r?\n/).filter((line) => line.trim() !== "");
       if (lines.length < 2) {
         window.alert(t("products.import.invalidFile"));
         return;
       }
 
-      const parseCsvLine = (line) => {
-        const cells = [];
-        let cell = "";
-        let inQuotes = false;
+      const delimiter = detectDelimiter(lines[0]);
+      const headers = parseCsvLine(lines[0], delimiter).map((header) => header.replace(/^\uFEFF/, "").trim());
+      const importedProducts = lines
+        .slice(1)
+        .map((line) => {
+          const values = parseCsvLine(line, delimiter);
+          const row = {};
+          headers.forEach((header, index) => {
+            row[header] = values[index] ?? "";
+          });
 
-        for (let i = 0; i < line.length; i += 1) {
-          const char = line[i];
-          if (char === "\"") {
-            if (inQuotes && line[i + 1] === "\"") {
-              cell += "\"";
-              i += 1;
-            } else {
-              inQuotes = !inQuotes;
-            }
-          } else if (char === "," && !inQuotes) {
-            cells.push(cell);
-            cell = "";
-          } else {
-            cell += char;
-          }
-        }
+          const baseQtyPerUnitRaw = row.baseQtyPerUnit?.trim() || "";
+          const normalizedBaseQtyPerUnit = baseQtyPerUnitRaw.replace(",", ".");
+          const parsedBaseQtyPerUnit = Number(normalizedBaseQtyPerUnit);
 
-        cells.push(cell);
-        return cells;
-      };
-
-      const headers = parseCsvLine(lines[0]).map((header) => header.trim());
-      const importedProducts = lines.slice(1).map((line) => {
-        const values = parseCsvLine(line);
-        const row = {};
-        headers.forEach((header, index) => {
-          row[header] = values[index] ?? "";
-        });
-
-        const baseQtyPerUnit = row.baseQtyPerUnit?.trim();
-        return {
-          documentId: row.documentId?.trim(),
-          name: row.name?.trim(),
-          brand: row.brand?.trim(),
-          description: row.description?.trim(),
-          active: String(row.active || "").trim().toLowerCase() !== "false",
-          category: row.category?.trim(),
-          subcategory: row.subcategory?.trim(),
-          baseUnit: row.baseUnit?.trim(),
-          baseQtyPerUnit: baseQtyPerUnit === "" ? undefined : Number(baseQtyPerUnit),
-          gtin: row.gtin?.trim(),
-          internalSku: row.internalSku?.trim(),
-          storageType: row.storageType?.trim(),
-          allergens: row.allergens ? row.allergens.split("|").map((item) => item.trim()).filter(Boolean) : [],
-          notes: row.notes?.trim(),
-          imageUrl: row.imageUrl?.trim(),
-        };
-      }).filter((product) => product.documentId);
+          return {
+            documentId: row.documentId?.trim(),
+            name: row.name?.trim(),
+            brand: row.brand?.trim(),
+            description: row.description?.trim(),
+            active: String(row.active || "").trim().toLowerCase() !== "false",
+            category: row.category?.trim(),
+            subcategory: row.subcategory?.trim(),
+            baseUnit: row.baseUnit?.trim(),
+            baseQtyPerUnit:
+              normalizedBaseQtyPerUnit === "" || Number.isNaN(parsedBaseQtyPerUnit)
+                ? undefined
+                : parsedBaseQtyPerUnit,
+            gtin: row.gtin?.trim(),
+            internalSku: row.internalSku?.trim(),
+            storageType: row.storageType?.trim(),
+            allergens: row.allergens
+              ? row.allergens
+                  .split("|")
+                  .map((item) => item.trim())
+                  .filter(Boolean)
+              : [],
+            notes: row.notes?.trim(),
+            imageUrl: row.imageUrl?.trim(),
+          };
+        })
+        .filter((product) => product.documentId);
 
       if (importedProducts.length === 0) {
         window.alert(t("products.import.invalidFile"));
@@ -342,19 +378,17 @@ export default function ProductsPage() {
               type="button"
               onClick={handleImportButton}
               disabled={busy}
-              title={t("products.actions.import")}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Upload className="h-4 w-4" />
+              {t("products.actions.import")}
             </button>
             <button
               type="button"
               onClick={() => setShowExportModal(true)}
               disabled={busy}
-              title={t("products.actions.export")}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Download className="h-4 w-4" />
+              {t("products.actions.export")}
             </button>
             <button
               onClick={() => navigate("/catalog/products/new")}
@@ -442,6 +476,14 @@ export default function ProductsPage() {
       </PageContainer>
 
       <Modal open={showExportModal} onClose={() => setShowExportModal(false)} title={t("products.export.title")}>
+        <button
+          type="button"
+          onClick={() => setShowExportModal(false)}
+          className="absolute right-4 top-4 rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+          aria-label={t("products.actions.cancel")}
+        >
+          <X className="h-4 w-4" />
+        </button>
         <p className="mb-4 text-sm text-gray-700">{t("products.export.message")}</p>
         <div className="flex flex-col gap-2">
           <button
