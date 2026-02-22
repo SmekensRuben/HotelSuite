@@ -76,7 +76,7 @@ export default function ProductsPage() {
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       setDebouncedSearchTerm(searchTerm);
-    }, 250);
+    }, 400);
 
     return () => window.clearTimeout(timeoutId);
   }, [searchTerm]);
