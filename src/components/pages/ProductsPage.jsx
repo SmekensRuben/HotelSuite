@@ -10,6 +10,8 @@ import { useHotelContext } from "../../contexts/HotelContext";
 import { getCatalogProducts } from "../../services/firebaseProducts";
 import { usePermission } from "../../hooks/usePermission";
 
+const PAGE_SIZE = 20;
+
 export default function ProductsPage() {
   const navigate = useNavigate();
   const { t } = useTranslation("common");
@@ -20,6 +22,9 @@ export default function ProductsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedSubcategory, setSelectedSubcategory] = useState("");
+  const [pageIndex, setPageIndex] = useState(0);
+  const [hasMorePages, setHasMorePages] = useState(false);
+  const [pageStartCursors, setPageStartCursors] = useState({ 0: null });
 
   const today = useMemo(
     () =>
@@ -37,15 +42,33 @@ export default function ProductsPage() {
     window.location.href = "/login";
   };
 
+  const loadProductsPage = async (nextPageIndex, cursor) => {
+    if (!hotelUid) return;
+
+    setLoading(true);
+    const result = await getCatalogProducts(hotelUid, {
+      pageSize: PAGE_SIZE,
+      cursor,
+    });
+
+    setProducts(result.products);
+    setHasMorePages(result.hasMore);
+    setPageIndex(nextPageIndex);
+
+    if (result.hasMore && result.cursor) {
+      setPageStartCursors((prev) => ({
+        ...prev,
+        [nextPageIndex + 1]: result.cursor,
+      }));
+    }
+
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const loadProducts = async () => {
-      if (!hotelUid) return;
-      setLoading(true);
-      const result = await getCatalogProducts(hotelUid);
-      setProducts(result);
-      setLoading(false);
-    };
-    loadProducts();
+    setPageStartCursors({ 0: null });
+    loadProductsPage(0, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hotelUid]);
 
   const categories = useMemo(() => {
@@ -191,12 +214,47 @@ export default function ProductsPage() {
         {loading ? (
           <p className="text-gray-600">{t("products.loading")}</p>
         ) : (
-          <DataListTable
-            columns={columns}
-            rows={filteredProducts}
-            onRowClick={(product) => navigate(`/catalog/products/${product.id}`)}
-            emptyMessage={t("products.table.empty")}
-          />
+          <>
+            <DataListTable
+              columns={columns}
+              rows={filteredProducts}
+              onRowClick={(product) => navigate(`/catalog/products/${product.id}`)}
+              emptyMessage={t("products.table.empty")}
+            />
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm text-gray-500">
+                Pagina {pageIndex + 1} · Max. {PAGE_SIZE} producten per pagina
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (pageIndex === 0) return;
+                    const previousPage = pageIndex - 1;
+                    const previousCursor = pageStartCursors[previousPage] || null;
+                    loadProductsPage(previousPage, previousCursor);
+                  }}
+                  disabled={pageIndex === 0 || loading}
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Vorige
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!hasMorePages) return;
+                    const nextPage = pageIndex + 1;
+                    const nextCursor = pageStartCursors[nextPage] || null;
+                    loadProductsPage(nextPage, nextCursor);
+                  }}
+                  disabled={!hasMorePages || loading}
+                  className="rounded-lg border border-[#b41f1f] bg-[#b41f1f] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Volgende
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </PageContainer>
     </div>

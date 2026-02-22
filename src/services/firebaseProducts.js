@@ -11,6 +11,10 @@ import {
   writeBatch,
   query,
   where,
+  orderBy,
+  limit,
+  startAfter,
+  documentId,
   serverTimestamp,
   storage,
   ref,
@@ -238,21 +242,42 @@ export async function renameOutletInProducts(hotelUid, oldName, newName) {
   clearProductsIndexedCache(hotelUid);
 }
 
-export async function getCatalogProducts(hotelUid) {
-  return getEntityProducts(hotelUid, "catalogproducts");
+export async function getCatalogProducts(hotelUid, options = {}) {
+  return getEntityProducts(hotelUid, "catalogproducts", options);
 }
 
-export async function getSupplierProducts(hotelUid) {
-  return getEntityProducts(hotelUid, "supplierproducts");
+export async function getSupplierProducts(hotelUid, options = {}) {
+  return getEntityProducts(hotelUid, "supplierproducts", options);
 }
 
-async function getEntityProducts(hotelUid, entityCollection) {
-  if (!hotelUid) return [];
+async function getEntityProducts(hotelUid, entityCollection, options = {}) {
+  if (!hotelUid) return options.pageSize ? { products: [], cursor: null, hasMore: false } : [];
+
+  const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
+  const pageSize = Number(options.pageSize) || 0;
+
+  if (pageSize > 0) {
+    const constraints = [orderBy(documentId()), limit(pageSize)];
+    if (options.cursor) {
+      constraints.push(startAfter(options.cursor));
+    }
+
+    const pagedQuery = query(productsCol, ...constraints);
+    const snap = await getDocs(pagedQuery);
+    const products = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+    const cursor = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
+    return {
+      products,
+      cursor,
+      hasMore: snap.docs.length === pageSize,
+    };
+  }
+
   const cacheKey = getEntityCacheKey(hotelUid, entityCollection);
   if (entityProductsCache[cacheKey]) {
     return entityProductsCache[cacheKey];
   }
-  const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
+
   const snap = await getDocs(productsCol);
   const products = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
   entityProductsCache[cacheKey] = products;
