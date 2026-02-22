@@ -13,6 +13,7 @@ const defaultState = {
   pricingModel: "Per Purchase Unit",
   pricePerBaseUnit: "",
   pricePerPurchaseUnit: "",
+  purchaseUnit: "",
   baseUnit: "",
   baseUnitsPerPurchaseUnit: "",
   catalogProductId: "",
@@ -38,6 +39,7 @@ function toFormState(initialData) {
       initialData.baseUnitsPerPurchaseUnit !== undefined && initialData.baseUnitsPerPurchaseUnit !== null
         ? String(initialData.baseUnitsPerPurchaseUnit)
         : "",
+    purchaseUnit: initialData.purchaseUnit || "",
     variants:
       Array.isArray(initialData.variants) && initialData.variants.length > 0
         ? initialData.variants.map((variant) => ({
@@ -125,6 +127,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
       nameAtSupplier: formState.nameAtSupplier.trim(),
       currency: formState.currency.trim() || "EUR",
       pricingModel: formState.pricingModel,
+      purchaseUnit: formState.pricingModel === "Per Purchase Unit" ? formState.purchaseUnit.trim() : "",
       baseUnit: formState.baseUnit.trim(),
       catalogProductId: formState.catalogProductId.trim(),
       active: formState.active,
@@ -144,6 +147,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
         : isPerPurchaseUnit
           ? Number(formState.baseUnitsPerPurchaseUnit) || 0
           : null,
+      priceUpdatedOn: new Date().toISOString(),
       variants: formState.hasVariants
         ? completedVariants.map((variant) => ({
             perBaseUnit: variant.perBaseUnit,
@@ -219,14 +223,16 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
           </select>
         </label>
 
-        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          Base Unit
-          <input
-            value={formState.baseUnit}
-            onChange={(event) => updateField("baseUnit", event.target.value)}
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
-          />
-        </label>
+        {formState.pricingModel !== "Per Purchase Unit" && (
+          <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
+            Base Unit
+            <input
+              value={formState.baseUnit}
+              onChange={(event) => updateField("baseUnit", event.target.value)}
+              className="rounded border border-gray-300 px-3 py-2 text-sm"
+            />
+          </label>
+        )}
 
 
         {formState.pricingModel === "Per Base Unit" && (
@@ -326,6 +332,15 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
         ) : formState.pricingModel === "Per Purchase Unit" ? (
           <>
             <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
+              Purchase Unit *
+              <input
+                required
+                value={formState.purchaseUnit}
+                onChange={(event) => updateField("purchaseUnit", event.target.value)}
+                className="rounded border border-gray-300 px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
               Price Per Purchase Unit *
               <input
                 required
@@ -334,6 +349,15 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
                 min="0"
                 value={formState.pricePerPurchaseUnit}
                 onChange={(event) => updateField("pricePerPurchaseUnit", event.target.value)}
+                className="rounded border border-gray-300 px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
+              Base Unit *
+              <input
+                required
+                value={formState.baseUnit}
+                onChange={(event) => updateField("baseUnit", event.target.value)}
                 className="rounded border border-gray-300 px-3 py-2 text-sm"
               />
             </label>

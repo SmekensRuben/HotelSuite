@@ -142,7 +142,10 @@ export default function SupplierProductDetailPage() {
               {product.pricingModel === "Per Base Unit" ? (
                 <DetailField label="pricePerBaseUnit" value={product.pricePerBaseUnit} />
               ) : (
-                <DetailField label="pricePerPurchaseUnit" value={product.pricePerPurchaseUnit} />
+                <>
+                  <DetailField label="purchaseUnit" value={product.purchaseUnit} />
+                  <DetailField label="pricePerPurchaseUnit" value={product.pricePerPurchaseUnit} />
+                </>
               )}
               <DetailField label="baseUnit" value={product.baseUnit} />
               {product.pricingModel === "Per Purchase Unit" && (
@@ -177,6 +180,7 @@ export default function SupplierProductDetailPage() {
               <DetailField label="createdBy" value={product.createdBy} />
               <DetailField label="updatedAt" value={formatDate(product.updatedAt)} />
               <DetailField label="updatedBy" value={product.updatedBy} />
+              <DetailField label="priceUpdatedOn" value={formatDate(product.priceUpdatedOn)} />
             </div>
           </Card>
         )}
