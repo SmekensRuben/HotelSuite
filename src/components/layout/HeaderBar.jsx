@@ -12,6 +12,7 @@ export default function HeaderBar({ today, onLogout }) {
   const { hotelUid, hotelUids = [], selectHotel } = useHotelContext();
   const canViewCatalogProducts = usePermission("catalogproducts", "read");
   const canViewSupplierProducts = usePermission("supplierproducts", "read");
+  const canViewSuppliers = usePermission("suppliers", "read");
   const canViewSettings = usePermission("settings", "read");
   const canViewUsers = usePermission("users", "read");
   const [hotels, setHotels] = useState([]);
@@ -58,7 +59,7 @@ export default function HeaderBar({ today, onLogout }) {
       label: "Suppliers",
       action: () => navigate("/catalog/suppliers"),
       icon: Truck,
-      visible: canViewSupplierProducts,
+      visible: canViewSuppliers,
     },
   ].filter((item) => item.visible !== false);
 

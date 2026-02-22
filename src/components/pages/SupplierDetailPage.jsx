@@ -31,8 +31,8 @@ export default function SupplierDetailPage() {
   const navigate = useNavigate();
   const { supplierId } = useParams();
   const { hotelUid } = useHotelContext();
-  const canEditSuppliers = usePermission("supplierproducts", "update");
-  const canDeleteSuppliers = usePermission("supplierproducts", "delete");
+  const canEditSuppliers = usePermission("suppliers", "update");
+  const canDeleteSuppliers = usePermission("suppliers", "delete");
   const [supplier, setSupplier] = useState(null);
   const [loading, setLoading] = useState(true);
   const [createdByName, setCreatedByName] = useState("-");

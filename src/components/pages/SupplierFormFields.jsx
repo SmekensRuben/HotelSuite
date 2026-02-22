@@ -79,7 +79,7 @@ export default function SupplierFormFields({
       <section className="space-y-4 border-t border-gray-200 pt-6">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Order settings</h2>
-          <p className="text-sm text-gray-600">How orders should be sent and grouped.</p>
+          <p className="text-sm text-gray-600">How orders should be sent.</p>
         </div>
         <div className="grid gap-4 md:grid-cols-2">
           <SelectField
@@ -88,6 +88,15 @@ export default function SupplierFormFields({
             options={ORDER_SYSTEM_OPTIONS}
             onChange={(value) => setValue("orderSystem", value)}
           />
+        </div>
+      </section>
+
+      <section className="space-y-4 border-t border-gray-200 pt-6">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Classification</h2>
+          <p className="text-sm text-gray-600">Category mapping for this supplier.</p>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
           <InputField label="Category" value={formValues.category} onChange={(value) => setValue("category", value)} />
           <InputField
             label="Subcategory"

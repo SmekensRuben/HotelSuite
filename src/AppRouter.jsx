@@ -109,7 +109,7 @@ export default function AppRouter() {
       <Route
         path="/catalog/suppliers"
         element={
-          <ProtectedRoute feature="supplierproducts" action="read">
+          <ProtectedRoute feature="suppliers" action="read">
             <SuppliersPage />
           </ProtectedRoute>
         }
@@ -117,7 +117,7 @@ export default function AppRouter() {
       <Route
         path="/catalog/suppliers/new"
         element={
-          <ProtectedRoute feature="supplierproducts" action="create">
+          <ProtectedRoute feature="suppliers" action="create">
             <SupplierCreatePage />
           </ProtectedRoute>
         }
@@ -125,7 +125,7 @@ export default function AppRouter() {
       <Route
         path="/catalog/suppliers/:supplierId"
         element={
-          <ProtectedRoute feature="supplierproducts" action="read">
+          <ProtectedRoute feature="suppliers" action="read">
             <SupplierDetailPage />
           </ProtectedRoute>
         }
@@ -133,7 +133,7 @@ export default function AppRouter() {
       <Route
         path="/catalog/suppliers/:supplierId/edit"
         element={
-          <ProtectedRoute feature="supplierproducts" action="update">
+          <ProtectedRoute feature="suppliers" action="update">
             <SupplierEditPage />
           </ProtectedRoute>
         }

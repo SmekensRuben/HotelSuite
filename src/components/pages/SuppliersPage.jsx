@@ -12,7 +12,7 @@ import { usePermission } from "../../hooks/usePermission";
 export default function SuppliersPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
-  const canCreateSuppliers = usePermission("supplierproducts", "create");
+  const canCreateSuppliers = usePermission("suppliers", "create");
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
