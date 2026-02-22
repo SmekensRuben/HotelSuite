@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useHotelContext } from "contexts/HotelContext";
 import { db, doc, getDoc } from "../../firebaseConfig";
-import { Package, Settings2, Users } from "lucide-react";
+import { Package, Settings2, Truck, Users } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
 
 export default function HeaderBar({ today, onLogout }) {
@@ -12,6 +12,7 @@ export default function HeaderBar({ today, onLogout }) {
   const { hotelUid, hotelUids = [], selectHotel } = useHotelContext();
   const canViewCatalogProducts = usePermission("catalogproducts", "read");
   const canViewSupplierProducts = usePermission("supplierproducts", "read");
+  const canViewSuppliers = usePermission("suppliers", "read");
   const canViewSettings = usePermission("settings", "read");
   const canViewUsers = usePermission("users", "read");
   const [hotels, setHotels] = useState([]);
@@ -53,6 +54,12 @@ export default function HeaderBar({ today, onLogout }) {
       action: () => navigate("/catalog/supplier-products"),
       icon: Package,
       visible: canViewSupplierProducts,
+    },
+    {
+      label: "Suppliers",
+      action: () => navigate("/catalog/suppliers"),
+      icon: Truck,
+      visible: canViewSuppliers,
     },
   ].filter((item) => item.visible !== false);
 

@@ -22,7 +22,8 @@ import {
   documentId,
   serverTimestamp,
   writeBatch,   // <-- toegevoegd!
-  enableIndexedDbPersistence
+  enableIndexedDbPersistence,
+  Timestamp
 } from 'firebase/firestore';
 
 import {
@@ -78,6 +79,7 @@ export {
   documentId,
   serverTimestamp,
   writeBatch,  // <-- toegevoegd!
+  Timestamp,
   storage,
   ref,
   uploadBytes,

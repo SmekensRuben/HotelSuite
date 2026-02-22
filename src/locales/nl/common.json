@@ -45,7 +45,9 @@
       "delete": "Verwijderen",
       "cancel": "Annuleren",
       "backToProducts": "Terug naar Products",
-      "backToDetail": "Terug naar detail"
+      "backToDetail": "Terug naar detail",
+      "import": "Importeren",
+      "export": "Exporteren"
     },
     "table": {
       "empty": "Nog geen producten aangemaakt.",
@@ -100,6 +102,21 @@
       "subcategory": "Filter op subcategorie",
       "allCategories": "Alle categorieën",
       "allSubcategories": "Alle subcategorieën"
+    },
+    "export": {
+      "title": "Catalog Products exporteren",
+      "message": "Wil je een lege template of de volledige lijst exporteren?",
+      "template": "Lege template exporteren",
+      "full": "Volledige lijst exporteren"
+    },
+    "import": {
+      "title": "Catalog Products importeren",
+      "message": "Wat wil je doen met bestaande Catalog Products met dezelfde documentId?",
+      "overwrite": "Overschrijven met dezelfde documentId",
+      "skip": "Overslaan bij dezelfde documentId",
+      "invalidFile": "Ongeldig importbestand. Gebruik een CSV-bestand met producten.",
+      "failed": "Importeren is mislukt. Probeer opnieuw.",
+      "result": "Import voltooid: {{imported}} geïmporteerd, {{skipped}} overgeslagen."
     }
   }
 }
