@@ -23,7 +23,7 @@ function DetailField({ label, value }) {
   return (
     <div>
       <p className="text-xs uppercase tracking-wide text-gray-500">{label}</p>
-      <p className="text-sm text-gray-800 mt-1">{value || "-"}</p>
+      <p className="text-sm text-gray-800 mt-1">{value === null || value === undefined || value === "" ? "-" : String(value)}</p>
     </div>
   );
 }
@@ -143,86 +143,78 @@ export default function SupplierProductDetailPage() {
         ) : (
           <>
             <Card>
-              <div className="grid gap-6 md:grid-cols-[220px_1fr] items-start">
-                <div className="rounded-xl overflow-hidden bg-gray-100 border border-gray-200 shadow-sm">
-                  {product.imageUrl ? (
-                    <img
-                      src={product.imageUrl}
-                      alt={product.name || "Product"}
-                      className="h-56 w-full object-cover"
-                    />
-                  ) : (
-                    <div className="h-56 flex items-center justify-center text-gray-400 text-sm">
-                      {t("products.detail.noImage")}
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <h2 className="text-2xl font-semibold text-gray-900">{product.name || "-"}</h2>
-                  <p className="text-gray-600 mt-1">{product.brand || "-"}</p>
-                  <p className="mt-3 text-sm text-gray-700">{product.description || "-"}</p>
-                  <div className="mt-4">
-                    <span
-                      className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-                        product.active !== false
-                          ? "bg-green-100 text-green-700"
-                          : "bg-gray-200 text-gray-700"
-                      }`}
-                    >
-                      {product.active !== false ? t("products.status.active") : t("products.status.inactive")}
-                    </span>
-                  </div>
+              <div>
+                <h2 className="text-2xl font-semibold text-gray-900">{product.supplierProductName || "-"}</h2>
+                <p className="text-gray-600 mt-1">{product.supplierSku || "-"}</p>
+                <p className="mt-3 text-sm text-gray-700">Supplier ID: {product.supplierId || "-"}</p>
+                <div className="mt-4">
+                  <span
+                    className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                      product.active !== false
+                        ? "bg-green-100 text-green-700"
+                        : "bg-gray-200 text-gray-700"
+                    }`}
+                  >
+                    {product.active !== false ? t("products.status.active") : t("products.status.inactive")}
+                  </span>
                 </div>
               </div>
             </Card>
 
             <div className="grid gap-4 lg:grid-cols-2">
               <Card>
-                <h2 className="text-lg font-semibold mb-3">{t("products.sections.classification")}</h2>
+                <h2 className="text-lg font-semibold mb-3">Pricing</h2>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <DetailField label={t("products.fields.category")} value={product.category} />
-                  <DetailField label={t("products.fields.subcategory")} value={product.subcategory} />
+                  <DetailField label="Currency" value={product.currency || "EUR"} />
+                  <DetailField label="Pricing Model" value={product.pricingModel || "Per Purchase Unit"} />
+                  {product.pricingModel === "Per Base Unit" ? (
+                    <DetailField label="Price per Base Unit" value={product.pricePerBaseUnit} />
+                  ) : (
+                    <>
+                      <DetailField label="Purchase Unit" value={product.purchaseUnit} />
+                      <DetailField label="Price per Purchase Unit" value={product.pricePerPurchaseUnit} />
+                      <DetailField label="Base Units per Purchase Unit" value={product.baseUnitsPerPurchaseUnit} />
+                    </>
+                  )}
                 </div>
               </Card>
 
               <Card>
-                <h2 className="text-lg font-semibold mb-3">{t("products.sections.units")}</h2>
+                <h2 className="text-lg font-semibold mb-3">Classification</h2>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <DetailField label={t("products.fields.baseUnit")} value={product.baseUnit} />
-                  <DetailField
-                    label={t("products.fields.baseQtyPerUnit")}
-                    value={product.baseQtyPerUnit}
-                  />
+                  <DetailField label="Base Unit" value={product.baseUnit} />
+                  <DetailField label="Catalog Product ID" value={product.catalogProductId} />
+                  <DetailField label="Has Variants" value={product.hasVariants ? "true" : "false"} />
                 </div>
               </Card>
 
-              <Card>
-                <h2 className="text-lg font-semibold mb-3">{t("products.sections.identifiers")}</h2>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <DetailField label={t("products.fields.gtin")} value={product.gtin} />
-                  <DetailField label={t("products.fields.internalSku")} value={product.internalSku} />
-                </div>
-              </Card>
-
-              <Card>
-                <h2 className="text-lg font-semibold mb-3">{t("products.sections.storage")}</h2>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <DetailField label={t("products.fields.storageType")} value={product.storageType} />
-                  <DetailField
-                    label={t("products.fields.allergens")}
-                    value={Array.isArray(product.allergens) ? product.allergens.join(", ") : ""}
-                  />
-                  <DetailField label={t("products.fields.notes")} value={product.notes} />
-                </div>
-              </Card>
+              {product.hasVariants && Array.isArray(product.variants) && product.variants.length > 0 && (
+                <Card className="lg:col-span-2">
+                  <h2 className="text-lg font-semibold mb-3">Variants</h2>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {product.variants.map((variant, index) => (
+                      <div key={index} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                        <p className="text-sm font-semibold text-gray-900 mb-2">Variant {index + 1}</p>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <DetailField label="Weight per Base Unit" value={variant.perBaseUnit} />
+                          <DetailField label="Packages" value={variant.packages} />
+                          <DetailField label="Base Units per Purchase Unit" value={variant.baseUnitsPerPurchaseUnit} />
+                          <DetailField label="Price per Purchase Unit" value={variant.pricePerPurchaseUnit} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
 
               <Card className="lg:col-span-2">
-                <h2 className="text-lg font-semibold mb-3">{t("products.sections.audit")}</h2>
+                <h2 className="text-lg font-semibold mb-3">Audit</h2>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <DetailField label={t("products.fields.createdAt")} value={formatDate(product.createdAt)} />
-                  <DetailField label={t("products.fields.createdBy")} value={createdByName} />
-                  <DetailField label={t("products.fields.updatedAt")} value={formatDate(product.updatedAt)} />
-                  <DetailField label={t("products.fields.updatedBy")} value={updatedByName} />
+                  <DetailField label="Created At" value={formatDate(product.createdAt)} />
+                  <DetailField label="Created By" value={createdByName} />
+                  <DetailField label="Updated At" value={formatDate(product.updatedAt)} />
+                  <DetailField label="Updated By" value={updatedByName} />
+                  <DetailField label="Price Updated On" value={formatDate(product.priceUpdatedOn)} />
                 </div>
               </Card>
             </div>

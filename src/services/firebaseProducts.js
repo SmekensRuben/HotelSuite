@@ -253,13 +253,14 @@ export async function createCatalogProduct(hotelUid, productData, actor) {
   return createEntityProduct(hotelUid, productData, actor, "catalogproducts");
 }
 
-export async function createSupplierProduct(hotelUid, productData, actor) {
-  return createEntityProduct(hotelUid, productData, actor, "supplierproducts");
+export async function createSupplierProduct(hotelUid, productData, actor, options = {}) {
+  return createEntityProduct(hotelUid, productData, actor, "supplierproducts", options);
 }
 
-async function createEntityProduct(hotelUid, productData, actor, entityCollection) {
+async function createEntityProduct(hotelUid, productData, actor, entityCollection, options = {}) {
   if (!hotelUid) throw new Error("hotelUid is verplicht!");
   const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
+  const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
   const payload = {
     ...productData,
     active: productData.active ?? true,
@@ -267,7 +268,30 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
     createdBy: actor || "unknown",
     updatedAt: serverTimestamp(),
     updatedBy: actor || "unknown",
+    ...(includeSupplierPriceTimestamp ? { priceUpdatedOn: serverTimestamp() } : {}),
   };
+
+  if (includeSupplierPriceTimestamp) {
+    const supplierId = String(productData.supplierId || "").trim();
+    const supplierSku = String(productData.supplierSku || "").trim();
+    if (!supplierId || !supplierSku) {
+      throw new Error("supplierId en supplierSku zijn verplicht voor supplier products");
+    }
+    const supplierProductId = `${supplierId}_${supplierSku}`;
+    const productRef = doc(productsCol, supplierProductId);
+    if (!options.overwriteExisting) {
+      const existingSnap = await getDoc(productRef);
+      if (existingSnap.exists()) {
+        const error = new Error("Supplier product bestaat al");
+        error.code = "supplier-product-exists";
+        error.productId = supplierProductId;
+        throw error;
+      }
+    }
+    await setDoc(productRef, payload);
+    return supplierProductId;
+  }
+
   const docRef = await addDoc(productsCol, payload);
   return docRef.id;
 }
@@ -302,10 +326,12 @@ export async function updateSupplierProduct(hotelUid, productId, productData, ac
 async function updateEntityProduct(hotelUid, productId, productData, actor, entityCollection) {
   if (!hotelUid || !productId) throw new Error("hotelUid en productId zijn verplicht!");
   const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
+  const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
   const payload = {
     ...productData,
     updatedAt: serverTimestamp(),
     updatedBy: actor || "unknown",
+    ...(includeSupplierPriceTimestamp ? { priceUpdatedOn: serverTimestamp() } : {}),
   };
   await updateDoc(productDoc, payload);
 }

@@ -4,10 +4,10 @@ import { useTranslation } from "react-i18next";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
-import ProductFormFields from "./ProductFormFields";
+import SupplierProductFormFields from "./SupplierProductFormFields";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getSupplierProduct, updateSupplierProduct, uploadSupplierProductImage } from "../../services/firebaseProducts";
+import { getSupplierProduct, updateSupplierProduct } from "../../services/firebaseProducts";
 
 export default function SupplierProductEditPage() {
   const navigate = useNavigate();
@@ -45,7 +45,7 @@ export default function SupplierProductEditPage() {
   }, [hotelUid, productId]);
 
   const handleUpdate = async (payload) => {
-    const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
+    const actor = auth.currentUser?.uid || "unknown";
     await updateSupplierProduct(hotelUid, productId, payload, actor);
     navigate(`/catalog/supplier-products/${productId}`);
   };
@@ -86,37 +86,11 @@ export default function SupplierProductEditPage() {
         ) : (
           <>
             <Card>
-              <div className="grid gap-6 md:grid-cols-[220px_1fr] items-start">
-                <div className="rounded-xl overflow-hidden bg-gray-100 border border-gray-200 shadow-sm">
-                  {product.imageUrl ? (
-                    <img
-                      src={product.imageUrl}
-                      alt={product.name || "Product"}
-                      className="h-56 w-full object-cover"
-                    />
-                  ) : (
-                    <div className="h-56 flex items-center justify-center text-gray-400 text-sm">
-                      {t("products.detail.noImage")}
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <h2 className="text-2xl font-semibold text-gray-900">{product.name || "-"}</h2>
-                  <p className="text-gray-600 mt-1">{product.brand || "-"}</p>
-                  <p className="mt-3 text-sm text-gray-700">{product.description || "-"}</p>
-                </div>
-              </div>
-            </Card>
-
-            <Card>
-              <ProductFormFields
-                hotelUid={hotelUid}
+              <SupplierProductFormFields
                 initialData={product}
                 onSubmit={handleUpdate}
                 savingLabel={t("products.actions.saving")}
                 submitLabel={t("products.actions.saveChanges")}
-                uploadImage={uploadSupplierProductImage}
-                showImagePreview={false}
               />
             </Card>
           </>
