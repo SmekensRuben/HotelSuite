@@ -56,6 +56,16 @@ function toFormState(initialData) {
   };
 }
 
+
+function roundToTwo(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function formatTwoDecimals(value) {
+  if (value === null || value === undefined || value === "") return "";
+  return roundToTwo(value).toFixed(2);
+}
+
 function SectionCard({ title, children }) {
   return (
     <div className="sm:col-span-2 rounded-xl border border-gray-200 bg-gray-50/70 p-4">
@@ -100,8 +110,8 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
       .map((variant) => {
         const perBaseUnit = Number(variant.perBaseUnit) || 0;
         const packages = Number(variant.packages) || 0;
-        const baseUnitsPerPurchaseUnit = perBaseUnit * packages;
-        const pricePerPurchaseUnit = (Number(formState.pricePerBaseUnit) || 0) * baseUnitsPerPurchaseUnit;
+        const baseUnitsPerPurchaseUnit = roundToTwo(perBaseUnit * packages);
+        const pricePerPurchaseUnit = roundToTwo((Number(formState.pricePerBaseUnit) || 0) * baseUnitsPerPurchaseUnit);
 
         return {
           perBaseUnit,
@@ -296,7 +306,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
                       Base Units Per Purchase Unit (calculated)
                       <input
                         readOnly
-                        value={computed.baseUnitsPerPurchaseUnit || ""}
+                        value={formatTwoDecimals(computed.baseUnitsPerPurchaseUnit)}
                         className="rounded border border-gray-200 bg-gray-100 px-3 py-2 text-sm"
                       />
                     </label>
@@ -304,7 +314,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
                       Price Per Purchase Unit (calculated)
                       <input
                         readOnly
-                        value={computed.pricePerPurchaseUnit || ""}
+                        value={formatTwoDecimals(computed.pricePerPurchaseUnit)}
                         className="rounded border border-gray-200 bg-gray-100 px-3 py-2 text-sm"
                       />
                     </label>
