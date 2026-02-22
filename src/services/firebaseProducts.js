@@ -12,6 +12,10 @@ import {
   writeBatch,
   query,
   where,
+  orderBy,
+  limit,
+  startAfter,
+  documentId,
   serverTimestamp,
   storage,
   ref,
@@ -21,11 +25,43 @@ import {
 
 // Simple in-memory cache for indexed products per hotel
 const productsIndexedCache = {};
+const entityProductsCache = {};
 
 export function clearProductsIndexedCache(hotelUid) {
   if (hotelUid) {
     delete productsIndexedCache[hotelUid];
   }
+}
+
+function getEntityCacheKey(hotelUid, entityCollection) {
+  return `${hotelUid}:${entityCollection}`;
+}
+
+function clearEntityProductsCache(hotelUid, entityCollection) {
+  if (!hotelUid) return;
+
+  if (entityCollection) {
+    delete entityProductsCache[getEntityCacheKey(hotelUid, entityCollection)];
+    return;
+  }
+
+  Object.keys(entityProductsCache).forEach((key) => {
+    if (key.startsWith(`${hotelUid}:`)) {
+      delete entityProductsCache[key];
+    }
+  });
+}
+
+function withCatalogNameLower(productData, entityCollection) {
+  if (entityCollection !== "catalogproducts") {
+    return productData;
+  }
+
+  const nextData = { ...productData };
+  if (typeof nextData.name === "string") {
+    nextData.nameLower = nextData.name.trim().toLowerCase();
+  }
+  return nextData;
 }
 
 async function refreshSalesSnapshotsForProduct(hotelUid, lightspeedId) {
@@ -219,19 +255,59 @@ export async function renameOutletInProducts(hotelUid, oldName, newName) {
   clearProductsIndexedCache(hotelUid);
 }
 
-export async function getCatalogProducts(hotelUid) {
-  return getEntityProducts(hotelUid, "catalogproducts");
+export async function getCatalogProducts(hotelUid, options = {}) {
+  return getEntityProducts(hotelUid, "catalogproducts", options);
 }
 
-export async function getSupplierProducts(hotelUid) {
-  return getEntityProducts(hotelUid, "supplierproducts");
+export async function getSupplierProducts(hotelUid, options = {}) {
+  return getEntityProducts(hotelUid, "supplierproducts", options);
 }
 
-async function getEntityProducts(hotelUid, entityCollection) {
-  if (!hotelUid) return [];
+async function getEntityProducts(hotelUid, entityCollection, options = {}) {
+  if (!hotelUid) return options.pageSize ? { products: [], cursor: null, hasMore: false } : [];
+
   const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
+  const pageSize = Number(options.pageSize) || 0;
+
+  if (pageSize > 0) {
+    const normalizedSearchTerm = String(options.searchTerm || "").trim().toLowerCase();
+    const constraints = [];
+
+    if (normalizedSearchTerm) {
+      constraints.push(where("nameLower", ">=", normalizedSearchTerm));
+      constraints.push(where("nameLower", "<=", `${normalizedSearchTerm}\uf8ff`));
+      constraints.push(orderBy("nameLower"));
+      constraints.push(orderBy(documentId()));
+    } else {
+      constraints.push(orderBy(documentId()));
+    }
+
+    constraints.push(limit(pageSize));
+
+    if (options.cursor) {
+      constraints.push(startAfter(options.cursor));
+    }
+
+    const pagedQuery = query(productsCol, ...constraints);
+    const snap = await getDocs(pagedQuery);
+    const products = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+    const cursor = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
+    return {
+      products,
+      cursor,
+      hasMore: snap.docs.length === pageSize,
+    };
+  }
+
+  const cacheKey = getEntityCacheKey(hotelUid, entityCollection);
+  if (entityProductsCache[cacheKey]) {
+    return entityProductsCache[cacheKey];
+  }
+
   const snap = await getDocs(productsCol);
-  return snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  const products = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  entityProductsCache[cacheKey] = products;
+  return products;
 }
 
 function sanitizeCatalogProductPayload(product = {}) {
@@ -337,8 +413,9 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
   if (!hotelUid) throw new Error("hotelUid is verplicht!");
   const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
   const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
+  const normalizedProductData = withCatalogNameLower(productData, entityCollection);
   const payload = {
-    ...productData,
+    ...normalizedProductData,
     active: productData.active ?? true,
     createdAt: serverTimestamp(),
     createdBy: actor || "unknown",
@@ -365,10 +442,12 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
       }
     }
     await setDoc(productRef, payload);
+    clearEntityProductsCache(hotelUid, entityCollection);
     return supplierProductId;
   }
 
   const docRef = await addDoc(productsCol, payload);
+  clearEntityProductsCache(hotelUid, entityCollection);
   return docRef.id;
 }
 
@@ -403,13 +482,15 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
   if (!hotelUid || !productId) throw new Error("hotelUid en productId zijn verplicht!");
   const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
   const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
+  const normalizedProductData = withCatalogNameLower(productData, entityCollection);
   const payload = {
-    ...productData,
+    ...normalizedProductData,
     updatedAt: serverTimestamp(),
     updatedBy: actor || "unknown",
     ...(includeSupplierPriceTimestamp ? { priceUpdatedOn: serverTimestamp() } : {}),
   };
   await updateDoc(productDoc, payload);
+  clearEntityProductsCache(hotelUid, entityCollection);
 }
 
 export async function deleteCatalogProduct(hotelUid, productId) {
@@ -424,4 +505,5 @@ async function deleteEntityProduct(hotelUid, productId, entityCollection) {
   if (!hotelUid || !productId) return;
   const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
   await deleteDoc(productDoc);
+  clearEntityProductsCache(hotelUid, entityCollection);
 }

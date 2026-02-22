@@ -89,8 +89,11 @@ export default function ProductFormFields({
       imageUrl = await uploadImage(hotelUid, imageFile);
     }
 
+    const normalizedName = formState.name.trim();
+
     const payload = {
-      name: formState.name.trim(),
+      name: normalizedName,
+      nameLower: normalizedName.toLowerCase(),
       brand: formState.brand.trim(),
       description: formState.description.trim(),
       active: formState.active,

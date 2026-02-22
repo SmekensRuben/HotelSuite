@@ -17,6 +17,9 @@ import {
   query,
   where,
   orderBy,
+  limit,
+  startAfter,
+  documentId,
   serverTimestamp,
   writeBatch,   // <-- toegevoegd!
   enableIndexedDbPersistence,
@@ -71,6 +74,9 @@ export {
   query,
   where,
   orderBy,
+  limit,
+  startAfter,
+  documentId,
   serverTimestamp,
   writeBatch,  // <-- toegevoegd!
   Timestamp,

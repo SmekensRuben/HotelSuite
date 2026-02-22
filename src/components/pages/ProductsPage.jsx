@@ -104,6 +104,7 @@ export default function ProductsPage() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedSubcategory, setSelectedSubcategory] = useState("");
   const [showExportModal, setShowExportModal] = useState(false);
@@ -133,6 +134,30 @@ export default function ProductsPage() {
     await signOut(auth);
     sessionStorage.clear();
     window.location.href = "/login";
+  };
+
+  const loadProductsPage = async (nextPageIndex, cursor) => {
+    if (!hotelUid) return;
+
+    setLoading(true);
+    const result = await getCatalogProducts(hotelUid, {
+      pageSize: PAGE_SIZE,
+      cursor,
+      searchTerm: debouncedSearchTerm,
+    });
+
+    setProducts(result.products);
+    setHasMorePages(result.hasMore);
+    setPageIndex(nextPageIndex);
+
+    if (result.hasMore && result.cursor) {
+      setPageStartCursors((prev) => ({
+        ...prev,
+        [nextPageIndex + 1]: result.cursor,
+      }));
+    }
+
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -165,20 +190,16 @@ export default function ProductsPage() {
   }, [selectedSubcategory, subcategories]);
 
   const filteredProducts = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
     return products.filter((product) => {
-      const name = String(product.name || "").toLowerCase();
-      const brand = String(product.brand || "").toLowerCase();
       const category = String(product.category || "");
       const subcategory = String(product.subcategory || "");
 
-      const matchesTerm = !term || name.includes(term) || brand.includes(term);
       const matchesCategory = !selectedCategory || category === selectedCategory;
       const matchesSubcategory = !selectedSubcategory || subcategory === selectedSubcategory;
 
-      return matchesTerm && matchesCategory && matchesSubcategory;
+      return matchesCategory && matchesSubcategory;
     });
-  }, [products, searchTerm, selectedCategory, selectedSubcategory]);
+  }, [products, selectedCategory, selectedSubcategory]);
 
   const columns = [
     { key: "name", label: t("products.columns.name") },
@@ -466,12 +487,47 @@ export default function ProductsPage() {
         {loading ? (
           <p className="text-gray-600">{t("products.loading")}</p>
         ) : (
-          <DataListTable
-            columns={columns}
-            rows={filteredProducts}
-            onRowClick={(product) => navigate(`/catalog/products/${product.id}`)}
-            emptyMessage={t("products.table.empty")}
-          />
+          <>
+            <DataListTable
+              columns={columns}
+              rows={filteredProducts}
+              onRowClick={(product) => navigate(`/catalog/products/${product.id}`)}
+              emptyMessage={t("products.table.empty")}
+            />
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm text-gray-500">
+                Pagina {pageIndex + 1} · Max. {PAGE_SIZE} producten per pagina{debouncedSearchTerm.trim() ? " · Server-side naamfilter actief" : ""}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (pageIndex === 0) return;
+                    const previousPage = pageIndex - 1;
+                    const previousCursor = pageStartCursors[previousPage] || null;
+                    loadProductsPage(previousPage, previousCursor);
+                  }}
+                  disabled={pageIndex === 0 || loading}
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Vorige
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!hasMorePages) return;
+                    const nextPage = pageIndex + 1;
+                    const nextCursor = pageStartCursors[nextPage] || null;
+                    loadProductsPage(nextPage, nextCursor);
+                  }}
+                  disabled={!hasMorePages || loading}
+                  className="rounded-lg border border-[#b41f1f] bg-[#b41f1f] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Volgende
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </PageContainer>
 
