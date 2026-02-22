@@ -219,11 +219,11 @@ export async function renameOutletInProducts(hotelUid, oldName, newName) {
 }
 
 export async function getCatalogProducts(hotelUid) {
-  return getEntityProducts(hotelUid, "products");
+  return getEntityProducts(hotelUid, "catalogproducts");
 }
 
 export async function getSupplierProducts(hotelUid) {
-  return getEntityProducts(hotelUid, "supplierProducts");
+  return getEntityProducts(hotelUid, "supplierproducts");
 }
 
 async function getEntityProducts(hotelUid, entityCollection) {
@@ -234,11 +234,11 @@ async function getEntityProducts(hotelUid, entityCollection) {
 }
 
 export async function getCatalogProduct(hotelUid, productId) {
-  return getEntityProduct(hotelUid, productId, "products");
+  return getEntityProduct(hotelUid, productId, "catalogproducts");
 }
 
 export async function getSupplierProduct(hotelUid, productId) {
-  return getEntityProduct(hotelUid, productId, "supplierProducts");
+  return getEntityProduct(hotelUid, productId, "supplierproducts");
 }
 
 async function getEntityProduct(hotelUid, productId, entityCollection) {
@@ -250,11 +250,11 @@ async function getEntityProduct(hotelUid, productId, entityCollection) {
 }
 
 export async function createCatalogProduct(hotelUid, productData, actor) {
-  return createEntityProduct(hotelUid, productData, actor, "products");
+  return createEntityProduct(hotelUid, productData, actor, "catalogproducts");
 }
 
 export async function createSupplierProduct(hotelUid, productData, actor) {
-  return createEntityProduct(hotelUid, productData, actor, "supplierProducts");
+  return createEntityProduct(hotelUid, productData, actor, "supplierproducts");
 }
 
 async function createEntityProduct(hotelUid, productData, actor, entityCollection) {
@@ -274,11 +274,11 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
 
 
 export async function uploadCatalogProductImage(hotelUid, file) {
-  return uploadEntityProductImage(hotelUid, file, "products");
+  return uploadEntityProductImage(hotelUid, file, "catalogproducts");
 }
 
 export async function uploadSupplierProductImage(hotelUid, file) {
-  return uploadEntityProductImage(hotelUid, file, "supplierProducts");
+  return uploadEntityProductImage(hotelUid, file, "supplierproducts");
 }
 
 async function uploadEntityProductImage(hotelUid, file, entityCollection) {
@@ -292,11 +292,11 @@ async function uploadEntityProductImage(hotelUid, file, entityCollection) {
 }
 
 export async function updateCatalogProduct(hotelUid, productId, productData, actor) {
-  return updateEntityProduct(hotelUid, productId, productData, actor, "products");
+  return updateEntityProduct(hotelUid, productId, productData, actor, "catalogproducts");
 }
 
 export async function updateSupplierProduct(hotelUid, productId, productData, actor) {
-  return updateEntityProduct(hotelUid, productId, productData, actor, "supplierProducts");
+  return updateEntityProduct(hotelUid, productId, productData, actor, "supplierproducts");
 }
 
 async function updateEntityProduct(hotelUid, productId, productData, actor, entityCollection) {
@@ -311,11 +311,11 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
 }
 
 export async function deleteCatalogProduct(hotelUid, productId) {
-  return deleteEntityProduct(hotelUid, productId, "products");
+  return deleteEntityProduct(hotelUid, productId, "catalogproducts");
 }
 
 export async function deleteSupplierProduct(hotelUid, productId) {
-  return deleteEntityProduct(hotelUid, productId, "supplierProducts");
+  return deleteEntityProduct(hotelUid, productId, "supplierproducts");
 }
 
 async function deleteEntityProduct(hotelUid, productId, entityCollection) {
