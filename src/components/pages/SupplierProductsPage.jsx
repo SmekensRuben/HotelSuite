@@ -7,14 +7,14 @@ import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getCatalogProducts } from "../../services/firebaseProducts";
+import { getSupplierProducts } from "../../services/firebaseProducts";
 import { usePermission } from "../../hooks/usePermission";
 
-export default function ProductsPage() {
+export default function SupplierProductsPage() {
   const navigate = useNavigate();
   const { t } = useTranslation("common");
   const { hotelUid } = useHotelContext();
-  const canCreateProducts = usePermission("catalogproducts", "create");
+  const canCreateProducts = usePermission("supplierproducts", "create");
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -41,7 +41,7 @@ export default function ProductsPage() {
     const loadProducts = async () => {
       if (!hotelUid) return;
       setLoading(true);
-      const result = await getCatalogProducts(hotelUid);
+      const result = await getSupplierProducts(hotelUid);
       setProducts(result);
       setLoading(false);
     };
@@ -120,11 +120,11 @@ export default function ProductsPage() {
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
-            <h1 className="text-3xl font-semibold">{t("products.title")}</h1>
+            <h1 className="text-3xl font-semibold">Supplier Products</h1>
             <p className="text-gray-600 mt-1">{t("products.subtitle")}</p>
           </div>
           <button
-            onClick={() => navigate("/catalog/products/new")}
+            onClick={() => navigate("/catalog/supplier-products/new")}
             disabled={!canCreateProducts}
             className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow ${
               canCreateProducts
@@ -194,7 +194,7 @@ export default function ProductsPage() {
           <DataListTable
             columns={columns}
             rows={filteredProducts}
-            onRowClick={(product) => navigate(`/catalog/products/${product.id}`)}
+            onRowClick={(product) => navigate(`/catalog/supplier-products/${product.id}`)}
             emptyMessage={t("products.table.empty")}
           />
         )}

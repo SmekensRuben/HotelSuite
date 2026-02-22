@@ -20,7 +20,7 @@
   },
   "products": {
     "catalog": "Catalog",
-    "title": "Products",
+    "title": "Catalog Products",
     "subtitle": "Overzicht van alle producten.",
     "loading": "Producten laden...",
     "notFound": "Product niet gevonden.",
@@ -58,7 +58,7 @@
       "title": "Product bewerken"
     },
     "detail": {
-      "title": "Product detail",
+      "title": "Catalog Product Detail",
       "noImage": "Geen afbeelding geüpload"
     },
     "sections": {

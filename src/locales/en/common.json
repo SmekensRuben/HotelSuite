@@ -20,7 +20,7 @@
   },
   "products": {
     "catalog": "Catalog",
-    "title": "Products",
+    "title": "Catalog Products",
     "subtitle": "Overview of all products.",
     "loading": "Loading products...",
     "notFound": "Product not found.",
@@ -58,7 +58,7 @@
       "title": "Edit product"
     },
     "detail": {
-      "title": "Product detail",
+      "title": "Catalog Product Detail",
       "noImage": "No image uploaded"
     },
     "sections": {
