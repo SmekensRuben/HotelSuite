@@ -20,6 +20,7 @@ export default function ProductsPage() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedSubcategory, setSelectedSubcategory] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
@@ -49,6 +50,7 @@ export default function ProductsPage() {
     const result = await getCatalogProducts(hotelUid, {
       pageSize: PAGE_SIZE,
       cursor,
+      searchTerm: debouncedSearchTerm,
     });
 
     setProducts(result.products);
@@ -68,8 +70,16 @@ export default function ProductsPage() {
   useEffect(() => {
     setPageStartCursors({ 0: null });
     loadProductsPage(0, null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hotelUid]);
+  }, [hotelUid, debouncedSearchTerm]);
+
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [searchTerm]);
 
   const categories = useMemo(() => {
     const values = new Set(
@@ -97,20 +107,16 @@ export default function ProductsPage() {
   }, [selectedSubcategory, subcategories]);
 
   const filteredProducts = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
     return products.filter((product) => {
-      const name = String(product.name || "").toLowerCase();
-      const brand = String(product.brand || "").toLowerCase();
       const category = String(product.category || "");
       const subcategory = String(product.subcategory || "");
 
-      const matchesTerm = !term || name.includes(term) || brand.includes(term);
       const matchesCategory = !selectedCategory || category === selectedCategory;
       const matchesSubcategory = !selectedSubcategory || subcategory === selectedSubcategory;
 
-      return matchesTerm && matchesCategory && matchesSubcategory;
+      return matchesCategory && matchesSubcategory;
     });
-  }, [products, searchTerm, selectedCategory, selectedSubcategory]);
+  }, [products, selectedCategory, selectedSubcategory]);
 
   const columns = [
     { key: "name", label: t("products.columns.name") },
@@ -223,7 +229,7 @@ export default function ProductsPage() {
             />
             <div className="flex items-center justify-between gap-3">
               <span className="text-sm text-gray-500">
-                Pagina {pageIndex + 1} · Max. {PAGE_SIZE} producten per pagina
+                Pagina {pageIndex + 1} · Max. {PAGE_SIZE} producten per pagina{debouncedSearchTerm.trim() ? " · Server-side naamfilter actief" : ""}
               </span>
               <div className="flex items-center gap-2">
                 <button

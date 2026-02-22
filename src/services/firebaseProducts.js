@@ -51,6 +51,18 @@ function clearEntityProductsCache(hotelUid, entityCollection) {
   });
 }
 
+function withCatalogNameLower(productData, entityCollection) {
+  if (entityCollection !== "catalogproducts") {
+    return productData;
+  }
+
+  const nextData = { ...productData };
+  if (typeof nextData.name === "string") {
+    nextData.nameLower = nextData.name.trim().toLowerCase();
+  }
+  return nextData;
+}
+
 async function refreshSalesSnapshotsForProduct(hotelUid, lightspeedId) {
   if (!hotelUid || !lightspeedId) return;
   const indexesCol = collection(
@@ -257,7 +269,20 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
   const pageSize = Number(options.pageSize) || 0;
 
   if (pageSize > 0) {
-    const constraints = [orderBy(documentId()), limit(pageSize)];
+    const normalizedSearchTerm = String(options.searchTerm || "").trim().toLowerCase();
+    const constraints = [];
+
+    if (normalizedSearchTerm) {
+      constraints.push(where("nameLower", ">=", normalizedSearchTerm));
+      constraints.push(where("nameLower", "<=", `${normalizedSearchTerm}\uf8ff`));
+      constraints.push(orderBy("nameLower"));
+      constraints.push(orderBy(documentId()));
+    } else {
+      constraints.push(orderBy(documentId()));
+    }
+
+    constraints.push(limit(pageSize));
+
     if (options.cursor) {
       constraints.push(startAfter(options.cursor));
     }
@@ -312,8 +337,9 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
   if (!hotelUid) throw new Error("hotelUid is verplicht!");
   const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
   const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
+  const normalizedProductData = withCatalogNameLower(productData, entityCollection);
   const payload = {
-    ...productData,
+    ...normalizedProductData,
     active: productData.active ?? true,
     createdAt: serverTimestamp(),
     createdBy: actor || "unknown",
@@ -380,8 +406,9 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
   if (!hotelUid || !productId) throw new Error("hotelUid en productId zijn verplicht!");
   const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
   const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
+  const normalizedProductData = withCatalogNameLower(productData, entityCollection);
   const payload = {
-    ...productData,
+    ...normalizedProductData,
     updatedAt: serverTimestamp(),
     updatedBy: actor || "unknown",
     ...(includeSupplierPriceTimestamp ? { priceUpdatedOn: serverTimestamp() } : {}),
