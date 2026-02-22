@@ -7,11 +7,13 @@ import SupplierFormFields from "./SupplierFormFields";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSupplier, updateSupplier } from "../../services/firebaseSuppliers";
+import { usePermission } from "../../hooks/usePermission";
 
 export default function SupplierEditPage() {
   const navigate = useNavigate();
   const { supplierId } = useParams();
   const { hotelUid } = useHotelContext();
+  const canViewSupplierPassword = usePermission("suppliers", "password");
   const [supplier, setSupplier] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -36,11 +38,13 @@ export default function SupplierEditPage() {
       if (!hotelUid || !supplierId) return;
       setLoading(true);
       const data = await getSupplier(hotelUid, supplierId);
-      setSupplier(data);
+      const sanitizedSupplier =
+        !data || canViewSupplierPassword ? data : { ...data, password: "" };
+      setSupplier(sanitizedSupplier);
       setLoading(false);
     };
     loadSupplier();
-  }, [hotelUid, supplierId]);
+  }, [hotelUid, supplierId, canViewSupplierPassword]);
 
   const handleUpdate = async (payload) => {
     const actor = auth.currentUser?.uid || "unknown";

@@ -33,6 +33,7 @@ export default function SupplierDetailPage() {
   const { hotelUid } = useHotelContext();
   const canEditSuppliers = usePermission("suppliers", "update");
   const canDeleteSuppliers = usePermission("suppliers", "delete");
+  const canViewSupplierPassword = usePermission("suppliers", "password");
   const [supplier, setSupplier] = useState(null);
   const [loading, setLoading] = useState(true);
   const [createdByName, setCreatedByName] = useState("-");
@@ -163,7 +164,10 @@ export default function SupplierDetailPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <DetailField label="Webshop URL" value={supplier.webshopUrl} />
                 <DetailField label="Username" value={supplier.username} />
-                <DetailField label="Password" value={supplier.password} />
+                <DetailField
+                  label="Password"
+                  value={canViewSupplierPassword ? supplier.password : "••••••••"}
+                />
               </div>
             </Card>
 
