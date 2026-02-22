@@ -143,27 +143,20 @@ export default function SupplierProductDetailPage() {
         ) : (
           <>
             <Card>
-              <div className="grid gap-6 md:grid-cols-[220px_1fr] items-start">
-                <div className="rounded-xl overflow-hidden bg-gray-100 border border-gray-200 shadow-sm">
-                  <div className="h-56 flex items-center justify-center text-gray-500 text-sm px-3 text-center">
-                    Supplier product
-                  </div>
-                </div>
-                <div>
-                  <h2 className="text-2xl font-semibold text-gray-900">{product.supplierProductName || "-"}</h2>
-                  <p className="text-gray-600 mt-1">{product.supplierSku || "-"}</p>
-                  <p className="mt-3 text-sm text-gray-700">Supplier ID: {product.supplierId || "-"}</p>
-                  <div className="mt-4">
-                    <span
-                      className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-                        product.active !== false
-                          ? "bg-green-100 text-green-700"
-                          : "bg-gray-200 text-gray-700"
-                      }`}
-                    >
-                      {product.active !== false ? t("products.status.active") : t("products.status.inactive")}
-                    </span>
-                  </div>
+              <div>
+                <h2 className="text-2xl font-semibold text-gray-900">{product.supplierProductName || "-"}</h2>
+                <p className="text-gray-600 mt-1">{product.supplierSku || "-"}</p>
+                <p className="mt-3 text-sm text-gray-700">Supplier ID: {product.supplierId || "-"}</p>
+                <div className="mt-4">
+                  <span
+                    className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                      product.active !== false
+                        ? "bg-green-100 text-green-700"
+                        : "bg-gray-200 text-gray-700"
+                    }`}
+                  >
+                    {product.active !== false ? t("products.status.active") : t("products.status.inactive")}
+                  </span>
                 </div>
               </div>
             </Card>
