@@ -43,3 +43,77 @@ exports.sendTestMail = functions.https.onRequest(async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+function getMeiliConfig() {
+  const host = functions.config().meili?.host || process.env.MEILI_HOST;
+  const apiKey = functions.config().meili?.key || process.env.MEILI_API_KEY;
+  const indexUid = functions.config().meili?.index || process.env.MEILI_INDEX || "catalogproducts";
+
+  if (!host || !apiKey) {
+    throw new Error("Missing Meilisearch config. Set meili.host and meili.key (or MEILI_HOST/MEILI_API_KEY).");
+  }
+
+  return {
+    host: host.replace(/\/$/, ""),
+    apiKey,
+    indexUid,
+  };
+}
+
+async function meiliRequest(path, { method = "GET", body } = {}) {
+  const { host, apiKey } = getMeiliConfig();
+  const response = await fetch(`${host}${path}`, {
+    method,
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Meili request failed (${response.status}): ${text}`);
+  }
+
+  return response;
+}
+
+async function ensureIndex(indexUid) {
+  const response = await meiliRequest("/indexes", {
+    method: "POST",
+    body: { uid: indexUid, primaryKey: "id" },
+  });
+
+  if (response.status === 202 || response.status === 201) {
+    return;
+  }
+}
+
+exports.syncCatalogProductsToMeili = functions.firestore
+  .document("hotels/{hotelUid}/catalogproducts/{productId}")
+  .onWrite(async (change, context) => {
+    const { hotelUid, productId } = context.params;
+    const { indexUid } = getMeiliConfig();
+
+    await ensureIndex(indexUid);
+
+    if (!change.after.exists) {
+      await meiliRequest(`/indexes/${indexUid}/documents/${productId}`, {
+        method: "DELETE",
+      });
+      return;
+    }
+
+    const productData = change.after.data() || {};
+    const document = {
+      id: productId,
+      hotelUid,
+      ...productData,
+    };
+
+    await meiliRequest(`/indexes/${indexUid}/documents`, {
+      method: "POST",
+      body: [document],
+    });
+  });
