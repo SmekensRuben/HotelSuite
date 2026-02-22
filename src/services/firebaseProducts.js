@@ -260,6 +260,7 @@ export async function createSupplierProduct(hotelUid, productData, actor) {
 async function createEntityProduct(hotelUid, productData, actor, entityCollection) {
   if (!hotelUid) throw new Error("hotelUid is verplicht!");
   const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
+  const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
   const payload = {
     ...productData,
     active: productData.active ?? true,
@@ -267,6 +268,7 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
     createdBy: actor || "unknown",
     updatedAt: serverTimestamp(),
     updatedBy: actor || "unknown",
+    ...(includeSupplierPriceTimestamp ? { priceUpdatedOn: serverTimestamp() } : {}),
   };
   const docRef = await addDoc(productsCol, payload);
   return docRef.id;
@@ -302,10 +304,12 @@ export async function updateSupplierProduct(hotelUid, productId, productData, ac
 async function updateEntityProduct(hotelUid, productId, productData, actor, entityCollection) {
   if (!hotelUid || !productId) throw new Error("hotelUid en productId zijn verplicht!");
   const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
+  const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
   const payload = {
     ...productData,
     updatedAt: serverTimestamp(),
     updatedBy: actor || "unknown",
+    ...(includeSupplierPriceTimestamp ? { priceUpdatedOn: serverTimestamp() } : {}),
   };
   await updateDoc(productDoc, payload);
 }

@@ -50,16 +50,16 @@ export default function SupplierProductsPage() {
     const term = searchTerm.trim().toLowerCase();
     return products.filter((product) => {
       const supplierSku = String(product.supplierSku || "").toLowerCase();
-      const nameAtSupplier = String(product.nameAtSupplier || "").toLowerCase();
+      const supplierProductName = String(product.supplierProductName || "").toLowerCase();
       const supplierId = String(product.supplierId || "").toLowerCase();
-      return !term || supplierSku.includes(term) || nameAtSupplier.includes(term) || supplierId.includes(term);
+      return !term || supplierSku.includes(term) || supplierProductName.includes(term) || supplierId.includes(term);
     });
   }, [products, searchTerm]);
 
   const columns = [
     { key: "supplierId", label: "Supplier ID" },
     { key: "supplierSku", label: "Supplier SKU" },
-    { key: "nameAtSupplier", label: "Name at Supplier" },
+    { key: "supplierProductName", label: "Supplier Product Name" },
     { key: "baseUnit", label: "Base Unit" },
     { key: "pricingModel", label: "Pricing Model" },
     {

@@ -31,7 +31,7 @@ export default function SupplierProductCreatePage() {
   };
 
   const handleCreate = async (payload) => {
-    const actor = auth.currentUser?.displayName || auth.currentUser?.email || auth.currentUser?.uid || "unknown";
+    const actor = auth.currentUser?.uid || "unknown";
     const productId = await createSupplierProduct(hotelUid, payload, actor);
     navigate(`/catalog/supplier-products/${productId}`);
   };

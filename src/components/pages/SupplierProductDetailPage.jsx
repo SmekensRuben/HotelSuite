@@ -9,6 +9,7 @@ import Modal from "../shared/Modal";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { deleteSupplierProduct, getSupplierProduct } from "../../services/firebaseProducts";
+import { getUserDisplayName } from "../../services/firebaseUserManagement";
 import { usePermission } from "../../hooks/usePermission";
 
 function formatDate(value) {
@@ -17,7 +18,6 @@ function formatDate(value) {
   if (typeof value?.seconds === "number") return new Date(value.seconds * 1000).toLocaleString();
   return String(value);
 }
-
 
 function formatNumber(value) {
   if (value === null || value === undefined || value === "") return "-";
@@ -28,7 +28,7 @@ function formatNumber(value) {
 function DetailField({ label, value }) {
   return (
     <div>
-      <p className="text-xs uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="text-xs tracking-wide text-gray-500">{label}</p>
       <p className="text-sm text-gray-800 mt-1">{value === null || value === undefined || value === "" ? "-" : String(value)}</p>
     </div>
   );
@@ -44,6 +44,8 @@ export default function SupplierProductDetailPage() {
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [createdByName, setCreatedByName] = useState("-");
+  const [updatedByName, setUpdatedByName] = useState("-");
 
   const today = useMemo(
     () =>
@@ -71,6 +73,19 @@ export default function SupplierProductDetailPage() {
     };
     loadProduct();
   }, [hotelUid, productId]);
+
+  useEffect(() => {
+    const loadUserNames = async () => {
+      if (!product) return;
+      const [createdName, updatedName] = await Promise.all([
+        getUserDisplayName(product.createdBy),
+        getUserDisplayName(product.updatedBy),
+      ]);
+      setCreatedByName(createdName);
+      setUpdatedByName(updatedName);
+    };
+    loadUserNames();
+  }, [product]);
 
   const handleDeleteProduct = async () => {
     if (!hotelUid || !productId || !canDeleteProducts) return;
@@ -134,53 +149,53 @@ export default function SupplierProductDetailPage() {
         ) : (
           <Card>
             <div className="grid gap-4 sm:grid-cols-2">
-              <DetailField label="supplierId" value={product.supplierId} />
-              <DetailField label="supplierSku" value={product.supplierSku} />
-              <DetailField label="nameAtSupplier" value={product.nameAtSupplier} />
-              <DetailField label="currency" value={product.currency || "EUR"} />
-              <DetailField label="pricingModel" value={product.pricingModel || "Per Purchase Unit"} />
+              <DetailField label="Supplier ID" value={product.supplierId} />
+              <DetailField label="Supplier SKU" value={product.supplierSku} />
+              <DetailField label="Supplier Product Name" value={product.supplierProductName} />
+              <DetailField label="Currency" value={product.currency || "EUR"} />
+              <DetailField label="Pricing Model" value={product.pricingModel || "Per Purchase Unit"} />
               {product.pricingModel === "Per Base Unit" ? (
-                <DetailField label="pricePerBaseUnit" value={product.pricePerBaseUnit} />
+                <DetailField label="Price per Base Unit" value={product.pricePerBaseUnit} />
               ) : (
                 <>
-                  <DetailField label="purchaseUnit" value={product.purchaseUnit} />
-                  <DetailField label="pricePerPurchaseUnit" value={product.pricePerPurchaseUnit} />
+                  <DetailField label="Purchase Unit" value={product.purchaseUnit} />
+                  <DetailField label="Price per Purchase Unit" value={product.pricePerPurchaseUnit} />
                 </>
               )}
-              <DetailField label="baseUnit" value={product.baseUnit} />
+              <DetailField label="Base Unit" value={product.baseUnit} />
               {product.pricingModel === "Per Purchase Unit" && (
                 <DetailField
-                  label="baseUnitsPerPurchaseUnit"
+                  label="Base Units per Purchase Unit"
                   value={product.baseUnitsPerPurchaseUnit}
                 />
               )}
               {product.hasVariants && Array.isArray(product.variants) && product.variants.length > 0 && (
                 <div className="sm:col-span-2 space-y-2">
-                  <p className="text-xs uppercase tracking-wide text-gray-500">variants</p>
+                  <p className="text-xs tracking-wide text-gray-500">Variants</p>
                   {product.variants.map((variant, index) => (
                     <div key={index} className="grid gap-3 sm:grid-cols-2 border border-gray-200 rounded-lg p-3 bg-gray-50">
-                      <DetailField label={`variant ${index + 1} - perBaseUnit`} value={formatNumber(variant.perBaseUnit)} />
-                      <DetailField label={`variant ${index + 1} - packages`} value={formatNumber(variant.packages)} />
+                      <DetailField label={`Variant ${index + 1} - Weight per Base Unit`} value={formatNumber(variant.perBaseUnit)} />
+                      <DetailField label={`Variant ${index + 1} - Packages`} value={formatNumber(variant.packages)} />
                       <DetailField
-                        label={`variant ${index + 1} - baseUnitsPerPurchaseUnit`}
+                        label={`Variant ${index + 1} - Base Units per Purchase Unit`}
                         value={formatNumber(variant.baseUnitsPerPurchaseUnit)}
                       />
                       <DetailField
-                        label={`variant ${index + 1} - pricePerPurchaseUnit`}
+                        label={`Variant ${index + 1} - Price per Purchase Unit`}
                         value={formatNumber(variant.pricePerPurchaseUnit)}
                       />
                     </div>
                   ))}
                 </div>
               )}
-              <DetailField label="catalogProductId" value={product.catalogProductId} />
-              <DetailField label="active" value={product.active ? "true" : "false"} />
-              <DetailField label="hasVariants" value={product.hasVariants ? "true" : "false"} />
-              <DetailField label="createdAt" value={formatDate(product.createdAt)} />
-              <DetailField label="createdBy" value={product.createdBy} />
-              <DetailField label="updatedAt" value={formatDate(product.updatedAt)} />
-              <DetailField label="updatedBy" value={product.updatedBy} />
-              <DetailField label="priceUpdatedOn" value={formatDate(product.priceUpdatedOn)} />
+              <DetailField label="Catalog Product ID" value={product.catalogProductId} />
+              <DetailField label="Active" value={product.active ? "true" : "false"} />
+              <DetailField label="Has Variants" value={product.hasVariants ? "true" : "false"} />
+              <DetailField label="Created At" value={formatDate(product.createdAt)} />
+              <DetailField label="Created By" value={createdByName} />
+              <DetailField label="Updated At" value={formatDate(product.updatedAt)} />
+              <DetailField label="Updated By" value={updatedByName} />
+              <DetailField label="Price Updated On" value={formatDate(product.priceUpdatedOn)} />
             </div>
           </Card>
         )}

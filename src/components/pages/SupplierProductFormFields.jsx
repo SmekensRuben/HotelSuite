@@ -8,7 +8,7 @@ const defaultVariant = {
 const defaultState = {
   supplierId: "",
   supplierSku: "",
-  nameAtSupplier: "",
+  supplierProductName: "",
   currency: "EUR",
   pricingModel: "Per Purchase Unit",
   pricePerBaseUnit: "",
@@ -134,7 +134,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
     const payload = {
       supplierId: formState.supplierId.trim(),
       supplierSku: formState.supplierSku.trim(),
-      nameAtSupplier: formState.nameAtSupplier.trim(),
+      supplierProductName: formState.supplierProductName.trim(),
       currency: formState.currency.trim() || "EUR",
       pricingModel: formState.pricingModel,
       purchaseUnit: formState.pricingModel === "Per Purchase Unit" ? formState.purchaseUnit.trim() : "",
@@ -157,7 +157,6 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
         : isPerPurchaseUnit
           ? Number(formState.baseUnitsPerPurchaseUnit) || 0
           : null,
-      priceUpdatedOn: new Date().toISOString(),
       variants: formState.hasVariants
         ? completedVariants.map((variant) => ({
             perBaseUnit: variant.perBaseUnit,
@@ -194,11 +193,11 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
           />
         </label>
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700 sm:col-span-2">
-          Name at Supplier *
+          Supplier Product Name *
           <input
             required
-            value={formState.nameAtSupplier}
-            onChange={(event) => updateField("nameAtSupplier", event.target.value)}
+            value={formState.supplierProductName}
+            onChange={(event) => updateField("supplierProductName", event.target.value)}
             className="rounded border border-gray-300 px-3 py-2 text-sm"
           />
         </label>

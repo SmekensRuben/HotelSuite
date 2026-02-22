@@ -45,7 +45,7 @@ export default function SupplierProductEditPage() {
   }, [hotelUid, productId]);
 
   const handleUpdate = async (payload) => {
-    const actor = auth.currentUser?.displayName || auth.currentUser?.email || auth.currentUser?.uid || "unknown";
+    const actor = auth.currentUser?.uid || "unknown";
     await updateSupplierProduct(hotelUid, productId, payload, actor);
     navigate(`/catalog/supplier-products/${productId}`);
   };
