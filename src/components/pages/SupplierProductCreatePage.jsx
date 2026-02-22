@@ -4,10 +4,10 @@ import { useTranslation } from "react-i18next";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
-import ProductFormFields from "./ProductFormFields";
+import SupplierProductFormFields from "./SupplierProductFormFields";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { createSupplierProduct, uploadSupplierProductImage } from "../../services/firebaseProducts";
+import { createSupplierProduct } from "../../services/firebaseProducts";
 
 export default function SupplierProductCreatePage() {
   const navigate = useNavigate();
@@ -31,7 +31,7 @@ export default function SupplierProductCreatePage() {
   };
 
   const handleCreate = async (payload) => {
-    const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
+    const actor = auth.currentUser?.displayName || auth.currentUser?.email || auth.currentUser?.uid || "unknown";
     const productId = await createSupplierProduct(hotelUid, payload, actor);
     navigate(`/catalog/supplier-products/${productId}`);
   };
@@ -46,12 +46,10 @@ export default function SupplierProductCreatePage() {
         </div>
 
         <Card>
-          <ProductFormFields
-            hotelUid={hotelUid}
+          <SupplierProductFormFields
             onSubmit={handleCreate}
             savingLabel={t("products.actions.saving")}
             submitLabel={t("products.actions.create")}
-            uploadImage={uploadSupplierProductImage}
           />
         </Card>
       </PageContainer>
