@@ -18,6 +18,13 @@ function formatDate(value) {
   return String(value);
 }
 
+
+function formatNumber(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const num = Number(value);
+  return Number.isNaN(num) ? String(value) : num;
+}
+
 function DetailField({ label, value }) {
   return (
     <div>
@@ -143,6 +150,25 @@ export default function SupplierProductDetailPage() {
                   label="baseUnitsPerPurchaseUnit"
                   value={product.baseUnitsPerPurchaseUnit}
                 />
+              )}
+              {product.hasVariants && Array.isArray(product.variants) && product.variants.length > 0 && (
+                <div className="sm:col-span-2 space-y-2">
+                  <p className="text-xs uppercase tracking-wide text-gray-500">variants</p>
+                  {product.variants.map((variant, index) => (
+                    <div key={index} className="grid gap-3 sm:grid-cols-2 border border-gray-200 rounded-lg p-3 bg-gray-50">
+                      <DetailField label={`variant ${index + 1} - perBaseUnit`} value={formatNumber(variant.perBaseUnit)} />
+                      <DetailField label={`variant ${index + 1} - packages`} value={formatNumber(variant.packages)} />
+                      <DetailField
+                        label={`variant ${index + 1} - baseUnitsPerPurchaseUnit`}
+                        value={formatNumber(variant.baseUnitsPerPurchaseUnit)}
+                      />
+                      <DetailField
+                        label={`variant ${index + 1} - pricePerPurchaseUnit`}
+                        value={formatNumber(variant.pricePerPurchaseUnit)}
+                      />
+                    </div>
+                  ))}
+                </div>
               )}
               <DetailField label="catalogProductId" value={product.catalogProductId} />
               <DetailField label="active" value={product.active ? "true" : "false"} />
