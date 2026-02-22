@@ -19,7 +19,8 @@ import {
   orderBy,
   serverTimestamp,
   writeBatch,   // <-- toegevoegd!
-  enableIndexedDbPersistence
+  enableIndexedDbPersistence,
+  Timestamp
 } from 'firebase/firestore';
 
 import {
@@ -72,6 +73,7 @@ export {
   orderBy,
   serverTimestamp,
   writeBatch,  // <-- toegevoegd!
+  Timestamp,
   storage,
   ref,
   uploadBytes,

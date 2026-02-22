@@ -8,6 +8,7 @@ import {
   deleteDoc,
   getDocs,
   getDoc,
+  Timestamp,
   writeBatch,
   query,
   where,
@@ -231,6 +232,81 @@ async function getEntityProducts(hotelUid, entityCollection) {
   const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
   const snap = await getDocs(productsCol);
   return snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
+function sanitizeCatalogProductPayload(product = {}) {
+  const {
+    documentId,
+    id,
+    createdAt,
+    updatedAt,
+    createdBy,
+    updatedBy,
+    ...payload
+  } = product;
+
+  const cleanedPayload = Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== undefined)
+  );
+
+  return cleanedPayload;
+}
+
+export async function importCatalogProducts(hotelUid, products, options = {}) {
+  if (!hotelUid) throw new Error("hotelUid is verplicht!");
+  const strategy = options.onExisting === "overwrite" ? "overwrite" : "skip";
+  const actor = options.actor || "unknown";
+
+  const productsCol = collection(db, `hotels/${hotelUid}/catalogproducts`);
+  const snapshot = await getDocs(productsCol);
+  const existingIds = new Set(snapshot.docs.map((docSnap) => docSnap.id));
+
+  let imported = 0;
+  let skipped = 0;
+
+  for (const product of products) {
+    const documentId = String(product.documentId || product.id || "").trim();
+    if (!documentId) {
+      skipped += 1;
+      continue;
+    }
+
+    const payload = sanitizeCatalogProductPayload(product);
+    const exists = existingIds.has(documentId);
+
+    if (exists && strategy === "skip") {
+      skipped += 1;
+      continue;
+    }
+
+    const now = Timestamp.now();
+    const docRef = doc(db, `hotels/${hotelUid}/catalogproducts`, documentId);
+    if (exists) {
+      await setDoc(
+        docRef,
+        {
+          ...payload,
+          updatedAt: now,
+          updatedBy: actor,
+        },
+        { merge: true }
+      );
+    } else {
+      await setDoc(docRef, {
+        ...payload,
+        active: payload.active ?? true,
+        createdAt: now,
+        createdBy: actor,
+        updatedAt: now,
+        updatedBy: actor,
+      });
+      existingIds.add(documentId);
+    }
+
+    imported += 1;
+  }
+
+  return { imported, skipped };
 }
 
 export async function getCatalogProduct(hotelUid, productId) {
