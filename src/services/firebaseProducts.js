@@ -266,9 +266,20 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
 
   if (pageSize > 0) {
     const normalizedSearchTerm = String(options.searchTerm || "").trim().toLowerCase();
+    const normalizedCategory = String(options.category || "").trim();
+    const normalizedSubcategory = String(options.subcategory || "").trim();
 
-    if (entityCollection === "catalogproducts" && normalizedSearchTerm) {
-      return searchCatalogProductsWithMeili(hotelUid, normalizedSearchTerm, pageSize, options.cursor);
+    if (entityCollection === "catalogproducts" && (normalizedSearchTerm || normalizedCategory || normalizedSubcategory)) {
+      return searchCatalogProductsWithMeili(
+        hotelUid,
+        {
+          searchTerm: normalizedSearchTerm,
+          category: normalizedCategory,
+          subcategory: normalizedSubcategory,
+        },
+        pageSize,
+        options.cursor
+      );
     }
 
     const constraints = [];
@@ -277,6 +288,16 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
       constraints.push(where("nameLower", ">=", normalizedSearchTerm));
       constraints.push(where("nameLower", "<=", `${normalizedSearchTerm}\uf8ff`));
       constraints.push(orderBy("nameLower"));
+      constraints.push(orderBy(documentId()));
+    } else if (normalizedCategory && normalizedSubcategory) {
+      constraints.push(where("category", "==", normalizedCategory));
+      constraints.push(where("subcategory", "==", normalizedSubcategory));
+      constraints.push(orderBy(documentId()));
+    } else if (normalizedCategory) {
+      constraints.push(where("category", "==", normalizedCategory));
+      constraints.push(orderBy(documentId()));
+    } else if (normalizedSubcategory) {
+      constraints.push(where("subcategory", "==", normalizedSubcategory));
       constraints.push(orderBy(documentId()));
     } else {
       constraints.push(orderBy(documentId()));
@@ -310,9 +331,25 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
   return products;
 }
 
-async function searchCatalogProductsWithMeili(hotelUid, searchTerm, pageSize, cursor) {
+async function searchCatalogProductsWithMeili(hotelUid, criteria, pageSize, cursor) {
+  const searchTerm = String(criteria?.searchTerm || "").trim();
+  const category = String(criteria?.category || "").trim();
+  const subcategory = String(criteria?.subcategory || "").trim();
+
   if (!MEILI_HOST || !MEILI_SEARCH_KEY) {
-    return searchCatalogProductsWithFirestore(hotelUid, searchTerm, pageSize, cursor);
+    return searchCatalogProductsWithFirestore(hotelUid, {
+      searchTerm,
+      category,
+      subcategory,
+    }, pageSize, cursor);
+  }
+
+  const meiliFilters = [`hotelUid = \"${String(hotelUid).replace(/\"/g, "\\\\\"")}\"`];
+  if (category) {
+    meiliFilters.push(`category = \"${category.replace(/\"/g, "\\\\\"")}\"`);
+  }
+  if (subcategory) {
+    meiliFilters.push(`subcategory = \"${subcategory.replace(/\"/g, "\\\\\"")}\"`);
   }
 
   const offset = Number(cursor?.offset || 0);
@@ -326,7 +363,7 @@ async function searchCatalogProductsWithMeili(hotelUid, searchTerm, pageSize, cu
       q: searchTerm,
       limit: pageSize,
       offset,
-      filter: `hotelUid = \"${String(hotelUid).replace(/\"/g, "\\\"")}\"`,
+      filter: meiliFilters,
     }),
   });
 
@@ -356,15 +393,33 @@ async function searchCatalogProductsWithMeili(hotelUid, searchTerm, pageSize, cu
   };
 }
 
-async function searchCatalogProductsWithFirestore(hotelUid, searchTerm, pageSize, cursor) {
+async function searchCatalogProductsWithFirestore(hotelUid, criteria, pageSize, cursor) {
+  const searchTerm = String(criteria?.searchTerm || "").trim();
+  const category = String(criteria?.category || "").trim();
+  const subcategory = String(criteria?.subcategory || "").trim();
   const productsCol = collection(db, `hotels/${hotelUid}/catalogproducts`);
-  const constraints = [
-    where("nameLower", ">=", searchTerm),
-    where("nameLower", "<=", `${searchTerm}\uf8ff`),
-    orderBy("nameLower"),
-    orderBy(documentId()),
-    limit(pageSize),
-  ];
+  const constraints = [];
+
+  if (searchTerm) {
+    constraints.push(where("nameLower", ">=", searchTerm));
+    constraints.push(where("nameLower", "<=", `${searchTerm}\uf8ff`));
+    constraints.push(orderBy("nameLower"));
+    constraints.push(orderBy(documentId()));
+  } else if (category && subcategory) {
+    constraints.push(where("category", "==", category));
+    constraints.push(where("subcategory", "==", subcategory));
+    constraints.push(orderBy(documentId()));
+  } else if (category) {
+    constraints.push(where("category", "==", category));
+    constraints.push(orderBy(documentId()));
+  } else if (subcategory) {
+    constraints.push(where("subcategory", "==", subcategory));
+    constraints.push(orderBy(documentId()));
+  } else {
+    constraints.push(orderBy(documentId()));
+  }
+
+  constraints.push(limit(pageSize));
 
   if (cursor) {
     constraints.push(startAfter(cursor));

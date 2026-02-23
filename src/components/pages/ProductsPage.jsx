@@ -141,6 +141,8 @@ export default function ProductsPage() {
       pageSize: PAGE_SIZE,
       cursor,
       searchTerm: debouncedSearchTerm,
+      category: selectedCategory,
+      subcategory: selectedSubcategory,
     });
 
     setProducts(result.products);
@@ -170,7 +172,7 @@ export default function ProductsPage() {
 
     setPageStartCursors({ 0: null });
     loadProductsPage(0, null);
-  }, [hotelUid, debouncedSearchTerm]);
+  }, [hotelUid, debouncedSearchTerm, selectedCategory, selectedSubcategory]);
 
   const categories = useMemo(() => {
     const values = new Set(
