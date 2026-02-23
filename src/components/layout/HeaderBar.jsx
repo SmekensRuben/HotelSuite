@@ -107,11 +107,11 @@ export default function HeaderBar({ today, onLogout }) {
           >
             <img
               src="/assets/breakfast_pilot_logo_black_circle.png"
-              alt="Revenue Pilot Logo"
+              alt="Hotel Toolkit Logo"
               className="h-10 sm:h-16"
             />
             <h1 className="text-lg sm:text-2xl font-bold tracking-wide text-center flex-1">
-              Revenue Pilot
+              Hotel Toolkit
             </h1>
           </div>
 

@@ -64,10 +64,10 @@ useEffect(() => {
           <div className="flex items-center gap-3">
             <img
               src="/assets/breakfast_pilot_logo_black_circle.png"
-              alt="Breakfast Pilot Logo"
+              alt="Hotel Toolkit Logo"
               className="h-10"
             />
-            <h1 className="text-2xl font-bold tracking-wide">Revenue Pilot</h1>
+            <h1 className="text-2xl font-bold tracking-wide">Hotel Toolkit</h1>
           </div>
           <button
             onClick={() => navigate("/")}
@@ -89,7 +89,7 @@ useEffect(() => {
           <div className="flex flex-col items-center mb-6">
             <img
               src="/assets/breakfast_pilot_logo_black_circle.png"
-              alt="Breakfast Pilot Logo"
+              alt="Hotel Toolkit Logo"
               className="h-16 mb-2"
             />
             <h1 className="text-2xl font-bold text-[#b41f1f]">{t("loginTitle")}</h1>
@@ -134,7 +134,7 @@ useEffect(() => {
           </form>
 
           <p className="text-xs text-center text-gray-400 mt-6">
-            &copy; {new Date().getFullYear()} Revenue Pilot
+            &copy; {new Date().getFullYear()} Hotel Toolkit
           </p>
         </motion.div>
       </div>
