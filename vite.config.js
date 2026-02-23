@@ -6,6 +6,7 @@ import path from 'path';
 export default defineConfig({
   base: '/', // ← voor subdomeinen!
   plugins: [react()],
+  envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
