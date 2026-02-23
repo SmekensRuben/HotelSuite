@@ -1,5 +1,5 @@
 // src/components/pages/LandingPage.jsx
-import React, { useState } from "react";
+import React from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
@@ -7,21 +7,58 @@ import i18n from "../../i18n";
 
 export default function LandingPage() {
   const navigate = useNavigate();
-  const [selectedImage, setSelectedImage] = useState(null);
   const { t } = useTranslation("landing");
+
+  const features = [
+    {
+      icon: "/assets/sync_icon.png",
+      alt: t("featureInventoryTitle"),
+      title: t("featureInventoryTitle"),
+      description: t("featureInventoryDesc"),
+    },
+    {
+      icon: "/assets/analytics_icon.png",
+      alt: t("featureOrderingTitle"),
+      title: t("featureOrderingTitle"),
+      description: t("featureOrderingDesc"),
+    },
+    {
+      icon: "/assets/tablet_checkin.png",
+      alt: t("featureApprovalsTitle"),
+      title: t("featureApprovalsTitle"),
+      description: t("featureApprovalsDesc"),
+    },
+    {
+      icon: "/assets/analytics_icon.png",
+      alt: t("featureOperaTitle"),
+      title: t("featureOperaTitle"),
+      description: t("featureOperaDesc"),
+    },
+    {
+      icon: "/assets/sync_icon.png",
+      alt: t("featureQuotesTitle"),
+      title: t("featureQuotesTitle"),
+      description: t("featureQuotesDesc"),
+    },
+    {
+      icon: "/assets/tablet_checkin.png",
+      alt: t("featureProcurementTitle"),
+      title: t("featureProcurementTitle"),
+      description: t("featureProcurementDesc"),
+    },
+  ];
 
   return (
     <div className="min-h-screen bg-white text-gray-900 font-sans">
-      {/* Header */}
       <header className="bg-[#b41f1f] text-white shadow-sm sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <img
               src="/assets/breakfast_pilot_logo_black_circle.png"
-              alt="Revenue Pilot Logo"
+              alt="Hotel Toolkit Logo"
               className="h-10"
             />
-            <h1 className="text-2xl font-bold tracking-wide">Revenue Pilot</h1>
+            <h1 className="text-2xl font-bold tracking-wide">Hotel Toolkit</h1>
           </div>
           <div className="flex items-center gap-4">
             <div className="flex gap-1">
@@ -53,7 +90,6 @@ export default function LandingPage() {
       </header>
 
       <main>
-        {/* Hero Banner */}
         <section className="bg-gray-50 py-20">
           <div className="max-w-4xl mx-auto px-6 text-center">
             <motion.h2
@@ -84,28 +120,24 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* Features */}
         <section className="py-20 bg-white">
-          <div className="max-w-6xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-12 text-center">
-            <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.5 }}>
-              <img src="/assets/sync_icon.png" alt="Stockbeheer" className="h-20 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold mb-2">{t("featureStockTitle")}</h3>
-              <p className="text-gray-600">{t("featureStockDesc")}</p>
-            </motion.div>
-            <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.5, delay: 0.1 }}>
-              <img src="/assets/analytics_icon.png" alt="Foodcost" className="h-20 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold mb-2">{t("featureFoodcostTitle")}</h3>
-              <p className="text-gray-600">{t("featureFoodcostDesc")}</p>
-            </motion.div>
-            <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.5, delay: 0.2 }}>
-              <img src="/assets/tablet_checkin.png" alt="Receptbeheer" className="h-20 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold mb-2">{t("featureRecipesTitle")}</h3>
-              <p className="text-gray-600">{t("featureRecipesDesc")}</p>
-            </motion.div>
+          <div className="max-w-6xl mx-auto px-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-12 text-center">
+            {features.map((feature, index) => (
+              <motion.div
+                key={feature.title}
+                initial={{ opacity: 0, y: 30 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.5, delay: index * 0.08 }}
+              >
+                <img src={feature.icon} alt={feature.alt} className="h-20 mx-auto mb-4" />
+                <h3 className="text-xl font-semibold mb-2">{feature.title}</h3>
+                <p className="text-gray-600">{feature.description}</p>
+              </motion.div>
+            ))}
           </div>
         </section>
 
-        {/* CTA */}
         <section className="text-center py-16 bg-gray-50">
           <h3 className="text-2xl font-semibold mb-4">{t("ctaFinalTitle")}</h3>
           <button
@@ -118,7 +150,7 @@ export default function LandingPage() {
 
         <footer className="bg-[#b41f1f] text-white py-6">
           <div className="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row justify-between items-center text-sm">
-            <p>&copy; {new Date().getFullYear()} Revenue Pilot</p>
+            <p>&copy; {new Date().getFullYear()} Hotel Toolkit</p>
             <p className="mt-2 sm:mt-0">{t("footerMadeBy")}</p>
           </div>
         </footer>
