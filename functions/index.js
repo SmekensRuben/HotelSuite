@@ -1,4 +1,3 @@
-const { onRequest } = require("firebase-functions/v2/https");
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");

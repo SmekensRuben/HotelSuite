@@ -27,6 +27,17 @@ import {
 const productsIndexedCache = {};
 const entityProductsCache = {};
 
+const MEILI_HOST =
+  (import.meta.env.NEXT_PUBLIC_MEILI_HOST || import.meta.env.VITE_MEILI_HOST || "")
+    .trim()
+    .replace(/\/$/, "");
+const MEILI_SEARCH_KEY =
+  (import.meta.env.NEXT_PUBLIC_MEILI_SEARCH_KEY || import.meta.env.VITE_MEILI_SEARCH_KEY || "")
+    .trim();
+const MEILI_INDEX =
+  (import.meta.env.NEXT_PUBLIC_MEILI_INDEX || import.meta.env.VITE_MEILI_INDEX || "catalogproducts")
+    .trim() || "catalogproducts";
+
 export function clearProductsIndexedCache(hotelUid) {
   if (hotelUid) {
     delete productsIndexedCache[hotelUid];
@@ -271,6 +282,11 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
 
   if (pageSize > 0) {
     const normalizedSearchTerm = String(options.searchTerm || "").trim().toLowerCase();
+
+    if (entityCollection === "catalogproducts" && normalizedSearchTerm) {
+      return searchCatalogProductsWithMeili(hotelUid, normalizedSearchTerm, pageSize, options.cursor);
+    }
+
     const constraints = [];
 
     if (normalizedSearchTerm) {
@@ -308,6 +324,104 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
   const products = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
   entityProductsCache[cacheKey] = products;
   return products;
+}
+
+async function searchCatalogProductsWithMeili(hotelUid, searchTerm, pageSize, cursor) {
+  if (!MEILI_HOST || !MEILI_SEARCH_KEY) {
+    return searchCatalogProductsWithFirestore(hotelUid, searchTerm, pageSize, cursor);
+  }
+
+  const offset = Number(cursor?.offset || 0);
+  const response = await fetch(`${MEILI_HOST}/indexes/${encodeURIComponent(MEILI_INDEX)}/search`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${MEILI_SEARCH_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      q: searchTerm,
+      limit: pageSize,
+      offset,
+      filter: `hotelUid = \"${String(hotelUid).replace(/\"/g, "\\\"")}\"`,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Meili search failed (${response.status}): ${errorText}`);
+  }
+
+  const payload = await response.json();
+  const hitIds = (payload?.hits || []).map((hit) => String(hit.id || "")).filter(Boolean);
+
+  if (hitIds.length === 0) {
+    return {
+      products: [],
+      cursor: null,
+      hasMore: false,
+    };
+  }
+
+  const docsById = await fetchProductsByIds(hotelUid, "catalogproducts", hitIds);
+  const orderedProducts = hitIds
+    .map((id) => docsById.get(id))
+    .filter(Boolean);
+
+  const estimatedTotalHits = Number(payload?.estimatedTotalHits || 0);
+  const nextOffset = offset + hitIds.length;
+  const hasMore = nextOffset < estimatedTotalHits;
+
+  return {
+    products: orderedProducts,
+    cursor: hasMore ? { offset: nextOffset } : null,
+    hasMore,
+  };
+}
+
+async function searchCatalogProductsWithFirestore(hotelUid, searchTerm, pageSize, cursor) {
+  const productsCol = collection(db, `hotels/${hotelUid}/catalogproducts`);
+  const constraints = [
+    where("nameLower", ">=", searchTerm),
+    where("nameLower", "<=", `${searchTerm}\uf8ff`),
+    orderBy("nameLower"),
+    orderBy(documentId()),
+    limit(pageSize),
+  ];
+
+  if (cursor) {
+    constraints.push(startAfter(cursor));
+  }
+
+  const pagedQuery = query(productsCol, ...constraints);
+  const snap = await getDocs(pagedQuery);
+  const products = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  const nextCursor = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
+
+  return {
+    products,
+    cursor: nextCursor,
+    hasMore: snap.docs.length === pageSize,
+  };
+}
+
+async function fetchProductsByIds(hotelUid, entityCollection, ids = []) {
+  const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
+  const chunks = [];
+
+  for (let index = 0; index < ids.length; index += 30) {
+    chunks.push(ids.slice(index, index + 30));
+  }
+
+  const docsById = new Map();
+  for (const chunk of chunks) {
+    const productsQuery = query(productsCol, where(documentId(), "in", chunk));
+    const snap = await getDocs(productsQuery);
+    snap.docs.forEach((docSnap) => {
+      docsById.set(docSnap.id, { id: docSnap.id, ...docSnap.data() });
+    });
+  }
+
+  return docsById;
 }
 
 function sanitizeCatalogProductPayload(product = {}) {
