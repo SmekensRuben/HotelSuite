@@ -27,16 +27,12 @@ import {
 const productsIndexedCache = {};
 const entityProductsCache = {};
 
-const MEILI_HOST =
-  (import.meta.env.NEXT_PUBLIC_MEILI_HOST || import.meta.env.VITE_MEILI_HOST || "")
-    .trim()
-    .replace(/\/$/, "");
-const MEILI_SEARCH_KEY =
-  (import.meta.env.NEXT_PUBLIC_MEILI_SEARCH_KEY || import.meta.env.VITE_MEILI_SEARCH_KEY || "")
-    .trim();
-const MEILI_INDEX =
-  (import.meta.env.NEXT_PUBLIC_MEILI_INDEX || import.meta.env.VITE_MEILI_INDEX || "catalogproducts")
-    .trim() || "catalogproducts";
+const MEILI_HOST = (import.meta.env.VITE_MEILI_HOST || import.meta.env.NEXT_PUBLIC_MEILI_HOST || "")
+  .trim()
+  .replace(/\/$/, "");
+const MEILI_SEARCH_KEY = (import.meta.env.VITE_MEILI_SEARCH_KEY || import.meta.env.NEXT_PUBLIC_MEILI_SEARCH_KEY || "")
+  .trim();
+const CATALOG_PRODUCTS_MEILI_INDEX = "catalogproducts";
 
 export function clearProductsIndexedCache(hotelUid) {
   if (hotelUid) {
@@ -61,18 +57,6 @@ function clearEntityProductsCache(hotelUid, entityCollection) {
       delete entityProductsCache[key];
     }
   });
-}
-
-function withCatalogNameLower(productData, entityCollection) {
-  if (entityCollection !== "catalogproducts") {
-    return productData;
-  }
-
-  const nextData = { ...productData };
-  if (typeof nextData.name === "string") {
-    nextData.nameLower = nextData.name.trim().toLowerCase();
-  }
-  return nextData;
 }
 
 async function refreshSalesSnapshotsForProduct(hotelUid, lightspeedId) {
@@ -332,7 +316,7 @@ async function searchCatalogProductsWithMeili(hotelUid, searchTerm, pageSize, cu
   }
 
   const offset = Number(cursor?.offset || 0);
-  const response = await fetch(`${MEILI_HOST}/indexes/${encodeURIComponent(MEILI_INDEX)}/search`, {
+  const response = await fetch(`${MEILI_HOST}/indexes/${encodeURIComponent(CATALOG_PRODUCTS_MEILI_INDEX)}/search`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${MEILI_SEARCH_KEY}`,
@@ -352,27 +336,21 @@ async function searchCatalogProductsWithMeili(hotelUid, searchTerm, pageSize, cu
   }
 
   const payload = await response.json();
-  const hitIds = (payload?.hits || []).map((hit) => String(hit.id || "")).filter(Boolean);
-
-  if (hitIds.length === 0) {
-    return {
-      products: [],
-      cursor: null,
-      hasMore: false,
-    };
-  }
-
-  const docsById = await fetchProductsByIds(hotelUid, "catalogproducts", hitIds);
-  const orderedProducts = hitIds
-    .map((id) => docsById.get(id))
+  const hits = Array.isArray(payload?.hits) ? payload.hits : [];
+  const products = hits
+    .map((hit) => {
+      const id = String(hit?.id || hit?.documentId || "").trim();
+      if (!id) return null;
+      return { id, ...hit };
+    })
     .filter(Boolean);
 
   const estimatedTotalHits = Number(payload?.estimatedTotalHits || 0);
-  const nextOffset = offset + hitIds.length;
+  const nextOffset = offset + products.length;
   const hasMore = nextOffset < estimatedTotalHits;
 
   return {
-    products: orderedProducts,
+    products,
     cursor: hasMore ? { offset: nextOffset } : null,
     hasMore,
   };
@@ -402,26 +380,6 @@ async function searchCatalogProductsWithFirestore(hotelUid, searchTerm, pageSize
     cursor: nextCursor,
     hasMore: snap.docs.length === pageSize,
   };
-}
-
-async function fetchProductsByIds(hotelUid, entityCollection, ids = []) {
-  const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
-  const chunks = [];
-
-  for (let index = 0; index < ids.length; index += 30) {
-    chunks.push(ids.slice(index, index + 30));
-  }
-
-  const docsById = new Map();
-  for (const chunk of chunks) {
-    const productsQuery = query(productsCol, where(documentId(), "in", chunk));
-    const snap = await getDocs(productsQuery);
-    snap.docs.forEach((docSnap) => {
-      docsById.set(docSnap.id, { id: docSnap.id, ...docSnap.data() });
-    });
-  }
-
-  return docsById;
 }
 
 function sanitizeCatalogProductPayload(product = {}) {
@@ -527,9 +485,8 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
   if (!hotelUid) throw new Error("hotelUid is verplicht!");
   const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
   const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
-  const normalizedProductData = withCatalogNameLower(productData, entityCollection);
   const payload = {
-    ...normalizedProductData,
+    ...productData,
     active: productData.active ?? true,
     createdAt: serverTimestamp(),
     createdBy: actor || "unknown",
@@ -596,9 +553,8 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
   if (!hotelUid || !productId) throw new Error("hotelUid en productId zijn verplicht!");
   const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
   const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
-  const normalizedProductData = withCatalogNameLower(productData, entityCollection);
   const payload = {
-    ...normalizedProductData,
+    ...productData,
     updatedAt: serverTimestamp(),
     updatedBy: actor || "unknown",
     ...(includeSupplierPriceTimestamp ? { priceUpdatedOn: serverTimestamp() } : {}),
