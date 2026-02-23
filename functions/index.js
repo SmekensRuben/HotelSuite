@@ -1,70 +1,27 @@
-const functions = require("firebase-functions");
-const nodemailer = require("nodemailer");
+const { onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { defineSecret } = require("firebase-functions/params");
+const logger = require("firebase-functions/logger");
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
-  auth: {
-    user: "breakfastpilotapp@gmail.com",
-    pass: "jjtg pkdb fdpd ebix"
-  }
-});
+// ---------- Params + Secrets (future-proof) ----------
+const MEILI_HOST = defineSecret("MEILI_HOST");
+const MEILI_INDEX = defineSecret("MEILI_INDEX");
+const MEILI_API_KEY = defineSecret("MEILI_API_KEY");
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
 
-exports.sendTestMail = functions.https.onRequest(async (req, res) => {
-  Object.entries(corsHeaders).forEach(([k, v]) => res.set(k, v));
+// ---------- Helpers ----------
+function requireMeiliHost() {
+  const host = (MEILI_HOST.value() || "").trim().replace(/\/$/, "");
+  if (!host) throw new Error("Missing MEILI_HOST secret.");
+  return host;
+}
 
-  if (req.method === "OPTIONS") {
-    res.status(204).send("");
-    return;
-  }
-
-  const { to, subject, text } = req.body;
-  if (!to || !subject || !text) {
-    res.status(400).json({ error: "Missing fields" });
-    return;
-  }
-
-  try {
-    await transporter.sendMail({
-      from: "breakfastpilotapp@gmail.com",
-      to,
-      subject,
-      text,
-    });
-    res.status(200).json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-function getMeiliConfig() {
-  const host = functions.config().meili?.host || process.env.MEILI_HOST;
-  const apiKey = functions.config().meili?.key || process.env.MEILI_API_KEY;
-  const indexUid =
-    functions.config().meili?.index || process.env.MEILI_INDEX || "catalogproducts";
-
-  if (!host || !apiKey) {
-    throw new Error(
-      "Missing Meilisearch config. Set meili.host and meili.key (or MEILI_HOST/MEILI_API_KEY)."
-    );
-  }
-
-  return {
-    host: host.replace(/\/$/, ""),
-    apiKey,
-    indexUid,
-  };
+function getIndexUid() {
+  return (MEILI_INDEX.value() || "catalogproducts").trim() || "catalogproducts";
 }
 
 async function meiliRequest(path, { method = "GET", body } = {}) {
-  const { host, apiKey } = getMeiliConfig();
+  const host = requireMeiliHost();
+  const apiKey = MEILI_API_KEY.value();
 
   const res = await fetch(`${host}${path}`, {
     method,
@@ -82,32 +39,29 @@ async function meiliJson(path, opts) {
   const res = await meiliRequest(path, opts);
   const text = await res.text();
 
-  let data = null;
+  let data;
   try {
     data = text ? JSON.parse(text) : null;
-  } catch (e) {
+  } catch {
     data = text;
   }
 
   if (!res.ok) {
     const msg = typeof data === "string" ? data : JSON.stringify(data ?? {});
-    const err = new Error(`Meili request failed (${res.status}): ${msg}`);
-    err.status = res.status;
-    err.body = data;
-    throw err;
+    throw new Error(`Meili request failed (${res.status}): ${msg}`);
   }
 
   return data;
 }
 
-let ensuredIndexUids = new Set();
+
+// Cache per cold start
+const ensuredIndexUids = new Set();
 
 async function ensureIndex(indexUid) {
   if (ensuredIndexUids.has(indexUid)) return;
 
-  const checkRes = await meiliRequest(`/indexes/${encodeURIComponent(indexUid)}`, {
-    method: "GET",
-  });
+  const checkRes = await meiliRequest(`/indexes/${encodeURIComponent(indexUid)}`, { method: "GET" });
 
   if (checkRes.status === 200) {
     ensuredIndexUids.add(indexUid);
@@ -124,6 +78,7 @@ async function ensureIndex(indexUid) {
     body: { uid: indexUid, primaryKey: "id" },
   });
 
+  // 201/202 OK, 409 = race condition (bestaat al)
   if (![201, 202, 409].includes(createRes.status)) {
     const text = await createRes.text();
     throw new Error(`Index create failed (${createRes.status}): ${text}`);
@@ -132,49 +87,56 @@ async function ensureIndex(indexUid) {
   ensuredIndexUids.add(indexUid);
 }
 
-exports.syncCatalogProductsToMeili = functions.firestore
-  .document("hotels/{hotelUid}/catalogproducts/{productId}")
-  .onWrite(async (change, context) => {
-    const { hotelUid, productId } = context.params;
-    const { indexUid } = getMeiliConfig();
+
+// ---------- Firestore Trigger: syncCatalogProductsToMeili (Gen 2) ----------
+exports.syncCatalogProductsToMeili = onDocumentWritten(
+  {
+    document: "hotels/{hotelUid}/catalogproducts/{productId}",
+    secrets: [MEILI_API_KEY, MEILI_HOST, MEILI_INDEX],
+  },
+  async (event) => {
+    const { hotelUid, productId } = event.params;
+    const indexUid = getIndexUid();
 
     await ensureIndex(indexUid);
 
-    if (!change.after.exists) {
-      const res = await meiliRequest(
+    // Deleted
+    if (!event.data?.after?.exists) {
+      const delRes = await meiliRequest(
         `/indexes/${encodeURIComponent(indexUid)}/documents/${encodeURIComponent(productId)}`,
         { method: "DELETE" }
       );
 
-      if (![200, 202, 404].includes(res.status)) {
-        const text = await res.text();
-        throw new Error(`Delete failed (${res.status}): ${text}`);
+      // 200/202 OK, 404 ok (already gone)
+      if (![200, 202, 404].includes(delRes.status)) {
+        const text = await delRes.text();
+        throw new Error(`Delete failed (${delRes.status}): ${text}`);
       }
 
+      logger.info("Meili delete ok", { indexUid, productId, hotelUid });
       return;
     }
 
-    const productData = change.after.data() || {};
-    const document = {
+    // Upsert
+    const productData = event.data.after.data() || {};
+    const doc = {
       id: productId,
       hotelUid,
+      // keep it simple for now
       name: productData.name ?? "",
       brand: productData.brand ?? "",
     };
 
-    const result = await meiliJson(
-      `/indexes/${encodeURIComponent(indexUid)}/documents`,
-      {
-        method: "POST",
-        body: [document],
-      }
-    );
+    const result = await meiliJson(`/indexes/${encodeURIComponent(indexUid)}/documents`, {
+      method: "POST",
+      body: [doc],
+    });
 
-    if (result?.taskUid !== undefined) {
-      functions.logger.info("Meili upsert enqueued", {
-        indexUid,
-        productId,
-        taskUid: result.taskUid,
-      });
-    }
-  });
+    logger.info("Meili upsert enqueued", {
+      indexUid,
+      productId,
+      hotelUid,
+      taskUid: result?.taskUid,
+    });
+  }
+);
