@@ -47,6 +47,8 @@ const EXPORT_TEMPLATE_ROW = {
   imageUrl: "",
 };
 
+const PAGE_SIZE = 50;
+
 function parseCsvLine(line, delimiter) {
   const cells = [];
   let cell = "";
@@ -107,6 +109,9 @@ export default function ProductsPage() {
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedSubcategory, setSelectedSubcategory] = useState("");
+  const [pageIndex, setPageIndex] = useState(0);
+  const [hasMorePages, setHasMorePages] = useState(false);
+  const [pageStartCursors, setPageStartCursors] = useState({ 0: null });
   const [showExportModal, setShowExportModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [pendingImportProducts, setPendingImportProducts] = useState([]);
@@ -121,14 +126,6 @@ export default function ProductsPage() {
       }),
     []
   );
-
-  const loadProducts = async () => {
-    if (!hotelUid) return;
-    setLoading(true);
-    const result = await getCatalogProducts(hotelUid);
-    setProducts(result);
-    setLoading(false);
-  };
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -161,8 +158,19 @@ export default function ProductsPage() {
   };
 
   useEffect(() => {
-    loadProducts();
-  }, [hotelUid]);
+    const timeoutId = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    if (!hotelUid) return;
+
+    setPageStartCursors({ 0: null });
+    loadProductsPage(0, null);
+  }, [hotelUid, debouncedSearchTerm]);
 
   const categories = useMemo(() => {
     const values = new Set(
@@ -369,7 +377,8 @@ export default function ProductsPage() {
       });
       setShowImportModal(false);
       setPendingImportProducts([]);
-      await loadProducts();
+      setPageStartCursors({ 0: null });
+      await loadProductsPage(0, null);
       window.alert(
         t("products.import.result", {
           imported: result.imported,
