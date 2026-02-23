@@ -19,6 +19,61 @@ function getIndexUid() {
   return (MEILI_INDEX.value() || "catalogproducts").trim() || "catalogproducts";
 }
 
+function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toMillisOrNull(value) {
+  if (!value) return null;
+
+  if (typeof value.toMillis === "function") {
+    return value.toMillis();
+  }
+
+  if (value instanceof Date) {
+    const parsed = value.getTime();
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  if (typeof value === "object" && typeof value.seconds === "number") {
+    const nanos = typeof value.nanoseconds === "number" ? value.nanoseconds : 0;
+    const parsed = (value.seconds * 1000) + Math.floor(nanos / 1000000);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function buildCatalogProductDocument(productId, hotelUid, productData = {}) {
+  return {
+    id: productId,
+    hotelUid,
+    name: String(productData.name || "").trim(),
+    brand: String(productData.brand || "").trim(),
+    gtin: String(productData.gtin || "").trim(),
+    internalSku: String(productData.internalSku || "").trim(),
+    category: String(productData.category || "").trim(),
+    subcategory: String(productData.subcategory || "").trim(),
+    active: productData.active !== false,
+    imageUrl: String(productData.imageUrl || "").trim(),
+    baseQtyPerUnit: toNumberOrNull(productData.baseQtyPerUnit),
+    baseUnit: String(productData.baseUnit || "").trim(),
+    price: toNumberOrNull(productData.price),
+    updatedAt: toMillisOrNull(productData.updatedAt),
+  };
+}
+
 async function meiliRequest(path, { method = "GET", body } = {}) {
   const host = requireMeiliHost();
   const apiKey = MEILI_API_KEY.value();
@@ -119,13 +174,7 @@ exports.syncCatalogProductsToMeili = onDocumentWritten(
 
     // Upsert
     const productData = event.data.after.data() || {};
-    const doc = {
-      id: productId,
-      hotelUid,
-      // keep it simple for now
-      name: productData.name ?? "",
-      brand: productData.brand ?? "",
-    };
+    const doc = buildCatalogProductDocument(productId, hotelUid, productData);
 
     const result = await meiliJson(`/indexes/${encodeURIComponent(indexUid)}/documents`, {
       method: "POST",
