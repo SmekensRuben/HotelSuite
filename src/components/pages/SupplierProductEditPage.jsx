@@ -46,8 +46,8 @@ export default function SupplierProductEditPage() {
 
   const handleUpdate = async (payload) => {
     const actor = auth.currentUser?.uid || "unknown";
-    await updateSupplierProduct(hotelUid, productId, payload, actor);
-    navigate(`/catalog/supplier-products/${productId}`);
+    const updatedProductId = await updateSupplierProduct(hotelUid, productId, payload, actor);
+    navigate(`/catalog/supplier-products/${updatedProductId}`);
   };
 
   return (

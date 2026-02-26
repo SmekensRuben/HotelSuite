@@ -395,11 +395,7 @@ async function searchSupplierProducts(hotelUid, criteria, pageSize, cursor) {
   const hits = Array.isArray(payload?.hits) ? payload.hits : [];
   const products = hits
     .map((hit) => {
-      const fallbackId = [hit?.supplierId, hit?.supplierSku]
-        .map((value) => String(value || "").trim())
-        .filter(Boolean)
-        .join("_");
-      const id = String(hit?.id || hit?.documentId || fallbackId || "").trim();
+      const id = String(hit?.id || hit?.documentId || "").trim();
       if (!id) return null;
       return { id, ...hit };
     })
@@ -835,6 +831,45 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
   if (!hotelUid || !productId) throw new Error("hotelUid en productId zijn verplicht!");
   const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
   const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
+
+  if (includeSupplierPriceTimestamp) {
+    const supplierId = String(productData.supplierId || "").trim();
+    const supplierSku = String(productData.supplierSku || "").trim();
+    if (!supplierId || !supplierSku) {
+      throw new Error("supplierId en supplierSku zijn verplicht voor supplier products");
+    }
+
+    const nextProductId = `${supplierId}_${supplierSku}`;
+    if (nextProductId !== productId) {
+      const [currentSnap, nextSnap] = await Promise.all([
+        getDoc(productDoc),
+        getDoc(doc(db, `hotels/${hotelUid}/${entityCollection}`, nextProductId)),
+      ]);
+
+      if (nextSnap.exists()) {
+        const error = new Error("Supplier product bestaat al");
+        error.code = "supplier-product-exists";
+        error.productId = nextProductId;
+        throw error;
+      }
+
+      const currentData = currentSnap.exists() ? currentSnap.data() : {};
+      const payload = {
+        ...currentData,
+        ...productData,
+        updatedAt: serverTimestamp(),
+        updatedBy: actor || "unknown",
+        priceUpdatedOn: serverTimestamp(),
+      };
+
+      const nextDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, nextProductId);
+      await setDoc(nextDoc, payload, { merge: true });
+      await deleteDoc(productDoc);
+      clearEntityProductsCache(hotelUid, entityCollection);
+      return nextProductId;
+    }
+  }
+
   const payload = {
     ...productData,
     updatedAt: serverTimestamp(),
@@ -843,6 +878,7 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
   };
   await updateDoc(productDoc, payload);
   clearEntityProductsCache(hotelUid, entityCollection);
+  return productId;
 }
 
 export async function deleteCatalogProduct(hotelUid, productId) {
