@@ -395,11 +395,7 @@ async function searchSupplierProducts(hotelUid, criteria, pageSize, cursor) {
   const hits = Array.isArray(payload?.hits) ? payload.hits : [];
   const products = hits
     .map((hit) => {
-      const fallbackId = [hit?.supplierId, hit?.supplierSku]
-        .map((value) => String(value || "").trim())
-        .filter(Boolean)
-        .join("_");
-      const id = String(hit?.id || hit?.documentId || fallbackId || "").trim();
+      const id = String(hit?.id || hit?.documentId || "").trim();
       if (!id) return null;
       return { id, ...hit };
     })
@@ -598,6 +594,25 @@ function sanitizeCatalogProductPayload(product = {}) {
   return cleanedPayload;
 }
 
+function sanitizeSupplierProductPayload(product = {}) {
+  const {
+    documentId,
+    id,
+    createdAt,
+    updatedAt,
+    createdBy,
+    updatedBy,
+    priceUpdatedOn,
+    ...payload
+  } = product;
+
+  const cleanedPayload = Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== undefined)
+  );
+
+  return cleanedPayload;
+}
+
 export async function importCatalogProducts(hotelUid, products, options = {}) {
   if (!hotelUid) throw new Error("hotelUid is verplicht!");
   const strategy = options.onExisting === "overwrite" ? "overwrite" : "skip";
@@ -611,11 +626,8 @@ export async function importCatalogProducts(hotelUid, products, options = {}) {
   let skipped = 0;
 
   for (const product of products) {
-    const documentId = String(product.documentId || product.id || "").trim();
-    if (!documentId) {
-      skipped += 1;
-      continue;
-    }
+    const providedDocumentId = String(product.documentId || product.id || "").trim();
+    const documentId = providedDocumentId || doc(productsCol).id;
 
     const payload = sanitizeCatalogProductPayload(product);
     const exists = existingIds.has(documentId);
@@ -652,6 +664,74 @@ export async function importCatalogProducts(hotelUid, products, options = {}) {
     imported += 1;
   }
 
+  return { imported, skipped };
+}
+
+export async function importSupplierProducts(hotelUid, products, options = {}) {
+  if (!hotelUid) throw new Error("hotelUid is verplicht!");
+  const strategy = options.onExisting === "overwrite" ? "overwrite" : "skip";
+  const actor = options.actor || "unknown";
+
+  const productsCol = collection(db, `hotels/${hotelUid}/supplierproducts`);
+  const snapshot = await getDocs(productsCol);
+  const existingIds = new Set(snapshot.docs.map((docSnap) => docSnap.id));
+
+  let imported = 0;
+  let skipped = 0;
+
+  for (const product of products) {
+    const supplierId = String(product.supplierId || "").trim();
+    const supplierSku = String(product.supplierSku || "").trim();
+    const providedDocumentId = String(product.documentId || product.id || "").trim();
+    const generatedSupplierDocumentId = `${supplierId}_${supplierSku}`;
+    const documentId = providedDocumentId || generatedSupplierDocumentId;
+    if (!supplierId || !supplierSku) {
+      skipped += 1;
+      continue;
+    }
+
+    const payload = sanitizeSupplierProductPayload({
+      ...product,
+      supplierId,
+      supplierSku,
+    });
+    const exists = existingIds.has(documentId);
+
+    if (exists && strategy === "skip") {
+      skipped += 1;
+      continue;
+    }
+
+    const now = Timestamp.now();
+    const docRef = doc(db, `hotels/${hotelUid}/supplierproducts`, documentId);
+    if (exists) {
+      await setDoc(
+        docRef,
+        {
+          ...payload,
+          updatedAt: now,
+          updatedBy: actor,
+          priceUpdatedOn: now,
+        },
+        { merge: true }
+      );
+    } else {
+      await setDoc(docRef, {
+        ...payload,
+        active: payload.active ?? true,
+        createdAt: now,
+        createdBy: actor,
+        updatedAt: now,
+        updatedBy: actor,
+        priceUpdatedOn: now,
+      });
+      existingIds.add(documentId);
+    }
+
+    imported += 1;
+  }
+
+  clearEntityProductsCache(hotelUid, "supplierproducts");
   return { imported, skipped };
 }
 
@@ -743,14 +823,53 @@ export async function updateCatalogProduct(hotelUid, productId, productData, act
   return updateEntityProduct(hotelUid, productId, productData, actor, "catalogproducts");
 }
 
-export async function updateSupplierProduct(hotelUid, productId, productData, actor) {
-  return updateEntityProduct(hotelUid, productId, productData, actor, "supplierproducts");
+export async function updateSupplierProduct(hotelUid, productId, productData, actor, options = {}) {
+  return updateEntityProduct(hotelUid, productId, productData, actor, "supplierproducts", options);
 }
 
-async function updateEntityProduct(hotelUid, productId, productData, actor, entityCollection) {
+async function updateEntityProduct(hotelUid, productId, productData, actor, entityCollection, options = {}) {
   if (!hotelUid || !productId) throw new Error("hotelUid en productId zijn verplicht!");
   const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
   const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
+
+  if (includeSupplierPriceTimestamp) {
+    const supplierId = String(productData.supplierId || "").trim();
+    const supplierSku = String(productData.supplierSku || "").trim();
+    if (!supplierId || !supplierSku) {
+      throw new Error("supplierId en supplierSku zijn verplicht voor supplier products");
+    }
+
+    const nextProductId = `${supplierId}_${supplierSku}`;
+    if (nextProductId !== productId) {
+      const [currentSnap, nextSnap] = await Promise.all([
+        getDoc(productDoc),
+        getDoc(doc(db, `hotels/${hotelUid}/${entityCollection}`, nextProductId)),
+      ]);
+
+      if (nextSnap.exists() && !options.overwriteExisting) {
+        const error = new Error("Supplier product bestaat al");
+        error.code = "supplier-product-exists";
+        error.productId = nextProductId;
+        throw error;
+      }
+
+      const currentData = currentSnap.exists() ? currentSnap.data() : {};
+      const payload = {
+        ...currentData,
+        ...productData,
+        updatedAt: serverTimestamp(),
+        updatedBy: actor || "unknown",
+        priceUpdatedOn: serverTimestamp(),
+      };
+
+      const nextDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, nextProductId);
+      await setDoc(nextDoc, payload, { merge: true });
+      await deleteDoc(productDoc);
+      clearEntityProductsCache(hotelUid, entityCollection);
+      return nextProductId;
+    }
+  }
+
   const payload = {
     ...productData,
     updatedAt: serverTimestamp(),
@@ -759,6 +878,7 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
   };
   await updateDoc(productDoc, payload);
   clearEntityProductsCache(hotelUid, entityCollection);
+  return productId;
 }
 
 export async function deleteCatalogProduct(hotelUid, productId) {
