@@ -382,7 +382,6 @@ async function searchSupplierProducts(hotelUid, criteria, pageSize, cursor) {
       limit: pageSize,
       offset,
       filter: meiliFilters,
-      sort: ["supplierProductName:asc"],
     }),
   });
 
