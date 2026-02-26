@@ -598,6 +598,25 @@ function sanitizeCatalogProductPayload(product = {}) {
   return cleanedPayload;
 }
 
+function sanitizeSupplierProductPayload(product = {}) {
+  const {
+    documentId,
+    id,
+    createdAt,
+    updatedAt,
+    createdBy,
+    updatedBy,
+    priceUpdatedOn,
+    ...payload
+  } = product;
+
+  const cleanedPayload = Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== undefined)
+  );
+
+  return cleanedPayload;
+}
+
 export async function importCatalogProducts(hotelUid, products, options = {}) {
   if (!hotelUid) throw new Error("hotelUid is verplicht!");
   const strategy = options.onExisting === "overwrite" ? "overwrite" : "skip";
@@ -652,6 +671,72 @@ export async function importCatalogProducts(hotelUid, products, options = {}) {
     imported += 1;
   }
 
+  return { imported, skipped };
+}
+
+export async function importSupplierProducts(hotelUid, products, options = {}) {
+  if (!hotelUid) throw new Error("hotelUid is verplicht!");
+  const strategy = options.onExisting === "overwrite" ? "overwrite" : "skip";
+  const actor = options.actor || "unknown";
+
+  const productsCol = collection(db, `hotels/${hotelUid}/supplierproducts`);
+  const snapshot = await getDocs(productsCol);
+  const existingIds = new Set(snapshot.docs.map((docSnap) => docSnap.id));
+
+  let imported = 0;
+  let skipped = 0;
+
+  for (const product of products) {
+    const supplierId = String(product.supplierId || "").trim();
+    const supplierSku = String(product.supplierSku || "").trim();
+    const documentId = String(product.documentId || product.id || `${supplierId}_${supplierSku}`).trim();
+    if (!documentId || !supplierId || !supplierSku) {
+      skipped += 1;
+      continue;
+    }
+
+    const payload = sanitizeSupplierProductPayload({
+      ...product,
+      supplierId,
+      supplierSku,
+    });
+    const exists = existingIds.has(documentId);
+
+    if (exists && strategy === "skip") {
+      skipped += 1;
+      continue;
+    }
+
+    const now = Timestamp.now();
+    const docRef = doc(db, `hotels/${hotelUid}/supplierproducts`, documentId);
+    if (exists) {
+      await setDoc(
+        docRef,
+        {
+          ...payload,
+          updatedAt: now,
+          updatedBy: actor,
+          priceUpdatedOn: now,
+        },
+        { merge: true }
+      );
+    } else {
+      await setDoc(docRef, {
+        ...payload,
+        active: payload.active ?? true,
+        createdAt: now,
+        createdBy: actor,
+        updatedAt: now,
+        updatedBy: actor,
+        priceUpdatedOn: now,
+      });
+      existingIds.add(documentId);
+    }
+
+    imported += 1;
+  }
+
+  clearEntityProductsCache(hotelUid, "supplierproducts");
   return { imported, skipped };
 }
 
