@@ -33,6 +33,7 @@ const MEILI_HOST = (import.meta.env.VITE_MEILI_HOST || import.meta.env.NEXT_PUBL
 const MEILI_SEARCH_KEY = (import.meta.env.VITE_MEILI_SEARCH_KEY || import.meta.env.NEXT_PUBLIC_MEILI_SEARCH_KEY || "")
   .trim();
 const CATALOG_PRODUCTS_MEILI_INDEX = "catalogproducts";
+const SUPPLIER_PRODUCTS_MEILI_INDEX = "supplierproducts";
 
 export function clearProductsIndexedCache(hotelUid) {
   if (hotelUid) {
@@ -268,6 +269,9 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
     const normalizedSearchTerm = String(options.searchTerm || "").trim().toLowerCase();
     const normalizedCategory = String(options.category || "").trim();
     const normalizedSubcategory = String(options.subcategory || "").trim();
+    const normalizedSupplierId = String(options.supplierId || "").trim();
+    const normalizedActive =
+      options.active === true || options.active === false ? options.active : null;
 
     if (entityCollection === "catalogproducts" && (normalizedSearchTerm || normalizedCategory || normalizedSubcategory)) {
       return searchCatalogProductsWithMeili(
@@ -276,6 +280,19 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
           searchTerm: normalizedSearchTerm,
           category: normalizedCategory,
           subcategory: normalizedSubcategory,
+        },
+        pageSize,
+        options.cursor
+      );
+    }
+
+    if (entityCollection === "supplierproducts") {
+      return searchSupplierProducts(
+        hotelUid,
+        {
+          searchTerm: normalizedSearchTerm,
+          supplierId: normalizedSupplierId,
+          active: normalizedActive,
         },
         pageSize,
         options.cursor
@@ -329,6 +346,132 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
   const products = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
   entityProductsCache[cacheKey] = products;
   return products;
+}
+
+async function searchSupplierProducts(hotelUid, criteria, pageSize, cursor) {
+  const searchTerm = String(criteria?.searchTerm || "").trim();
+  const supplierId = String(criteria?.supplierId || "").trim();
+  const active = criteria?.active;
+
+  if (!MEILI_HOST || !MEILI_SEARCH_KEY) {
+    return searchSupplierProductsWithFirestore(
+      hotelUid,
+      { searchTerm, supplierId, active },
+      pageSize,
+      cursor
+    );
+  }
+
+  const meiliFilters = [`hotelUid = \"${String(hotelUid).replace(/\"/g, "\\\\\"")}\"`];
+  if (supplierId) {
+    meiliFilters.push(`supplierId = \"${supplierId.replace(/\"/g, "\\\\\"")}\"`);
+  }
+  if (active === true || active === false) {
+    meiliFilters.push(`active = ${active}`);
+  }
+
+  const offset = Number(cursor?.offset || 0);
+  const response = await fetch(`${MEILI_HOST}/indexes/${encodeURIComponent(SUPPLIER_PRODUCTS_MEILI_INDEX)}/search`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${MEILI_SEARCH_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      q: searchTerm,
+      limit: pageSize,
+      offset,
+      filter: meiliFilters,
+      sort: ["supplierProductName:asc"],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Meili search failed (${response.status}): ${errorText}`);
+  }
+
+  const payload = await response.json();
+  const hits = Array.isArray(payload?.hits) ? payload.hits : [];
+  const products = hits
+    .map((hit) => {
+      const fallbackId = [hit?.supplierId, hit?.supplierSku]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .join("_");
+      const id = String(hit?.id || hit?.documentId || fallbackId || "").trim();
+      if (!id) return null;
+      return { id, ...hit };
+    })
+    .filter(Boolean);
+
+  const estimatedTotalHits = Number(payload?.estimatedTotalHits || 0);
+  const nextOffset = offset + products.length;
+  const hasMore = nextOffset < estimatedTotalHits;
+
+  const hasNoCriteria = !searchTerm && !supplierId && active !== true && active !== false;
+  if (offset === 0 && hasNoCriteria && products.length === 0) {
+    return searchSupplierProductsWithFirestore(
+      hotelUid,
+      { searchTerm, supplierId, active },
+      pageSize,
+      null
+    );
+  }
+
+  return {
+    products,
+    cursor: hasMore ? { offset: nextOffset } : null,
+    hasMore,
+  };
+}
+
+async function searchSupplierProductsWithFirestore(hotelUid, criteria, pageSize, cursor) {
+  const searchTerm = String(criteria?.searchTerm || "").trim();
+  const supplierId = String(criteria?.supplierId || "").trim();
+  const active = criteria?.active;
+  const productsCol = collection(db, `hotels/${hotelUid}/supplierproducts`);
+  const constraints = [];
+
+  if (supplierId) {
+    constraints.push(where("supplierId", "==", supplierId));
+  }
+
+  if (active === true || active === false) {
+    constraints.push(where("active", "==", active));
+  }
+
+  constraints.push(orderBy(documentId()));
+  constraints.push(limit(pageSize));
+
+  if (cursor) {
+    constraints.push(startAfter(cursor));
+  }
+
+  const pagedQuery = query(productsCol, ...constraints);
+  const snap = await getDocs(pagedQuery);
+  let products = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+
+  if (searchTerm) {
+    const lowerTerm = searchTerm.toLowerCase();
+    products = products.filter((product) => {
+      const supplierSku = String(product.supplierSku || "").toLowerCase();
+      const supplierProductName = String(product.supplierProductName || "").toLowerCase();
+      const candidateSupplierId = String(product.supplierId || "").toLowerCase();
+      return (
+        supplierSku.includes(lowerTerm)
+        || supplierProductName.includes(lowerTerm)
+        || candidateSupplierId.includes(lowerTerm)
+      );
+    });
+  }
+  const nextCursor = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
+
+  return {
+    products,
+    cursor: nextCursor,
+    hasMore: snap.docs.length === pageSize,
+  };
 }
 
 async function searchCatalogProductsWithMeili(hotelUid, criteria, pageSize, cursor) {
