@@ -6,6 +6,7 @@ const logger = require("firebase-functions/logger");
 const MEILI_HOST = defineSecret("MEILI_HOST");
 const MEILI_INDEX = defineSecret("MEILI_INDEX");
 const MEILI_API_KEY = defineSecret("MEILI_API_KEY");
+const SUPPLIER_PRODUCTS_INDEX_UID = "supplierproducts";
 
 
 // ---------- Helpers ----------
@@ -70,6 +71,23 @@ function buildCatalogProductDocument(productId, hotelUid, productData = {}) {
     baseQtyPerUnit: toNumberOrNull(productData.baseQtyPerUnit),
     baseUnit: String(productData.baseUnit || "").trim(),
     price: toNumberOrNull(productData.price),
+    updatedAt: toMillisOrNull(productData.updatedAt),
+  };
+}
+
+function buildSupplierProductDocument(productId, hotelUid, productData = {}) {
+  return {
+    id: productId,
+    hotelUid,
+    active: productData.active !== false,
+    baseUnit: String(productData.baseUnit || "").trim(),
+    pricePerPurchaseUnit: toNumberOrNull(productData.pricePerPurchaseUnit),
+    supplierId: String(productData.supplierId || "").trim(),
+    pricingModel: String(productData.pricingModel || "").trim(),
+    priceUpdatedOn: toMillisOrNull(productData.priceUpdatedOn),
+    purchaseUnit: String(productData.purchaseUnit || "").trim(),
+    supplierProductName: String(productData.supplierProductName || "").trim(),
+    supplierSku: String(productData.supplierSku || "").trim(),
     updatedAt: toMillisOrNull(productData.updatedAt),
   };
 }
@@ -175,6 +193,50 @@ exports.syncCatalogProductsToMeili = onDocumentWritten(
     // Upsert
     const productData = event.data.after.data() || {};
     const doc = buildCatalogProductDocument(productId, hotelUid, productData);
+
+    const result = await meiliJson(`/indexes/${encodeURIComponent(indexUid)}/documents`, {
+      method: "POST",
+      body: [doc],
+    });
+
+    logger.info("Meili upsert enqueued", {
+      indexUid,
+      productId,
+      hotelUid,
+      taskUid: result?.taskUid,
+    });
+  }
+);
+
+// ---------- Firestore Trigger: syncSupplierProductsToMeili (Gen 2) ----------
+exports.syncSupplierProductsToMeili = onDocumentWritten(
+  {
+    document: "hotels/{hotelUid}/supplierproducts/{productId}",
+    secrets: [MEILI_API_KEY, MEILI_HOST],
+  },
+  async (event) => {
+    const { hotelUid, productId } = event.params;
+    const indexUid = SUPPLIER_PRODUCTS_INDEX_UID;
+
+    await ensureIndex(indexUid);
+
+    if (!event.data?.after?.exists) {
+      const delRes = await meiliRequest(
+        `/indexes/${encodeURIComponent(indexUid)}/documents/${encodeURIComponent(productId)}`,
+        { method: "DELETE" }
+      );
+
+      if (![200, 202, 404].includes(delRes.status)) {
+        const text = await delRes.text();
+        throw new Error(`Delete failed (${delRes.status}): ${text}`);
+      }
+
+      logger.info("Meili delete ok", { indexUid, productId, hotelUid });
+      return;
+    }
+
+    const productData = event.data.after.data() || {};
+    const doc = buildSupplierProductDocument(productId, hotelUid, productData);
 
     const result = await meiliJson(`/indexes/${encodeURIComponent(indexUid)}/documents`, {
       method: "POST",
