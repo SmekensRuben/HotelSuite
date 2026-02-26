@@ -382,7 +382,6 @@ async function searchSupplierProducts(hotelUid, criteria, pageSize, cursor) {
       limit: pageSize,
       offset,
       filter: meiliFilters,
-      sort: ["supplierProductName:asc"],
     }),
   });
 
@@ -392,7 +391,11 @@ async function searchSupplierProducts(hotelUid, criteria, pageSize, cursor) {
   }
 
   const payload = await response.json();
-  const hits = Array.isArray(payload?.hits) ? payload.hits : [];
+  const hits = Array.isArray(payload?.hits)
+    ? payload.hits
+    : Array.isArray(payload?.results)
+      ? payload.results
+      : [];
   const products = hits
     .map((hit) => {
       const id = String(hit?.id || hit?.documentId || "").trim();
@@ -401,12 +404,11 @@ async function searchSupplierProducts(hotelUid, criteria, pageSize, cursor) {
     })
     .filter(Boolean);
 
-  const estimatedTotalHits = Number(payload?.estimatedTotalHits || 0);
+  const estimatedTotalHits = Number(payload?.estimatedTotalHits ?? payload?.total ?? 0);
   const nextOffset = offset + products.length;
   const hasMore = nextOffset < estimatedTotalHits;
 
-  const hasNoCriteria = !searchTerm && !supplierId && active !== true && active !== false;
-  if (offset === 0 && hasNoCriteria && products.length === 0) {
+  if (offset === 0 && products.length === 0) {
     return searchSupplierProductsWithFirestore(
       hotelUid,
       { searchTerm, supplierId, active },
@@ -512,7 +514,11 @@ async function searchCatalogProductsWithMeili(hotelUid, criteria, pageSize, curs
   }
 
   const payload = await response.json();
-  const hits = Array.isArray(payload?.hits) ? payload.hits : [];
+  const hits = Array.isArray(payload?.hits)
+    ? payload.hits
+    : Array.isArray(payload?.results)
+      ? payload.results
+      : [];
   const products = hits
     .map((hit) => {
       const id = String(hit?.id || hit?.documentId || "").trim();
@@ -521,7 +527,7 @@ async function searchCatalogProductsWithMeili(hotelUid, criteria, pageSize, curs
     })
     .filter(Boolean);
 
-  const estimatedTotalHits = Number(payload?.estimatedTotalHits || 0);
+  const estimatedTotalHits = Number(payload?.estimatedTotalHits ?? payload?.total ?? 0);
   const nextOffset = offset + products.length;
   const hasMore = nextOffset < estimatedTotalHits;
 
