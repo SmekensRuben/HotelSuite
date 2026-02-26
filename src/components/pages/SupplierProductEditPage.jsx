@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
+import Modal from "../shared/Modal";
 import SupplierProductFormFields from "./SupplierProductFormFields";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
@@ -16,6 +17,8 @@ export default function SupplierProductEditPage() {
   const { hotelUid } = useHotelContext();
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showOverwriteModal, setShowOverwriteModal] = useState(false);
+  const [pendingPayload, setPendingPayload] = useState(null);
 
   const today = useMemo(
     () =>
@@ -46,8 +49,28 @@ export default function SupplierProductEditPage() {
 
   const handleUpdate = async (payload) => {
     const actor = auth.currentUser?.uid || "unknown";
-    await updateSupplierProduct(hotelUid, productId, payload, actor);
-    navigate(`/catalog/supplier-products/${productId}`);
+    try {
+      const updatedProductId = await updateSupplierProduct(hotelUid, productId, payload, actor);
+      navigate(`/catalog/supplier-products/${updatedProductId}`);
+    } catch (error) {
+      if (error?.code === "supplier-product-exists") {
+        setPendingPayload(payload);
+        setShowOverwriteModal(true);
+        return;
+      }
+      throw error;
+    }
+  };
+
+  const handleConfirmOverwrite = async () => {
+    if (!pendingPayload) return;
+    const actor = auth.currentUser?.uid || "unknown";
+    const updatedProductId = await updateSupplierProduct(hotelUid, productId, pendingPayload, actor, {
+      overwriteExisting: true,
+    });
+    setShowOverwriteModal(false);
+    setPendingPayload(null);
+    navigate(`/catalog/supplier-products/${updatedProductId}`);
   };
 
   return (
@@ -96,6 +119,39 @@ export default function SupplierProductEditPage() {
           </>
         )}
       </PageContainer>
+
+      <Modal
+        open={showOverwriteModal}
+        onClose={() => {
+          setShowOverwriteModal(false);
+          setPendingPayload(null);
+        }}
+        title="Supplier product bestaat al"
+      >
+        <p className="text-sm text-gray-700">
+          Er bestaat al een supplier product met dezelfde combinatie van Supplier ID en Supplier SKU.
+          Wil je dit bestaande product overschrijven?
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setShowOverwriteModal(false);
+              setPendingPayload(null);
+            }}
+            className="px-4 py-2 rounded border border-gray-300 text-gray-700"
+          >
+            Annuleren
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirmOverwrite}
+            className="px-4 py-2 rounded bg-[#b41f1f] text-white hover:bg-[#961919]"
+          >
+            Overschrijven
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

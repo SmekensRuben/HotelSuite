@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Plus, X } from "lucide-react";
+import * as XLSX from "xlsx";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
@@ -11,7 +12,7 @@ import { useHotelContext } from "../../contexts/HotelContext";
 import { getCatalogProducts, importCatalogProducts } from "../../services/firebaseProducts";
 import { usePermission } from "../../hooks/usePermission";
 
-const CSV_HEADERS = [
+const EXCEL_HEADERS = [
   "documentId",
   "name",
   "brand",
@@ -29,8 +30,9 @@ const CSV_HEADERS = [
   "imageUrl",
 ];
 
+const TEMPLATE_HEADERS = EXCEL_HEADERS.filter((header) => header !== "documentId");
+
 const EXPORT_TEMPLATE_ROW = {
-  documentId: "",
   name: "",
   brand: "",
   description: "",
@@ -48,54 +50,6 @@ const EXPORT_TEMPLATE_ROW = {
 };
 
 const PAGE_SIZE = 50;
-
-function parseCsvLine(line, delimiter) {
-  const cells = [];
-  let cell = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i];
-    if (char === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        cell += '"';
-        i += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (char === delimiter && !inQuotes) {
-      cells.push(cell);
-      cell = "";
-    } else {
-      cell += char;
-    }
-  }
-
-  cells.push(cell);
-  return cells;
-}
-
-function detectDelimiter(line) {
-  const countOutsideQuotes = (delimiter) => {
-    let inQuotes = false;
-    let count = 0;
-    for (let i = 0; i < line.length; i += 1) {
-      const char = line[i];
-      if (char === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          i += 1;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (!inQuotes && char === delimiter) {
-        count += 1;
-      }
-    }
-    return count;
-  };
-
-  return countOutsideQuotes(";") > countOutsideQuotes(",") ? ";" : ",";
-}
 
 export default function ProductsPage() {
   const navigate = useNavigate();
@@ -235,28 +189,11 @@ export default function ProductsPage() {
     },
   ];
 
-  const downloadCsv = (rows, filename) => {
-    const escapeCsv = (value) => {
-      const strValue = String(value ?? "");
-      if (strValue.includes('"') || strValue.includes(",") || strValue.includes("\n")) {
-        return `"${strValue.replace(/"/g, '""')}"`;
-      }
-      return strValue;
-    };
-
-    const headerLine = CSV_HEADERS.join(",");
-    const rowLines = rows.map((row) => CSV_HEADERS.map((header) => escapeCsv(row[header])).join(","));
-    const csvContent = [headerLine, ...rowLines].join("\n");
-
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    URL.revokeObjectURL(url);
+  const downloadExcel = (rows, headers, filename) => {
+    const worksheet = XLSX.utils.json_to_sheet(rows, { header: headers });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Products");
+    XLSX.writeFile(workbook, filename);
   };
 
   const normalizeExportRow = (row) => ({
@@ -278,13 +215,13 @@ export default function ProductsPage() {
   });
 
   const handleExportTemplate = () => {
-    downloadCsv([EXPORT_TEMPLATE_ROW], "catalog-products-template.csv");
+    downloadExcel([EXPORT_TEMPLATE_ROW], TEMPLATE_HEADERS, "catalog-products-template.xlsx");
     setShowExportModal(false);
   };
 
   const handleExportFullList = () => {
     const rows = products.map((product) => normalizeExportRow({ documentId: product.id, ...product }));
-    downloadCsv(rows, "catalog-products-full.csv");
+    downloadExcel(rows, EXCEL_HEADERS, "catalog-products-full.xlsx");
     setShowExportModal(false);
   };
 
@@ -298,56 +235,50 @@ export default function ProductsPage() {
     if (!file) return;
 
     try {
-      const raw = await file.text();
-      const normalizedRaw = raw.replace(/^\uFEFF/, "");
-      const lines = normalizedRaw.split(/\r?\n/).filter((line) => line.trim() !== "");
-      if (lines.length < 2) {
+      const workbookData = await file.arrayBuffer();
+      const workbook = XLSX.read(workbookData, { type: "array" });
+      const firstSheet = workbook.SheetNames[0];
+      const worksheet = firstSheet ? workbook.Sheets[firstSheet] : null;
+      if (!worksheet) {
         window.alert(t("products.import.invalidFile"));
         return;
       }
 
-      const delimiter = detectDelimiter(lines[0]);
-      const headers = parseCsvLine(lines[0], delimiter).map((header) => header.replace(/^\uFEFF/, "").trim());
-      const importedProducts = lines
-        .slice(1)
-        .map((line) => {
-          const values = parseCsvLine(line, delimiter);
-          const row = {};
-          headers.forEach((header, index) => {
-            row[header] = values[index] ?? "";
-          });
+      const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "", raw: false });
+      const parseNumberOrUndefined = (value) => {
+        const normalized = String(value || "").trim().replace(",", ".");
+        if (!normalized) return undefined;
+        const parsed = Number(normalized);
+        return Number.isNaN(parsed) ? undefined : parsed;
+      };
 
-          const baseQtyPerUnitRaw = row.baseQtyPerUnit?.trim() || "";
-          const normalizedBaseQtyPerUnit = baseQtyPerUnitRaw.replace(",", ".");
-          const parsedBaseQtyPerUnit = Number(normalizedBaseQtyPerUnit);
+      const importedProducts = rows
+        .map((row) => {
+          const hasData = Object.values(row).some((value) => String(value ?? "").trim() !== "");
+          if (!hasData) return null;
 
           return {
-            documentId: row.documentId?.trim(),
-            name: row.name?.trim(),
-            brand: row.brand?.trim(),
-            description: row.description?.trim(),
+            documentId: String(row.documentId || "").trim() || undefined,
+            name: String(row.name || "").trim(),
+            brand: String(row.brand || "").trim(),
+            description: String(row.description || "").trim(),
             active: String(row.active || "").trim().toLowerCase() !== "false",
-            category: row.category?.trim(),
-            subcategory: row.subcategory?.trim(),
-            baseUnit: row.baseUnit?.trim(),
-            baseQtyPerUnit:
-              normalizedBaseQtyPerUnit === "" || Number.isNaN(parsedBaseQtyPerUnit)
-                ? undefined
-                : parsedBaseQtyPerUnit,
-            gtin: row.gtin?.trim(),
-            internalSku: row.internalSku?.trim(),
-            storageType: row.storageType?.trim(),
-            allergens: row.allergens
-              ? row.allergens
-                  .split("|")
-                  .map((item) => item.trim())
-                  .filter(Boolean)
-              : [],
-            notes: row.notes?.trim(),
-            imageUrl: row.imageUrl?.trim(),
+            category: String(row.category || "").trim(),
+            subcategory: String(row.subcategory || "").trim(),
+            baseUnit: String(row.baseUnit || "").trim(),
+            baseQtyPerUnit: parseNumberOrUndefined(row.baseQtyPerUnit),
+            gtin: String(row.gtin || "").trim(),
+            internalSku: String(row.internalSku || "").trim(),
+            storageType: String(row.storageType || "").trim(),
+            allergens: String(row.allergens || "")
+              .split("|")
+              .map((item) => item.trim())
+              .filter(Boolean),
+            notes: String(row.notes || "").trim(),
+            imageUrl: String(row.imageUrl || "").trim(),
           };
         })
-        .filter((product) => product.documentId);
+        .filter(Boolean);
 
       if (importedProducts.length === 0) {
         window.alert(t("products.import.invalidFile"));
@@ -438,7 +369,7 @@ export default function ProductsPage() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".csv,text/csv"
+          accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
           className="hidden"
           onChange={handleImportFileChange}
         />
