@@ -409,8 +409,7 @@ async function searchSupplierProducts(hotelUid, criteria, pageSize, cursor) {
   const nextOffset = offset + products.length;
   const hasMore = nextOffset < estimatedTotalHits;
 
-  const hasNoCriteria = !searchTerm && !supplierId && active !== true && active !== false;
-  if (offset === 0 && hasNoCriteria && products.length === 0) {
+  if (offset === 0 && products.length === 0) {
     return searchSupplierProductsWithFirestore(
       hotelUid,
       { searchTerm, supplierId, active },
