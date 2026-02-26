@@ -634,7 +634,7 @@ export async function importCatalogProducts(hotelUid, products, options = {}) {
     const documentId = providedDocumentId || doc(productsCol).id;
 
     const payload = sanitizeCatalogProductPayload(product);
-    const exists = providedDocumentId ? existingIds.has(documentId) : false;
+    const exists = existingIds.has(documentId);
 
     if (exists && strategy === "skip") {
       skipped += 1;
@@ -687,7 +687,8 @@ export async function importSupplierProducts(hotelUid, products, options = {}) {
     const supplierId = String(product.supplierId || "").trim();
     const supplierSku = String(product.supplierSku || "").trim();
     const providedDocumentId = String(product.documentId || product.id || "").trim();
-    const documentId = providedDocumentId || doc(productsCol).id;
+    const generatedSupplierDocumentId = `${supplierId}_${supplierSku}`;
+    const documentId = providedDocumentId || generatedSupplierDocumentId;
     if (!supplierId || !supplierSku) {
       skipped += 1;
       continue;
@@ -698,7 +699,7 @@ export async function importSupplierProducts(hotelUid, products, options = {}) {
       supplierId,
       supplierSku,
     });
-    const exists = providedDocumentId ? existingIds.has(documentId) : false;
+    const exists = existingIds.has(documentId);
 
     if (exists && strategy === "skip") {
       skipped += 1;
