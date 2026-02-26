@@ -823,11 +823,11 @@ export async function updateCatalogProduct(hotelUid, productId, productData, act
   return updateEntityProduct(hotelUid, productId, productData, actor, "catalogproducts");
 }
 
-export async function updateSupplierProduct(hotelUid, productId, productData, actor) {
-  return updateEntityProduct(hotelUid, productId, productData, actor, "supplierproducts");
+export async function updateSupplierProduct(hotelUid, productId, productData, actor, options = {}) {
+  return updateEntityProduct(hotelUid, productId, productData, actor, "supplierproducts", options);
 }
 
-async function updateEntityProduct(hotelUid, productId, productData, actor, entityCollection) {
+async function updateEntityProduct(hotelUid, productId, productData, actor, entityCollection, options = {}) {
   if (!hotelUid || !productId) throw new Error("hotelUid en productId zijn verplicht!");
   const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
   const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
@@ -846,7 +846,7 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
         getDoc(doc(db, `hotels/${hotelUid}/${entityCollection}`, nextProductId)),
       ]);
 
-      if (nextSnap.exists()) {
+      if (nextSnap.exists() && !options.overwriteExisting) {
         const error = new Error("Supplier product bestaat al");
         error.code = "supplier-product-exists";
         error.productId = nextProductId;
