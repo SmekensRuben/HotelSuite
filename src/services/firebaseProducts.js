@@ -630,14 +630,11 @@ export async function importCatalogProducts(hotelUid, products, options = {}) {
   let skipped = 0;
 
   for (const product of products) {
-    const documentId = String(product.documentId || product.id || "").trim();
-    if (!documentId) {
-      skipped += 1;
-      continue;
-    }
+    const providedDocumentId = String(product.documentId || product.id || "").trim();
+    const documentId = providedDocumentId || doc(productsCol).id;
 
     const payload = sanitizeCatalogProductPayload(product);
-    const exists = existingIds.has(documentId);
+    const exists = providedDocumentId ? existingIds.has(documentId) : false;
 
     if (exists && strategy === "skip") {
       skipped += 1;
@@ -689,8 +686,9 @@ export async function importSupplierProducts(hotelUid, products, options = {}) {
   for (const product of products) {
     const supplierId = String(product.supplierId || "").trim();
     const supplierSku = String(product.supplierSku || "").trim();
-    const documentId = String(product.documentId || product.id || `${supplierId}_${supplierSku}`).trim();
-    if (!documentId || !supplierId || !supplierSku) {
+    const providedDocumentId = String(product.documentId || product.id || "").trim();
+    const documentId = providedDocumentId || doc(productsCol).id;
+    if (!supplierId || !supplierSku) {
       skipped += 1;
       continue;
     }
@@ -700,7 +698,7 @@ export async function importSupplierProducts(hotelUid, products, options = {}) {
       supplierId,
       supplierSku,
     });
-    const exists = existingIds.has(documentId);
+    const exists = providedDocumentId ? existingIds.has(documentId) : false;
 
     if (exists && strategy === "skip") {
       skipped += 1;
