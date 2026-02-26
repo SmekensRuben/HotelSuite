@@ -395,7 +395,11 @@ async function searchSupplierProducts(hotelUid, criteria, pageSize, cursor) {
   const hits = Array.isArray(payload?.hits) ? payload.hits : [];
   const products = hits
     .map((hit) => {
-      const id = String(hit?.id || hit?.documentId || "").trim();
+      const fallbackId = [hit?.supplierId, hit?.supplierSku]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .join("_");
+      const id = String(hit?.id || hit?.documentId || fallbackId || "").trim();
       if (!id) return null;
       return { id, ...hit };
     })
@@ -404,6 +408,16 @@ async function searchSupplierProducts(hotelUid, criteria, pageSize, cursor) {
   const estimatedTotalHits = Number(payload?.estimatedTotalHits || 0);
   const nextOffset = offset + products.length;
   const hasMore = nextOffset < estimatedTotalHits;
+
+  const hasNoCriteria = !searchTerm && !supplierId && active !== true && active !== false;
+  if (offset === 0 && hasNoCriteria && products.length === 0) {
+    return searchSupplierProductsWithFirestore(
+      hotelUid,
+      { searchTerm, supplierId, active },
+      pageSize,
+      null
+    );
+  }
 
   return {
     products,
