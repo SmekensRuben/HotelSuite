@@ -619,6 +619,35 @@ function sanitizeSupplierProductPayload(product = {}) {
   return cleanedPayload;
 }
 
+function normalizeSupplierProductPricingPayload(product = {}) {
+  const pricingModel = String(product.pricingModel || "Per Purchase Unit").trim();
+  const normalized = {
+    ...product,
+    pricingModel,
+  };
+
+  const baseUnitsPerPurchaseUnit = Number(normalized.baseUnitsPerPurchaseUnit || 0);
+  const pricePerBaseUnit = Number(normalized.pricePerBaseUnit || 0);
+
+  if (pricingModel === "Per Base Unit") {
+    const purchaseUnit = String(normalized.purchaseUnit || "").trim();
+    if (!purchaseUnit || !(baseUnitsPerPurchaseUnit > 0)) {
+      throw new Error(
+        "Voor pricingModel 'Per Base Unit' zijn purchaseUnit en baseUnitsPerPurchaseUnit verplicht"
+      );
+    }
+
+    normalized.purchaseUnit = purchaseUnit;
+    normalized.baseUnitsPerPurchaseUnit = baseUnitsPerPurchaseUnit;
+    normalized.pricePerBaseUnit = pricePerBaseUnit;
+    normalized.pricePerPurchaseUnit = Number(
+      (pricePerBaseUnit * baseUnitsPerPurchaseUnit).toFixed(4)
+    );
+  }
+
+  return normalized;
+}
+
 export async function importCatalogProducts(hotelUid, products, options = {}) {
   if (!hotelUid) throw new Error("hotelUid is verplicht!");
   const strategy = options.onExisting === "overwrite" ? "overwrite" : "skip";
@@ -696,11 +725,11 @@ export async function importSupplierProducts(hotelUid, products, options = {}) {
       continue;
     }
 
-    const payload = sanitizeSupplierProductPayload({
+    const payload = normalizeSupplierProductPricingPayload(sanitizeSupplierProductPayload({
       ...product,
       supplierId,
       supplierSku,
-    });
+    }));
     const exists = existingIds.has(documentId);
 
     if (exists && strategy === "skip") {
@@ -769,8 +798,12 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
   if (!hotelUid) throw new Error("hotelUid is verplicht!");
   const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
   const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
+  const normalizedProductData = includeSupplierPriceTimestamp
+    ? normalizeSupplierProductPricingPayload(productData)
+    : productData;
+
   const payload = {
-    ...productData,
+    ...normalizedProductData,
     active: productData.active ?? true,
     createdAt: serverTimestamp(),
     createdBy: actor || "unknown",
@@ -780,8 +813,8 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
   };
 
   if (includeSupplierPriceTimestamp) {
-    const supplierId = String(productData.supplierId || "").trim();
-    const supplierSku = String(productData.supplierSku || "").trim();
+    const supplierId = String(normalizedProductData.supplierId || "").trim();
+    const supplierSku = String(normalizedProductData.supplierSku || "").trim();
     if (!supplierId || !supplierSku) {
       throw new Error("supplierId en supplierSku zijn verplicht voor supplier products");
     }
@@ -838,9 +871,13 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
   const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
   const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
 
+  const normalizedProductData = includeSupplierPriceTimestamp
+    ? normalizeSupplierProductPricingPayload(productData)
+    : productData;
+
   if (includeSupplierPriceTimestamp) {
-    const supplierId = String(productData.supplierId || "").trim();
-    const supplierSku = String(productData.supplierSku || "").trim();
+    const supplierId = String(normalizedProductData.supplierId || "").trim();
+    const supplierSku = String(normalizedProductData.supplierSku || "").trim();
     if (!supplierId || !supplierSku) {
       throw new Error("supplierId en supplierSku zijn verplicht voor supplier products");
     }
@@ -862,7 +899,7 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
       const currentData = currentSnap.exists() ? currentSnap.data() : {};
       const payload = {
         ...currentData,
-        ...productData,
+        ...normalizedProductData,
         updatedAt: serverTimestamp(),
         updatedBy: actor || "unknown",
         priceUpdatedOn: serverTimestamp(),
@@ -877,7 +914,7 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
   }
 
   const payload = {
-    ...productData,
+    ...normalizedProductData,
     updatedAt: serverTimestamp(),
     updatedBy: actor || "unknown",
     ...(includeSupplierPriceTimestamp ? { priceUpdatedOn: serverTimestamp() } : {}),
