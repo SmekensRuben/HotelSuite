@@ -6,7 +6,7 @@ import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getShoppingCarts } from "../../services/firebaseShoppingCarts";
+import { getOrders } from "../../services/firebaseOrders";
 
 function formatDateTime(value) {
   if (!value) return "-";
@@ -16,7 +16,7 @@ function formatDateTime(value) {
 export default function OrdersPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
-  const [carts, setCarts] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const today = useMemo(
@@ -36,15 +36,15 @@ export default function OrdersPage() {
   };
 
   useEffect(() => {
-    const loadCarts = async () => {
+    const loadOrders = async () => {
       if (!hotelUid) return;
       setLoading(true);
-      const result = await getShoppingCarts(hotelUid);
-      setCarts(result);
+      const result = await getOrders(hotelUid);
+      setOrders(result);
       setLoading(false);
     };
 
-    loadCarts();
+    loadOrders();
   }, [hotelUid]);
 
   return (
@@ -55,7 +55,7 @@ export default function OrdersPage() {
           <div className="flex items-center justify-between gap-4">
             <div>
               <h1 className="text-2xl font-semibold">Orders</h1>
-              <p className="text-sm text-gray-500 mt-1">Overzicht van shopping carts / orders.</p>
+              <p className="text-sm text-gray-500 mt-1">Overzicht van orders.</p>
             </div>
             <button
               type="button"
@@ -69,7 +69,7 @@ export default function OrdersPage() {
 
           {loading ? (
             <p className="mt-6 text-sm text-gray-600">Orders laden...</p>
-          ) : carts.length === 0 ? (
+          ) : orders.length === 0 ? (
             <p className="mt-6 text-sm text-gray-600">Nog geen orders gevonden.</p>
           ) : (
             <div className="mt-6 overflow-x-auto">
@@ -77,29 +77,25 @@ export default function OrdersPage() {
                 <thead className="bg-gray-100 text-xs uppercase text-gray-600">
                   <tr>
                     <th className="text-left px-4 py-2">Order ID</th>
+                    <th className="text-left px-4 py-2">Status</th>
+                    <th className="text-left px-4 py-2">Delivery Date</th>
                     <th className="text-left px-4 py-2">Created By</th>
                     <th className="text-left px-4 py-2">Created At</th>
-                    <th className="text-left px-4 py-2">Updated At</th>
                     <th className="text-right px-4 py-2">Items</th>
-                    <th className="text-right px-4 py-2">Acties</th>
+                    <th className="text-right px-4 py-2">Totaal</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {carts.map((cart) => (
-                    <tr key={cart.id} className="border-t border-gray-200 text-sm">
-                      <td className="px-4 py-2 font-mono">{cart.id}</td>
-                      <td className="px-4 py-2">{cart.createdBy || "-"}</td>
-                      <td className="px-4 py-2">{formatDateTime(cart.createdAtDate)}</td>
-                      <td className="px-4 py-2">{formatDateTime(cart.updatedAtDate)}</td>
-                      <td className="px-4 py-2 text-right">{Array.isArray(cart.items) ? cart.items.length : 0}</td>
+                  {orders.map((order) => (
+                    <tr key={order.id} className="border-t border-gray-200 text-sm">
+                      <td className="px-4 py-2 font-mono">{order.id}</td>
+                      <td className="px-4 py-2">{order.status}</td>
+                      <td className="px-4 py-2">{order.deliveryDate || "-"}</td>
+                      <td className="px-4 py-2">{order.createdBy || "-"}</td>
+                      <td className="px-4 py-2">{formatDateTime(order.createdAtDate)}</td>
+                      <td className="px-4 py-2 text-right">{Array.isArray(order.products) ? order.products.length : 0}</td>
                       <td className="px-4 py-2 text-right">
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/orders/cart/${cart.id}`)}
-                          className="text-blue-600 hover:text-blue-800 font-semibold"
-                        >
-                          Open
-                        </button>
+                        {Number(order.totalAmount || 0).toFixed(2)} {order.currency || "EUR"}
                       </td>
                     </tr>
                   ))}

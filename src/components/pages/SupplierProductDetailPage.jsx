@@ -167,8 +167,14 @@ export default function SupplierProductDetailPage() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <DetailField label="Currency" value={product.currency || "EUR"} />
                   <DetailField label="Pricing Model" value={product.pricingModel || "Per Purchase Unit"} />
+                  <DetailField label="Base Unit" value={product.baseUnit} />
                   {product.pricingModel === "Per Base Unit" ? (
-                    <DetailField label="Price per Base Unit" value={product.pricePerBaseUnit} />
+                    <>
+                      <DetailField label="Purchase Unit" value={product.purchaseUnit} />
+                      <DetailField label="Price per Base Unit" value={product.pricePerBaseUnit} />
+                      <DetailField label="Base Units per Purchase Unit" value={product.baseUnitsPerPurchaseUnit} />
+                      <DetailField label="Price per Purchase Unit" value={product.pricePerPurchaseUnit} />
+                    </>
                   ) : (
                     <>
                       <DetailField label="Purchase Unit" value={product.purchaseUnit} />
@@ -182,7 +188,6 @@ export default function SupplierProductDetailPage() {
               <Card>
                 <h2 className="text-lg font-semibold mb-3">Classification</h2>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <DetailField label="Base Unit" value={product.baseUnit} />
                   <DetailField label="Catalog Product ID" value={product.catalogProductId} />
                   <DetailField label="Has Variants" value={product.hasVariants ? "true" : "false"} />
                 </div>
