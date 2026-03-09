@@ -22,6 +22,7 @@ import {
   uploadBytes,
   getDownloadURL
 } from "../firebaseConfig";
+import { normalizeDocumentId } from "./productIdUtils";
 
 // Simple in-memory cache for indexed products per hotel
 const productsIndexedCache = {};
@@ -648,6 +649,7 @@ function normalizeSupplierProductPricingPayload(product = {}) {
   return normalized;
 }
 
+
 export async function importCatalogProducts(hotelUid, products, options = {}) {
   if (!hotelUid) throw new Error("hotelUid is verplicht!");
   const strategy = options.onExisting === "overwrite" ? "overwrite" : "skip";
@@ -662,7 +664,7 @@ export async function importCatalogProducts(hotelUid, products, options = {}) {
 
   for (const product of products) {
     const providedDocumentId = String(product.documentId || product.id || "").trim();
-    const documentId = providedDocumentId || doc(productsCol).id;
+    const documentId = normalizeDocumentId(providedDocumentId) || doc(productsCol).id;
 
     const payload = sanitizeCatalogProductPayload(product);
     const exists = existingIds.has(documentId);
@@ -718,8 +720,8 @@ export async function importSupplierProducts(hotelUid, products, options = {}) {
     const supplierId = String(product.supplierId || "").trim();
     const supplierSku = String(product.supplierSku || "").trim();
     const providedDocumentId = String(product.documentId || product.id || "").trim();
-    const generatedSupplierDocumentId = `${supplierId}_${supplierSku}`;
-    const documentId = providedDocumentId || generatedSupplierDocumentId;
+    const generatedSupplierDocumentId = normalizeDocumentId(`${supplierId}_${supplierSku}`);
+    const documentId = normalizeDocumentId(providedDocumentId) || generatedSupplierDocumentId;
     if (!supplierId || !supplierSku) {
       skipped += 1;
       continue;
@@ -818,7 +820,10 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
     if (!supplierId || !supplierSku) {
       throw new Error("supplierId en supplierSku zijn verplicht voor supplier products");
     }
-    const supplierProductId = `${supplierId}_${supplierSku}`;
+    const supplierProductId = normalizeDocumentId(`${supplierId}_${supplierSku}`);
+    if (!supplierProductId) {
+      throw new Error("supplierId en supplierSku bevatten geen geldige tekens voor een product ID");
+    }
     const productRef = doc(productsCol, supplierProductId);
     if (!options.overwriteExisting) {
       const existingSnap = await getDoc(productRef);
@@ -882,7 +887,10 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
       throw new Error("supplierId en supplierSku zijn verplicht voor supplier products");
     }
 
-    const nextProductId = `${supplierId}_${supplierSku}`;
+    const nextProductId = normalizeDocumentId(`${supplierId}_${supplierSku}`);
+    if (!nextProductId) {
+      throw new Error("supplierId en supplierSku bevatten geen geldige tekens voor een product ID");
+    }
     if (nextProductId !== productId) {
       const [currentSnap, nextSnap] = await Promise.all([
         getDoc(productDoc),
