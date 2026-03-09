@@ -23,6 +23,7 @@ import UserDetailPage from "./components/pages/UserDetailPage.jsx";
 import OrdersPage from "./components/pages/OrdersPage.jsx";
 import OrderCreatePage from "./components/pages/OrderCreatePage.jsx";
 import ShoppingCartPage from "./components/pages/ShoppingCartPage.jsx";
+import OrderDetailPage from "./components/pages/OrderDetailPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -178,6 +179,14 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="orders" action="read">
             <ShoppingCartPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/orders/:orderId"
+        element={
+          <ProtectedRoute feature="orders" action="read">
+            <OrderDetailPage />
           </ProtectedRoute>
         }
       />

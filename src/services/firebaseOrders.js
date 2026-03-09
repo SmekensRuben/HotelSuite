@@ -20,6 +20,22 @@ function normalizeTimestamp(value) {
   return null;
 }
 
+function normalizeOrder(docSnap) {
+  const data = docSnap.data() || {};
+  return {
+    id: docSnap.id,
+    ...data,
+    createdAtDate: normalizeTimestamp(data.createdAt),
+    updatedAtDate: normalizeTimestamp(data.updatedAt),
+    deliveryDate: data.deliveryDate || "",
+    status: ORDER_STATUSES.includes(data.status) ? data.status : "Created",
+    products: Array.isArray(data.products) ? data.products : [],
+    totalAmount: Number(data.totalAmount || 0),
+    supplierId: data.supplierId || "",
+    currency: data.currency || "EUR",
+  };
+}
+
 export function listOrderStatuses() {
   return ORDER_STATUSES;
 }
@@ -31,22 +47,18 @@ export async function getOrders(hotelUid) {
   const ordersQuery = query(ordersCol, orderBy("createdAt", "desc"));
   const snap = await getDocs(ordersQuery);
 
-  return snap.docs.map((docSnap) => {
-    const data = docSnap.data() || {};
-    return {
-      id: docSnap.id,
-      ...data,
-      createdAtDate: normalizeTimestamp(data.createdAt),
-      updatedAtDate: normalizeTimestamp(data.updatedAt),
-      deliveryDate: data.deliveryDate || "",
-      status: ORDER_STATUSES.includes(data.status) ? data.status : "Created",
-      products: Array.isArray(data.products) ? data.products : [],
-      totalAmount: Number(data.totalAmount || 0),
-    };
-  });
+  return snap.docs.map((docSnap) => normalizeOrder(docSnap));
 }
 
-export async function createOrderFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor) {
+export async function getOrderById(hotelUid, orderId) {
+  if (!hotelUid || !orderId) return null;
+  const orderRef = doc(db, `hotels/${hotelUid}/orders`, orderId);
+  const snap = await getDoc(orderRef);
+  if (!snap.exists()) return null;
+  return normalizeOrder(snap);
+}
+
+export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor) {
   if (!hotelUid || !shoppingCartId || !deliveryDate) {
     throw new Error("hotelUid, shoppingCartId en deliveryDate zijn verplicht");
   }
@@ -64,30 +76,48 @@ export async function createOrderFromShoppingCart(hotelUid, shoppingCartId, deli
     throw new Error("Shopping cart is leeg");
   }
 
-  const totalAmount = items.reduce(
-    (sum, item) => sum + (Number(item.pricePerPurchaseUnit || 0) * Number(item.qtyPurchaseUnits || 0)),
-    0
-  );
-
-  const orderPayload = {
-    status: "Created",
-    deliveryDate,
-    shoppingCartId,
-    createdBy: actor || "unknown",
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-    products: items,
-    totalAmount,
-    currency: items[0]?.currency || "EUR",
-  };
+  const groupedBySupplier = items.reduce((acc, item) => {
+    const supplierId = String(item.supplierId || "Onbekend").trim() || "Onbekend";
+    if (!acc[supplierId]) acc[supplierId] = [];
+    acc[supplierId].push(item);
+    return acc;
+  }, {});
 
   const ordersCol = collection(db, `hotels/${hotelUid}/orders`);
-  const orderRef = await addDoc(ordersCol, orderPayload);
+  const createdOrderIds = [];
+
+  for (const [supplierId, supplierItems] of Object.entries(groupedBySupplier)) {
+    const totalAmount = supplierItems.reduce(
+      (sum, item) => sum + (Number(item.pricePerPurchaseUnit || 0) * Number(item.qtyPurchaseUnits || 0)),
+      0
+    );
+
+    const orderPayload = {
+      status: "Created",
+      deliveryDate,
+      shoppingCartId,
+      supplierId,
+      createdBy: actor || "unknown",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      products: supplierItems,
+      totalAmount,
+      currency: supplierItems[0]?.currency || "EUR",
+    };
+
+    const orderRef = await addDoc(ordersCol, orderPayload);
+    createdOrderIds.push(orderRef.id);
+  }
 
   await updateDoc(cartRef, {
     items: [],
     updatedAt: serverTimestamp(),
   });
 
-  return orderRef.id;
+  return createdOrderIds;
+}
+
+export async function createOrderFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor) {
+  const orderIds = await createOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor);
+  return orderIds[0] || null;
 }

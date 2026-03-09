@@ -7,7 +7,7 @@ import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { createOrderFromShoppingCart } from "../../services/firebaseOrders";
+import { createOrdersFromShoppingCart } from "../../services/firebaseOrders";
 import {
   getShoppingCart,
   removeShoppingCartItem,
@@ -184,7 +184,7 @@ export default function ShoppingCartPage() {
               if (!deliveryDate) return;
               setCreatingOrder(true);
               const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-              await createOrderFromShoppingCart(hotelUid, cartId, deliveryDate, actor);
+              await createOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, actor);
               setCreatingOrder(false);
               setShowCreateOrderModal(false);
               navigate("/orders");
