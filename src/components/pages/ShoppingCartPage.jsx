@@ -95,6 +95,7 @@ export default function ShoppingCartPage() {
                       <th className="text-left px-4 py-2">Product</th>
                       <th className="text-left px-4 py-2">SKU</th>
                       <th className="text-left px-4 py-2">Purchase Unit</th>
+                      <th className="text-left px-4 py-2">Content</th>
                       <th className="text-left px-4 py-2">Aantal</th>
                       <th className="text-right px-4 py-2">Prijs / stuk</th>
                       <th className="text-right px-4 py-2">Totaal</th>
@@ -111,6 +112,7 @@ export default function ShoppingCartPage() {
                           <td className="px-4 py-2">{item.supplierProductName || "-"}</td>
                           <td className="px-4 py-2">{item.supplierSku || "-"}</td>
                           <td className="px-4 py-2">{item.purchaseUnit || "-"}</td>
+                          <td className="px-4 py-2">{Number(item.baseUnitsPerPurchaseUnit || 0) > 0 && item.baseUnit ? `${Number(item.baseUnitsPerPurchaseUnit)} ${item.baseUnit}` : "-"}</td>
                           <td className="px-4 py-2">
                             <input
                               type="number"
