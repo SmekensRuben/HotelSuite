@@ -20,6 +20,11 @@ import SupplierEditPage from "./components/pages/SupplierEditPage.jsx";
 import SettingsCatalogPage from "./components/pages/SettingsCatalogPage.jsx";
 import UserManagementPage from "./components/pages/UserManagementPage.jsx";
 import UserDetailPage from "./components/pages/UserDetailPage.jsx";
+import OrdersPage from "./components/pages/OrdersPage.jsx";
+import OrderCreatePage from "./components/pages/OrderCreatePage.jsx";
+import ShoppingCartPage from "./components/pages/ShoppingCartPage.jsx";
+import OrderDetailPage from "./components/pages/OrderDetailPage.jsx";
+import OrderEditPage from "./components/pages/OrderEditPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -151,6 +156,46 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="users" action="read">
             <UserManagementPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/orders"
+        element={
+          <ProtectedRoute feature="orders" action="read">
+            <OrdersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/orders/new"
+        element={
+          <ProtectedRoute feature="orders" action="create">
+            <OrderCreatePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/orders/cart/:cartId"
+        element={
+          <ProtectedRoute feature="orders" action="read">
+            <ShoppingCartPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/orders/:orderId"
+        element={
+          <ProtectedRoute feature="orders" action="read">
+            <OrderDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/orders/:orderId/edit"
+        element={
+          <ProtectedRoute feature="orders" action="update">
+            <OrderEditPage />
           </ProtectedRoute>
         }
       />
