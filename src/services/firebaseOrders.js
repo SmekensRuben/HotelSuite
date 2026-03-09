@@ -9,6 +9,7 @@ import {
   orderBy,
   serverTimestamp,
   updateDoc,
+  deleteDoc,
 } from "../firebaseConfig";
 
 const ORDER_STATUSES = ["Created", "Ordered", "Received", "Finalized", "Canceled"];
@@ -56,6 +57,51 @@ export async function getOrderById(hotelUid, orderId) {
   const snap = await getDoc(orderRef);
   if (!snap.exists()) return null;
   return normalizeOrder(snap);
+}
+
+export async function updateOrder(hotelUid, orderId, payload, actor) {
+  if (!hotelUid || !orderId) throw new Error("hotelUid en orderId zijn verplicht");
+
+  const orderRef = doc(db, `hotels/${hotelUid}/orders`, orderId);
+  const snap = await getDoc(orderRef);
+  if (!snap.exists()) throw new Error("Order niet gevonden");
+
+  const current = snap.data() || {};
+  if (String(current.status || "") !== "Created") {
+    throw new Error("Enkel orders met status Created kunnen bewerkt worden");
+  }
+
+  const nextPayload = {
+    ...payload,
+    updatedAt: serverTimestamp(),
+    updatedBy: actor || "unknown",
+  };
+
+  if (Array.isArray(payload?.products)) {
+    const totalAmount = payload.products.reduce(
+      (sum, item) => sum + Number(item.pricePerPurchaseUnit || 0) * Number(item.qtyPurchaseUnits || 0),
+      0
+    );
+    nextPayload.totalAmount = totalAmount;
+    nextPayload.currency = payload.products[0]?.currency || current.currency || "EUR";
+  }
+
+  await updateDoc(orderRef, nextPayload);
+}
+
+export async function deleteOrder(hotelUid, orderId) {
+  if (!hotelUid || !orderId) throw new Error("hotelUid en orderId zijn verplicht");
+
+  const orderRef = doc(db, `hotels/${hotelUid}/orders`, orderId);
+  const snap = await getDoc(orderRef);
+  if (!snap.exists()) throw new Error("Order niet gevonden");
+
+  const current = snap.data() || {};
+  if (String(current.status || "") !== "Created") {
+    throw new Error("Enkel orders met status Created kunnen verwijderd worden");
+  }
+
+  await deleteDoc(orderRef);
 }
 
 export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor) {

@@ -3,9 +3,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
+import Modal from "../shared/Modal";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getOrderById } from "../../services/firebaseOrders";
+import { deleteOrder, getOrderById, updateOrder } from "../../services/firebaseOrders";
 import { getUserDisplayName } from "../../services/firebaseUserManagement";
 
 export default function OrderDetailPage() {
@@ -15,6 +16,10 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [createdByName, setCreatedByName] = useState("-");
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deliveryDate, setDeliveryDate] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const today = useMemo(
     () =>
@@ -32,20 +37,21 @@ export default function OrderDetailPage() {
     window.location.href = "/login";
   };
 
-  useEffect(() => {
-    const load = async () => {
-      if (!hotelUid || !orderId) return;
-      setLoading(true);
-      const result = await getOrderById(hotelUid, orderId);
-      setOrder(result);
-      if (result?.createdBy) {
-        const displayName = await getUserDisplayName(result.createdBy);
-        setCreatedByName(displayName);
-      }
-      setLoading(false);
-    };
+  const loadOrder = async () => {
+    if (!hotelUid || !orderId) return;
+    setLoading(true);
+    const result = await getOrderById(hotelUid, orderId);
+    setOrder(result);
+    if (result?.createdBy) {
+      const displayName = await getUserDisplayName(result.createdBy);
+      setCreatedByName(displayName);
+    }
+    setDeliveryDate(result?.deliveryDate || "");
+    setLoading(false);
+  };
 
-    load();
+  useEffect(() => {
+    loadOrder();
   }, [hotelUid, orderId]);
 
   if (loading) {
@@ -73,6 +79,7 @@ export default function OrderDetailPage() {
   }
 
   const items = Array.isArray(order.products) ? order.products : [];
+  const isCreated = order.status === "Created";
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -80,19 +87,57 @@ export default function OrderDetailPage() {
       <PageContainer className="space-y-6">
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-3xl font-semibold">Order detail</h1>
-          <button type="button" onClick={() => navigate("/orders")} className="px-4 py-2 border border-gray-300 rounded font-semibold hover:bg-gray-100">
-            Terug
-          </button>
+          <div className="flex items-center gap-2">
+            {isCreated && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(true)}
+                  className="px-4 py-2 border border-gray-300 rounded font-semibold hover:bg-gray-100"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteModal(true)}
+                  className="px-4 py-2 border border-red-300 text-red-700 rounded font-semibold hover:bg-red-50"
+                >
+                  Delete
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => navigate("/orders")}
+              className="px-4 py-2 border border-gray-300 rounded font-semibold hover:bg-gray-100"
+            >
+              Terug
+            </button>
+          </div>
         </div>
 
         <Card>
           <div className="grid gap-3 md:grid-cols-3 text-sm">
-            <p><span className="font-semibold">Status:</span> {order.status}</p>
-            <p><span className="font-semibold">Supplier:</span> {order.supplierId || "-"}</p>
-            <p><span className="font-semibold">Delivery Date:</span> {order.deliveryDate || "-"}</p>
-            <p><span className="font-semibold">Created By:</span> {createdByName}</p>
-            <p><span className="font-semibold">Created At:</span> {order.createdAtDate ? new Date(order.createdAtDate).toLocaleString() : "-"}</p>
-            <p><span className="font-semibold">Totaal:</span> {Number(order.totalAmount || 0).toFixed(2)} {order.currency || "EUR"}</p>
+            <p>
+              <span className="font-semibold">Status:</span> {order.status}
+            </p>
+            <p>
+              <span className="font-semibold">Supplier:</span> {order.supplierId || "-"}
+            </p>
+            <p>
+              <span className="font-semibold">Delivery Date:</span> {order.deliveryDate || "-"}
+            </p>
+            <p>
+              <span className="font-semibold">Created By:</span> {createdByName}
+            </p>
+            <p>
+              <span className="font-semibold">Created At:</span>{" "}
+              {order.createdAtDate ? new Date(order.createdAtDate).toLocaleString() : "-"}
+            </p>
+            <p>
+              <span className="font-semibold">Totaal:</span> {Number(order.totalAmount || 0).toFixed(2)}{" "}
+              {order.currency || "EUR"}
+            </p>
           </div>
         </Card>
 
@@ -102,12 +147,24 @@ export default function OrderDetailPage() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase text-gray-500">Product</th>
-                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase text-gray-500">SKU</th>
-                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase text-gray-500">Purchase Unit</th>
-                  <th className="px-4 py-2 text-right text-xs font-semibold uppercase text-gray-500">Qty</th>
-                  <th className="px-4 py-2 text-right text-xs font-semibold uppercase text-gray-500">Prijs</th>
-                  <th className="px-4 py-2 text-right text-xs font-semibold uppercase text-gray-500">Subtotaal</th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase text-gray-500">
+                    Product
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase text-gray-500">
+                    SKU
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase text-gray-500">
+                    Purchase Unit
+                  </th>
+                  <th className="px-4 py-2 text-right text-xs font-semibold uppercase text-gray-500">
+                    Qty
+                  </th>
+                  <th className="px-4 py-2 text-right text-xs font-semibold uppercase text-gray-500">
+                    Prijs
+                  </th>
+                  <th className="px-4 py-2 text-right text-xs font-semibold uppercase text-gray-500">
+                    Subtotaal
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -120,8 +177,12 @@ export default function OrderDetailPage() {
                       <td className="px-4 py-2 text-sm">{item.supplierSku || "-"}</td>
                       <td className="px-4 py-2 text-sm">{item.purchaseUnit || "-"}</td>
                       <td className="px-4 py-2 text-sm text-right">{qty}</td>
-                      <td className="px-4 py-2 text-sm text-right">{unitPrice.toFixed(2)} {item.currency || order.currency || "EUR"}</td>
-                      <td className="px-4 py-2 text-sm text-right">{(unitPrice * qty).toFixed(2)} {item.currency || order.currency || "EUR"}</td>
+                      <td className="px-4 py-2 text-sm text-right">
+                        {unitPrice.toFixed(2)} {item.currency || order.currency || "EUR"}
+                      </td>
+                      <td className="px-4 py-2 text-sm text-right">
+                        {(unitPrice * qty).toFixed(2)} {item.currency || order.currency || "EUR"}
+                      </td>
                     </tr>
                   );
                 })}
@@ -130,6 +191,69 @@ export default function OrderDetailPage() {
           </div>
         </Card>
       </PageContainer>
+
+      <Modal open={showEditModal} onClose={() => setShowEditModal(false)} title="Edit order">
+        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
+          Delivery Date
+          <input
+            type="date"
+            value={deliveryDate}
+            onChange={(event) => setDeliveryDate(event.target.value)}
+            className="rounded border border-gray-300 px-3 py-2 text-sm"
+          />
+        </label>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setShowEditModal(false)}
+            className="px-4 py-2 rounded border border-gray-300 text-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!deliveryDate || busy}
+            onClick={async () => {
+              if (!deliveryDate) return;
+              setBusy(true);
+              const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
+              await updateOrder(hotelUid, orderId, { deliveryDate }, actor);
+              setBusy(false);
+              setShowEditModal(false);
+              await loadOrder();
+            }}
+            className="px-4 py-2 rounded bg-[#b41f1f] text-white hover:bg-[#961919] disabled:opacity-50"
+          >
+            Save
+          </button>
+        </div>
+      </Modal>
+
+      <Modal open={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete order">
+        <p className="text-sm text-gray-700">Weet je zeker dat je deze order wil verwijderen?</p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setShowDeleteModal(false)}
+            className="px-4 py-2 rounded border border-gray-300 text-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              await deleteOrder(hotelUid, orderId);
+              setBusy(false);
+              navigate("/orders");
+            }}
+            className="px-4 py-2 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            Delete
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

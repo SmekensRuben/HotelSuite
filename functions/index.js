@@ -81,6 +81,7 @@ function buildSupplierProductDocument(productId, hotelUid, productData = {}) {
     hotelUid,
     active: productData.active !== false,
     baseUnit: String(productData.baseUnit || "").trim(),
+    baseUnitsPerPurchaseUnit: toNumberOrNull(productData.baseUnitsPerPurchaseUnit),
     pricePerPurchaseUnit: toNumberOrNull(productData.pricePerPurchaseUnit),
     supplierId: String(productData.supplierId || "").trim(),
     pricingModel: String(productData.pricingModel || "").trim(),
