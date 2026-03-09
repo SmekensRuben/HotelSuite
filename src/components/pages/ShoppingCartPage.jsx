@@ -5,6 +5,7 @@ import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
+import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { createOrdersFromShoppingCart } from "../../services/firebaseOrders";
@@ -13,6 +14,13 @@ import {
   removeShoppingCartItem,
   updateShoppingCartItemQty,
 } from "../../services/firebaseShoppingCarts";
+
+function formatContent(item) {
+  const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
+  const unit = String(item?.baseUnit || "").trim();
+  if (!(amount > 0) || !unit) return "-";
+  return `${amount} ${unit}`;
+}
 
 export default function ShoppingCartPage() {
   const navigate = useNavigate();
@@ -58,10 +66,72 @@ export default function ShoppingCartPage() {
     0
   );
 
+  const rows = items.map((item, index) => {
+    const unitPrice = Number(item.pricePerPurchaseUnit || 0);
+    const qty = Number(item.qtyPurchaseUnits || 0);
+    return {
+      id: `${item.supplierProductId || "row"}-${index}`,
+      supplierId: item.supplierId || "-",
+      supplierProductName: item.supplierProductName || "-",
+      supplierSku: item.supplierSku || "-",
+      purchaseUnit: item.purchaseUnit || "-",
+      content: formatContent(item),
+      unitPrice: `${unitPrice.toFixed(2)} ${item.currency || "EUR"}`,
+      subtotal: `${(unitPrice * qty).toFixed(2)} ${item.currency || "EUR"}`,
+      rowIndex: index,
+      supplierProductId: item.supplierProductId,
+      qtyPurchaseUnits: qty,
+    };
+  });
+
+  const columns = [
+    { key: "supplierId", label: "Supplier" },
+    { key: "supplierProductName", label: "Product" },
+    { key: "supplierSku", label: "SKU" },
+    { key: "purchaseUnit", label: "Purchase Unit" },
+    { key: "content", label: "Content" },
+    {
+      key: "qty",
+      label: "Aantal",
+      sortable: false,
+      render: (row) => (
+        <input
+          type="number"
+          min="1"
+          value={row.qtyPurchaseUnits}
+          onChange={async (event) => {
+            await updateShoppingCartItemQty(hotelUid, cartId, row.supplierProductId, event.target.value);
+            await refreshCart();
+          }}
+          className="w-24 border border-gray-300 rounded px-2 py-1"
+        />
+      ),
+    },
+    { key: "unitPrice", label: "Prijs / stuk" },
+    { key: "subtotal", label: "Totaal" },
+    {
+      key: "actions",
+      label: "Acties",
+      sortable: false,
+      render: (row) => (
+        <button
+          type="button"
+          onClick={async () => {
+            await removeShoppingCartItem(hotelUid, cartId, row.supplierProductId);
+            await refreshCart();
+          }}
+          className="text-red-600 hover:text-red-800 font-semibold"
+        >
+          Verwijderen
+        </button>
+      ),
+    },
+  ];
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer>
+      <PageContainer className="space-y-6">
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-2xl font-semibold">Shopping Cart</h1>
@@ -80,85 +150,23 @@ export default function ShoppingCartPage() {
               </span>
             </div>
           </div>
-
-          {loading ? (
-            <p className="mt-6 text-sm text-gray-600">Shopping cart laden...</p>
-          ) : items.length === 0 ? (
-            <p className="mt-6 text-sm text-gray-600">Er zitten nog geen producten in de shopping cart.</p>
-          ) : (
-            <>
-              <div className="mt-6 overflow-x-auto">
-                <table className="min-w-full border border-gray-200 rounded">
-                  <thead className="bg-gray-100 text-xs uppercase text-gray-600">
-                    <tr>
-                      <th className="text-left px-4 py-2">Supplier</th>
-                      <th className="text-left px-4 py-2">Product</th>
-                      <th className="text-left px-4 py-2">SKU</th>
-                      <th className="text-left px-4 py-2">Purchase Unit</th>
-                      <th className="text-left px-4 py-2">Content</th>
-                      <th className="text-left px-4 py-2">Aantal</th>
-                      <th className="text-right px-4 py-2">Prijs / stuk</th>
-                      <th className="text-right px-4 py-2">Totaal</th>
-                      <th className="text-right px-4 py-2">Acties</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((item) => {
-                      const unitPrice = Number(item.pricePerPurchaseUnit || 0);
-                      const qty = Number(item.qtyPurchaseUnits || 0);
-                      return (
-                        <tr key={item.supplierProductId} className="border-t border-gray-200 text-sm">
-                          <td className="px-4 py-2">{item.supplierId || "-"}</td>
-                          <td className="px-4 py-2">{item.supplierProductName || "-"}</td>
-                          <td className="px-4 py-2">{item.supplierSku || "-"}</td>
-                          <td className="px-4 py-2">{item.purchaseUnit || "-"}</td>
-                          <td className="px-4 py-2">{Number(item.baseUnitsPerPurchaseUnit || 0) > 0 && item.baseUnit ? `${Number(item.baseUnitsPerPurchaseUnit)} ${item.baseUnit}` : "-"}</td>
-                          <td className="px-4 py-2">
-                            <input
-                              type="number"
-                              min="1"
-                              value={item.qtyPurchaseUnits}
-                              onChange={async (event) => {
-                                await updateShoppingCartItemQty(hotelUid, cartId, item.supplierProductId, event.target.value);
-                                await refreshCart();
-                              }}
-                              className="w-24 border border-gray-300 rounded px-2 py-1"
-                            />
-                          </td>
-                          <td className="px-4 py-2 text-right">{unitPrice.toFixed(2)} {item.currency || "EUR"}</td>
-                          <td className="px-4 py-2 text-right">{(unitPrice * qty).toFixed(2)} {item.currency || "EUR"}</td>
-                          <td className="px-4 py-2 text-right">
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                await removeShoppingCartItem(hotelUid, cartId, item.supplierProductId);
-                                await refreshCart();
-                              }}
-                              className="text-red-600 hover:text-red-800 font-semibold"
-                            >
-                              Verwijderen
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="mt-5 flex flex-col items-end gap-3">
-                <p className="text-lg font-semibold">Totaal shopping cart: {cartTotal.toFixed(2)} EUR</p>
-                <button
-                  type="button"
-                  onClick={() => setShowCreateOrderModal(true)}
-                  className="bg-blue-600 text-white px-4 py-2 rounded font-semibold hover:bg-blue-700"
-                >
-                  Create Order
-                </button>
-              </div>
-            </>
-          )}
         </Card>
+
+        {loading ? (
+          <p className="text-sm text-gray-600">Shopping cart laden...</p>
+        ) : items.length === 0 ? (
+          <p className="text-sm text-gray-600">Er zitten nog geen producten in de shopping cart.</p>
+        ) : (
+          <>
+            <DataListTable columns={columns} rows={rows} emptyMessage="Er zitten geen producten in de shopping cart." />
+            <div className="flex flex-col items-end gap-3">
+              <p className="text-lg font-semibold">Totaal shopping cart: {cartTotal.toFixed(2)} EUR</p>
+              <button type="button" onClick={() => setShowCreateOrderModal(true)} className="bg-blue-600 text-white px-4 py-2 rounded font-semibold hover:bg-blue-700">
+                Create Order
+              </button>
+            </div>
+          </>
+        )}
       </PageContainer>
 
       <Modal open={showCreateOrderModal} onClose={() => setShowCreateOrderModal(false)} title="Create Order">
