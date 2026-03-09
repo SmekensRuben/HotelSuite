@@ -19,7 +19,15 @@ export default function OrderDetailPage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState("");
+  const [editableItems, setEditableItems] = useState([]);
   const [busy, setBusy] = useState(false);
+
+  const formatContent = (item) => {
+    const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
+    const unit = String(item?.baseUnit || "").trim();
+    if (!(amount > 0) || !unit) return "-";
+    return `${amount} ${unit}`;
+  };
 
   const today = useMemo(
     () =>
@@ -47,6 +55,7 @@ export default function OrderDetailPage() {
       setCreatedByName(displayName);
     }
     setDeliveryDate(result?.deliveryDate || "");
+    setEditableItems(Array.isArray(result?.products) ? result.products : []);
     setLoading(false);
   };
 
@@ -156,6 +165,9 @@ export default function OrderDetailPage() {
                   <th className="px-4 py-2 text-left text-xs font-semibold uppercase text-gray-500">
                     Purchase Unit
                   </th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase text-gray-500">
+                    Content
+                  </th>
                   <th className="px-4 py-2 text-right text-xs font-semibold uppercase text-gray-500">
                     Qty
                   </th>
@@ -176,6 +188,7 @@ export default function OrderDetailPage() {
                       <td className="px-4 py-2 text-sm">{item.supplierProductName || "-"}</td>
                       <td className="px-4 py-2 text-sm">{item.supplierSku || "-"}</td>
                       <td className="px-4 py-2 text-sm">{item.purchaseUnit || "-"}</td>
+                      <td className="px-4 py-2 text-sm">{formatContent(item)}</td>
                       <td className="px-4 py-2 text-sm text-right">{qty}</td>
                       <td className="px-4 py-2 text-sm text-right">
                         {unitPrice.toFixed(2)} {item.currency || order.currency || "EUR"}
@@ -202,6 +215,42 @@ export default function OrderDetailPage() {
             className="rounded border border-gray-300 px-3 py-2 text-sm"
           />
         </label>
+
+        <div className="mt-4">
+          <p className="text-sm font-semibold text-gray-700 mb-2">Orderregels</p>
+          {editableItems.length === 0 ? (
+            <p className="text-sm text-gray-500">Geen orderregels meer.</p>
+          ) : (
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+              {editableItems.map((item, index) => (
+                <div key={`${item.supplierProductId || "row"}_${index}`} className="rounded border border-gray-200 p-2">
+                  <p className="text-sm font-semibold text-gray-800">{item.supplierProductName || "-"}</p>
+                  <p className="text-xs text-gray-500">{item.supplierSku || "-"} · {formatContent(item)}</p>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <input
+                      type="number"
+                      min="1"
+                      value={Number(item.qtyPurchaseUnits || 1)}
+                      onChange={(event) => {
+                        const nextQty = Math.max(1, Number(event.target.value || 1));
+                        setEditableItems((prev) => prev.map((entry, i) => (i === index ? { ...entry, qtyPurchaseUnits: nextQty } : entry)));
+                      }}
+                      className="w-24 rounded border border-gray-300 px-2 py-1 text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setEditableItems((prev) => prev.filter((_, i) => i !== index))}
+                      className="text-xs font-semibold text-red-700 hover:text-red-900"
+                    >
+                      Verwijder regel
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
@@ -214,10 +263,10 @@ export default function OrderDetailPage() {
             type="button"
             disabled={!deliveryDate || busy}
             onClick={async () => {
-              if (!deliveryDate) return;
+              if (!deliveryDate || editableItems.length === 0) return;
               setBusy(true);
               const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-              await updateOrder(hotelUid, orderId, { deliveryDate }, actor);
+              await updateOrder(hotelUid, orderId, { deliveryDate, products: editableItems }, actor);
               setBusy(false);
               setShowEditModal(false);
               await loadOrder();
