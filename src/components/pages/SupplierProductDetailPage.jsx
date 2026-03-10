@@ -143,20 +143,47 @@ export default function SupplierProductDetailPage() {
         ) : (
           <>
             <Card>
-              <div>
-                <h2 className="text-2xl font-semibold text-gray-900">{product.supplierProductName || "-"}</h2>
-                <p className="text-gray-600 mt-1">{product.supplierSku || "-"}</p>
-                <p className="mt-3 text-sm text-gray-700">Supplier ID: {product.supplierId || "-"}</p>
-                <div className="mt-4">
-                  <span
-                    className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-                      product.active !== false
-                        ? "bg-green-100 text-green-700"
-                        : "bg-gray-200 text-gray-700"
-                    }`}
-                  >
-                    {product.active !== false ? t("products.status.active") : t("products.status.inactive")}
-                  </span>
+              <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_180px] items-start">
+                <div>
+                  <h2 className="text-2xl font-semibold text-gray-900">{product.supplierProductName || "-"}</h2>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-gray-500">Supplier SKU</p>
+                      <p className="text-sm text-gray-800 mt-1 font-medium">{product.supplierSku || "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-gray-500">Supplier</p>
+                      <p className="text-sm text-gray-800 mt-1 font-medium">{product.supplierId || "-"}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    <span
+                      className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                        product.active !== false
+                          ? "bg-green-100 text-green-700"
+                          : "bg-gray-200 text-gray-700"
+                      }`}
+                    >
+                      {product.active !== false ? t("products.status.active") : t("products.status.inactive")}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-gray-500 mb-2">Search image</p>
+                  {product.searchImageUrl ? (
+                    <img
+                      src={product.searchImageUrl}
+                      alt={product.supplierProductName || "Supplier product"}
+                      className="w-full max-w-[180px] aspect-square object-cover rounded-lg border border-gray-200 bg-gray-50"
+                    />
+                  ) : (
+                    <div className="w-full max-w-[180px] aspect-square rounded-lg border border-dashed border-gray-300 bg-gray-50 text-gray-400 text-xs flex items-center justify-center px-3 text-center">
+                      Geen search image
+                    </div>
+                  )}
                 </div>
               </div>
             </Card>
