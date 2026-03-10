@@ -19,7 +19,7 @@ import {
 } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBUqtUVov_JcgJ5CvA4tNvF3JMar7FbaLU",
+  apiKey: "AIzaSyBLGAayzhmokVDppeuvHAqrJFWLeHexFbM",
   authDomain: "lobby-logic.firebaseapp.com",
   projectId: "lobby-logic"
 };
