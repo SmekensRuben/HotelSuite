@@ -960,7 +960,10 @@ const handleCreateArticleClick = async (row) => {
       purchaseUnit: pricingModel === "Per Base Unit" ? manualPurchaseUnit : unitValue,
       baseUnit: pricingModel === "Per Base Unit" ? manualBaseUnit : unitValue,
       baseUnitsPerPurchaseUnit: pricingModel === "Per Base Unit" ? manualBaseUnitsPerPurchaseUnit : 1,
-      pricePerPurchaseUnit: pricingModel === "Per Purchase Unit" ? enteredPrice : null,
+      pricePerPurchaseUnit:
+        pricingModel === "Per Purchase Unit"
+          ? enteredPrice
+          : roundPrice(enteredPrice * manualBaseUnitsPerPurchaseUnit),
       pricePerBaseUnit: pricingModel === "Per Base Unit" ? enteredPrice : null,
       active: true,
       createdAt: serverTimestamp(),
@@ -1316,9 +1319,22 @@ const getFirebasePriceInfo = (match) => {
       unitLabel: ""
     });
   } else {
+    const pricePerPurchaseUnit = toNumberOrNull(match.pricePerPurchaseUnit);
+    const pricePerBaseUnit = toNumberOrNull(match.pricePerBaseUnit);
+    const baseUnitsPerPurchaseUnit = toNumberOrNull(match.baseUnitsPerPurchaseUnit);
+    const calculatedPurchaseUnitPrice =
+      pricePerBaseUnit !== null && baseUnitsPerPurchaseUnit !== null
+        ? roundPrice(pricePerBaseUnit * baseUnitsPerPurchaseUnit)
+        : null;
+
     candidates.push({
       field: "pricePerPurchaseUnit",
-      value: toNumberOrNull(match.pricePerPurchaseUnit),
+      value: pricePerPurchaseUnit,
+      unitLabel: ""
+    });
+    candidates.push({
+      field: "pricePerPurchaseUnit",
+      value: calculatedPurchaseUnitPrice,
       unitLabel: ""
     });
   }
@@ -1373,7 +1389,7 @@ const renderResults = (rows) => {
     const webshopPriceContent = `${formatPrice(row.price)}${rowUnitSuffix}`;
 
     const actionButtons = [];
-    const shouldShowUpdateButton = hasDifference && firebaseMatch && firebasePriceInfo.field && Number.isFinite(row.price);
+    const shouldShowUpdateButton = firebaseMatch && firebasePriceInfo.field && Number.isFinite(row.price) && (hasDifference || firebasePriceValue === null);
     if (shouldShowUpdateButton) {
       actionButtons.push(
         '<button type="button" class="secondary-btn update-price-btn">Prijs updaten</button>'
