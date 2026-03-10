@@ -76,6 +76,7 @@ const cleanNameWithBrand = (nameValue, brandValue) => {
   return name;
 };
 
+
 const SHOP_OPTIONS = {
   sligro: {
     label: "Sligro",
@@ -209,6 +210,19 @@ const SHOP_OPTIONS = {
         if (text) {
           return text;
         }
+      }
+      return "";
+    };
+
+    const extractPackagingFromElement = (element) => {
+      if (!element) return "";
+      const candidates = Array.from(element.querySelectorAll(".cmp-listdetail__table--add-separator"));
+      for (const node of candidates) {
+        if (node.classList?.contains("cmp-listdetail__table-productcode")) continue;
+        const text = node.textContent?.trim() || "";
+        if (!text) continue;
+        if (/^\d+$/.test(text)) continue;
+        return text;
       }
       return "";
     };
@@ -431,9 +445,7 @@ document.querySelectorAll(".cmp-listdetail__table tbody tr").forEach((tr) => {
     "";
   const price = parsePrice(rawPrice);
 
-  const packaging =
-    tr.querySelector(".cmp-listdetail__table--add-separator")?.textContent?.trim() ||
-    "";
+  const packaging = extractPackagingFromElement(tr);
 
   addResult(article, price, name, { brand, packaging });
 });
