@@ -221,6 +221,7 @@ const SHOP_OPTIONS = {
       const displayArticle = articleNumber == null ? "" : String(articleNumber).trim();
       const brand = typeof extra.brand === "string" ? extra.brand.trim() : "";
       const imageUrl = typeof extra.imageUrl === "string" ? toAbsoluteUrl(extra.imageUrl) : "";
+      const packaging = typeof extra.packaging === "string" ? extra.packaging.trim() : "";
       const cleanedName = cleanNameWithBrand(name, brand);
       if (!existing) {
         resultsMap.set(normalized, {
@@ -228,7 +229,8 @@ const SHOP_OPTIONS = {
           price: Number.isFinite(price) ? price : null,
           name: cleanedName,
           brand,
-          imageUrl
+          imageUrl,
+          packaging
         });
         return;
       }
@@ -248,6 +250,9 @@ const SHOP_OPTIONS = {
       }
       if (!existing.imageUrl && imageUrl) {
         existing.imageUrl = imageUrl;
+      }
+      if (!existing.packaging && packaging) {
+        existing.packaging = packaging;
       }
     };
 
@@ -426,7 +431,11 @@ document.querySelectorAll(".cmp-listdetail__table tbody tr").forEach((tr) => {
     "";
   const price = parsePrice(rawPrice);
 
-  addResult(article, price, name, { brand });
+  const packaging =
+    tr.querySelector(".cmp-listdetail__table--add-separator")?.textContent?.trim() ||
+    "";
+
+  addResult(article, price, name, { brand, packaging });
 });
 
 
@@ -1295,6 +1304,7 @@ const renderResults = (rows) => {
           <span class="result-title">${escapeHtml(row.articleNumber)}</span>
           <span class="result-price">${webshopPriceContent}</span>
           ${row.name ? `<span class="result-meta">${escapeHtml(row.name)}</span>` : ""}
+          ${row.packaging ? `<span class="result-meta">Verpakking: ${escapeHtml(row.packaging)}</span>` : ""}
           <span class="badge">Webshop</span>
         </div>
       `;
@@ -1402,6 +1412,7 @@ const scrapeWebshop = async (shopKey) => {
         name: item.name || "",
         brand: typeof item.brand === "string" ? item.brand.trim() : "",
         imageUrl: typeof item.imageUrl === "string" ? item.imageUrl : "",
+        packaging: typeof item.packaging === "string" ? item.packaging.trim() : "",
         supplier: typeof item.supplier === "string" && item.supplier.trim()
           ? item.supplier.trim()
           : supplierName,
@@ -1420,6 +1431,9 @@ const scrapeWebshop = async (shopKey) => {
       }
       if (!existing.imageUrl && typeof item.imageUrl === "string" && item.imageUrl) {
         existing.imageUrl = item.imageUrl;
+      }
+      if (!existing.packaging && typeof item.packaging === "string" && item.packaging.trim()) {
+        existing.packaging = item.packaging.trim();
       }
       if (!existing.supplier) {
         const itemSupplier = typeof item.supplier === "string" && item.supplier.trim()
