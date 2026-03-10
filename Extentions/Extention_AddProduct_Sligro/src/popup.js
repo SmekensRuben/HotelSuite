@@ -6,7 +6,12 @@ import {
   doc,
   getDoc,
   updateDoc,
-  addDoc
+  addDoc,
+  setDoc,
+  query,
+  where,
+  limit,
+  serverTimestamp
 } from "firebase/firestore";
 import {
   getAuth,
@@ -16,9 +21,9 @@ import {
 } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBUqtUVov_JcgJ5CvA4tNvF3JMar7FbaLU",
-  authDomain: "test-breakfast.firebaseapp.com",
-  projectId: "test-breakfast"
+  apiKey: "AIzaSyBLGAayzhmokVDppeuvHAqrJFWLeHexFbM",
+  authDomain: "lobby-logic.firebaseapp.com",
+  projectId: "lobby-logic"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -72,6 +77,7 @@ const cleanNameWithBrand = (nameValue, brandValue) => {
 
   return name;
 };
+
 
 const SHOP_OPTIONS = {
   sligro: {
@@ -210,6 +216,19 @@ const SHOP_OPTIONS = {
       return "";
     };
 
+    const extractPackagingFromElement = (element) => {
+      if (!element) return "";
+      const candidates = Array.from(element.querySelectorAll(".cmp-listdetail__table--add-separator"));
+      for (const node of candidates) {
+        if (node.classList?.contains("cmp-listdetail__table-productcode")) continue;
+        const text = node.textContent?.trim() || "";
+        if (!text) continue;
+        if (/^\d+$/.test(text)) continue;
+        return text;
+      }
+      return "";
+    };
+
     const resultsMap = new Map();
     const addResult = (articleNumber, price, name, extra = {}) => {
       const normalized = normaliseArticle(articleNumber);
@@ -218,6 +237,7 @@ const SHOP_OPTIONS = {
       const displayArticle = articleNumber == null ? "" : String(articleNumber).trim();
       const brand = typeof extra.brand === "string" ? extra.brand.trim() : "";
       const imageUrl = typeof extra.imageUrl === "string" ? toAbsoluteUrl(extra.imageUrl) : "";
+      const packaging = typeof extra.packaging === "string" ? extra.packaging.trim() : "";
       const cleanedName = cleanNameWithBrand(name, brand);
       if (!existing) {
         resultsMap.set(normalized, {
@@ -225,7 +245,8 @@ const SHOP_OPTIONS = {
           price: Number.isFinite(price) ? price : null,
           name: cleanedName,
           brand,
-          imageUrl
+          imageUrl,
+          packaging
         });
         return;
       }
@@ -245,6 +266,9 @@ const SHOP_OPTIONS = {
       }
       if (!existing.imageUrl && imageUrl) {
         existing.imageUrl = imageUrl;
+      }
+      if (!existing.packaging && packaging) {
+        existing.packaging = packaging;
       }
     };
 
@@ -423,7 +447,9 @@ document.querySelectorAll(".cmp-listdetail__table tbody tr").forEach((tr) => {
     "";
   const price = parsePrice(rawPrice);
 
-  addResult(article, price, name, { brand });
+  const packaging = extractPackagingFromElement(tr);
+
+  addResult(article, price, name, { brand, packaging });
 });
 
 
@@ -672,7 +698,88 @@ const firebaseIndexCache = {
 };
 
 const PRICE_DIFF_THRESHOLD = 0.005;
-const KITCHENPILOT_CREATE_URL = "https://kitchenpilot.eu/articles";
+
+const normalizeDocumentId = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  return raw
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+};
+
+const openCreateProductDialog = (row) =>
+  new Promise((resolve) => {
+    const modal = document.getElementById("createProductModal");
+    const modelSelect = document.getElementById("pricingModelSelect");
+    const valueInput = document.getElementById("pricingValueInput");
+    const baseFields = document.getElementById("baseUnitFields");
+    const searchImageUrlInput = document.getElementById("searchImageUrlInput");
+    const purchaseUnitInput = document.getElementById("purchaseUnitInput");
+    const baseUnitInput = document.getElementById("baseUnitInput");
+    const baseUnitsInput = document.getElementById("baseUnitsPerPurchaseUnitInput");
+    const cancelBtn = document.getElementById("createProductCancelBtn");
+    const confirmBtn = document.getElementById("createProductConfirmBtn");
+
+    if (!modal || !modelSelect || !valueInput || !baseFields || !searchImageUrlInput || !purchaseUnitInput || !baseUnitInput || !baseUnitsInput || !cancelBtn || !confirmBtn) {
+      resolve(null);
+      return;
+    }
+
+    const syncBaseUnitFields = () => {
+      const isPerBaseUnit = modelSelect.value === "Per Base Unit";
+      baseFields.classList.toggle("hidden", !isPerBaseUnit);
+    };
+
+    modelSelect.value = "Per Purchase Unit";
+    valueInput.value = Number.isFinite(row?.price) ? String(row.price) : "";
+    searchImageUrlInput.value = typeof row?.imageUrl === "string" ? row.imageUrl : "";
+    purchaseUnitInput.value = String(row?.packaging || "").trim();
+    baseUnitInput.value = String(row?.packaging || "").trim();
+    baseUnitsInput.value = "1";
+    syncBaseUnitFields();
+    modal.classList.remove("hidden");
+
+    const cleanup = () => {
+      modal.classList.add("hidden");
+      modelSelect.removeEventListener("change", syncBaseUnitFields);
+      cancelBtn.removeEventListener("click", onCancel);
+      confirmBtn.removeEventListener("click", onConfirm);
+    };
+
+    const onCancel = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    const onConfirm = () => {
+      const pricingModel = modelSelect.value === "Per Base Unit"
+        ? "Per Base Unit"
+        : "Per Purchase Unit";
+      const rawValue = String(valueInput.value || "").trim();
+      const enteredPrice = Number(rawValue.replace(',', '.'));
+
+      const searchImageUrl = String(searchImageUrlInput.value || "").trim();
+      const purchaseUnit = String(purchaseUnitInput.value || "").trim();
+      const baseUnit = String(baseUnitInput.value || "").trim();
+      const baseUnitsPerPurchaseUnit = Number(String(baseUnitsInput.value || "").trim().replace(',', '.'));
+
+      if (pricingModel === "Per Base Unit") {
+        if (!purchaseUnit || !baseUnit || !Number.isFinite(baseUnitsPerPurchaseUnit)) {
+          window.alert("Voor 'Per Base Unit' zijn purchaseUnit, baseUnit en baseUnitsPerPurchaseUnit verplicht.");
+          return;
+        }
+      }
+
+      cleanup();
+      resolve({ pricingModel, enteredPrice, searchImageUrl, purchaseUnit, baseUnit, baseUnitsPerPurchaseUnit });
+    };
+
+    modelSelect.addEventListener("change", syncBaseUnitFields);
+    cancelBtn.addEventListener("click", onCancel);
+    confirmBtn.addEventListener("click", onConfirm);
+    valueInput.focus();
+  });
 
 const roundPrice = (value) => {
   const num = Number(value);
@@ -696,7 +803,7 @@ const updateFirebaseArticlePrice = async (hotelUid, articleId, field, price) => 
     throw new Error("Ongeldige prijs om bij te werken.");
   }
 
-  const articleRef = doc(db, `hotels/${hotelUid}/articles`, articleId);
+  const articleRef = doc(db, `hotels/${hotelUid}/supplierproducts`, articleId);
   const timestamp = Date.now();
 
   await updateDoc(articleRef, { [field]: roundedPrice, lastPriceUpdate: timestamp });
@@ -704,7 +811,7 @@ const updateFirebaseArticlePrice = async (hotelUid, articleId, field, price) => 
   try {
     const historyRef = collection(
       db,
-      `hotels/${hotelUid}/articles/${articleId}/priceHistory`
+      `hotels/${hotelUid}/supplierproducts/${articleId}/priceHistory`
     );
     await addDoc(historyRef, { price: roundedPrice, date: timestamp });
   } catch (err) {
@@ -722,7 +829,7 @@ const updateFirebaseArticleLastChecked = async (hotelUid, articleId) => {
     throw new Error("Artikel-ID ontbreekt voor het bijwerken van de prijscontrole.");
   }
 
-  const articleRef = doc(db, `hotels/${hotelUid}/articles`, articleId);
+  const articleRef = doc(db, `hotels/${hotelUid}/supplierproducts`, articleId);
   const timestamp = Date.now();
 
   await updateDoc(articleRef, { lastPriceUpdate: timestamp });
@@ -738,7 +845,7 @@ const handleUpdateButtonClick = async (button, row, firebasePriceInfo, rows) => 
 
   const firebaseMatch = row.firebase;
   if (!firebaseMatch?.id) {
-    updateStatus("Geen geldig Firebase-artikel gevonden om te updaten.", "error");
+    updateStatus("Geen geldig Firebase-product gevonden om te updaten.", "error");
     return;
   }
 
@@ -783,7 +890,7 @@ const handlePriceCheckedButtonClick = async (button, row, rows) => {
 
   const firebaseMatch = row.firebase;
   if (!firebaseMatch?.id) {
-    updateStatus("Geen geldig Firebase-artikel gevonden om te updaten.", "error");
+    updateStatus("Geen geldig Firebase-product gevonden om te updaten.", "error");
     return;
   }
 
@@ -808,40 +915,79 @@ const handlePriceCheckedButtonClick = async (button, row, rows) => {
 };
 
 const handleCreateArticleClick = async (row) => {
-  try {
-    const params = new URLSearchParams();
-    params.set("prefillArticle", "1");
-    if (row?.name) {
-      params.set("name", row.name);
-    }
-    if (row?.brand) {
-      params.set("brand", row.brand);
-    }
-    if (row?.articleNumber) {
-      params.set("articleNumber", row.articleNumber);
-    }
-    const priceValue = roundPrice(row?.price);
-    if (Number.isFinite(priceValue)) {
-      params.set("pricePerPurchaseUnit", priceValue.toString());
-    }
-    if (row?.supplier) {
-      params.set("supplier", row.supplier);
-    }
-    if (typeof row?.imageUrl === "string" && row.imageUrl) {
-      params.set("imageUrl", row.imageUrl);
-    }
-    const url = `${KITCHENPILOT_CREATE_URL}?${params.toString()}`;
+  if (!selectedHotelUid) {
+    updateStatus("Selecteer eerst een hotel om producten aan te maken.", "error");
+    return;
+  }
 
-    try {
-      await chromeApi.windowsCreate({ url, focused: true });
-    } catch (windowErr) {
-      console.warn("Kon KitchenPilot niet openen in een nieuw venster, val terug op tab", windowErr);
-      await chromeApi.tabsCreate({ url });
+  const supplierId = "Sligro";
+  const supplierSku = String(row?.articleNumber || "").trim();
+  const supplierProductName = String(row?.name || "").trim();
+  const unitValue = String(row?.packaging || "").trim();
+
+  if (!supplierSku) {
+    updateStatus("Artikelnummer ontbreekt. Product kan niet aangemaakt worden.", "error");
+    return;
+  }
+
+  const createInput = await openCreateProductDialog(row);
+  if (!createInput) {
+    updateStatus("Productcreatie geannuleerd.", "");
+    return;
+  }
+  const {
+    pricingModel,
+    enteredPrice,
+    searchImageUrl,
+    purchaseUnit: manualPurchaseUnit,
+    baseUnit: manualBaseUnit,
+    baseUnitsPerPurchaseUnit: manualBaseUnitsPerPurchaseUnit
+  } = createInput;
+
+  try {
+    const documentId = normalizeDocumentId(`${supplierId}_${supplierSku}`) || normalizeDocumentId(supplierSku);
+    if (!documentId) {
+      throw new Error("Kon geen geldig document-ID opbouwen voor dit product.");
     }
-    updateStatus("Artikelcreatie geopend in KitchenPilot.", "success");
+
+    const productRef = doc(db, `hotels/${selectedHotelUid}/supplierproducts`, documentId);
+    const existingSnap = await getDoc(productRef);
+    if (existingSnap.exists()) {
+      throw new Error(`Supplierproduct bestaat al (${documentId}).`);
+    }
+
+    const payload = {
+      supplierId,
+      supplierSku,
+      supplierProductName,
+      pricingModel,
+      purchaseUnit: pricingModel === "Per Base Unit" ? manualPurchaseUnit : unitValue,
+      baseUnit: pricingModel === "Per Base Unit" ? manualBaseUnit : unitValue,
+      baseUnitsPerPurchaseUnit: pricingModel === "Per Base Unit" ? manualBaseUnitsPerPurchaseUnit : 1,
+      pricePerPurchaseUnit:
+        pricingModel === "Per Purchase Unit"
+          ? enteredPrice
+          : roundPrice(enteredPrice * manualBaseUnitsPerPurchaseUnit),
+      pricePerBaseUnit: pricingModel === "Per Base Unit" ? enteredPrice : null,
+      active: true,
+      createdAt: serverTimestamp(),
+      createdBy: currentUser?.uid || "extension",
+      updatedAt: serverTimestamp(),
+      updatedBy: currentUser?.uid || "extension",
+      priceUpdatedOn: serverTimestamp(),
+      imageUrl: typeof row?.imageUrl === "string" ? row.imageUrl : "",
+      searchImageUrl,
+      articleNumber: supplierSku,
+      name: supplierProductName
+    };
+
+    await setDoc(productRef, payload);
+    updateStatus(`Supplierproduct aangemaakt (${documentId}).`, "success");
+    window.alert(`Supplierproduct succesvol aangemaakt:\n${documentId}`);
   } catch (err) {
-    console.error("Kon KitchenPilot niet openen voor artikelcreatie", err);
-    updateStatus("Kon KitchenPilot niet openen om artikel aan te maken.", "error");
+    console.error("Supplierproduct aanmaken mislukt", err);
+    updateStatus(err.message || "Supplierproduct aanmaken mislukt.", "error");
+    window.alert(`Supplierproduct aanmaken mislukt:\n${err.message || "Onbekende fout"}`);
   }
 };
 
@@ -931,7 +1077,7 @@ const buildFirebaseIndex = async (hotelUid) => {
   if (!hotelUid) {
     throw new Error("Geen hotel geselecteerd.");
   }
-  const snapshot = await getDocs(collection(db, `hotels/${hotelUid}/articles`));
+  const snapshot = await getDocs(collection(db, `hotels/${hotelUid}/supplierproducts`));
   const index = new Map();
   const articles = [];
   snapshot.forEach((docSnap) => {
@@ -941,12 +1087,20 @@ const buildFirebaseIndex = async (hotelUid) => {
       ...data
     };
     articles.push(article);
-    const keys = getLookupKeys(data.articleNumber);
-    keys.forEach((key) => {
-      if (!index.has(key)) {
-        index.set(key, []);
-      }
-      index.get(key).push(article);
+    const keyCandidates = [
+      data.articleNumber,
+      data.supplierSku,
+      data.supplierArticleNumber,
+      docSnap.id
+    ];
+    keyCandidates.forEach((candidate) => {
+      const keys = getLookupKeys(candidate);
+      keys.forEach((key) => {
+        if (!index.has(key)) {
+          index.set(key, []);
+        }
+        index.get(key).push(article);
+      });
     });
   });
   return { index, articles };
@@ -978,32 +1132,113 @@ const findFirebaseMatch = (index, articleNumber) => {
   return null;
 };
 
+
+const extractHotelIds = (...sources) => {
+  const result = [];
+
+  const pushValue = (value) => {
+    if (!value && value !== 0) return;
+    if (Array.isArray(value)) {
+      value.forEach(pushValue);
+      return;
+    }
+    if (typeof value === "object") {
+      Object.entries(value).forEach(([key, enabled]) => {
+        if (enabled) pushValue(key);
+      });
+      return;
+    }
+
+    const uid = typeof value === "string" ? value.trim() : String(value).trim();
+    if (uid) {
+      result.push(uid);
+    }
+  };
+
+  sources.forEach(pushValue);
+  return Array.from(new Set(result));
+};
+
+const mapFirestoreError = (error) => {
+  const code = error?.code || "";
+  if (code === "permission-denied") {
+    return "Je account heeft geen toegang tot de vereiste Firestore-documenten. Vraag een beheerder om rechten op users/{uid} of hotel-koppeling via claims.";
+  }
+  if (code === "unauthenticated") {
+    return "Je sessie is verlopen. Log opnieuw in.";
+  }
+  return error?.message || "Firestore-verzoek mislukt.";
+};
+
 const loadAccessibleHotels = async (user) => {
   if (!user?.uid) {
     throw new Error("Geen gebruiker aangemeld.");
   }
 
+  console.log("AUTH UID:", user?.uid);
+  console.log("USER DOC PATH:", `users/${user?.uid}`);
+
+  let hotelIds = [];
   const userRef = doc(db, "users", user.uid);
-  const userSnap = await getDoc(userRef);
-  if (!userSnap.exists()) {
-    throw new Error("Gebruikersprofiel niet gevonden.");
+  try {
+    const userSnap = await getDoc(userRef);
+    console.log("USER DOC EXISTS:", userSnap.exists());
+
+    if (userSnap.exists()) {
+      const data = userSnap.data() || {};
+      console.log("USER DOC DATA:", data);
+      hotelIds = extractHotelIds(data?.hotelUids, data?.hotelUid, data?.hotels, data?.allowedHotels, data?.hotelsMap);
+    }
+  } catch (err) {
+    console.error("FOUT BIJ USER DOC:", err);
+    if (err?.code !== "permission-denied") {
+      throw err;
+    }
+    console.warn("Geen toegang tot users-profiel; val terug op token claims", err);
   }
 
-  const data = userSnap.data() || {};
-  let hotelIds = data?.hotelUids || data?.hotelUid || [];
-  if (!Array.isArray(hotelIds)) {
-    hotelIds = [hotelIds];
+  if (!hotelIds.length && user?.email) {
+    try {
+      const usersByEmailQuery = query(
+        collection(db, "users"),
+        where("email", "==", user.email),
+        limit(1)
+      );
+      const userByEmailSnap = await getDocs(usersByEmailQuery);
+      if (!userByEmailSnap.empty) {
+        const profileData = userByEmailSnap.docs[0].data() || {};
+        hotelIds = extractHotelIds(
+          profileData?.hotelUids,
+          profileData?.hotelUid,
+          profileData?.hotels,
+          profileData?.allowedHotels,
+          profileData?.hotelsMap
+        );
+      }
+    } catch (err) {
+      console.warn("Users-profiel via e-mail lookup mislukt", err);
+    }
   }
-
-  hotelIds = hotelIds
-    .map((uid) => (typeof uid === "string" ? uid.trim() : ""))
-    .filter(Boolean);
 
   if (!hotelIds.length) {
-    throw new Error("Er zijn geen hotels aan dit account gekoppeld.");
+    try {
+      const tokenResult = await user.getIdTokenResult(true);
+      const claims = tokenResult?.claims || {};
+      hotelIds = extractHotelIds(
+        claims.hotelUids,
+        claims.hotelUid,
+        claims.hotels,
+        claims.allowedHotels,
+        claims.hotelsMap
+      );
+    } catch (err) {
+      console.warn("Token claims ophalen mislukt", err);
+    }
   }
 
-  hotelIds = Array.from(new Set(hotelIds));
+  if (!hotelIds.length) {
+    throw new Error("Geen toegankelijke hotels gevonden voor dit account. Controleer users/{auth.uid}.hotelUid of users.email mapping.");
+  }
 
   const hotels = await Promise.all(
     hotelIds.map(async (uid) => {
@@ -1089,11 +1324,53 @@ const getFirebasePriceInfo = (match) => {
       unitLabel: ""
     });
   } else {
-    candidates.push({
-      field: "pricePerPurchaseUnit",
-      value: toNumberOrNull(match.pricePerPurchaseUnit),
-      unitLabel: ""
-    });
+    const pricingModel = String(match.pricingModel || "").trim();
+    const pricePerPurchaseUnit = toNumberOrNull(match.pricePerPurchaseUnit);
+    const pricePerBaseUnit = toNumberOrNull(match.pricePerBaseUnit);
+    const baseUnitsPerPurchaseUnit = toNumberOrNull(match.baseUnitsPerPurchaseUnit);
+    const calculatedPurchaseUnitPrice =
+      pricePerBaseUnit !== null && baseUnitsPerPurchaseUnit !== null
+        ? roundPrice(pricePerBaseUnit * baseUnitsPerPurchaseUnit)
+        : null;
+    const calculatedBaseUnitPrice =
+      pricePerPurchaseUnit !== null && baseUnitsPerPurchaseUnit !== null && baseUnitsPerPurchaseUnit !== 0
+        ? roundPrice(pricePerPurchaseUnit / baseUnitsPerPurchaseUnit)
+        : null;
+    const baseUnitLabel = match.baseUnit ? `/${match.baseUnit}` : "";
+
+    if (pricingModel === "Per Base Unit") {
+      candidates.push({
+        field: "pricePerBaseUnit",
+        value: pricePerBaseUnit,
+        unitLabel: baseUnitLabel
+      });
+      candidates.push({
+        field: "pricePerBaseUnit",
+        value: calculatedBaseUnitPrice,
+        unitLabel: baseUnitLabel
+      });
+      candidates.push({
+        field: "pricePerPurchaseUnit",
+        value: pricePerPurchaseUnit,
+        unitLabel: ""
+      });
+      candidates.push({
+        field: "pricePerPurchaseUnit",
+        value: calculatedPurchaseUnitPrice,
+        unitLabel: ""
+      });
+    } else {
+      candidates.push({
+        field: "pricePerPurchaseUnit",
+        value: pricePerPurchaseUnit,
+        unitLabel: ""
+      });
+      candidates.push({
+        field: "pricePerPurchaseUnit",
+        value: calculatedPurchaseUnitPrice,
+        unitLabel: ""
+      });
+    }
   }
 
   const selected = candidates.find((candidate) => candidate.value !== null);
@@ -1146,7 +1423,7 @@ const renderResults = (rows) => {
     const webshopPriceContent = `${formatPrice(row.price)}${rowUnitSuffix}`;
 
     const actionButtons = [];
-    const shouldShowUpdateButton = hasDifference && firebaseMatch && firebasePriceInfo.field && Number.isFinite(row.price);
+    const shouldShowUpdateButton = firebaseMatch && firebasePriceInfo.field && Number.isFinite(row.price) && (hasDifference || firebasePriceValue === null);
     if (shouldShowUpdateButton) {
       actionButtons.push(
         '<button type="button" class="secondary-btn update-price-btn">Prijs updaten</button>'
@@ -1173,7 +1450,7 @@ const renderResults = (rows) => {
     const createArticleHtml = !firebaseMatch
       ? `
           <div class="result-actions">
-            <button type="button" class="secondary-btn create-article-btn">Create article</button>
+            <button type="button" class="secondary-btn create-article-btn">Create product</button>
           </div>
         `
       : "";
@@ -1203,6 +1480,7 @@ const renderResults = (rows) => {
           <span class="result-title">${escapeHtml(row.articleNumber)}</span>
           <span class="result-price">${webshopPriceContent}</span>
           ${row.name ? `<span class="result-meta">${escapeHtml(row.name)}</span>` : ""}
+          ${row.packaging ? `<span class="result-meta">Verpakking: ${escapeHtml(row.packaging)}</span>` : ""}
           <span class="badge">Webshop</span>
         </div>
       `;
@@ -1310,6 +1588,7 @@ const scrapeWebshop = async (shopKey) => {
         name: item.name || "",
         brand: typeof item.brand === "string" ? item.brand.trim() : "",
         imageUrl: typeof item.imageUrl === "string" ? item.imageUrl : "",
+        packaging: typeof item.packaging === "string" ? item.packaging.trim() : "",
         supplier: typeof item.supplier === "string" && item.supplier.trim()
           ? item.supplier.trim()
           : supplierName,
@@ -1328,6 +1607,9 @@ const scrapeWebshop = async (shopKey) => {
       }
       if (!existing.imageUrl && typeof item.imageUrl === "string" && item.imageUrl) {
         existing.imageUrl = item.imageUrl;
+      }
+      if (!existing.packaging && typeof item.packaging === "string" && item.packaging.trim()) {
+        existing.packaging = item.packaging.trim();
       }
       if (!existing.supplier) {
         const itemSupplier = typeof item.supplier === "string" && item.supplier.trim()
@@ -1519,7 +1801,7 @@ document.addEventListener("DOMContentLoaded", () => {
       accessibleHotels = [];
       populateHotelSelect([]);
       await setSelectedHotel(null, { persist: false });
-      setHotelStatus(err.message || "Hotels konden niet geladen worden.", "error");
+      setHotelStatus(mapFirestoreError(err), "error");
     }
 
     updateLoadButtonState();
@@ -1603,7 +1885,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       if (!currentUser) {
-        updateStatus("Log eerst in met je KitchenPilot-account.", "error");
+        updateStatus("Log eerst in met je HotelToolkit-account.", "error");
         return;
       }
       if (!selectedHotelUid) {

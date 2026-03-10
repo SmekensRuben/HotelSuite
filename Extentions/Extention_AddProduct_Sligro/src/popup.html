@@ -2,16 +2,16 @@
 <html lang="nl">
   <head>
     <meta charset="utf-8" />
-    <title>KitchenPilot prijsvergelijker</title>
+    <title>HotelToolkit prijsvergelijker</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <div class="popup">
       <header class="header">
         <div class="logo">
-          <span class="logo-mark">KP</span>
+          <span class="logo-mark">HT</span>
           <div>
-            <p class="title">KitchenPilot prijsvergelijker</p>
+            <p class="title">HotelToolkit prijsvergelijker</p>
             <p class="subtitle">Vergelijk webshopprijzen met Firebase</p>
           </div>
         </div>
@@ -83,6 +83,45 @@
         </div>
         <div id="resultRows" class="results-rows"></div>
       </section>
+
+      <div id="createProductModal" class="modal-overlay hidden">
+        <div class="modal-card">
+          <h3 class="section-title">Supplierproduct aanmaken</h3>
+          <label class="field">
+            <span class="field-label">Pricing model</span>
+            <select id="pricingModelSelect" class="field-input">
+              <option value="Per Purchase Unit">Per Purchase Unit</option>
+              <option value="Per Base Unit">Per Base Unit</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">Prijs</span>
+            <input id="pricingValueInput" type="text" class="field-input" placeholder="Bijv. 12,34" />
+          </label>
+          <label class="field">
+            <span class="field-label">Search image URL</span>
+            <input id="searchImageUrlInput" type="text" class="field-input" placeholder="https://..." />
+          </label>
+          <div id="baseUnitFields" class="hidden">
+            <label class="field">
+              <span class="field-label">Purchase Unit *</span>
+              <input id="purchaseUnitInput" type="text" class="field-input" placeholder="Bijv. Doos x 72 stuks" />
+            </label>
+            <label class="field">
+              <span class="field-label">Base Unit *</span>
+              <input id="baseUnitInput" type="text" class="field-input" placeholder="Bijv. Stuk" />
+            </label>
+            <label class="field">
+              <span class="field-label">Base Units Per Purchase Unit *</span>
+              <input id="baseUnitsPerPurchaseUnitInput" type="text" class="field-input" placeholder="Bijv. 72" />
+            </label>
+          </div>
+          <div class="result-actions">
+            <button id="createProductCancelBtn" type="button" class="secondary-btn">Annuleren</button>
+            <button id="createProductConfirmBtn" type="button" class="primary-btn">Aanmaken</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="./popup.js"></script>
