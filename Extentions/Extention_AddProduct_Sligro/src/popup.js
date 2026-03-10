@@ -6,7 +6,10 @@ import {
   doc,
   getDoc,
   updateDoc,
-  addDoc
+  addDoc,
+  query,
+  where,
+  limit
 } from "firebase/firestore";
 import {
   getAuth,
@@ -16,9 +19,9 @@ import {
 } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBUqtUVov_JcgJ5CvA4tNvF3JMar7FbaLU",
-  authDomain: "test-breakfast.firebaseapp.com",
-  projectId: "test-breakfast"
+  apiKey: "AIzaSyBLGAayzhmokVDppeuvHAqrJFWLeHexFbM",
+  authDomain: "lobby-logic.firebaseapp.com",
+  projectId: "lobby-logic"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -672,7 +675,7 @@ const firebaseIndexCache = {
 };
 
 const PRICE_DIFF_THRESHOLD = 0.005;
-const KITCHENPILOT_CREATE_URL = "https://kitchenpilot.eu/articles";
+const HOTELTOOLKIT_CREATE_URL = "https://hoteltoolkit.eu/catalog/supplier-products/new";
 
 const roundPrice = (value) => {
   const num = Number(value);
@@ -696,7 +699,7 @@ const updateFirebaseArticlePrice = async (hotelUid, articleId, field, price) => 
     throw new Error("Ongeldige prijs om bij te werken.");
   }
 
-  const articleRef = doc(db, `hotels/${hotelUid}/articles`, articleId);
+  const articleRef = doc(db, `hotels/${hotelUid}/supplierproducts`, articleId);
   const timestamp = Date.now();
 
   await updateDoc(articleRef, { [field]: roundedPrice, lastPriceUpdate: timestamp });
@@ -704,7 +707,7 @@ const updateFirebaseArticlePrice = async (hotelUid, articleId, field, price) => 
   try {
     const historyRef = collection(
       db,
-      `hotels/${hotelUid}/articles/${articleId}/priceHistory`
+      `hotels/${hotelUid}/supplierproducts/${articleId}/priceHistory`
     );
     await addDoc(historyRef, { price: roundedPrice, date: timestamp });
   } catch (err) {
@@ -722,7 +725,7 @@ const updateFirebaseArticleLastChecked = async (hotelUid, articleId) => {
     throw new Error("Artikel-ID ontbreekt voor het bijwerken van de prijscontrole.");
   }
 
-  const articleRef = doc(db, `hotels/${hotelUid}/articles`, articleId);
+  const articleRef = doc(db, `hotels/${hotelUid}/supplierproducts`, articleId);
   const timestamp = Date.now();
 
   await updateDoc(articleRef, { lastPriceUpdate: timestamp });
@@ -738,7 +741,7 @@ const handleUpdateButtonClick = async (button, row, firebasePriceInfo, rows) => 
 
   const firebaseMatch = row.firebase;
   if (!firebaseMatch?.id) {
-    updateStatus("Geen geldig Firebase-artikel gevonden om te updaten.", "error");
+    updateStatus("Geen geldig Firebase-product gevonden om te updaten.", "error");
     return;
   }
 
@@ -783,7 +786,7 @@ const handlePriceCheckedButtonClick = async (button, row, rows) => {
 
   const firebaseMatch = row.firebase;
   if (!firebaseMatch?.id) {
-    updateStatus("Geen geldig Firebase-artikel gevonden om te updaten.", "error");
+    updateStatus("Geen geldig Firebase-product gevonden om te updaten.", "error");
     return;
   }
 
@@ -830,18 +833,18 @@ const handleCreateArticleClick = async (row) => {
     if (typeof row?.imageUrl === "string" && row.imageUrl) {
       params.set("imageUrl", row.imageUrl);
     }
-    const url = `${KITCHENPILOT_CREATE_URL}?${params.toString()}`;
+    const url = `${HOTELTOOLKIT_CREATE_URL}?${params.toString()}`;
 
     try {
       await chromeApi.windowsCreate({ url, focused: true });
     } catch (windowErr) {
-      console.warn("Kon KitchenPilot niet openen in een nieuw venster, val terug op tab", windowErr);
+      console.warn("Kon HotelToolkit niet openen in een nieuw venster, val terug op tab", windowErr);
       await chromeApi.tabsCreate({ url });
     }
-    updateStatus("Artikelcreatie geopend in KitchenPilot.", "success");
+    updateStatus("Productcreatie geopend in HotelToolkit.", "success");
   } catch (err) {
-    console.error("Kon KitchenPilot niet openen voor artikelcreatie", err);
-    updateStatus("Kon KitchenPilot niet openen om artikel aan te maken.", "error");
+    console.error("Kon HotelToolkit niet openen voor productcreatie", err);
+    updateStatus("Kon HotelToolkit niet openen om product aan te maken.", "error");
   }
 };
 
@@ -931,7 +934,7 @@ const buildFirebaseIndex = async (hotelUid) => {
   if (!hotelUid) {
     throw new Error("Geen hotel geselecteerd.");
   }
-  const snapshot = await getDocs(collection(db, `hotels/${hotelUid}/articles`));
+  const snapshot = await getDocs(collection(db, `hotels/${hotelUid}/supplierproducts`));
   const index = new Map();
   const articles = [];
   snapshot.forEach((docSnap) => {
@@ -941,12 +944,20 @@ const buildFirebaseIndex = async (hotelUid) => {
       ...data
     };
     articles.push(article);
-    const keys = getLookupKeys(data.articleNumber);
-    keys.forEach((key) => {
-      if (!index.has(key)) {
-        index.set(key, []);
-      }
-      index.get(key).push(article);
+    const keyCandidates = [
+      data.articleNumber,
+      data.supplierSku,
+      data.supplierArticleNumber,
+      docSnap.id
+    ];
+    keyCandidates.forEach((candidate) => {
+      const keys = getLookupKeys(candidate);
+      keys.forEach((key) => {
+        if (!index.has(key)) {
+          index.set(key, []);
+        }
+        index.get(key).push(article);
+      });
     });
   });
   return { index, articles };
@@ -978,32 +989,113 @@ const findFirebaseMatch = (index, articleNumber) => {
   return null;
 };
 
+
+const extractHotelIds = (...sources) => {
+  const result = [];
+
+  const pushValue = (value) => {
+    if (!value && value !== 0) return;
+    if (Array.isArray(value)) {
+      value.forEach(pushValue);
+      return;
+    }
+    if (typeof value === "object") {
+      Object.entries(value).forEach(([key, enabled]) => {
+        if (enabled) pushValue(key);
+      });
+      return;
+    }
+
+    const uid = typeof value === "string" ? value.trim() : String(value).trim();
+    if (uid) {
+      result.push(uid);
+    }
+  };
+
+  sources.forEach(pushValue);
+  return Array.from(new Set(result));
+};
+
+const mapFirestoreError = (error) => {
+  const code = error?.code || "";
+  if (code === "permission-denied") {
+    return "Je account heeft geen toegang tot de vereiste Firestore-documenten. Vraag een beheerder om rechten op users/{uid} of hotel-koppeling via claims.";
+  }
+  if (code === "unauthenticated") {
+    return "Je sessie is verlopen. Log opnieuw in.";
+  }
+  return error?.message || "Firestore-verzoek mislukt.";
+};
+
 const loadAccessibleHotels = async (user) => {
   if (!user?.uid) {
     throw new Error("Geen gebruiker aangemeld.");
   }
 
+  console.log("AUTH UID:", user?.uid);
+  console.log("USER DOC PATH:", `users/${user?.uid}`);
+
+  let hotelIds = [];
   const userRef = doc(db, "users", user.uid);
-  const userSnap = await getDoc(userRef);
-  if (!userSnap.exists()) {
-    throw new Error("Gebruikersprofiel niet gevonden.");
+  try {
+    const userSnap = await getDoc(userRef);
+    console.log("USER DOC EXISTS:", userSnap.exists());
+
+    if (userSnap.exists()) {
+      const data = userSnap.data() || {};
+      console.log("USER DOC DATA:", data);
+      hotelIds = extractHotelIds(data?.hotelUids, data?.hotelUid, data?.hotels, data?.allowedHotels, data?.hotelsMap);
+    }
+  } catch (err) {
+    console.error("FOUT BIJ USER DOC:", err);
+    if (err?.code !== "permission-denied") {
+      throw err;
+    }
+    console.warn("Geen toegang tot users-profiel; val terug op token claims", err);
   }
 
-  const data = userSnap.data() || {};
-  let hotelIds = data?.hotelUids || data?.hotelUid || [];
-  if (!Array.isArray(hotelIds)) {
-    hotelIds = [hotelIds];
+  if (!hotelIds.length && user?.email) {
+    try {
+      const usersByEmailQuery = query(
+        collection(db, "users"),
+        where("email", "==", user.email),
+        limit(1)
+      );
+      const userByEmailSnap = await getDocs(usersByEmailQuery);
+      if (!userByEmailSnap.empty) {
+        const profileData = userByEmailSnap.docs[0].data() || {};
+        hotelIds = extractHotelIds(
+          profileData?.hotelUids,
+          profileData?.hotelUid,
+          profileData?.hotels,
+          profileData?.allowedHotels,
+          profileData?.hotelsMap
+        );
+      }
+    } catch (err) {
+      console.warn("Users-profiel via e-mail lookup mislukt", err);
+    }
   }
-
-  hotelIds = hotelIds
-    .map((uid) => (typeof uid === "string" ? uid.trim() : ""))
-    .filter(Boolean);
 
   if (!hotelIds.length) {
-    throw new Error("Er zijn geen hotels aan dit account gekoppeld.");
+    try {
+      const tokenResult = await user.getIdTokenResult(true);
+      const claims = tokenResult?.claims || {};
+      hotelIds = extractHotelIds(
+        claims.hotelUids,
+        claims.hotelUid,
+        claims.hotels,
+        claims.allowedHotels,
+        claims.hotelsMap
+      );
+    } catch (err) {
+      console.warn("Token claims ophalen mislukt", err);
+    }
   }
 
-  hotelIds = Array.from(new Set(hotelIds));
+  if (!hotelIds.length) {
+    throw new Error("Geen toegankelijke hotels gevonden voor dit account. Controleer users/{auth.uid}.hotelUid of users.email mapping.");
+  }
 
   const hotels = await Promise.all(
     hotelIds.map(async (uid) => {
@@ -1173,7 +1265,7 @@ const renderResults = (rows) => {
     const createArticleHtml = !firebaseMatch
       ? `
           <div class="result-actions">
-            <button type="button" class="secondary-btn create-article-btn">Create article</button>
+            <button type="button" class="secondary-btn create-article-btn">Create product</button>
           </div>
         `
       : "";
@@ -1519,7 +1611,7 @@ document.addEventListener("DOMContentLoaded", () => {
       accessibleHotels = [];
       populateHotelSelect([]);
       await setSelectedHotel(null, { persist: false });
-      setHotelStatus(err.message || "Hotels konden niet geladen worden.", "error");
+      setHotelStatus(mapFirestoreError(err), "error");
     }
 
     updateLoadButtonState();
@@ -1603,7 +1695,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       if (!currentUser) {
-        updateStatus("Log eerst in met je KitchenPilot-account.", "error");
+        updateStatus("Log eerst in met je HotelToolkit-account.", "error");
         return;
       }
       if (!selectedHotelUid) {
