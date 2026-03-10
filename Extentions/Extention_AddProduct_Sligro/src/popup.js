@@ -757,6 +757,7 @@ const openCreateProductDialog = (row) =>
       const rawValue = String(valueInput.value || "").trim();
       const enteredPrice = Number(rawValue.replace(',', '.'));
 
+      const searchImageUrl = typeof row?.imageUrl === "string" ? row.imageUrl : "";
       const purchaseUnit = String(purchaseUnitInput.value || "").trim();
       const baseUnit = String(baseUnitInput.value || "").trim();
       const baseUnitsPerPurchaseUnit = Number(String(baseUnitsInput.value || "").trim().replace(',', '.'));
@@ -769,7 +770,7 @@ const openCreateProductDialog = (row) =>
       }
 
       cleanup();
-      resolve({ pricingModel, enteredPrice, purchaseUnit, baseUnit, baseUnitsPerPurchaseUnit });
+      resolve({ pricingModel, enteredPrice, searchImageUrl, purchaseUnit, baseUnit, baseUnitsPerPurchaseUnit });
     };
 
     modelSelect.addEventListener("change", syncBaseUnitFields);
@@ -935,6 +936,7 @@ const handleCreateArticleClick = async (row) => {
   const {
     pricingModel,
     enteredPrice,
+    searchImageUrl,
     purchaseUnit: manualPurchaseUnit,
     baseUnit: manualBaseUnit,
     baseUnitsPerPurchaseUnit: manualBaseUnitsPerPurchaseUnit
@@ -972,6 +974,7 @@ const handleCreateArticleClick = async (row) => {
       updatedBy: currentUser?.uid || "extension",
       priceUpdatedOn: serverTimestamp(),
       imageUrl: typeof row?.imageUrl === "string" ? row.imageUrl : "",
+      searchImageUrl,
       articleNumber: supplierSku,
       name: supplierProductName
     };
@@ -1319,6 +1322,7 @@ const getFirebasePriceInfo = (match) => {
       unitLabel: ""
     });
   } else {
+    const pricingModel = String(match.pricingModel || "").trim();
     const pricePerPurchaseUnit = toNumberOrNull(match.pricePerPurchaseUnit);
     const pricePerBaseUnit = toNumberOrNull(match.pricePerBaseUnit);
     const baseUnitsPerPurchaseUnit = toNumberOrNull(match.baseUnitsPerPurchaseUnit);
@@ -1326,17 +1330,45 @@ const getFirebasePriceInfo = (match) => {
       pricePerBaseUnit !== null && baseUnitsPerPurchaseUnit !== null
         ? roundPrice(pricePerBaseUnit * baseUnitsPerPurchaseUnit)
         : null;
+    const calculatedBaseUnitPrice =
+      pricePerPurchaseUnit !== null && baseUnitsPerPurchaseUnit !== null && baseUnitsPerPurchaseUnit !== 0
+        ? roundPrice(pricePerPurchaseUnit / baseUnitsPerPurchaseUnit)
+        : null;
+    const baseUnitLabel = match.baseUnit ? `/${match.baseUnit}` : "";
 
-    candidates.push({
-      field: "pricePerPurchaseUnit",
-      value: pricePerPurchaseUnit,
-      unitLabel: ""
-    });
-    candidates.push({
-      field: "pricePerPurchaseUnit",
-      value: calculatedPurchaseUnitPrice,
-      unitLabel: ""
-    });
+    if (pricingModel === "Per Base Unit") {
+      candidates.push({
+        field: "pricePerBaseUnit",
+        value: pricePerBaseUnit,
+        unitLabel: baseUnitLabel
+      });
+      candidates.push({
+        field: "pricePerBaseUnit",
+        value: calculatedBaseUnitPrice,
+        unitLabel: baseUnitLabel
+      });
+      candidates.push({
+        field: "pricePerPurchaseUnit",
+        value: pricePerPurchaseUnit,
+        unitLabel: ""
+      });
+      candidates.push({
+        field: "pricePerPurchaseUnit",
+        value: calculatedPurchaseUnitPrice,
+        unitLabel: ""
+      });
+    } else {
+      candidates.push({
+        field: "pricePerPurchaseUnit",
+        value: pricePerPurchaseUnit,
+        unitLabel: ""
+      });
+      candidates.push({
+        field: "pricePerPurchaseUnit",
+        value: calculatedPurchaseUnitPrice,
+        unitLabel: ""
+      });
+    }
   }
 
   const selected = candidates.find((candidate) => candidate.value !== null);
