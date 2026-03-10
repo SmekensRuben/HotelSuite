@@ -164,7 +164,7 @@ export default function SupplierProductDetailPage() {
               </div>
 
               <div className="p-6 bg-white">
-                <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_240px] items-start">
+                <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_160px] items-start">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <DetailField label="Supplier SKU" value={product.supplierSku} />
                     <DetailField label="Supplier" value={product.supplierId} />
@@ -178,10 +178,10 @@ export default function SupplierProductDetailPage() {
                       <img
                         src={product.searchImageUrl}
                         alt={product.supplierProductName || "Supplier product"}
-                        className="w-full max-w-[240px] aspect-square object-cover rounded-xl border border-gray-200 bg-gray-50"
+                        className="w-full max-w-[140px] aspect-[4/3] object-cover rounded-lg border border-gray-200 bg-gray-50 mx-auto"
                       />
                     ) : (
-                      <div className="w-full max-w-[240px] aspect-square rounded-xl border border-dashed border-gray-300 bg-gray-50 text-gray-400 text-xs flex items-center justify-center px-3 text-center">
+                      <div className="w-full max-w-[140px] aspect-[4/3] rounded-lg border border-dashed border-gray-300 bg-gray-50 text-gray-400 text-xs flex items-center justify-center px-3 text-center mx-auto">
                         Geen search image
                       </div>
                     )}
