@@ -672,7 +672,7 @@ const firebaseIndexCache = {
 };
 
 const PRICE_DIFF_THRESHOLD = 0.005;
-const KITCHENPILOT_CREATE_URL = "https://kitchenpilot.eu/articles";
+const HOTELTOOLKIT_CREATE_URL = "https://hoteltoolkit.eu/catalog/supplier-products/new";
 
 const roundPrice = (value) => {
   const num = Number(value);
@@ -696,7 +696,7 @@ const updateFirebaseArticlePrice = async (hotelUid, articleId, field, price) => 
     throw new Error("Ongeldige prijs om bij te werken.");
   }
 
-  const articleRef = doc(db, `hotels/${hotelUid}/articles`, articleId);
+  const articleRef = doc(db, `hotels/${hotelUid}/supplierproducts`, articleId);
   const timestamp = Date.now();
 
   await updateDoc(articleRef, { [field]: roundedPrice, lastPriceUpdate: timestamp });
@@ -704,7 +704,7 @@ const updateFirebaseArticlePrice = async (hotelUid, articleId, field, price) => 
   try {
     const historyRef = collection(
       db,
-      `hotels/${hotelUid}/articles/${articleId}/priceHistory`
+      `hotels/${hotelUid}/supplierproducts/${articleId}/priceHistory`
     );
     await addDoc(historyRef, { price: roundedPrice, date: timestamp });
   } catch (err) {
@@ -722,7 +722,7 @@ const updateFirebaseArticleLastChecked = async (hotelUid, articleId) => {
     throw new Error("Artikel-ID ontbreekt voor het bijwerken van de prijscontrole.");
   }
 
-  const articleRef = doc(db, `hotels/${hotelUid}/articles`, articleId);
+  const articleRef = doc(db, `hotels/${hotelUid}/supplierproducts`, articleId);
   const timestamp = Date.now();
 
   await updateDoc(articleRef, { lastPriceUpdate: timestamp });
@@ -738,7 +738,7 @@ const handleUpdateButtonClick = async (button, row, firebasePriceInfo, rows) => 
 
   const firebaseMatch = row.firebase;
   if (!firebaseMatch?.id) {
-    updateStatus("Geen geldig Firebase-artikel gevonden om te updaten.", "error");
+    updateStatus("Geen geldig Firebase-product gevonden om te updaten.", "error");
     return;
   }
 
@@ -783,7 +783,7 @@ const handlePriceCheckedButtonClick = async (button, row, rows) => {
 
   const firebaseMatch = row.firebase;
   if (!firebaseMatch?.id) {
-    updateStatus("Geen geldig Firebase-artikel gevonden om te updaten.", "error");
+    updateStatus("Geen geldig Firebase-product gevonden om te updaten.", "error");
     return;
   }
 
@@ -830,18 +830,18 @@ const handleCreateArticleClick = async (row) => {
     if (typeof row?.imageUrl === "string" && row.imageUrl) {
       params.set("imageUrl", row.imageUrl);
     }
-    const url = `${KITCHENPILOT_CREATE_URL}?${params.toString()}`;
+    const url = `${HOTELTOOLKIT_CREATE_URL}?${params.toString()}`;
 
     try {
       await chromeApi.windowsCreate({ url, focused: true });
     } catch (windowErr) {
-      console.warn("Kon KitchenPilot niet openen in een nieuw venster, val terug op tab", windowErr);
+      console.warn("Kon HotelToolkit niet openen in een nieuw venster, val terug op tab", windowErr);
       await chromeApi.tabsCreate({ url });
     }
-    updateStatus("Artikelcreatie geopend in KitchenPilot.", "success");
+    updateStatus("Productcreatie geopend in HotelToolkit.", "success");
   } catch (err) {
-    console.error("Kon KitchenPilot niet openen voor artikelcreatie", err);
-    updateStatus("Kon KitchenPilot niet openen om artikel aan te maken.", "error");
+    console.error("Kon HotelToolkit niet openen voor productcreatie", err);
+    updateStatus("Kon HotelToolkit niet openen om product aan te maken.", "error");
   }
 };
 
@@ -931,7 +931,7 @@ const buildFirebaseIndex = async (hotelUid) => {
   if (!hotelUid) {
     throw new Error("Geen hotel geselecteerd.");
   }
-  const snapshot = await getDocs(collection(db, `hotels/${hotelUid}/articles`));
+  const snapshot = await getDocs(collection(db, `hotels/${hotelUid}/supplierproducts`));
   const index = new Map();
   const articles = [];
   snapshot.forEach((docSnap) => {
@@ -941,12 +941,20 @@ const buildFirebaseIndex = async (hotelUid) => {
       ...data
     };
     articles.push(article);
-    const keys = getLookupKeys(data.articleNumber);
-    keys.forEach((key) => {
-      if (!index.has(key)) {
-        index.set(key, []);
-      }
-      index.get(key).push(article);
+    const keyCandidates = [
+      data.articleNumber,
+      data.supplierSku,
+      data.supplierArticleNumber,
+      docSnap.id
+    ];
+    keyCandidates.forEach((candidate) => {
+      const keys = getLookupKeys(candidate);
+      keys.forEach((key) => {
+        if (!index.has(key)) {
+          index.set(key, []);
+        }
+        index.get(key).push(article);
+      });
     });
   });
   return { index, articles };
@@ -1173,7 +1181,7 @@ const renderResults = (rows) => {
     const createArticleHtml = !firebaseMatch
       ? `
           <div class="result-actions">
-            <button type="button" class="secondary-btn create-article-btn">Create article</button>
+            <button type="button" class="secondary-btn create-article-btn">Create product</button>
           </div>
         `
       : "";
@@ -1603,7 +1611,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       if (!currentUser) {
-        updateStatus("Log eerst in met je KitchenPilot-account.", "error");
+        updateStatus("Log eerst in met je HotelToolkit-account.", "error");
         return;
       }
       if (!selectedHotelUid) {
