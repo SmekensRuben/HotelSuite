@@ -21,9 +21,9 @@ function formatDate(value) {
 
 function DetailField({ label, value }) {
   return (
-    <div>
-      <p className="text-xs uppercase tracking-wide text-gray-500">{label}</p>
-      <p className="text-sm text-gray-800 mt-1">{value === null || value === undefined || value === "" ? "-" : String(value)}</p>
+    <div className="rounded-xl border border-gray-200 bg-white/80 p-3">
+      <p className="text-[11px] uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="text-sm text-gray-900 mt-1 font-medium">{value === null || value === undefined || value === "" ? "-" : String(value)}</p>
     </div>
   );
 }
@@ -142,56 +142,58 @@ export default function SupplierProductDetailPage() {
           </Card>
         ) : (
           <>
-            <Card>
-              <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_180px] items-start">
-                <div>
-                  <h2 className="text-2xl font-semibold text-gray-900">{product.supplierProductName || "-"}</h2>
-
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-gray-500">Supplier SKU</p>
-                      <p className="text-sm text-gray-800 mt-1 font-medium">{product.supplierSku || "-"}</p>
+            <Card className="overflow-hidden border-0 shadow-xl shadow-slate-200/70">
+              <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 p-6 text-white">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-300">Supplier product</p>
+                    <h2 className="text-3xl font-semibold mt-2">{product.supplierProductName || "-"}</h2>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">SKU: {product.supplierSku || "-"}</span>
+                      <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">Supplier: {product.supplierId || "-"}</span>
+                      <span
+                        className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                          product.active !== false ? "bg-emerald-400/20 text-emerald-200" : "bg-white/10 text-slate-200"
+                        }`}
+                      >
+                        {product.active !== false ? t("products.status.active") : t("products.status.inactive")}
+                      </span>
                     </div>
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-gray-500">Supplier</p>
-                      <p className="text-sm text-gray-800 mt-1 font-medium">{product.supplierId || "-"}</p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4">
-                    <span
-                      className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-                        product.active !== false
-                          ? "bg-green-100 text-green-700"
-                          : "bg-gray-200 text-gray-700"
-                      }`}
-                    >
-                      {product.active !== false ? t("products.status.active") : t("products.status.inactive")}
-                    </span>
                   </div>
                 </div>
+              </div>
 
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-gray-500 mb-2">Search image</p>
-                  {product.searchImageUrl ? (
-                    <img
-                      src={product.searchImageUrl}
-                      alt={product.supplierProductName || "Supplier product"}
-                      className="w-full max-w-[180px] aspect-square object-cover rounded-lg border border-gray-200 bg-gray-50"
-                    />
-                  ) : (
-                    <div className="w-full max-w-[180px] aspect-square rounded-lg border border-dashed border-gray-300 bg-gray-50 text-gray-400 text-xs flex items-center justify-center px-3 text-center">
-                      Geen search image
-                    </div>
-                  )}
+              <div className="p-6 bg-white">
+                <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_160px] items-start">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <DetailField label="Supplier SKU" value={product.supplierSku} />
+                    <DetailField label="Supplier" value={product.supplierId} />
+                    <DetailField label="Pricing Model" value={product.pricingModel || "Per Purchase Unit"} />
+                    <DetailField label="Currency" value={product.currency || "EUR"} />
+                  </div>
+
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-gray-500 mb-2">Search image</p>
+                    {product.searchImageUrl ? (
+                      <img
+                        src={product.searchImageUrl}
+                        alt={product.supplierProductName || "Supplier product"}
+                        className="w-full max-w-[140px] aspect-[4/3] object-cover rounded-lg border border-gray-200 bg-gray-50 mx-auto"
+                      />
+                    ) : (
+                      <div className="w-full max-w-[140px] aspect-[4/3] rounded-lg border border-dashed border-gray-300 bg-gray-50 text-gray-400 text-xs flex items-center justify-center px-3 text-center mx-auto">
+                        Geen search image
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </Card>
 
             <div className="grid gap-4 lg:grid-cols-2">
-              <Card>
+              <Card className="border-0 shadow-md shadow-slate-200/70">
                 <h2 className="text-lg font-semibold mb-3">Pricing</h2>
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <DetailField label="Currency" value={product.currency || "EUR"} />
                   <DetailField label="Pricing Model" value={product.pricingModel || "Per Purchase Unit"} />
                   <DetailField label="Base Unit" value={product.baseUnit} />
@@ -212,7 +214,7 @@ export default function SupplierProductDetailPage() {
                 </div>
               </Card>
 
-              <Card>
+              <Card className="border-0 shadow-md shadow-slate-200/70">
                 <h2 className="text-lg font-semibold mb-3">Classification</h2>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <DetailField label="Catalog Product ID" value={product.catalogProductId} />
@@ -240,7 +242,7 @@ export default function SupplierProductDetailPage() {
                 </Card>
               )}
 
-              <Card className="lg:col-span-2">
+              <Card className="lg:col-span-2 border-0 shadow-md shadow-slate-200/70">
                 <h2 className="text-lg font-semibold mb-3">Audit</h2>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <DetailField label="Created At" value={formatDate(product.createdAt)} />
