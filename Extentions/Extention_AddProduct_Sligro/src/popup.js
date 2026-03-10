@@ -986,32 +986,83 @@ const findFirebaseMatch = (index, articleNumber) => {
   return null;
 };
 
+
+const extractHotelIds = (...sources) => {
+  const result = [];
+
+  const pushValue = (value) => {
+    if (!value && value !== 0) return;
+    if (Array.isArray(value)) {
+      value.forEach(pushValue);
+      return;
+    }
+    if (typeof value === "object") {
+      Object.entries(value).forEach(([key, enabled]) => {
+        if (enabled) pushValue(key);
+      });
+      return;
+    }
+
+    const uid = typeof value === "string" ? value.trim() : String(value).trim();
+    if (uid) {
+      result.push(uid);
+    }
+  };
+
+  sources.forEach(pushValue);
+  return Array.from(new Set(result));
+};
+
+const mapFirestoreError = (error) => {
+  const code = error?.code || "";
+  if (code === "permission-denied") {
+    return "Je account heeft geen toegang tot de vereiste Firestore-documenten. Vraag een beheerder om rechten op users/{uid} of hotel-koppeling via claims.";
+  }
+  if (code === "unauthenticated") {
+    return "Je sessie is verlopen. Log opnieuw in.";
+  }
+  return error?.message || "Firestore-verzoek mislukt.";
+};
+
 const loadAccessibleHotels = async (user) => {
   if (!user?.uid) {
     throw new Error("Geen gebruiker aangemeld.");
   }
 
-  const userRef = doc(db, "users", user.uid);
-  const userSnap = await getDoc(userRef);
-  if (!userSnap.exists()) {
-    throw new Error("Gebruikersprofiel niet gevonden.");
+  let hotelIds = [];
+  try {
+    const userRef = doc(db, "users", user.uid);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+      const data = userSnap.data() || {};
+      hotelIds = extractHotelIds(data?.hotelUids, data?.hotelUid, data?.hotels, data?.allowedHotels, data?.hotelsMap);
+    }
+  } catch (err) {
+    if (err?.code !== "permission-denied") {
+      throw err;
+    }
+    console.warn("Geen toegang tot users-profiel; val terug op token claims", err);
   }
-
-  const data = userSnap.data() || {};
-  let hotelIds = data?.hotelUids || data?.hotelUid || [];
-  if (!Array.isArray(hotelIds)) {
-    hotelIds = [hotelIds];
-  }
-
-  hotelIds = hotelIds
-    .map((uid) => (typeof uid === "string" ? uid.trim() : ""))
-    .filter(Boolean);
 
   if (!hotelIds.length) {
-    throw new Error("Er zijn geen hotels aan dit account gekoppeld.");
+    try {
+      const tokenResult = await user.getIdTokenResult(true);
+      const claims = tokenResult?.claims || {};
+      hotelIds = extractHotelIds(
+        claims.hotelUids,
+        claims.hotelUid,
+        claims.hotels,
+        claims.allowedHotels,
+        claims.hotelsMap
+      );
+    } catch (err) {
+      console.warn("Token claims ophalen mislukt", err);
+    }
   }
 
-  hotelIds = Array.from(new Set(hotelIds));
+  if (!hotelIds.length) {
+    throw new Error("Geen toegankelijke hotels gevonden voor dit account.");
+  }
 
   const hotels = await Promise.all(
     hotelIds.map(async (uid) => {
@@ -1527,7 +1578,7 @@ document.addEventListener("DOMContentLoaded", () => {
       accessibleHotels = [];
       populateHotelSelect([]);
       await setSelectedHotel(null, { persist: false });
-      setHotelStatus(err.message || "Hotels konden niet geladen worden.", "error");
+      setHotelStatus(mapFirestoreError(err), "error");
     }
 
     updateLoadButtonState();
