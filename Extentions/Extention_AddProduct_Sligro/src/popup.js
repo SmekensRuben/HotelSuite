@@ -7,9 +7,11 @@ import {
   getDoc,
   updateDoc,
   addDoc,
+  setDoc,
   query,
   where,
-  limit
+  limit,
+  serverTimestamp
 } from "firebase/firestore";
 import {
   getAuth,
@@ -696,7 +698,42 @@ const firebaseIndexCache = {
 };
 
 const PRICE_DIFF_THRESHOLD = 0.005;
-const HOTELTOOLKIT_CREATE_URL = "https://hoteltoolkit.eu/catalog/supplier-products/new";
+
+const normalizeDocumentId = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  return raw
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+};
+
+const promptPricingModelChoice = () => {
+  const choice = window.prompt(
+    `Kies pricing model:
+1 = Per Purchase Unit
+2 = Per Base Unit`,
+    "1"
+  );
+  if (choice === null) return null;
+  const normalized = choice.trim();
+  if (normalized === '2') {
+    return 'Per Base Unit';
+  }
+  return 'Per Purchase Unit';
+};
+
+const promptPriceValue = (pricingModel, defaultValue) => {
+  const label = pricingModel === 'Per Base Unit' ? 'pricePerBaseUnit' : 'pricePerPurchaseUnit';
+  const initial = Number.isFinite(defaultValue) ? String(defaultValue) : '';
+  const raw = window.prompt(`Geef ${label} in:`, initial);
+  if (raw === null) return null;
+  const value = Number(String(raw).replace(',', '.'));
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error('Ongeldige prijs. Vul een positief getal in.');
+  }
+  return Math.round(value * 10000) / 10000;
+};
 
 const roundPrice = (value) => {
   const num = Number(value);
@@ -832,40 +869,79 @@ const handlePriceCheckedButtonClick = async (button, row, rows) => {
 };
 
 const handleCreateArticleClick = async (row) => {
-  try {
-    const params = new URLSearchParams();
-    params.set("prefillArticle", "1");
-    if (row?.name) {
-      params.set("name", row.name);
-    }
-    if (row?.brand) {
-      params.set("brand", row.brand);
-    }
-    if (row?.articleNumber) {
-      params.set("articleNumber", row.articleNumber);
-    }
-    const priceValue = roundPrice(row?.price);
-    if (Number.isFinite(priceValue)) {
-      params.set("pricePerPurchaseUnit", priceValue.toString());
-    }
-    if (row?.supplier) {
-      params.set("supplier", row.supplier);
-    }
-    if (typeof row?.imageUrl === "string" && row.imageUrl) {
-      params.set("imageUrl", row.imageUrl);
-    }
-    const url = `${HOTELTOOLKIT_CREATE_URL}?${params.toString()}`;
+  if (!selectedHotelUid) {
+    updateStatus("Selecteer eerst een hotel om producten aan te maken.", "error");
+    return;
+  }
 
-    try {
-      await chromeApi.windowsCreate({ url, focused: true });
-    } catch (windowErr) {
-      console.warn("Kon HotelToolkit niet openen in een nieuw venster, val terug op tab", windowErr);
-      await chromeApi.tabsCreate({ url });
-    }
-    updateStatus("Productcreatie geopend in HotelToolkit.", "success");
+  const supplierId = "Sligro";
+  const supplierSku = String(row?.articleNumber || "").trim();
+  const supplierProductName = String(row?.name || "").trim();
+  const unitValue = String(row?.packaging || "").trim();
+
+  if (!supplierSku) {
+    updateStatus("Artikelnummer ontbreekt. Product kan niet aangemaakt worden.", "error");
+    return;
+  }
+
+  const pricingModel = promptPricingModelChoice();
+  if (!pricingModel) {
+    updateStatus("Productcreatie geannuleerd.", "");
+    return;
+  }
+
+  let enteredPrice;
+  try {
+    enteredPrice = promptPriceValue(pricingModel, row?.price);
   } catch (err) {
-    console.error("Kon HotelToolkit niet openen voor productcreatie", err);
-    updateStatus("Kon HotelToolkit niet openen om product aan te maken.", "error");
+    updateStatus(err.message || "Ongeldige prijs.", "error");
+    return;
+  }
+  if (enteredPrice === null) {
+    updateStatus("Productcreatie geannuleerd.", "");
+    return;
+  }
+
+  try {
+    const documentId = normalizeDocumentId(`${supplierId}_${supplierSku}`) || normalizeDocumentId(supplierSku);
+    if (!documentId) {
+      throw new Error("Kon geen geldig document-ID opbouwen voor dit product.");
+    }
+
+    const productRef = doc(db, `hotels/${selectedHotelUid}/supplierproducts`, documentId);
+    const existingSnap = await getDoc(productRef);
+    if (existingSnap.exists()) {
+      throw new Error(`Supplierproduct bestaat al (${documentId}).`);
+    }
+
+    const payload = {
+      supplierId,
+      supplierSku,
+      supplierProductName,
+      pricingModel,
+      purchaseUnit: unitValue,
+      baseUnit: unitValue,
+      baseUnitsPerPurchaseUnit: 1,
+      pricePerPurchaseUnit: pricingModel === "Per Purchase Unit" ? enteredPrice : null,
+      pricePerBaseUnit: pricingModel === "Per Base Unit" ? enteredPrice : null,
+      active: true,
+      createdAt: serverTimestamp(),
+      createdBy: currentUser?.uid || "extension",
+      updatedAt: serverTimestamp(),
+      updatedBy: currentUser?.uid || "extension",
+      priceUpdatedOn: serverTimestamp(),
+      imageUrl: typeof row?.imageUrl === "string" ? row.imageUrl : "",
+      articleNumber: supplierSku,
+      name: supplierProductName
+    };
+
+    await setDoc(productRef, payload);
+    updateStatus(`Supplierproduct aangemaakt (${documentId}).`, "success");
+    window.alert(`Supplierproduct succesvol aangemaakt:\n${documentId}`);
+  } catch (err) {
+    console.error("Supplierproduct aanmaken mislukt", err);
+    updateStatus(err.message || "Supplierproduct aanmaken mislukt.", "error");
+    window.alert(`Supplierproduct aanmaken mislukt:\n${err.message || "Onbekende fout"}`);
   }
 };
 
