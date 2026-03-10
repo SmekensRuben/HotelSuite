@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "KitchenPilot Price Sync",
-  "description": "Vergelijk webshopprijzen van Sligro en HANOS met Firebase.",
+  "name": "HotelToolkit Supplier Product Sync",
+  "description": "Vergelijk webshopprijzen van Sligro en HANOS met Firebase supplierproducts.",
   "version": "2.0.0",
   "action": {
-    "default_title": "KitchenPilot Price Sync",
+    "default_title": "HotelToolkit Supplier Product Sync",
     "default_popup": "popup.html"
   },
   "permissions": [
