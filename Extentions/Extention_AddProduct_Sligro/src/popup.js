@@ -708,32 +708,75 @@ const normalizeDocumentId = (value) => {
     .replace(/^-|-$/g, "");
 };
 
-const promptPricingModelChoice = () => {
-  const choice = window.prompt(
-    `Kies pricing model:
-1 = Per Purchase Unit
-2 = Per Base Unit`,
-    "1"
-  );
-  if (choice === null) return null;
-  const normalized = choice.trim();
-  if (normalized === '2') {
-    return 'Per Base Unit';
-  }
-  return 'Per Purchase Unit';
-};
+const openCreateProductDialog = (row) =>
+  new Promise((resolve) => {
+    const modal = document.getElementById("createProductModal");
+    const modelSelect = document.getElementById("pricingModelSelect");
+    const valueInput = document.getElementById("pricingValueInput");
+    const baseFields = document.getElementById("baseUnitFields");
+    const purchaseUnitInput = document.getElementById("purchaseUnitInput");
+    const baseUnitInput = document.getElementById("baseUnitInput");
+    const baseUnitsInput = document.getElementById("baseUnitsPerPurchaseUnitInput");
+    const cancelBtn = document.getElementById("createProductCancelBtn");
+    const confirmBtn = document.getElementById("createProductConfirmBtn");
 
-const promptPriceValue = (pricingModel, defaultValue) => {
-  const label = pricingModel === 'Per Base Unit' ? 'pricePerBaseUnit' : 'pricePerPurchaseUnit';
-  const initial = Number.isFinite(defaultValue) ? String(defaultValue) : '';
-  const raw = window.prompt(`Geef ${label} in:`, initial);
-  if (raw === null) return null;
-  const value = Number(String(raw).replace(',', '.'));
-  if (!Number.isFinite(value) || value < 0) {
-    throw new Error('Ongeldige prijs. Vul een positief getal in.');
-  }
-  return Math.round(value * 10000) / 10000;
-};
+    if (!modal || !modelSelect || !valueInput || !baseFields || !purchaseUnitInput || !baseUnitInput || !baseUnitsInput || !cancelBtn || !confirmBtn) {
+      resolve(null);
+      return;
+    }
+
+    const syncBaseUnitFields = () => {
+      const isPerBaseUnit = modelSelect.value === "Per Base Unit";
+      baseFields.classList.toggle("hidden", !isPerBaseUnit);
+    };
+
+    modelSelect.value = "Per Purchase Unit";
+    valueInput.value = Number.isFinite(row?.price) ? String(row.price) : "";
+    purchaseUnitInput.value = String(row?.packaging || "").trim();
+    baseUnitInput.value = String(row?.packaging || "").trim();
+    baseUnitsInput.value = "1";
+    syncBaseUnitFields();
+    modal.classList.remove("hidden");
+
+    const cleanup = () => {
+      modal.classList.add("hidden");
+      modelSelect.removeEventListener("change", syncBaseUnitFields);
+      cancelBtn.removeEventListener("click", onCancel);
+      confirmBtn.removeEventListener("click", onConfirm);
+    };
+
+    const onCancel = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    const onConfirm = () => {
+      const pricingModel = modelSelect.value === "Per Base Unit"
+        ? "Per Base Unit"
+        : "Per Purchase Unit";
+      const rawValue = String(valueInput.value || "").trim();
+      const enteredPrice = Number(rawValue.replace(',', '.'));
+
+      const purchaseUnit = String(purchaseUnitInput.value || "").trim();
+      const baseUnit = String(baseUnitInput.value || "").trim();
+      const baseUnitsPerPurchaseUnit = Number(String(baseUnitsInput.value || "").trim().replace(',', '.'));
+
+      if (pricingModel === "Per Base Unit") {
+        if (!purchaseUnit || !baseUnit || !Number.isFinite(baseUnitsPerPurchaseUnit)) {
+          window.alert("Voor 'Per Base Unit' zijn purchaseUnit, baseUnit en baseUnitsPerPurchaseUnit verplicht.");
+          return;
+        }
+      }
+
+      cleanup();
+      resolve({ pricingModel, enteredPrice, purchaseUnit, baseUnit, baseUnitsPerPurchaseUnit });
+    };
+
+    modelSelect.addEventListener("change", syncBaseUnitFields);
+    cancelBtn.addEventListener("click", onCancel);
+    confirmBtn.addEventListener("click", onConfirm);
+    valueInput.focus();
+  });
 
 const roundPrice = (value) => {
   const num = Number(value);
@@ -884,23 +927,18 @@ const handleCreateArticleClick = async (row) => {
     return;
   }
 
-  const pricingModel = promptPricingModelChoice();
-  if (!pricingModel) {
+  const createInput = await openCreateProductDialog(row);
+  if (!createInput) {
     updateStatus("Productcreatie geannuleerd.", "");
     return;
   }
-
-  let enteredPrice;
-  try {
-    enteredPrice = promptPriceValue(pricingModel, row?.price);
-  } catch (err) {
-    updateStatus(err.message || "Ongeldige prijs.", "error");
-    return;
-  }
-  if (enteredPrice === null) {
-    updateStatus("Productcreatie geannuleerd.", "");
-    return;
-  }
+  const {
+    pricingModel,
+    enteredPrice,
+    purchaseUnit: manualPurchaseUnit,
+    baseUnit: manualBaseUnit,
+    baseUnitsPerPurchaseUnit: manualBaseUnitsPerPurchaseUnit
+  } = createInput;
 
   try {
     const documentId = normalizeDocumentId(`${supplierId}_${supplierSku}`) || normalizeDocumentId(supplierSku);
@@ -919,9 +957,9 @@ const handleCreateArticleClick = async (row) => {
       supplierSku,
       supplierProductName,
       pricingModel,
-      purchaseUnit: unitValue,
-      baseUnit: unitValue,
-      baseUnitsPerPurchaseUnit: 1,
+      purchaseUnit: pricingModel === "Per Base Unit" ? manualPurchaseUnit : unitValue,
+      baseUnit: pricingModel === "Per Base Unit" ? manualBaseUnit : unitValue,
+      baseUnitsPerPurchaseUnit: pricingModel === "Per Base Unit" ? manualBaseUnitsPerPurchaseUnit : 1,
       pricePerPurchaseUnit: pricingModel === "Per Purchase Unit" ? enteredPrice : null,
       pricePerBaseUnit: pricingModel === "Per Base Unit" ? enteredPrice : null,
       active: true,

@@ -83,6 +83,41 @@
         </div>
         <div id="resultRows" class="results-rows"></div>
       </section>
+
+      <div id="createProductModal" class="modal-overlay hidden">
+        <div class="modal-card">
+          <h3 class="section-title">Supplierproduct aanmaken</h3>
+          <label class="field">
+            <span class="field-label">Pricing model</span>
+            <select id="pricingModelSelect" class="field-input">
+              <option value="Per Purchase Unit">Per Purchase Unit</option>
+              <option value="Per Base Unit">Per Base Unit</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">Prijs</span>
+            <input id="pricingValueInput" type="text" class="field-input" placeholder="Bijv. 12,34" />
+          </label>
+          <div id="baseUnitFields" class="hidden">
+            <label class="field">
+              <span class="field-label">Purchase Unit *</span>
+              <input id="purchaseUnitInput" type="text" class="field-input" placeholder="Bijv. Doos x 72 stuks" />
+            </label>
+            <label class="field">
+              <span class="field-label">Base Unit *</span>
+              <input id="baseUnitInput" type="text" class="field-input" placeholder="Bijv. Stuk" />
+            </label>
+            <label class="field">
+              <span class="field-label">Base Units Per Purchase Unit *</span>
+              <input id="baseUnitsPerPurchaseUnitInput" type="text" class="field-input" placeholder="Bijv. 72" />
+            </label>
+          </div>
+          <div class="result-actions">
+            <button id="createProductCancelBtn" type="button" class="secondary-btn">Annuleren</button>
+            <button id="createProductConfirmBtn" type="button" class="primary-btn">Aanmaken</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="./popup.js"></script>
