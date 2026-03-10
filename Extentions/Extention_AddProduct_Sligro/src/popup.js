@@ -714,14 +714,13 @@ const openCreateProductDialog = (row) =>
     const modelSelect = document.getElementById("pricingModelSelect");
     const valueInput = document.getElementById("pricingValueInput");
     const baseFields = document.getElementById("baseUnitFields");
-    const searchImageUrlInput = document.getElementById("searchImageUrlInput");
     const purchaseUnitInput = document.getElementById("purchaseUnitInput");
     const baseUnitInput = document.getElementById("baseUnitInput");
     const baseUnitsInput = document.getElementById("baseUnitsPerPurchaseUnitInput");
     const cancelBtn = document.getElementById("createProductCancelBtn");
     const confirmBtn = document.getElementById("createProductConfirmBtn");
 
-    if (!modal || !modelSelect || !valueInput || !baseFields || !searchImageUrlInput || !purchaseUnitInput || !baseUnitInput || !baseUnitsInput || !cancelBtn || !confirmBtn) {
+    if (!modal || !modelSelect || !valueInput || !baseFields || !purchaseUnitInput || !baseUnitInput || !baseUnitsInput || !cancelBtn || !confirmBtn) {
       resolve(null);
       return;
     }
@@ -733,7 +732,6 @@ const openCreateProductDialog = (row) =>
 
     modelSelect.value = "Per Purchase Unit";
     valueInput.value = Number.isFinite(row?.price) ? String(row.price) : "";
-    searchImageUrlInput.value = typeof row?.imageUrl === "string" ? row.imageUrl : "";
     purchaseUnitInput.value = String(row?.packaging || "").trim();
     baseUnitInput.value = String(row?.packaging || "").trim();
     baseUnitsInput.value = "1";
@@ -759,7 +757,7 @@ const openCreateProductDialog = (row) =>
       const rawValue = String(valueInput.value || "").trim();
       const enteredPrice = Number(rawValue.replace(',', '.'));
 
-      const searchImageUrl = String(searchImageUrlInput.value || "").trim();
+      const searchImageUrl = typeof row?.imageUrl === "string" ? row.imageUrl : "";
       const purchaseUnit = String(purchaseUnitInput.value || "").trim();
       const baseUnit = String(baseUnitInput.value || "").trim();
       const baseUnitsPerPurchaseUnit = Number(String(baseUnitsInput.value || "").trim().replace(',', '.'));
