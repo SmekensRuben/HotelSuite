@@ -6,7 +6,10 @@ import {
   doc,
   getDoc,
   updateDoc,
-  addDoc
+  addDoc,
+  query,
+  where,
+  limit
 } from "firebase/firestore";
 import {
   getAuth,
@@ -1029,19 +1032,49 @@ const loadAccessibleHotels = async (user) => {
     throw new Error("Geen gebruiker aangemeld.");
   }
 
+  console.log("AUTH UID:", user?.uid);
+  console.log("USER DOC PATH:", `users/${user?.uid}`);
+
   let hotelIds = [];
+  const userRef = doc(db, "users", user.uid);
   try {
-    const userRef = doc(db, "users", user.uid);
     const userSnap = await getDoc(userRef);
+    console.log("USER DOC EXISTS:", userSnap.exists());
+
     if (userSnap.exists()) {
       const data = userSnap.data() || {};
+      console.log("USER DOC DATA:", data);
       hotelIds = extractHotelIds(data?.hotelUids, data?.hotelUid, data?.hotels, data?.allowedHotels, data?.hotelsMap);
     }
   } catch (err) {
+    console.error("FOUT BIJ USER DOC:", err);
     if (err?.code !== "permission-denied") {
       throw err;
     }
     console.warn("Geen toegang tot users-profiel; val terug op token claims", err);
+  }
+
+  if (!hotelIds.length && user?.email) {
+    try {
+      const usersByEmailQuery = query(
+        collection(db, "users"),
+        where("email", "==", user.email),
+        limit(1)
+      );
+      const userByEmailSnap = await getDocs(usersByEmailQuery);
+      if (!userByEmailSnap.empty) {
+        const profileData = userByEmailSnap.docs[0].data() || {};
+        hotelIds = extractHotelIds(
+          profileData?.hotelUids,
+          profileData?.hotelUid,
+          profileData?.hotels,
+          profileData?.allowedHotels,
+          profileData?.hotelsMap
+        );
+      }
+    } catch (err) {
+      console.warn("Users-profiel via e-mail lookup mislukt", err);
+    }
   }
 
   if (!hotelIds.length) {
@@ -1061,7 +1094,7 @@ const loadAccessibleHotels = async (user) => {
   }
 
   if (!hotelIds.length) {
-    throw new Error("Geen toegankelijke hotels gevonden voor dit account.");
+    throw new Error("Geen toegankelijke hotels gevonden voor dit account. Controleer users/{auth.uid}.hotelUid of users.email mapping.");
   }
 
   const hotels = await Promise.all(
