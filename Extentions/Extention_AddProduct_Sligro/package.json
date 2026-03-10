@@ -1,7 +1,7 @@
 {
   "name": "sligro-chrome-ext",
   "version": "1.0.0",
-  "description": "Sligro article uploader voor Firestore",
+  "description": "Sligro supplierproduct uploader voor Firestore",
   "main": "src/popup.js",
   "scripts": {
     "dev": "vite",
