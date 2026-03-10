@@ -1035,7 +1035,7 @@ const loadAccessibleHotels = async (user) => {
     const userSnap = await getDoc(userRef);
     if (userSnap.exists()) {
       const data = userSnap.data() || {};
-      hotelIds = extractHotelIds(data?.hotelUids, data?.hotelUid);
+      hotelIds = extractHotelIds(data?.hotelUids, data?.hotelUid, data?.hotels, data?.allowedHotels, data?.hotelsMap);
     }
   } catch (err) {
     if (err?.code !== "permission-denied") {
