@@ -17,8 +17,8 @@ import {
 
 const firebaseConfig = {
   apiKey: "AIzaSyBUqtUVov_JcgJ5CvA4tNvF3JMar7FbaLU",
-  authDomain: "test-breakfast.firebaseapp.com",
-  projectId: "test-breakfast"
+  authDomain: "lobby-logic.firebaseapp.com",
+  projectId: "lobby-logic"
 };
 
 const app = initializeApp(firebaseConfig);
