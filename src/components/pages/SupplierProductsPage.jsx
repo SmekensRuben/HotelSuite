@@ -33,6 +33,14 @@ const EXCEL_HEADERS = [
 
 const TEMPLATE_HEADERS = EXCEL_HEADERS.filter((header) => header !== "documentId");
 
+
+function formatContent(product) {
+  const amount = Number(product?.baseUnitsPerPurchaseUnit || 0);
+  const unit = String(product?.baseUnit || "").trim();
+  if (!(amount > 0) || !unit) return "-";
+  return `${amount} ${unit}`;
+}
+
 const EXPORT_TEMPLATE_ROW = {
   supplierId: "",
   supplierSku: "",
@@ -138,7 +146,13 @@ export default function SupplierProductsPage() {
     { key: "supplierId", label: "Supplier ID" },
     { key: "supplierSku", label: "Supplier SKU" },
     { key: "supplierProductName", label: "Supplier Product Name" },
-    { key: "baseUnit", label: "Base Unit" },
+    { key: "purchaseUnit", label: "Purchase Unit" },
+    {
+      key: "content",
+      label: "Content",
+      sortValue: (product) => formatContent(product),
+      render: (product) => formatContent(product),
+    },
     { key: "pricingModel", label: "Pricing Model" },
     {
       key: "active",
