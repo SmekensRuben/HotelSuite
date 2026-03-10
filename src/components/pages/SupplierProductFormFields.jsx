@@ -17,6 +17,7 @@ const defaultState = {
   baseUnit: "",
   baseUnitsPerPurchaseUnit: "",
   catalogProductId: "",
+  searchImageUrl: "",
   active: true,
   hasVariants: false,
   variants: [defaultVariant],
@@ -33,6 +34,7 @@ function toFormState(initialData) {
       initialData.baseUnitsPerPurchaseUnit != null ? String(initialData.baseUnitsPerPurchaseUnit) : "",
     purchaseUnit: initialData.purchaseUnit || "",
     baseUnit: initialData.baseUnit || "",
+    searchImageUrl: initialData.searchImageUrl || "",
     variants:
       Array.isArray(initialData.variants) && initialData.variants.length > 0
         ? initialData.variants.map((variant) => ({
@@ -132,6 +134,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
       purchaseUnit: formState.purchaseUnit.trim(),
       baseUnit: formState.baseUnit.trim(),
       catalogProductId: formState.catalogProductId.trim(),
+      searchImageUrl: formState.searchImageUrl.trim(),
       active: formState.active,
       hasVariants: formState.hasVariants,
       pricePerBaseUnit: isPerBaseUnit ? Number(formState.pricePerBaseUnit) || 0 : null,
@@ -289,6 +292,10 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           Catalog Product ID
           <input value={formState.catalogProductId} onChange={(event) => updateField("catalogProductId", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
+        </label>
+        <label className="sm:col-span-2 flex flex-col gap-1 text-sm font-semibold text-gray-700">
+          Search Image URL
+          <input value={formState.searchImageUrl} onChange={(event) => updateField("searchImageUrl", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
         </label>
         <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
           <input type="checkbox" checked={formState.active} onChange={(event) => updateField("active", event.target.checked)} />
