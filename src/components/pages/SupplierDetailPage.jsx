@@ -18,6 +18,31 @@ function formatDate(value) {
   return String(value);
 }
 
+function formatDeliveryDays(deliveryDays) {
+  if (!Array.isArray(deliveryDays) || deliveryDays.length === 0) return "-";
+
+  const dayLabels = {
+    0: "Zondag",
+    1: "Maandag",
+    2: "Dinsdag",
+    3: "Woensdag",
+    4: "Donderdag",
+    5: "Vrijdag",
+    6: "Zaterdag",
+  };
+
+  const sortedDays = [...new Set(deliveryDays
+    .map((day) => Number(day))
+    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))]
+    .sort((a, b) => {
+      const mondayFirst = [1, 2, 3, 4, 5, 6, 0];
+      return mondayFirst.indexOf(a) - mondayFirst.indexOf(b);
+    });
+
+  if (sortedDays.length === 0) return "-";
+  return sortedDays.map((day) => dayLabels[day]).join(", ");
+}
+
 function DetailField({ label, value }) {
   return (
     <div>
@@ -154,6 +179,7 @@ export default function SupplierDetailPage() {
               <h2 className="text-lg font-semibold mb-3">Ordering</h2>
               <div className="grid gap-4 sm:grid-cols-2">
                 <DetailField label="Order System" value={supplier.orderSystem} />
+                <DetailField label="Leverdagen" value={formatDeliveryDays(supplier.deliveryDays)} />
                 <DetailField label="Category" value={supplier.category} />
                 <DetailField label="Subcategory" value={supplier.subcategory} />
               </div>

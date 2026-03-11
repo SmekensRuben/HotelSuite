@@ -263,7 +263,18 @@ export default function ShoppingCartPage() {
               setErrorMessage("");
               try {
                 const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-                await createOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, actor);
+                const result = await createOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, actor);
+                const adjustments = Array.isArray(result?.deliveryDateAdjustments)
+                  ? result.deliveryDateAdjustments
+                  : [];
+
+                if (adjustments.length > 0) {
+                  const message = adjustments
+                    .map((adjustment) => `${adjustment.supplierId}: ${adjustment.requestedDeliveryDate} → ${adjustment.resolvedDeliveryDate}`)
+                    .join(" | ");
+                  window.alert(`Leverdagen aangepast per supplier: ${message}`);
+                }
+
                 setShowCreateOrderModal(false);
                 navigate("/orders");
               } catch (error) {
