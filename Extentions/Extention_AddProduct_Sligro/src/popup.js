@@ -912,13 +912,15 @@ const handlePriceCheckedButtonClick = async (button, row, rows) => {
   }
 };
 
+const SLIGRO_SUPPLIER_ID = "Sligro";
+
 const handleCreateArticleClick = async (row) => {
   if (!selectedHotelUid) {
     updateStatus("Selecteer eerst een hotel om producten aan te maken.", "error");
     return;
   }
 
-  const supplierId = "Sligro";
+  const supplierId = SLIGRO_SUPPLIER_ID;
   const supplierSku = String(row?.articleNumber || "").trim();
   const supplierProductName = String(row?.name || "").trim();
   const unitValue = String(row?.packaging || "").trim();

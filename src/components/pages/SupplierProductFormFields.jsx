@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useHotelContext } from "../../contexts/HotelContext";
+import { getSuppliers } from "../../services/firebaseSuppliers";
 
 const defaultVariant = {
   perBaseUnit: "",
@@ -64,12 +66,42 @@ function SectionCard({ title, children }) {
 }
 
 export default function SupplierProductFormFields({ initialData, onSubmit, savingLabel, submitLabel }) {
+  const { hotelUid } = useHotelContext();
   const [formState, setFormState] = useState(() => toFormState(initialData));
   const [saving, setSaving] = useState(false);
+  const [supplierNames, setSupplierNames] = useState([]);
 
   useEffect(() => {
     setFormState(toFormState(initialData));
   }, [initialData]);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadSuppliers = async () => {
+      if (!hotelUid) {
+        setSupplierNames([]);
+        return;
+      }
+
+      const suppliers = await getSuppliers(hotelUid);
+      if (!active) return;
+
+      const names = [...new Set(
+        suppliers
+          .map((supplier) => String(supplier?.name || "").trim())
+          .filter(Boolean)
+      )].sort((left, right) => left.localeCompare(right));
+
+      setSupplierNames(names);
+    };
+
+    loadSuppliers();
+    return () => {
+      active = false;
+    };
+  }, [hotelUid]);
+
 
   const updateField = (key, value) => {
     setFormState((prev) => ({ ...prev, [key]: value }));
@@ -167,7 +199,19 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
       <SectionCard title="Basic Information">
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           Supplier ID *
-          <input required value={formState.supplierId} onChange={(event) => updateField("supplierId", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
+          <input
+            required
+            list="supplier-id-options"
+            value={formState.supplierId}
+            onChange={(event) => updateField("supplierId", event.target.value)}
+            placeholder="Kies of typ supplier naam"
+            className="rounded border border-gray-300 px-3 py-2 text-sm"
+          />
+          <datalist id="supplier-id-options">
+            {supplierNames.map((supplierName) => (
+              <option key={supplierName} value={supplierName} />
+            ))}
+          </datalist>
         </label>
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           Supplier SKU *
