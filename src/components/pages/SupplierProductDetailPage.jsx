@@ -218,7 +218,6 @@ export default function SupplierProductDetailPage() {
                 <h2 className="text-lg font-semibold mb-3">Classification</h2>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <DetailField label="Catalog Product ID" value={product.catalogProductId} />
-                  <DetailField label="Search Image URL" value={product.searchImageUrl} />
                   <DetailField label="Has Variants" value={product.hasVariants ? "true" : "false"} />
                 </div>
               </Card>

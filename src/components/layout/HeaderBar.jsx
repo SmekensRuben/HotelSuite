@@ -36,6 +36,12 @@ export default function HeaderBar({ today, onLogout }) {
       visible: canViewSettings,
     },
     {
+      label: "Outlet Settings",
+      action: () => navigate("/settings/outlets"),
+      icon: Settings2,
+      visible: canViewSettings,
+    },
+    {
       label: "User Management",
       action: () => navigate("/settings/users"),
       icon: Users,
