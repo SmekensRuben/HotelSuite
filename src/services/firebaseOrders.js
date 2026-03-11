@@ -122,6 +122,11 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
     throw new Error("Shopping cart is leeg");
   }
 
+  const itemsWithoutOutlet = items.filter((item) => !String(item.outletId || "").trim());
+  if (itemsWithoutOutlet.length > 0) {
+    throw new Error("Selecteer een outlet voor alle supplierproducten in de shopping cart");
+  }
+
   const groupedBySupplier = items.reduce((acc, item) => {
     const supplierId = String(item.supplierId || "Onbekend").trim() || "Onbekend";
     if (!acc[supplierId]) acc[supplierId] = [];

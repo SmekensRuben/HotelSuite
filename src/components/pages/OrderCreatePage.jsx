@@ -124,6 +124,7 @@ export default function OrderCreatePage() {
     () =>
       products.map((product) => ({
         ...product,
+        imageUrl: product.imageUrl || "",
         contentLabel: formatContent(product),
         priceLabel: `${Number(product.pricePerPurchaseUnit || 0).toFixed(2)} ${
           product.currency || "EUR"
@@ -143,6 +144,22 @@ export default function OrderCreatePage() {
   };
 
   const columns = [
+    {
+      key: "imageUrl",
+      label: "Image",
+      sortable: false,
+      render: (row) => (
+        row.imageUrl ? (
+          <img
+            src={row.imageUrl}
+            alt={row.supplierProductName || "Supplier product"}
+            className="h-10 w-10 rounded object-cover border border-gray-200"
+          />
+        ) : (
+          <span className="text-xs text-gray-400">-</span>
+        )
+      ),
+    },
     { key: "supplierId", label: "Supplier" },
     { key: "supplierProductName", label: "Product" },
     { key: "supplierSku", label: "SKU" },

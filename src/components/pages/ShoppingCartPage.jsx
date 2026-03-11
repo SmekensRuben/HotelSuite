@@ -9,9 +9,11 @@ import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { createOrdersFromShoppingCart } from "../../services/firebaseOrders";
+import { getOutlets } from "../../services/firebaseSettings";
 import {
   getShoppingCart,
   removeShoppingCartItem,
+  updateShoppingCartItemOutlet,
   updateShoppingCartItemQty,
 } from "../../services/firebaseShoppingCarts";
 
@@ -31,6 +33,8 @@ export default function ShoppingCartPage() {
   const [showCreateOrderModal, setShowCreateOrderModal] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState("");
   const [creatingOrder, setCreatingOrder] = useState(false);
+  const [outlets, setOutlets] = useState([]);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const today = useMemo(
     () =>
@@ -60,11 +64,22 @@ export default function ShoppingCartPage() {
     refreshCart();
   }, [hotelUid, cartId]);
 
+  useEffect(() => {
+    const loadOutlets = async () => {
+      if (!hotelUid) return;
+      const fetchedOutlets = await getOutlets(hotelUid);
+      setOutlets(fetchedOutlets || []);
+    };
+
+    loadOutlets();
+  }, [hotelUid]);
+
   const items = Array.isArray(shoppingCart?.items) ? shoppingCart.items : [];
   const cartTotal = items.reduce(
     (sum, item) => sum + Number(item.pricePerPurchaseUnit || 0) * Number(item.qtyPurchaseUnits || 0),
     0
   );
+  const hasMissingOutlets = items.some((item) => !String(item.outletId || "").trim());
 
   const rows = items.map((item, index) => {
     const unitPrice = Number(item.pricePerPurchaseUnit || 0);
@@ -73,6 +88,7 @@ export default function ShoppingCartPage() {
       id: `${item.supplierProductId || "row"}-${index}`,
       supplierId: item.supplierId || "-",
       supplierProductName: item.supplierProductName || "-",
+      imageUrl: item.imageUrl || "",
       supplierSku: item.supplierSku || "-",
       purchaseUnit: item.purchaseUnit || "-",
       content: formatContent(item),
@@ -81,15 +97,54 @@ export default function ShoppingCartPage() {
       rowIndex: index,
       supplierProductId: item.supplierProductId,
       qtyPurchaseUnits: qty,
+      outletId: item.outletId || "",
     };
   });
 
   const columns = [
     { key: "supplierId", label: "Supplier" },
+    {
+      key: "imageUrl",
+      label: "Image",
+      sortable: false,
+      render: (row) => (
+        row.imageUrl ? (
+          <img
+            src={row.imageUrl}
+            alt={row.supplierProductName || "Supplier product"}
+            className="h-10 w-10 rounded object-cover border border-gray-200"
+          />
+        ) : (
+          <span className="text-xs text-gray-400">-</span>
+        )
+      ),
+    },
     { key: "supplierProductName", label: "Product" },
     { key: "supplierSku", label: "SKU" },
     { key: "purchaseUnit", label: "Purchase Unit" },
     { key: "content", label: "Content" },
+    {
+      key: "outletId",
+      label: "Outlet",
+      sortable: false,
+      render: (row) => (
+        <select
+          value={row.outletId}
+          onChange={async (event) => {
+            await updateShoppingCartItemOutlet(hotelUid, cartId, row.supplierProductId, event.target.value);
+            await refreshCart();
+          }}
+          className="w-40 border border-gray-300 rounded px-2 py-1"
+        >
+          <option value="">Selecteer outlet</option>
+          {outlets.map((outlet) => (
+            <option key={outlet.id} value={outlet.id}>
+              {outlet.name || outlet.id}
+            </option>
+          ))}
+        </select>
+      ),
+    },
     {
       key: "qty",
       label: "Aantal",
@@ -161,7 +216,19 @@ export default function ShoppingCartPage() {
             <DataListTable columns={columns} rows={rows} emptyMessage="Er zitten geen producten in de shopping cart." />
             <div className="flex flex-col items-end gap-3">
               <p className="text-lg font-semibold">Totaal shopping cart: {cartTotal.toFixed(2)} EUR</p>
-              <button type="button" onClick={() => setShowCreateOrderModal(true)} className="bg-blue-600 text-white px-4 py-2 rounded font-semibold hover:bg-blue-700">
+              {hasMissingOutlets && (
+                <p className="text-sm text-red-600">Selecteer een outlet voor elk supplierproduct om een order te kunnen maken.</p>
+              )}
+              {errorMessage && <p className="text-sm text-red-600">{errorMessage}</p>}
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorMessage("");
+                  setShowCreateOrderModal(true);
+                }}
+                disabled={hasMissingOutlets}
+                className="bg-blue-600 text-white px-4 py-2 rounded font-semibold hover:bg-blue-700 disabled:opacity-50"
+              >
                 Create Order
               </button>
             </div>
@@ -189,15 +256,21 @@ export default function ShoppingCartPage() {
           </button>
           <button
             type="button"
-            disabled={!deliveryDate || creatingOrder}
+            disabled={!deliveryDate || creatingOrder || hasMissingOutlets}
             onClick={async () => {
-              if (!deliveryDate) return;
+              if (!deliveryDate || hasMissingOutlets) return;
               setCreatingOrder(true);
-              const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-              await createOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, actor);
-              setCreatingOrder(false);
-              setShowCreateOrderModal(false);
-              navigate("/orders");
+              setErrorMessage("");
+              try {
+                const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
+                await createOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, actor);
+                setShowCreateOrderModal(false);
+                navigate("/orders");
+              } catch (error) {
+                setErrorMessage(error?.message || "Kon order niet aanmaken");
+              } finally {
+                setCreatingOrder(false);
+              }
             }}
             className="px-4 py-2 rounded bg-[#b41f1f] text-white hover:bg-[#961919] disabled:opacity-50"
           >
