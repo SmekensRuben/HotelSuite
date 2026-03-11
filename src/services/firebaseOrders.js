@@ -6,6 +6,7 @@ import {
   getDoc,
   getDocs,
   query,
+  where,
   orderBy,
   serverTimestamp,
   updateDoc,
@@ -35,6 +36,49 @@ function normalizeOrder(docSnap) {
     supplierId: data.supplierId || "",
     currency: data.currency || "EUR",
   };
+}
+
+
+function parseIsoDateOnly(value) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) return null;
+  const date = new Date(`${rawValue}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function toIsoDateOnly(dateValue) {
+  const year = dateValue.getFullYear();
+  const month = String(dateValue.getMonth() + 1).padStart(2, "0");
+  const day = String(dateValue.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function resolveSupplierDeliveryDate(requestedDate, supplierDeliveryDays) {
+  if (!Array.isArray(supplierDeliveryDays) || supplierDeliveryDays.length === 0) {
+    return requestedDate;
+  }
+
+  const allowedDays = new Set(
+    supplierDeliveryDays
+      .map((day) => Number(day))
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+  );
+
+  if (allowedDays.size === 0) return requestedDate;
+
+  const baseDate = parseIsoDateOnly(requestedDate);
+  if (!baseDate) return requestedDate;
+
+  const candidateDate = new Date(baseDate);
+  for (let offset = 0; offset <= 7; offset += 1) {
+    const weekday = candidateDate.getDay();
+    if (allowedDays.has(weekday)) {
+      return toIsoDateOnly(candidateDate);
+    }
+    candidateDate.setDate(candidateDate.getDate() + 1);
+  }
+
+  return requestedDate;
 }
 
 export function listOrderStatuses() {
@@ -134,8 +178,27 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
     return acc;
   }, {});
 
+  const supplierIds = Object.keys(groupedBySupplier).filter((supplierId) => supplierId !== "Onbekend");
+  const suppliersById = {};
+
+  if (supplierIds.length > 0) {
+    const chunkSize = 10;
+    for (let index = 0; index < supplierIds.length; index += chunkSize) {
+      const supplierChunk = supplierIds.slice(index, index + chunkSize);
+      const suppliersQuery = query(
+        collection(db, `hotels/${hotelUid}/suppliers`),
+        where("__name__", "in", supplierChunk)
+      );
+      const suppliersSnap = await getDocs(suppliersQuery);
+      suppliersSnap.forEach((supplierDoc) => {
+        suppliersById[supplierDoc.id] = supplierDoc.data() || {};
+      });
+    }
+  }
+
   const ordersCol = collection(db, `hotels/${hotelUid}/orders`);
   const createdOrderIds = [];
+  const deliveryDateAdjustments = [];
 
   for (const [supplierId, supplierItems] of Object.entries(groupedBySupplier)) {
     const totalAmount = supplierItems.reduce(
@@ -143,9 +206,20 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
       0
     );
 
+    const supplier = suppliersById[supplierId] || {};
+    const resolvedDeliveryDate = resolveSupplierDeliveryDate(deliveryDate, supplier.deliveryDays);
+
+    if (resolvedDeliveryDate !== deliveryDate) {
+      deliveryDateAdjustments.push({
+        supplierId,
+        requestedDeliveryDate: deliveryDate,
+        resolvedDeliveryDate,
+      });
+    }
+
     const orderPayload = {
       status: "Created",
-      deliveryDate,
+      deliveryDate: resolvedDeliveryDate,
       shoppingCartId,
       supplierId,
       createdBy: actor || "unknown",
@@ -165,10 +239,13 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
     updatedAt: serverTimestamp(),
   });
 
-  return createdOrderIds;
+  return {
+    orderIds: createdOrderIds,
+    deliveryDateAdjustments,
+  };
 }
 
 export async function createOrderFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor) {
-  const orderIds = await createOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor);
-  return orderIds[0] || null;
+  const result = await createOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor);
+  return result?.orderIds?.[0] || null;
 }

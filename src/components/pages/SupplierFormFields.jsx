@@ -1,6 +1,15 @@
 import React, { useMemo, useState } from "react";
 
 const ORDER_SYSTEM_OPTIONS = ["Email", "SFTP csv"];
+const DELIVERY_DAY_OPTIONS = [
+  { value: 1, label: "Maandag" },
+  { value: 2, label: "Dinsdag" },
+  { value: 3, label: "Woensdag" },
+  { value: 4, label: "Donderdag" },
+  { value: 5, label: "Vrijdag" },
+  { value: 6, label: "Zaterdag" },
+  { value: 0, label: "Zondag" },
+];
 
 const EMPTY_FORM = {
   name: "",
@@ -14,6 +23,7 @@ const EMPTY_FORM = {
   webshopUrl: "",
   username: "",
   password: "",
+  deliveryDays: [],
 };
 
 export default function SupplierFormFields({
@@ -35,6 +45,24 @@ export default function SupplierFormFields({
       ...currentValues,
       [fieldName]: fieldValue,
     }));
+  };
+
+  const toggleDeliveryDay = (dayValue) => {
+    const numericDay = Number(dayValue);
+    setFormValues((currentValues) => {
+      const currentDays = Array.isArray(currentValues.deliveryDays)
+        ? currentValues.deliveryDays.map((day) => Number(day)).filter((day) => Number.isInteger(day))
+        : [];
+
+      const nextDays = currentDays.includes(numericDay)
+        ? currentDays.filter((day) => day !== numericDay)
+        : [...currentDays, numericDay];
+
+      return {
+        ...currentValues,
+        deliveryDays: nextDays,
+      };
+    });
   };
 
   const handleSubmit = async (event) => {
@@ -88,6 +116,32 @@ export default function SupplierFormFields({
             options={ORDER_SYSTEM_OPTIONS}
             onChange={(value) => setValue("orderSystem", value)}
           />
+        </div>
+        <div>
+          <p className="text-sm font-medium text-gray-700">Leverdagen</p>
+          <p className="text-xs text-gray-500 mt-1">Selecteer de dagen waarop deze supplier levert.</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+            {DELIVERY_DAY_OPTIONS.map((dayOption) => {
+              const selectedDays = Array.isArray(formValues.deliveryDays)
+                ? formValues.deliveryDays.map((day) => Number(day))
+                : [];
+              const checked = selectedDays.includes(dayOption.value);
+              return (
+                <label
+                  key={dayOption.value}
+                  className="inline-flex items-center gap-2 rounded border border-gray-200 px-3 py-2 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleDeliveryDay(dayOption.value)}
+                    className="h-4 w-4 rounded border-gray-300 text-[#b41f1f] focus:ring-[#b41f1f]/30"
+                  />
+                  <span>{dayOption.label}</span>
+                </label>
+              );
+            })}
+          </div>
         </div>
       </section>
 
