@@ -95,6 +95,8 @@ function mapSupplierProductToCartItem(supplierProduct, qtyPurchaseUnits) {
     currency: supplierProduct?.currency || "EUR",
     baseUnit: supplierProduct?.baseUnit || "",
     baseUnitsPerPurchaseUnit: Number(supplierProduct?.baseUnitsPerPurchaseUnit || 0),
+    imageUrl: supplierProduct?.imageUrl || "",
+    outletId: "",
     updatedAt: new Date().toISOString(),
   };
 }
@@ -152,6 +154,32 @@ export async function updateShoppingCartItemQty(hotelUid, shoppingCartId, suppli
       };
     })
     .filter((item) => Number(item.qtyPurchaseUnits) > 0);
+
+  await updateDoc(cartRef, {
+    items: nextItems,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+
+export async function updateShoppingCartItemOutlet(hotelUid, shoppingCartId, supplierProductId, outletId) {
+  if (!hotelUid || !shoppingCartId || !supplierProductId) return;
+
+  const cartRef = doc(db, `hotels/${hotelUid}/shoppingCarts`, shoppingCartId);
+  const cartSnap = await getDoc(cartRef);
+  if (!cartSnap.exists()) return;
+
+  const data = cartSnap.data() || {};
+  const currentItems = Array.isArray(data.items) ? data.items : [];
+
+  const nextItems = currentItems.map((item) => {
+    if (item.supplierProductId !== supplierProductId) return item;
+    return {
+      ...item,
+      outletId: String(outletId || "").trim(),
+      updatedAt: new Date().toISOString(),
+    };
+  });
 
   await updateDoc(cartRef, {
     items: nextItems,
