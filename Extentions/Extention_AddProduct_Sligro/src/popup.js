@@ -757,7 +757,7 @@ const openCreateProductDialog = (row) =>
       const rawValue = String(valueInput.value || "").trim();
       const enteredPrice = Number(rawValue.replace(',', '.'));
 
-      const searchImageUrl = typeof row?.imageUrl === "string" ? row.imageUrl : "";
+      const imageUrl = typeof row?.imageUrl === "string" ? row.imageUrl : "";
       const purchaseUnit = String(purchaseUnitInput.value || "").trim();
       const baseUnit = String(baseUnitInput.value || "").trim();
       const baseUnitsPerPurchaseUnit = Number(String(baseUnitsInput.value || "").trim().replace(',', '.'));
@@ -770,7 +770,7 @@ const openCreateProductDialog = (row) =>
       }
 
       cleanup();
-      resolve({ pricingModel, enteredPrice, searchImageUrl, purchaseUnit, baseUnit, baseUnitsPerPurchaseUnit });
+      resolve({ pricingModel, enteredPrice, imageUrl, purchaseUnit, baseUnit, baseUnitsPerPurchaseUnit });
     };
 
     modelSelect.addEventListener("change", syncBaseUnitFields);
@@ -936,7 +936,7 @@ const handleCreateArticleClick = async (row) => {
   const {
     pricingModel,
     enteredPrice,
-    searchImageUrl,
+    imageUrl,
     purchaseUnit: manualPurchaseUnit,
     baseUnit: manualBaseUnit,
     baseUnitsPerPurchaseUnit: manualBaseUnitsPerPurchaseUnit
@@ -973,8 +973,7 @@ const handleCreateArticleClick = async (row) => {
       updatedAt: serverTimestamp(),
       updatedBy: currentUser?.uid || "extension",
       priceUpdatedOn: serverTimestamp(),
-      imageUrl: typeof row?.imageUrl === "string" ? row.imageUrl : "",
-      searchImageUrl,
+      imageUrl: imageUrl || (typeof row?.imageUrl === "string" ? row.imageUrl : ""),
       articleNumber: supplierSku,
       name: supplierProductName
     };
