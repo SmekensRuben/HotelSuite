@@ -118,6 +118,29 @@ export async function setOutlets(hotelUid, outlets) {
   return normalizedOutlets;
 }
 
+
+export async function createOutlet(hotelUid, outletInput) {
+  if (!hotelUid) return null;
+
+  const cleanedName = String(outletInput?.name || "").trim();
+  if (!cleanedName) return null;
+
+  const outletsCol = collection(db, `hotels/${hotelUid}/outlets`);
+  const outletRef = doc(outletsCol);
+
+  const payload = {
+    id: outletRef.id,
+    name: cleanedName,
+    subOutlets: [],
+    menuCategories: [],
+    costCenterIds: [],
+    createdBy: outletInput?.createdBy || null,
+  };
+
+  await setDoc(outletRef, payload);
+  return payload;
+}
+
 export async function transferOutletsToCollection(hotelUid) {
   if (!hotelUid) return { transferred: 0 };
 

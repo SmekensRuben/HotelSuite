@@ -18,6 +18,8 @@ import SupplierCreatePage from "./components/pages/SupplierCreatePage.jsx";
 import SupplierDetailPage from "./components/pages/SupplierDetailPage.jsx";
 import SupplierEditPage from "./components/pages/SupplierEditPage.jsx";
 import SettingsCatalogPage from "./components/pages/SettingsCatalogPage.jsx";
+import OutletSettingsPage from "./components/pages/OutletSettingsPage.jsx";
+import OutletCreatePage from "./components/pages/OutletCreatePage.jsx";
 import UserManagementPage from "./components/pages/UserManagementPage.jsx";
 import UserDetailPage from "./components/pages/UserDetailPage.jsx";
 import OrdersPage from "./components/pages/OrdersPage.jsx";
@@ -148,6 +150,22 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="settings" action="read">
             <SettingsCatalogPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/outlets"
+        element={
+          <ProtectedRoute feature="settings" action="read">
+            <OutletSettingsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/outlets/new"
+        element={
+          <ProtectedRoute feature="settings" action="create">
+            <OutletCreatePage />
           </ProtectedRoute>
         }
       />
