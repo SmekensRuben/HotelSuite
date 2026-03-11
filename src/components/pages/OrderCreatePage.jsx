@@ -124,6 +124,7 @@ export default function OrderCreatePage() {
     () =>
       products.map((product) => ({
         ...product,
+        imageUrl: product.imageUrl || product.searchImageUrl || "",
         contentLabel: formatContent(product),
         priceLabel: `${Number(product.pricePerPurchaseUnit || 0).toFixed(2)} ${
           product.currency || "EUR"

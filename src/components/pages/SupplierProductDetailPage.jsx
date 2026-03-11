@@ -173,16 +173,16 @@ export default function SupplierProductDetailPage() {
                   </div>
 
                   <div>
-                    <p className="text-xs uppercase tracking-wide text-gray-500 mb-2">Search image</p>
-                    {product.searchImageUrl ? (
+                    <p className="text-xs uppercase tracking-wide text-gray-500 mb-2">Image</p>
+                    {(product.imageUrl || product.searchImageUrl) ? (
                       <img
-                        src={product.searchImageUrl}
+                        src={product.imageUrl || product.searchImageUrl}
                         alt={product.supplierProductName || "Supplier product"}
                         className="w-full max-w-[140px] aspect-[4/3] object-cover rounded-lg border border-gray-200 bg-gray-50 mx-auto"
                       />
                     ) : (
                       <div className="w-full max-w-[140px] aspect-[4/3] rounded-lg border border-dashed border-gray-300 bg-gray-50 text-gray-400 text-xs flex items-center justify-center px-3 text-center mx-auto">
-                        Geen search image
+                        Geen image
                       </div>
                     )}
                   </div>

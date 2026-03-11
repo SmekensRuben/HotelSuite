@@ -95,7 +95,7 @@ function mapSupplierProductToCartItem(supplierProduct, qtyPurchaseUnits) {
     currency: supplierProduct?.currency || "EUR",
     baseUnit: supplierProduct?.baseUnit || "",
     baseUnitsPerPurchaseUnit: Number(supplierProduct?.baseUnitsPerPurchaseUnit || 0),
-    imageUrl: supplierProduct?.imageUrl || "",
+    imageUrl: supplierProduct?.imageUrl || supplierProduct?.searchImageUrl || "",
     outletId: "",
     updatedAt: new Date().toISOString(),
   };
