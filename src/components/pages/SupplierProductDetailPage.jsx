@@ -178,7 +178,7 @@ export default function SupplierProductDetailPage() {
                       <img
                         src={product.imageUrl}
                         alt={product.supplierProductName || "Supplier product"}
-                        className="w-full max-w-[140px] aspect-[4/3] object-cover rounded-lg border border-gray-200 bg-gray-50 mx-auto"
+                        className="w-full max-w-[220px] aspect-[4/3] object-contain rounded-lg border border-gray-200 bg-white p-1 mx-auto"
                       />
                     ) : (
                       <div className="w-full max-w-[140px] aspect-[4/3] rounded-lg border border-dashed border-gray-300 bg-gray-50 text-gray-400 text-xs flex items-center justify-center px-3 text-center mx-auto">

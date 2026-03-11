@@ -153,7 +153,7 @@ export default function OrderCreatePage() {
           <img
             src={row.imageUrl}
             alt={row.supplierProductName || "Supplier product"}
-            className="h-10 w-10 rounded object-cover border border-gray-200"
+            className="h-14 w-14 rounded object-cover border border-gray-200"
           />
         ) : (
           <span className="text-xs text-gray-400">-</span>
