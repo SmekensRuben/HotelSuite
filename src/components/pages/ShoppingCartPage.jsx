@@ -36,6 +36,15 @@ export default function ShoppingCartPage() {
   const [outlets, setOutlets] = useState([]);
   const [errorMessage, setErrorMessage] = useState("");
 
+  const getTomorrowIsoDate = () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const year = tomorrow.getFullYear();
+    const month = String(tomorrow.getMonth() + 1).padStart(2, "0");
+    const day = String(tomorrow.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
   const today = useMemo(
     () =>
       new Date().toLocaleDateString(undefined, {
@@ -224,6 +233,7 @@ export default function ShoppingCartPage() {
                 type="button"
                 onClick={() => {
                   setErrorMessage("");
+                  setDeliveryDate(getTomorrowIsoDate());
                   setShowCreateOrderModal(true);
                 }}
                 disabled={hasMissingOutlets}
