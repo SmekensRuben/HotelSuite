@@ -118,5 +118,14 @@
       "failed": "Échec de l’import. Veuillez réessayer.",
       "result": "Import terminé : {{imported}} importés, {{skipped}} ignorés."
     }
+  },
+  "orderConfirm": {
+    "description1": "Si vous confirmez cette commande, le statut ne passera à Ordered qu'après un envoi réussi vers {{supplier}}.",
+    "description2": "Méthode d'envoi attendue selon la configuration du fournisseur :",
+    "description3": "Si l'envoi n'est pas terminé après 30 secondes, la demande passe automatiquement en échec et vous pouvez réessayer.",
+    "progress": "Progression",
+    "close": "Fermer",
+    "confirm": "Confirmer la commande",
+    "confirming": "Envoi en cours..."
   }
 }

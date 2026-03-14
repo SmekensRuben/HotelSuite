@@ -118,5 +118,14 @@
       "failed": "Import failed. Please try again.",
       "result": "Import completed: {{imported}} imported, {{skipped}} skipped."
     }
+  },
+  "orderConfirm": {
+    "description1": "If you confirm this order, the status will only be set to Ordered after the order is sent successfully to {{supplier}}.",
+    "description2": "Expected delivery method based on supplier settings:",
+    "description3": "If sending does not complete within 30 seconds, the request will automatically fail and you can retry.",
+    "progress": "Progress",
+    "close": "Close",
+    "confirm": "Confirm order",
+    "confirming": "Sending..."
   }
 }

@@ -118,5 +118,14 @@
       "failed": "Importeren is mislukt. Probeer opnieuw.",
       "result": "Import voltooid: {{imported}} geïmporteerd, {{skipped}} overgeslagen."
     }
+  },
+  "orderConfirm": {
+    "description1": "Als je deze order bevestigt, wordt de status pas op Ordered gezet nadat de order succesvol is verzonden naar {{supplier}}.",
+    "description2": "Verwachte verzendmethode op basis van supplier instellingen:",
+    "description3": "Als verzenden niet binnen 30 seconden klaar is, wordt de aanvraag automatisch op failed gezet en kan je opnieuw proberen.",
+    "progress": "Voortgang",
+    "close": "Sluiten",
+    "confirm": "Bevestig order",
+    "confirming": "Verzenden..."
   }
 }

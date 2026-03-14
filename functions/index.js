@@ -436,6 +436,14 @@ exports.sendOrderedSupplierOrder = onDocumentWritten(
       logger.info("Order dispatch progress", { hotelUid, orderId, progress, step });
     };
 
+    const isRequestStillActive = async () => {
+      const currentSnap = await orderRef.get();
+      const currentData = currentSnap.exists ? (currentSnap.data() || {}) : {};
+      const currentRequestId = String(currentData.dispatchRequestId || "").trim();
+      const currentDispatchStatus = String(currentData.dispatchStatus || "").toLowerCase();
+      return currentRequestId === afterDispatchRequestId && currentDispatchStatus === "processing";
+    };
+
     try {
       await setProgress(10, "Start dispatch request");
 
@@ -468,6 +476,16 @@ exports.sendOrderedSupplierOrder = onDocumentWritten(
         sentVia = "email";
       }
 
+      const requestStillActive = await isRequestStillActive();
+      if (!requestStillActive) {
+        logger.warn("Dispatch request no longer active; skipping final status update", {
+          hotelUid,
+          orderId,
+          dispatchRequestId: afterDispatchRequestId,
+        });
+        return;
+      }
+
       await orderRef.update({
         status: "Ordered",
         dispatchStatus: "sent",
@@ -480,6 +498,17 @@ exports.sendOrderedSupplierOrder = onDocumentWritten(
 
       logger.info("Order verzonden naar supplier", { hotelUid, orderId, supplierId, sentVia });
     } catch (error) {
+      const requestStillActive = await isRequestStillActive();
+      if (!requestStillActive) {
+        logger.warn("Dispatch failed but request was already marked inactive", {
+          hotelUid,
+          orderId,
+          dispatchRequestId: afterDispatchRequestId,
+          error: String(error?.message || error),
+        });
+        return;
+      }
+
       await orderRef.update({
         dispatchStatus: "failed",
         dispatchProgress: 100,

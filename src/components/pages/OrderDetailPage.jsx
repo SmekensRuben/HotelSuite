@@ -5,6 +5,7 @@ import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import DataListTable from "../shared/DataListTable";
+import { useTranslation } from "react-i18next";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { deleteOrder, getOrderById, updateOrder } from "../../services/firebaseOrders";
@@ -19,6 +20,7 @@ function formatContent(item) {
 }
 
 export default function OrderDetailPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { orderId } = useParams();
   const { hotelUid } = useHotelContext();
@@ -119,10 +121,21 @@ export default function OrderDetailPage() {
       }
 
       const elapsedMs = confirmStartedAt > 0 ? Date.now() - confirmStartedAt : 0;
-      if (confirmSubmitted && elapsedMs > 45000) {
-        setProgressMessage(
-          "Verwerking duurt langer dan verwacht. Controleer Cloud Functions logs of supplier-instellingen."
+      if (confirmSubmitted && elapsedMs > 30000 && dispatchStatus === "processing") {
+        const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
+        await updateOrder(
+          hotelUid,
+          orderId,
+          {
+            dispatchStatus: "failed",
+            dispatchProgress: 100,
+            dispatchStep: "Dispatch timeout after 30 seconds",
+            dispatchError: "Dispatch timed out after 30 seconds",
+            dispatchRequestId: "",
+          },
+          actor
         );
+        setProgressMessage("Verzending werd automatisch gestopt na 30 seconden zonder resultaat.");
         clearInterval(interval);
       }
     }, 2500);
@@ -270,15 +283,19 @@ export default function OrderDetailPage() {
       >
         <div className="space-y-3 text-sm text-gray-700">
           <p>
-            Bevestig je deze order, dan wordt de status aangepast naar <span className="font-semibold">Ordered</span>
-            en wordt de order automatisch verzonden naar <span className="font-semibold">{supplierName || order.supplierId || "de supplier"}</span>.
+            {t("orderConfirm.description1", {
+              supplier: supplierName || order.supplierId || "supplier",
+            })}
           </p>
           <p>
-            Verwachte verzendmethode op basis van supplier instellingen: <span className="font-semibold">{expectedDeliveryMethod}</span>.
+            {t("orderConfirm.description2")} <span className="font-semibold">{expectedDeliveryMethod}</span>.
+          </p>
+          <p>
+            {t("orderConfirm.description3")}
           </p>
 
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-            <p className="font-semibold text-gray-800">Voortgang</p>
+            <p className="font-semibold text-gray-800">{t("orderConfirm.progress")}</p>
             {ordering && <p className="mt-1 text-blue-700">Verzendverzoek wordt gestart...</p>}
             {!ordering && confirmSubmitted && dispatchStatus === "processing" && (
               <p className="mt-1 text-amber-700">Verzending is in verwerking...</p>
@@ -323,11 +340,11 @@ export default function OrderDetailPage() {
             }}
             className="px-4 py-2 rounded border border-gray-300 text-gray-700"
           >
-            Sluiten
+            {t("orderConfirm.close")}
           </button>
           <button
             type="button"
-            disabled={ordering || order.status !== "Created"}
+            disabled={ordering || order.status !== "Created" || dispatchStatus === "processing"}
             onClick={async () => {
               setOrdering(true);
               setActionError("");
@@ -357,7 +374,7 @@ export default function OrderDetailPage() {
             }}
             className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
           >
-            {ordering ? "Bevestigen..." : "Bevestig order"}
+            {ordering || dispatchStatus === "processing" ? t("orderConfirm.confirming") : t("orderConfirm.confirm")}
           </button>
         </div>
       </Modal>
