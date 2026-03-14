@@ -27,6 +27,9 @@ import OrderCreatePage from "./components/pages/OrderCreatePage.jsx";
 import ShoppingCartPage from "./components/pages/ShoppingCartPage.jsx";
 import OrderDetailPage from "./components/pages/OrderDetailPage.jsx";
 import OrderEditPage from "./components/pages/OrderEditPage.jsx";
+import ContractsPage from "./components/pages/ContractsPage.jsx";
+import ContractCreatePage from "./components/pages/ContractCreatePage.jsx";
+import ContractDetailPage from "./components/pages/ContractDetailPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -214,6 +217,30 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="orders" action="update">
             <OrderEditPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/contracts"
+        element={
+          <ProtectedRoute feature="contracts" action="read">
+            <ContractsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/contracts/new"
+        element={
+          <ProtectedRoute feature="contracts" action="create">
+            <ContractCreatePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/contracts/:contractId"
+        element={
+          <ProtectedRoute feature="contracts" action="read">
+            <ContractDetailPage />
           </ProtectedRoute>
         }
       />
