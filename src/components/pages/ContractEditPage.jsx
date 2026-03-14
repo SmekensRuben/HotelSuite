@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, PencilLine, Sparkles } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
@@ -51,37 +52,69 @@ export default function ContractEditPage() {
     loadData();
   }, [hotelUid, contractId]);
 
-  const handleUpdate = async (payload, contractFile) => {
+  const handleUpdate = async (payload, contractFiles, remainingFiles) => {
     const actor = auth.currentUser?.uid || "unknown";
-    await updateContract(hotelUid, contractId, payload, contractFile, actor);
+    await updateContract(hotelUid, contractId, payload, contractFiles, remainingFiles, actor);
     navigate(`/contracts/${contractId}`);
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-gray-100 text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
-        <div>
-          <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
-          <h1 className="text-3xl font-semibold">Edit Contract</h1>
-        </div>
+      <PageContainer className="space-y-6 pb-10">
+        <Card className="border-0 bg-gradient-to-r from-[#b41f1f] via-[#a71c1c] to-[#7f1717] text-white shadow-lg">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="space-y-2">
+              <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-red-100">
+                <Sparkles className="h-3.5 w-3.5" /> Contract management
+              </p>
+              <h1 className="text-3xl font-semibold">Edit contract</h1>
+              <p className="max-w-2xl text-sm text-red-100">
+                Update fields and documents. Removed documents will no longer be kept.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate(`/contracts/${contractId}`)}
+              className="inline-flex items-center gap-2 rounded-lg border border-white/30 bg-white/10 px-4 py-2 text-sm font-medium text-white hover:bg-white/20"
+            >
+              <ArrowLeft className="h-4 w-4" /> Back to details
+            </button>
+          </div>
+        </Card>
 
         {loading ? (
-          <p className="text-gray-600">Loading contract...</p>
+          <Card className="border border-gray-100 bg-white/95 shadow-sm">
+            <p className="text-gray-600">Loading contract...</p>
+          </Card>
         ) : !contract ? (
-          <Card>
+          <Card className="border border-gray-100 bg-white/95 shadow-sm">
             <p className="text-gray-600">Contract not found.</p>
           </Card>
         ) : (
-          <Card>
-            <ContractFormFields
-              onSubmit={handleUpdate}
-              savingLabel="Saving contract..."
-              submitLabel="Save Contract"
-              initialValues={contract}
-              availableUsers={users}
-            />
-          </Card>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Card className="border border-gray-100 bg-white/90 shadow-sm lg:col-span-1">
+              <div className="flex items-start gap-3">
+                <div className="rounded-lg bg-[#b41f1f]/10 p-2 text-[#b41f1f]">
+                  <PencilLine className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold text-gray-900">You are editing</h2>
+                  <p className="mt-1 text-sm text-gray-600">{contract.name || "Untitled contract"}</p>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="border border-gray-100 bg-white/95 shadow-sm lg:col-span-2">
+              <ContractFormFields
+                onSubmit={handleUpdate}
+                savingLabel="Saving contract..."
+                submitLabel="Save changes"
+                initialValues={contract}
+                availableUsers={users}
+              />
+            </Card>
+          </div>
         )}
       </PageContainer>
     </div>

@@ -47,6 +47,7 @@ export default function ContractFormFields({
 }) {
   const [formState, setFormState] = useState(INITIAL_STATE);
   const [contractFiles, setContractFiles] = useState([]);
+  const [existingContractFiles, setExistingContractFiles] = useState([]);
   const [saving, setSaving] = useState(false);
   const [selectedFollower, setSelectedFollower] = useState(null);
   const [newReminderDay, setNewReminderDay] = useState("");
@@ -54,6 +55,7 @@ export default function ContractFormFields({
   useEffect(() => {
     if (!initialValues) {
       setFormState(INITIAL_STATE);
+      setExistingContractFiles([]);
       return;
     }
 
@@ -69,6 +71,13 @@ export default function ContractFormFields({
       followers: sanitizeFollowers(initialValues.followers),
       reminderDays: sanitizeReminderDays(initialValues.reminderDays || [30, 15, 7]),
     });
+
+    const initialContractFiles = Array.isArray(initialValues.contractFiles)
+      ? initialValues.contractFiles
+      : initialValues.contractFile
+        ? [initialValues.contractFile]
+        : [];
+    setExistingContractFiles(initialContractFiles);
   }, [initialValues]);
 
   const selectedFollowerIds = useMemo(
@@ -143,11 +152,22 @@ export default function ContractFormFields({
           followers: sanitizeFollowers(formState.followers),
           reminderDays: sanitizeReminderDays(formState.reminderDays),
         },
-        contractFiles
+        contractFiles,
+        existingContractFiles
       );
     } finally {
       setSaving(false);
     }
+  };
+
+  const removeExistingContractFile = (fileToRemove) => {
+    setExistingContractFiles((prev) =>
+      prev.filter((file) => {
+        const samePath = file?.filePath && file?.filePath === fileToRemove?.filePath;
+        const sameUrl = file?.downloadUrl && file?.downloadUrl === fileToRemove?.downloadUrl;
+        return !(samePath || sameUrl);
+      })
+    );
   };
 
   return (
@@ -219,6 +239,30 @@ export default function ContractFormFields({
             <p className="mt-2 text-xs text-gray-500">
               {contractFiles.length} file(s) selected: {contractFiles.map((file) => file.name).join(", ")}
             </p>
+          )}
+
+          {existingContractFiles.length > 0 && (
+            <div className="mt-3 space-y-2">
+              <p className="text-xs font-medium text-gray-600">Existing documents</p>
+              <ul className="space-y-2">
+                {existingContractFiles.map((file, index) => (
+                  <li
+                    key={`${file.filePath || file.downloadUrl || file.fileName}-${index}`}
+                    className="flex items-center justify-between rounded border border-gray-200 px-3 py-2 text-sm"
+                  >
+                    <span className="truncate pr-2">{file.fileName || `Document ${index + 1}`}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeExistingContractFile(file)}
+                      className="rounded p-1 text-red-600 hover:bg-red-50"
+                      title="Remove document"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </label>
       </div>
