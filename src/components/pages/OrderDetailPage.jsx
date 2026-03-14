@@ -7,8 +7,9 @@ import Modal from "../shared/Modal";
 import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { deleteOrder, getOrderById } from "../../services/firebaseOrders";
+import { deleteOrder, getOrderById, updateOrder } from "../../services/firebaseOrders";
 import { getUserDisplayName } from "../../services/firebaseUserManagement";
+import { getSupplier } from "../../services/firebaseSuppliers";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -25,7 +26,11 @@ export default function OrderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [createdByName, setCreatedByName] = useState("-");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showOrderConfirmModal, setShowOrderConfirmModal] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [ordering, setOrdering] = useState(false);
+  const [supplierName, setSupplierName] = useState("-");
+  const [actionError, setActionError] = useState("");
 
   const today = useMemo(
     () =>
@@ -51,6 +56,12 @@ export default function OrderDetailPage() {
       setOrder(result);
       if (result?.createdBy) {
         setCreatedByName(await getUserDisplayName(result.createdBy));
+      }
+      if (result?.supplierId) {
+        const supplier = await getSupplier(hotelUid, result.supplierId);
+        setSupplierName(String(supplier?.name || "").trim() || result.supplierId);
+      } else {
+        setSupplierName("-");
       }
       setLoading(false);
     };
@@ -128,6 +139,16 @@ export default function OrderDetailPage() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => {
+                    setActionError("");
+                    setShowOrderConfirmModal(true);
+                  }}
+                  className="px-4 py-2 border border-green-300 text-green-700 rounded font-semibold hover:bg-green-50"
+                >
+                  Mark as Ordered
+                </button>
+                <button
+                  type="button"
                   onClick={() => setShowDeleteModal(true)}
                   className="px-4 py-2 border border-red-300 text-red-700 rounded font-semibold hover:bg-red-50"
                 >
@@ -148,7 +169,7 @@ export default function OrderDetailPage() {
         <Card>
           <div className="grid gap-3 md:grid-cols-3 text-sm">
             <p><span className="font-semibold">Status:</span> {order.status}</p>
-            <p><span className="font-semibold">Supplier:</span> {order.supplierId || "-"}</p>
+            <p><span className="font-semibold">Supplier:</span> {supplierName || order.supplierId || "-"}</p>
             <p><span className="font-semibold">Delivery Date:</span> {order.deliveryDate || "-"}</p>
             <p><span className="font-semibold">Created By:</span> {createdByName}</p>
             <p><span className="font-semibold">Created At:</span> {order.createdAtDate ? new Date(order.createdAtDate).toLocaleString() : "-"}</p>
@@ -156,8 +177,48 @@ export default function OrderDetailPage() {
           </div>
         </Card>
 
+        {actionError && <p className="text-sm text-red-600">{actionError}</p>}
         <DataListTable columns={columns} rows={rows} emptyMessage="Geen orderregels gevonden." />
       </PageContainer>
+
+
+      <Modal open={showOrderConfirmModal} onClose={() => setShowOrderConfirmModal(false)} title="Order verzenden en status wijzigen">
+        <p className="text-sm text-gray-700">
+          Wil je deze order op status <span className="font-semibold">Ordered</span> zetten?
+          De order wordt daarna automatisch verzonden op basis van het ingestelde order system van de supplier.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setShowOrderConfirmModal(false)}
+            className="px-4 py-2 rounded border border-gray-300 text-gray-700"
+          >
+            Annuleer
+          </button>
+          <button
+            type="button"
+            disabled={ordering}
+            onClick={async () => {
+              setOrdering(true);
+              setActionError("");
+              try {
+                const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
+                await updateOrder(hotelUid, orderId, { status: "Ordered" }, actor);
+                const refreshed = await getOrderById(hotelUid, orderId);
+                setOrder(refreshed);
+                setShowOrderConfirmModal(false);
+              } catch (error) {
+                setActionError(error?.message || "Kon order niet op Ordered zetten");
+              } finally {
+                setOrdering(false);
+              }
+            }}
+            className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+          >
+            {ordering ? "Bezig..." : "Bevestig"}
+          </button>
+        </div>
+      </Modal>
 
       <Modal open={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete order">
         <p className="text-sm text-gray-700">Weet je zeker dat je deze order wil verwijderen?</p>

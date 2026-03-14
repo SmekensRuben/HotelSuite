@@ -1,12 +1,24 @@
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
+const admin = require("firebase-admin");
+const nodemailer = require("nodemailer");
+const SftpClient = require("ssh2-sftp-client");
+
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
 
 // ---------- Params + Secrets (future-proof) ----------
 const MEILI_HOST = defineSecret("MEILI_HOST");
 const MEILI_INDEX = defineSecret("MEILI_INDEX");
 const MEILI_API_KEY = defineSecret("MEILI_API_KEY");
 const SUPPLIER_PRODUCTS_INDEX_UID = "supplierproducts";
+const SMTP_HOST = defineSecret("SMTP_HOST");
+const SMTP_PORT = defineSecret("SMTP_PORT");
+const SMTP_USER = defineSecret("SMTP_USER");
+const SMTP_PASS = defineSecret("SMTP_PASS");
+const SMTP_FROM = defineSecret("SMTP_FROM");
 
 
 // ---------- Helpers ----------
@@ -251,5 +263,201 @@ exports.syncSupplierProductsToMeili = onDocumentWritten(
       hotelUid,
       taskUid: result?.taskUid,
     });
+  }
+);
+
+
+function buildOrderCsv(order = {}) {
+  const rows = Array.isArray(order.products) ? order.products : [];
+  const headers = [
+    "supplierProductId",
+    "supplierSku",
+    "supplierProductName",
+    "qtyPurchaseUnits",
+    "purchaseUnit",
+    "pricePerPurchaseUnit",
+    "currency",
+    "deliveryDate",
+    "outletId",
+  ];
+
+  const escapeCell = (value) => {
+    const text = String(value ?? "");
+    if (text.includes(",") || text.includes("\"") || text.includes("\n")) {
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+  };
+
+  const body = rows
+    .map((item) => [
+      item?.supplierProductId || "",
+      item?.supplierSku || "",
+      item?.supplierProductName || "",
+      Number(item?.qtyPurchaseUnits || 0),
+      item?.purchaseUnit || "",
+      Number(item?.pricePerPurchaseUnit || 0),
+      item?.currency || order.currency || "EUR",
+      order.deliveryDate || "",
+      item?.outletId || "",
+    ].map(escapeCell).join(","))
+    .join("\n");
+
+  return `${headers.join(",")}\n${body}`;
+}
+
+async function sendOrderByEmail(order, supplier) {
+  const to = String(supplier?.orderEmail || "").trim();
+  if (!to) throw new Error("Supplier heeft geen orderEmail");
+
+  const host = String(SMTP_HOST.value() || "").trim();
+  const port = Number(SMTP_PORT.value() || 587);
+  const user = String(SMTP_USER.value() || "").trim();
+  const pass = String(SMTP_PASS.value() || "").trim();
+  const from = String(SMTP_FROM.value() || user || "noreply@kitchenpilot.local").trim();
+
+  const transporter = host
+    ? nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: user ? { user, pass } : undefined,
+    })
+    : nodemailer.createTransport({
+      streamTransport: true,
+      newline: "unix",
+      buffer: true,
+    });
+
+  const csv = buildOrderCsv(order);
+  await transporter.sendMail({
+    from,
+    to,
+    subject: `Order ${order.id} - levering ${order.deliveryDate || ""}`,
+    text: `Beste ${supplier?.name || "supplier"},\n\nIn bijlage vind je order ${order.id}.\n\nMet vriendelijke groeten`,
+    attachments: [
+      {
+        filename: `order-${order.id}.csv`,
+        content: csv,
+        contentType: "text/csv",
+      },
+    ],
+  });
+}
+
+function resolveSftpConnectionOptions(supplier) {
+  const rawAddress = String(supplier?.sftpAddress || "").trim();
+  const protocol = String(supplier?.sftpProtocol || "sftp").trim().toLowerCase();
+  const user = String(supplier?.sftpUser || "").trim();
+  const password = String(supplier?.sftpPassword || "").trim();
+  const port = Number(supplier?.sftpPort || 22);
+
+  if (!rawAddress || !user || !password) {
+    throw new Error("Onvolledige SFTP instellingen voor supplier");
+  }
+
+  let host = rawAddress;
+  let remoteDir = "/";
+
+  try {
+    const withProtocol = rawAddress.includes("://") ? rawAddress : `${protocol}://${rawAddress}`;
+    const parsed = new URL(withProtocol);
+    host = parsed.hostname || rawAddress;
+    remoteDir = parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : "/";
+  } catch (error) {
+    const [fallbackHost, ...pathParts] = rawAddress.split("/");
+    host = fallbackHost;
+    remoteDir = pathParts.length ? `/${pathParts.join("/")}` : "/";
+  }
+
+  return {
+    host,
+    port: Number.isFinite(port) && port > 0 ? port : 22,
+    username: user,
+    password,
+    remoteDir,
+  };
+}
+
+async function sendOrderBySftp(order, supplier) {
+  const connection = resolveSftpConnectionOptions(supplier);
+  const client = new SftpClient();
+  const csv = buildOrderCsv(order);
+
+  const safeRemoteDir = connection.remoteDir.endsWith("/") ? connection.remoteDir.slice(0, -1) : connection.remoteDir;
+  const remotePath = `${safeRemoteDir || ""}/order-${order.id}.csv`;
+
+  await client.connect({
+    host: connection.host,
+    port: connection.port,
+    username: connection.username,
+    password: connection.password,
+  });
+
+  try {
+    await client.put(Buffer.from(csv, "utf8"), remotePath);
+  } finally {
+    await client.end();
+  }
+}
+
+exports.sendOrderedSupplierOrder = onDocumentWritten(
+  {
+    document: "hotels/{hotelUid}/orders/{orderId}",
+    secrets: [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM],
+  },
+  async (event) => {
+    if (!event.data?.before?.exists || !event.data?.after?.exists) return;
+
+    const before = event.data.before.data() || {};
+    const after = event.data.after.data() || {};
+    const beforeStatus = String(before.status || "");
+    const afterStatus = String(after.status || "");
+
+    if (!(beforeStatus === "Created" && afterStatus === "Ordered")) return;
+
+    const { hotelUid, orderId } = event.params;
+    const supplierId = String(after.supplierId || "").trim();
+    if (!supplierId) throw new Error(`Order ${orderId} heeft geen supplierId`);
+
+    const supplierRef = admin.firestore().doc(`hotels/${hotelUid}/suppliers/${supplierId}`);
+    const supplierSnap = await supplierRef.get();
+    if (!supplierSnap.exists) {
+      throw new Error(`Supplier niet gevonden voor order ${orderId}: ${supplierId}`);
+    }
+
+    const supplier = supplierSnap.data() || {};
+    const orderSystem = String(supplier.orderSystem || "Email").trim();
+
+    const orderData = {
+      id: orderId,
+      ...after,
+    };
+
+    try {
+      let sentVia = "email";
+      if (orderSystem === "SFTP csv") {
+        await sendOrderBySftp(orderData, supplier);
+        sentVia = "sftp";
+      } else {
+        await sendOrderByEmail(orderData, supplier);
+        sentVia = "email";
+      }
+
+      await event.data.after.ref.update({
+        dispatchStatus: "sent",
+        dispatchedVia: sentVia,
+        dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
+        dispatchError: admin.firestore.FieldValue.delete(),
+      });
+
+      logger.info("Order verzonden naar supplier", { hotelUid, orderId, supplierId, sentVia });
+    } catch (error) {
+      await event.data.after.ref.update({
+        dispatchStatus: "failed",
+        dispatchError: String(error?.message || error),
+      });
+      throw error;
+    }
   }
 );
