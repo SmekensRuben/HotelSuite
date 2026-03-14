@@ -417,24 +417,24 @@ exports.sendOrderedSupplierOrder = onDocumentWritten(
     if (!(beforeStatus === "Created" && afterStatus === "Ordered")) return;
 
     const { hotelUid, orderId } = event.params;
-    const supplierId = String(after.supplierId || "").trim();
-    if (!supplierId) throw new Error(`Order ${orderId} heeft geen supplierId`);
-
-    const supplierRef = admin.firestore().doc(`hotels/${hotelUid}/suppliers/${supplierId}`);
-    const supplierSnap = await supplierRef.get();
-    if (!supplierSnap.exists) {
-      throw new Error(`Supplier niet gevonden voor order ${orderId}: ${supplierId}`);
-    }
-
-    const supplier = supplierSnap.data() || {};
-    const orderSystem = String(supplier.orderSystem || "Email").trim();
-
-    const orderData = {
-      id: orderId,
-      ...after,
-    };
-
     try {
+      const supplierId = String(after.supplierId || "").trim();
+      if (!supplierId) throw new Error(`Order ${orderId} heeft geen supplierId`);
+
+      const supplierRef = admin.firestore().doc(`hotels/${hotelUid}/suppliers/${supplierId}`);
+      const supplierSnap = await supplierRef.get();
+      if (!supplierSnap.exists) {
+        throw new Error(`Supplier niet gevonden voor order ${orderId}: ${supplierId}`);
+      }
+
+      const supplier = supplierSnap.data() || {};
+      const orderSystem = String(supplier.orderSystem || "Email").trim();
+
+      const orderData = {
+        id: orderId,
+        ...after,
+      };
+
       let sentVia = "email";
       if (orderSystem === "SFTP csv") {
         await sendOrderBySftp(orderData, supplier);
@@ -454,8 +454,11 @@ exports.sendOrderedSupplierOrder = onDocumentWritten(
       logger.info("Order verzonden naar supplier", { hotelUid, orderId, supplierId, sentVia });
     } catch (error) {
       await event.data.after.ref.update({
+        status: "Created",
         dispatchStatus: "failed",
         dispatchError: String(error?.message || error),
+        dispatchedVia: admin.firestore.FieldValue.delete(),
+        dispatchedAt: admin.firestore.FieldValue.delete(),
       });
       throw error;
     }

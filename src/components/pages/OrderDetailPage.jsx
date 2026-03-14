@@ -33,6 +33,8 @@ export default function OrderDetailPage() {
   const [supplierOrderSystem, setSupplierOrderSystem] = useState("Email");
   const [actionError, setActionError] = useState("");
   const [confirmSubmitted, setConfirmSubmitted] = useState(false);
+  const [confirmStartedAt, setConfirmStartedAt] = useState(0);
+  const [progressMessage, setProgressMessage] = useState("");
 
   const today = useMemo(
     () =>
@@ -88,13 +90,45 @@ export default function OrderDetailPage() {
     const interval = setInterval(async () => {
       const latestOrder = await refreshOrder();
       const dispatchStatus = String(latestOrder?.dispatchStatus || "").toLowerCase();
-      if (dispatchStatus === "sent" || dispatchStatus === "failed") {
+      const latestStatus = String(latestOrder?.status || "");
+
+      if (dispatchStatus === "sent") {
+        setProgressMessage("Verzending is succesvol afgerond.");
+        clearInterval(interval);
+        return;
+      }
+
+      if (dispatchStatus === "failed") {
+        const details = String(latestOrder?.dispatchError || "").trim();
+        setProgressMessage(
+          details
+            ? `Verzenden is mislukt. Foutmelding: ${details}`
+            : "Verzenden is mislukt. Controleer supplier-instellingen en probeer opnieuw."
+        );
+        clearInterval(interval);
+        return;
+      }
+
+      if (confirmSubmitted && latestStatus === "Created") {
+        const details = String(latestOrder?.dispatchError || "").trim();
+        setProgressMessage(
+          details
+            ? `Order bleef op Created omdat verzenden faalde: ${details}`
+            : "Order bleef op Created omdat verzenden nog niet gelukt is."
+        );
+      }
+
+      const elapsedMs = confirmStartedAt > 0 ? Date.now() - confirmStartedAt : 0;
+      if (confirmSubmitted && elapsedMs > 45000) {
+        setProgressMessage(
+          "Verwerking duurt langer dan verwacht. Controleer Cloud Functions logs of supplier-instellingen."
+        );
         clearInterval(interval);
       }
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [showOrderConfirmModal, hotelUid, orderId]);
+  }, [showOrderConfirmModal, hotelUid, orderId, confirmSubmitted, confirmStartedAt]);
 
   if (loading) {
     return (
@@ -209,6 +243,8 @@ export default function OrderDetailPage() {
               onClick={() => {
                 setActionError("");
                 setConfirmSubmitted(false);
+                setConfirmStartedAt(0);
+                setProgressMessage("");
                 setShowOrderConfirmModal(true);
               }}
               className="px-4 py-2 border border-green-300 text-green-700 rounded font-semibold hover:bg-green-50"
@@ -221,7 +257,12 @@ export default function OrderDetailPage() {
 
       <Modal
         open={showOrderConfirmModal}
-        onClose={() => setShowOrderConfirmModal(false)}
+        onClose={() => {
+          setShowOrderConfirmModal(false);
+          setConfirmSubmitted(false);
+          setConfirmStartedAt(0);
+          setProgressMessage("");
+        }}
         title="Confirm order en verzenden"
       >
         <div className="space-y-3 text-sm text-gray-700">
@@ -252,13 +293,19 @@ export default function OrderDetailPage() {
             {!ordering && !confirmSubmitted && order.status === "Created" && (
               <p className="mt-1 text-gray-600">Nog niet bevestigd.</p>
             )}
+            {progressMessage && <p className="mt-1 text-sm text-gray-700">{progressMessage}</p>}
           </div>
         </div>
 
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
-            onClick={() => setShowOrderConfirmModal(false)}
+            onClick={() => {
+              setShowOrderConfirmModal(false);
+              setConfirmSubmitted(false);
+              setConfirmStartedAt(0);
+              setProgressMessage("");
+            }}
             className="px-4 py-2 rounded border border-gray-300 text-gray-700"
           >
             Sluiten
@@ -270,6 +317,8 @@ export default function OrderDetailPage() {
               setOrdering(true);
               setActionError("");
               setConfirmSubmitted(true);
+              setConfirmStartedAt(Date.now());
+              setProgressMessage("Bevestiging gestart. We wachten op verzendresultaat...");
               try {
                 const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
                 await updateOrder(hotelUid, orderId, { status: "Ordered" }, actor);
