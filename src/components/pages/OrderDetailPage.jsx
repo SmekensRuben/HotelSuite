@@ -30,7 +30,9 @@ export default function OrderDetailPage() {
   const [busy, setBusy] = useState(false);
   const [ordering, setOrdering] = useState(false);
   const [supplierName, setSupplierName] = useState("-");
+  const [supplierOrderSystem, setSupplierOrderSystem] = useState("Email");
   const [actionError, setActionError] = useState("");
+  const [confirmSubmitted, setConfirmSubmitted] = useState(false);
 
   const today = useMemo(
     () =>
@@ -48,26 +50,51 @@ export default function OrderDetailPage() {
     window.location.href = "/login";
   };
 
+  const refreshOrder = async () => {
+    if (!hotelUid || !orderId) return null;
+    const result = await getOrderById(hotelUid, orderId);
+    setOrder(result);
+
+    if (result?.createdBy) {
+      setCreatedByName(await getUserDisplayName(result.createdBy));
+    }
+
+    if (result?.supplierId) {
+      const supplier = await getSupplier(hotelUid, result.supplierId);
+      setSupplierName(String(supplier?.name || "").trim() || result.supplierId);
+      setSupplierOrderSystem(String(supplier?.orderSystem || "Email").trim() || "Email");
+    } else {
+      setSupplierName("-");
+      setSupplierOrderSystem("Email");
+    }
+
+    return result;
+  };
+
   useEffect(() => {
     const loadOrder = async () => {
       if (!hotelUid || !orderId) return;
       setLoading(true);
-      const result = await getOrderById(hotelUid, orderId);
-      setOrder(result);
-      if (result?.createdBy) {
-        setCreatedByName(await getUserDisplayName(result.createdBy));
-      }
-      if (result?.supplierId) {
-        const supplier = await getSupplier(hotelUid, result.supplierId);
-        setSupplierName(String(supplier?.name || "").trim() || result.supplierId);
-      } else {
-        setSupplierName("-");
-      }
+      await refreshOrder();
       setLoading(false);
     };
 
     loadOrder();
   }, [hotelUid, orderId]);
+
+  useEffect(() => {
+    if (!showOrderConfirmModal) return undefined;
+
+    const interval = setInterval(async () => {
+      const latestOrder = await refreshOrder();
+      const dispatchStatus = String(latestOrder?.dispatchStatus || "").toLowerCase();
+      if (dispatchStatus === "sent" || dispatchStatus === "failed") {
+        clearInterval(interval);
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [showOrderConfirmModal, hotelUid, orderId]);
 
   if (loading) {
     return (
@@ -94,6 +121,11 @@ export default function OrderDetailPage() {
   }
 
   const isCreated = order.status === "Created";
+  const dispatchStatus = String(order.dispatchStatus || "").toLowerCase();
+  const dispatchError = String(order.dispatchError || "").trim();
+  const dispatchedVia = String(order.dispatchedVia || "").toLowerCase();
+  const expectedDeliveryMethod = supplierOrderSystem === "SFTP csv" ? "SFTP csv" : "Email";
+
   const items = Array.isArray(order.products) ? order.products : [];
 
   const rows = items.map((item, index) => {
@@ -139,16 +171,6 @@ export default function OrderDetailPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setActionError("");
-                    setShowOrderConfirmModal(true);
-                  }}
-                  className="px-4 py-2 border border-green-300 text-green-700 rounded font-semibold hover:bg-green-50"
-                >
-                  Mark as Ordered
-                </button>
-                <button
-                  type="button"
                   onClick={() => setShowDeleteModal(true)}
                   className="px-4 py-2 border border-red-300 text-red-700 rounded font-semibold hover:bg-red-50"
                 >
@@ -179,34 +201,79 @@ export default function OrderDetailPage() {
 
         {actionError && <p className="text-sm text-red-600">{actionError}</p>}
         <DataListTable columns={columns} rows={rows} emptyMessage="Geen orderregels gevonden." />
+
+        {isCreated && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                setActionError("");
+                setConfirmSubmitted(false);
+                setShowOrderConfirmModal(true);
+              }}
+              className="px-4 py-2 border border-green-300 text-green-700 rounded font-semibold hover:bg-green-50"
+            >
+              Confirm Order
+            </button>
+          </div>
+        )}
       </PageContainer>
 
+      <Modal
+        open={showOrderConfirmModal}
+        onClose={() => setShowOrderConfirmModal(false)}
+        title="Confirm order en verzenden"
+      >
+        <div className="space-y-3 text-sm text-gray-700">
+          <p>
+            Bevestig je deze order, dan wordt de status aangepast naar <span className="font-semibold">Ordered</span>
+            en wordt de order automatisch verzonden naar <span className="font-semibold">{supplierName || order.supplierId || "de supplier"}</span>.
+          </p>
+          <p>
+            Verwachte verzendmethode op basis van supplier instellingen: <span className="font-semibold">{expectedDeliveryMethod}</span>.
+          </p>
 
-      <Modal open={showOrderConfirmModal} onClose={() => setShowOrderConfirmModal(false)} title="Order verzenden en status wijzigen">
-        <p className="text-sm text-gray-700">
-          Wil je deze order op status <span className="font-semibold">Ordered</span> zetten?
-          De order wordt daarna automatisch verzonden op basis van het ingestelde order system van de supplier.
-        </p>
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <p className="font-semibold text-gray-800">Voortgang</p>
+            {ordering && <p className="mt-1 text-blue-700">Orderstatus wordt bijgewerkt naar Ordered...</p>}
+            {!ordering && confirmSubmitted && order.status === "Ordered" && dispatchStatus !== "sent" && dispatchStatus !== "failed" && (
+              <p className="mt-1 text-amber-700">Order bevestigd. Verzending is in verwerking...</p>
+            )}
+            {!ordering && dispatchStatus === "sent" && (
+              <p className="mt-1 text-green-700">
+                Verzending succesvol via {dispatchedVia === "sftp" ? "SFTP" : "email"}.
+              </p>
+            )}
+            {!ordering && dispatchStatus === "failed" && (
+              <p className="mt-1 text-red-700">
+                Verzenden mislukt{dispatchError ? `: ${dispatchError}` : "."}
+              </p>
+            )}
+            {!ordering && !confirmSubmitted && order.status === "Created" && (
+              <p className="mt-1 text-gray-600">Nog niet bevestigd.</p>
+            )}
+          </div>
+        </div>
+
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
             onClick={() => setShowOrderConfirmModal(false)}
             className="px-4 py-2 rounded border border-gray-300 text-gray-700"
           >
-            Annuleer
+            Sluiten
           </button>
           <button
             type="button"
-            disabled={ordering}
+            disabled={ordering || order.status !== "Created"}
             onClick={async () => {
               setOrdering(true);
               setActionError("");
+              setConfirmSubmitted(true);
               try {
                 const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
                 await updateOrder(hotelUid, orderId, { status: "Ordered" }, actor);
-                const refreshed = await getOrderById(hotelUid, orderId);
-                setOrder(refreshed);
-                setShowOrderConfirmModal(false);
+                await refreshOrder();
               } catch (error) {
                 setActionError(error?.message || "Kon order niet op Ordered zetten");
               } finally {
@@ -215,7 +282,7 @@ export default function OrderDetailPage() {
             }}
             className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
           >
-            {ordering ? "Bezig..." : "Bevestig"}
+            {ordering ? "Bevestigen..." : "Bevestig order"}
           </button>
         </div>
       </Modal>
