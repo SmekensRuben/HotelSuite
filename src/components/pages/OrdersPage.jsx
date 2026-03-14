@@ -8,6 +8,7 @@ import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getOrders, listOrderStatuses } from "../../services/firebaseOrders";
+import { getSuppliers } from "../../services/firebaseSuppliers";
 import { getUserDisplayName } from "../../services/firebaseUserManagement";
 
 function toDateValue(value) {
@@ -74,6 +75,7 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [createdByMap, setCreatedByMap] = useState({});
+  const [supplierNameMap, setSupplierNameMap] = useState({});
 
   const [selectedStatus, setSelectedStatus] = useState("");
   const [createdFrom, setCreatedFrom] = useState("");
@@ -112,6 +114,21 @@ export default function OrdersPage() {
     loadOrders();
   }, [hotelUid]);
 
+
+  useEffect(() => {
+    const loadSupplierNames = async () => {
+      if (!hotelUid) return;
+      const suppliers = await getSuppliers(hotelUid);
+      const map = (suppliers || []).reduce((acc, supplier) => {
+        acc[supplier.id] = String(supplier.name || "").trim() || supplier.id;
+        return acc;
+      }, {});
+      setSupplierNameMap(map);
+    };
+
+    loadSupplierNames();
+  }, [hotelUid]);
+
   useEffect(() => {
     const loadUserNames = async () => {
       const userIds = Array.from(
@@ -130,8 +147,10 @@ export default function OrdersPage() {
     () =>
       Array.from(
         new Set(orders.map((order) => String(order.supplierId || "").trim()).filter(Boolean))
-      ).sort((a, b) => a.localeCompare(b)),
-    [orders]
+      )
+        .map((supplierId) => ({ id: supplierId, name: supplierNameMap[supplierId] || supplierId }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [orders, supplierNameMap]
   );
 
   const createdByOptions = useMemo(
@@ -163,7 +182,7 @@ export default function OrdersPage() {
       })
       .map((order) => ({
         ...order,
-        supplier: order.supplierId || "-",
+        supplier: supplierNameMap[order.supplierId] || order.supplierId || "-",
         createdByLabel: createdByMap[order.createdBy] || order.createdBy || "-",
         createdAtLabel: order.createdAtDate ? new Date(order.createdAtDate).toLocaleString() : "-",
         itemCount: Array.isArray(order.products) ? order.products.length : 0,
@@ -179,6 +198,7 @@ export default function OrdersPage() {
     deliveryFrom,
     deliveryUntil,
     createdByMap,
+    supplierNameMap,
   ]);
 
   const columns = [
@@ -231,9 +251,9 @@ export default function OrdersPage() {
               className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
             >
               <option value="">Alle suppliers</option>
-              {supplierOptions.map((supplierId) => (
-                <option key={supplierId} value={supplierId}>
-                  {supplierId}
+              {supplierOptions.map((supplier) => (
+                <option key={supplier.id} value={supplier.id}>
+                  {supplier.name}
                 </option>
               ))}
             </select>

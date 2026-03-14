@@ -24,6 +24,11 @@ const EMPTY_FORM = {
   username: "",
   password: "",
   deliveryDays: [],
+  sftpAddress: "",
+  sftpProtocol: "sftp",
+  sftpPort: "22",
+  sftpUser: "",
+  sftpPassword: "",
 };
 
 export default function SupplierFormFields({
@@ -117,6 +122,40 @@ export default function SupplierFormFields({
             onChange={(value) => setValue("orderSystem", value)}
           />
         </div>
+        {formValues.orderSystem === "SFTP csv" && (
+          <div className="grid gap-4 md:grid-cols-2">
+            <InputField
+              label="sftp-address"
+              value={formValues.sftpAddress}
+              onChange={(value) => setValue("sftpAddress", value)}
+              placeholder="sftp.example.com/incoming"
+            />
+            <InputField
+              label="protocol"
+              value={formValues.sftpProtocol}
+              onChange={(value) => setValue("sftpProtocol", value)}
+              placeholder="sftp"
+            />
+            <InputField
+              label="port"
+              type="number"
+              value={formValues.sftpPort}
+              onChange={(value) => setValue("sftpPort", value)}
+              placeholder="22"
+            />
+            <InputField
+              label="user"
+              value={formValues.sftpUser}
+              onChange={(value) => setValue("sftpUser", value)}
+            />
+            <InputField
+              label="password"
+              type="password"
+              value={formValues.sftpPassword}
+              onChange={(value) => setValue("sftpPassword", value)}
+            />
+          </div>
+        )}
         <div>
           <p className="text-sm font-medium text-gray-700">Leverdagen</p>
           <p className="text-xs text-gray-500 mt-1">Selecteer de dagen waarop deze supplier levert.</p>

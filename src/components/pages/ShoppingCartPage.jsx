@@ -35,6 +35,17 @@ export default function ShoppingCartPage() {
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [outlets, setOutlets] = useState([]);
   const [errorMessage, setErrorMessage] = useState("");
+  const [showDeliveryAdjustmentsModal, setShowDeliveryAdjustmentsModal] = useState(false);
+  const [deliveryAdjustments, setDeliveryAdjustments] = useState([]);
+
+  const getTomorrowIsoDate = () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const year = tomorrow.getFullYear();
+    const month = String(tomorrow.getMonth() + 1).padStart(2, "0");
+    const day = String(tomorrow.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
 
   const today = useMemo(
     () =>
@@ -224,6 +235,7 @@ export default function ShoppingCartPage() {
                 type="button"
                 onClick={() => {
                   setErrorMessage("");
+                  setDeliveryDate(getTomorrowIsoDate());
                   setShowCreateOrderModal(true);
                 }}
                 disabled={hasMissingOutlets}
@@ -268,15 +280,14 @@ export default function ShoppingCartPage() {
                   ? result.deliveryDateAdjustments
                   : [];
 
-                if (adjustments.length > 0) {
-                  const message = adjustments
-                    .map((adjustment) => `${adjustment.supplierId}: ${adjustment.requestedDeliveryDate} → ${adjustment.resolvedDeliveryDate}`)
-                    .join(" | ");
-                  window.alert(`Leverdagen aangepast per supplier: ${message}`);
-                }
-
                 setShowCreateOrderModal(false);
-                navigate("/orders");
+
+                if (adjustments.length > 0) {
+                  setDeliveryAdjustments(adjustments);
+                  setShowDeliveryAdjustmentsModal(true);
+                } else {
+                  navigate("/orders");
+                }
               } catch (error) {
                 setErrorMessage(error?.message || "Kon order niet aanmaken");
               } finally {
@@ -286,6 +297,42 @@ export default function ShoppingCartPage() {
             className="px-4 py-2 rounded bg-[#b41f1f] text-white hover:bg-[#961919] disabled:opacity-50"
           >
             {creatingOrder ? "Creating..." : "Create"}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={showDeliveryAdjustmentsModal}
+        onClose={() => {
+          setShowDeliveryAdjustmentsModal(false);
+          navigate("/orders");
+        }}
+        title="Leverdagen automatisch aangepast"
+      >
+        <p className="text-sm text-gray-700">
+          We hebben de leverdata automatisch afgestemd op de ingestelde leverdagen van je suppliers.
+          Hieronder zie je per supplier welke datum werd aangepast.
+        </p>
+
+        <div className="mt-4 space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+          {deliveryAdjustments.map((adjustment) => (
+            <div key={`${adjustment.supplierId}-${adjustment.resolvedDeliveryDate}`} className="text-sm text-gray-800">
+              <span className="font-semibold">{adjustment.supplierName || adjustment.supplierId}</span>
+              <span className="text-gray-600">: {adjustment.requestedDeliveryDate} → {adjustment.resolvedDeliveryDate}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5 flex justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              setShowDeliveryAdjustmentsModal(false);
+              navigate("/orders");
+            }}
+            className="px-4 py-2 rounded bg-[#b41f1f] text-white hover:bg-[#961919]"
+          >
+            Verder naar Orders
           </button>
         </div>
       </Modal>

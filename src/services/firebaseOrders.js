@@ -53,6 +53,10 @@ function toIsoDateOnly(dateValue) {
   return `${year}-${month}-${day}`;
 }
 
+function normalizeLookupValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function resolveSupplierDeliveryDate(requestedDate, supplierDeliveryDays) {
   if (!Array.isArray(supplierDeliveryDays) || supplierDeliveryDays.length === 0) {
     return requestedDate;
@@ -115,6 +119,10 @@ export async function updateOrder(hotelUid, orderId, payload, actor) {
     throw new Error("Enkel orders met status Created kunnen bewerkt worden");
   }
 
+  if (String(payload?.status || "") === "Ordered") {
+    throw new Error("Gebruik Confirm Order om verzending te starten; status wordt pas Ordered na succesvolle verzending");
+  }
+
   const nextPayload = {
     ...payload,
     updatedAt: serverTimestamp(),
@@ -171,30 +179,83 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
     throw new Error("Selecteer een outlet voor alle supplierproducten in de shopping cart");
   }
 
-  const groupedBySupplier = items.reduce((acc, item) => {
+  const suppliersSnap = await getDocs(collection(db, `hotels/${hotelUid}/suppliers`));
+  const suppliersById = {};
+  const suppliersByName = {};
+  suppliersSnap.forEach((supplierDoc) => {
+    const supplierData = supplierDoc.data() || {};
+    const supplierRecord = {
+      id: supplierDoc.id,
+      ...supplierData,
+    };
+    suppliersById[supplierDoc.id] = supplierRecord;
+
+    const nameKey = normalizeLookupValue(supplierData.name);
+    if (nameKey && !suppliersByName[nameKey]) {
+      suppliersByName[nameKey] = supplierRecord;
+    }
+  });
+
+  const resolveSupplier = (supplierValue) => {
+    const directId = String(supplierValue || "").trim();
+    if (directId && suppliersById[directId]) return suppliersById[directId];
+    const byName = suppliersByName[normalizeLookupValue(supplierValue)];
+    return byName || null;
+  };
+
+  const uniqueSupplierProductIds = [...new Set(items
+    .map((item) => String(item?.supplierProductId || "").trim())
+    .filter(Boolean))];
+
+  const supplierProductsById = {};
+  if (uniqueSupplierProductIds.length > 0) {
+    const chunkSize = 10;
+    for (let index = 0; index < uniqueSupplierProductIds.length; index += chunkSize) {
+      const productChunk = uniqueSupplierProductIds.slice(index, index + chunkSize);
+      const supplierProductsQuery = query(
+        collection(db, `hotels/${hotelUid}/supplierproducts`),
+        where("__name__", "in", productChunk)
+      );
+      const supplierProductsSnap = await getDocs(supplierProductsQuery);
+      supplierProductsSnap.forEach((productDoc) => {
+        supplierProductsById[productDoc.id] = { id: productDoc.id, ...(productDoc.data() || {}) };
+      });
+    }
+  }
+
+  const normalizedCartItems = items.map((item) => {
+    const cartSupplierValue = String(item.supplierId || "").trim();
+    const resolvedSupplier = resolveSupplier(cartSupplierValue);
+    const resolvedSupplierId = resolvedSupplier?.id || cartSupplierValue || "Onbekend";
+
+    const supplierProductId = String(item.supplierProductId || "").trim();
+    const supplierProduct = supplierProductsById[supplierProductId];
+    if (!supplierProduct) {
+      throw new Error(`Supplier product niet gevonden in catalogus: ${supplierProductId}`);
+    }
+
+    const productSupplierValue = String(supplierProduct.supplierId || "").trim();
+    const productSupplier = resolveSupplier(productSupplierValue);
+    const productResolvedSupplierId = productSupplier?.id || productSupplierValue;
+
+    if (!productResolvedSupplierId || productResolvedSupplierId !== resolvedSupplierId) {
+      throw new Error(
+        `Supplier product ${supplierProductId} hoort niet bij supplier ${cartSupplierValue || resolvedSupplierId || "Onbekend"}`
+      );
+    }
+
+    return {
+      ...item,
+      supplierId: resolvedSupplierId,
+    };
+  });
+
+  const groupedBySupplier = normalizedCartItems.reduce((acc, item) => {
     const supplierId = String(item.supplierId || "Onbekend").trim() || "Onbekend";
     if (!acc[supplierId]) acc[supplierId] = [];
     acc[supplierId].push(item);
     return acc;
   }, {});
-
-  const supplierIds = Object.keys(groupedBySupplier).filter((supplierId) => supplierId !== "Onbekend");
-  const suppliersById = {};
-
-  if (supplierIds.length > 0) {
-    const chunkSize = 10;
-    for (let index = 0; index < supplierIds.length; index += chunkSize) {
-      const supplierChunk = supplierIds.slice(index, index + chunkSize);
-      const suppliersQuery = query(
-        collection(db, `hotels/${hotelUid}/suppliers`),
-        where("__name__", "in", supplierChunk)
-      );
-      const suppliersSnap = await getDocs(suppliersQuery);
-      suppliersSnap.forEach((supplierDoc) => {
-        suppliersById[supplierDoc.id] = supplierDoc.data() || {};
-      });
-    }
-  }
 
   const ordersCol = collection(db, `hotels/${hotelUid}/orders`);
   const createdOrderIds = [];
@@ -212,6 +273,7 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
     if (resolvedDeliveryDate !== deliveryDate) {
       deliveryDateAdjustments.push({
         supplierId,
+        supplierName: String(supplier.name || "").trim() || supplierId,
         requestedDeliveryDate: deliveryDate,
         resolvedDeliveryDate,
       });
