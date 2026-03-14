@@ -1,8 +1,8 @@
-const { onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 const SftpClient = require("ssh2-sftp-client");
 
 if (!admin.apps.length) {
@@ -14,11 +14,8 @@ const MEILI_HOST = defineSecret("MEILI_HOST");
 const MEILI_INDEX = defineSecret("MEILI_INDEX");
 const MEILI_API_KEY = defineSecret("MEILI_API_KEY");
 const SUPPLIER_PRODUCTS_INDEX_UID = "supplierproducts";
-const SMTP_HOST = defineSecret("SMTP_HOST");
-const SMTP_PORT = defineSecret("SMTP_PORT");
-const SMTP_USER = defineSecret("SMTP_USER");
-const SMTP_PASS = defineSecret("SMTP_PASS");
-const SMTP_FROM = defineSecret("SMTP_FROM");
+const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
+const RESEND_FROM = defineSecret("RESEND_FROM");
 
 
 // ---------- Helpers ----------
@@ -306,48 +303,171 @@ function buildOrderCsv(order = {}) {
   return `${headers.join(",")}\n${body}`;
 }
 
-async function sendOrderByEmail(order, supplier) {
+function encodeAttachmentContent(content) {
+  if (content === null || content === undefined) return "";
+  if (Buffer.isBuffer(content)) return content.toString("base64");
+  return Buffer.from(String(content), "utf8").toString("base64");
+}
+
+function buildOrderEmailAttachments(order = {}) {
+  const csv = buildOrderCsv(order);
+  const baseAttachments = [
+    {
+      filename: `order-${order.id}.csv`,
+      content: encodeAttachmentContent(csv),
+      contentType: "text/csv",
+    },
+  ];
+
+  const extraAttachments = Array.isArray(order.emailAttachments) ? order.emailAttachments : [];
+  const normalizedExtraAttachments = extraAttachments
+    .map((item, index) => {
+      if (!item || typeof item !== "object") return null;
+      const filename = String(item.filename || item.name || `attachment-${index + 1}`).trim();
+      if (!filename) return null;
+
+      const hasBase64 = typeof item.contentBase64 === "string" && item.contentBase64.trim() !== "";
+      const content = hasBase64 ? item.contentBase64.trim() : encodeAttachmentContent(item.content || "");
+
+      return {
+        filename,
+        content,
+        contentType: String(item.contentType || item.type || "application/octet-stream").trim(),
+      };
+    })
+    .filter(Boolean);
+
+  return [...baseAttachments, ...normalizedExtraAttachments];
+}
+
+function buildOrderEmailPayload(order, supplier) {
   const to = String(supplier?.orderEmail || "").trim();
   if (!to) throw new Error("Supplier heeft geen orderEmail");
 
-  let host = "";
-  try {
-    host = String(SMTP_HOST.value() || "").trim();
-  } catch (error) {
-    throw new Error("failed fetching smtp host");
-  }
-
-  if (!host) {
-    throw new Error("failed fetching smtp host");
-  }
-
-  const port = Number(SMTP_PORT.value() || 587);
-  const user = String(SMTP_USER.value() || "").trim();
-  const pass = String(SMTP_PASS.value() || "").trim();
-  const from = String(SMTP_FROM.value() || user || "noreply@kitchenpilot.local").trim();
-
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: user ? { user, pass } : undefined,
-  });
-
-  const csv = buildOrderCsv(order);
-  await transporter.sendMail({
-    from,
-    to,
+  return {
+    to: [to],
     subject: `Order ${order.id} - levering ${order.deliveryDate || ""}`,
     text: `Beste ${supplier?.name || "supplier"},\n\nIn bijlage vind je order ${order.id}.\n\nMet vriendelijke groeten`,
-    attachments: [
-      {
-        filename: `order-${order.id}.csv`,
-        content: csv,
-        contentType: "text/csv",
-      },
-    ],
-  });
+    attachments: buildOrderEmailAttachments(order),
+  };
 }
+
+async function enqueueOrderEmail({ hotelUid, orderId, dispatchRequestId, order, supplier, supplierId }) {
+  const mailQueueRef = admin.firestore().collection(`hotels/${hotelUid}/mailQueue`).doc();
+  const payload = buildOrderEmailPayload(order, supplier);
+  await mailQueueRef.set({
+    type: "order-confirmation",
+    hotelUid,
+    orderId,
+    supplierId,
+    dispatchRequestId,
+    orderRefPath: `hotels/${hotelUid}/orders/${orderId}`,
+    status: "queued",
+    queuedAt: admin.firestore.FieldValue.serverTimestamp(),
+    payload,
+  });
+
+  return mailQueueRef.id;
+}
+
+async function finalizeOrderDispatchFromMailQueue(mail = {}, updates = {}) {
+  const orderRefPath = String(mail.orderRefPath || "").trim();
+  const dispatchRequestId = String(mail.dispatchRequestId || "").trim();
+  if (!orderRefPath || !dispatchRequestId) return;
+
+  const orderRef = admin.firestore().doc(orderRefPath);
+  const orderSnap = await orderRef.get();
+  if (!orderSnap.exists) return;
+
+  const order = orderSnap.data() || {};
+  const currentDispatchRequestId = String(order.dispatchRequestId || "").trim();
+  const currentDispatchStatus = String(order.dispatchStatus || "").toLowerCase();
+  if (currentDispatchRequestId !== dispatchRequestId || currentDispatchStatus !== "processing") return;
+
+  await orderRef.update(updates);
+}
+
+exports.processMailQueue = onDocumentCreated(
+  {
+    document: "hotels/{hotelUid}/mailQueue/{mailId}",
+    secrets: [RESEND_API_KEY, RESEND_FROM],
+  },
+  async (event) => {
+    if (!event.data?.exists) return;
+
+    const { hotelUid, mailId } = event.params;
+    const mailRef = event.data.ref;
+    const mail = event.data.data() || {};
+    const status = String(mail.status || "").toLowerCase();
+    if (status && status !== "queued") return;
+
+    const resendApiKey = String(RESEND_API_KEY.value() || "").trim();
+    const from = String(RESEND_FROM.value() || "").trim();
+    if (!resendApiKey) throw new Error("Missing RESEND_API_KEY secret");
+    if (!from) throw new Error("Missing RESEND_FROM secret");
+
+    const payload = mail.payload || {};
+    const to = Array.isArray(payload.to) ? payload.to.filter(Boolean) : [];
+    if (!to.length) throw new Error(`mailQueue/${mailId} heeft geen geldige ontvanger(s)`);
+
+    await mailRef.update({
+      status: "processing",
+      processingAt: admin.firestore.FieldValue.serverTimestamp(),
+      error: admin.firestore.FieldValue.delete(),
+    });
+
+    const resend = new Resend(resendApiKey);
+
+    try {
+      const response = await resend.emails.send({
+        from,
+        to,
+        cc: Array.isArray(payload.cc) ? payload.cc.filter(Boolean) : undefined,
+        bcc: Array.isArray(payload.bcc) ? payload.bcc.filter(Boolean) : undefined,
+        replyTo: payload.replyTo || undefined,
+        subject: payload.subject || "",
+        text: payload.text || undefined,
+        html: payload.html || undefined,
+        attachments: Array.isArray(payload.attachments) ? payload.attachments : undefined,
+      });
+
+      await mailRef.update({
+        status: "sent",
+        sentAt: admin.firestore.FieldValue.serverTimestamp(),
+        provider: "resend",
+        providerId: String(response?.data?.id || "").trim() || null,
+      });
+
+      await finalizeOrderDispatchFromMailQueue(mail, {
+        status: "Ordered",
+        dispatchStatus: "sent",
+        dispatchProgress: 100,
+        dispatchStep: "Dispatch completed",
+        dispatchedVia: "email",
+        dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
+        dispatchError: admin.firestore.FieldValue.delete(),
+      });
+
+      logger.info("mailQueue item sent", { hotelUid, mailId, provider: "resend", toCount: to.length });
+    } catch (error) {
+      await mailRef.update({
+        status: "failed",
+        failedAt: admin.firestore.FieldValue.serverTimestamp(),
+        error: String(error?.message || error),
+      });
+
+      await finalizeOrderDispatchFromMailQueue(mail, {
+        dispatchStatus: "failed",
+        dispatchProgress: 100,
+        dispatchStep: "Dispatch failed",
+        dispatchError: String(error?.message || error),
+        dispatchedVia: admin.firestore.FieldValue.delete(),
+        dispatchedAt: admin.firestore.FieldValue.delete(),
+      });
+      throw error;
+    }
+  }
+);
 
 function resolveSftpConnectionOptions(supplier) {
   const rawAddress = String(supplier?.sftpAddress || "").trim();
@@ -408,7 +528,7 @@ async function sendOrderBySftp(order, supplier) {
 exports.sendOrderedSupplierOrder = onDocumentWritten(
   {
     document: "hotels/{hotelUid}/orders/{orderId}",
-    secrets: [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM],
+    secrets: [RESEND_API_KEY, RESEND_FROM],
   },
   async (event) => {
     if (!event.data?.before?.exists || !event.data?.after?.exists) return;
@@ -471,9 +591,27 @@ exports.sendOrderedSupplierOrder = onDocumentWritten(
         await sendOrderBySftp(orderData, supplier);
         sentVia = "sftp";
       } else {
-        await setProgress(45, "Preparing SMTP transport");
-        await sendOrderByEmail(orderData, supplier);
+        await setProgress(45, "Queueing email for delivery");
+        await enqueueOrderEmail({
+          hotelUid,
+          orderId,
+          dispatchRequestId: afterDispatchRequestId,
+          order: orderData,
+          supplier,
+          supplierId,
+        });
         sentVia = "email";
+      }
+
+      if (sentVia === "email") {
+        await orderRef.update({
+          dispatchStatus: "processing",
+          dispatchProgress: 70,
+          dispatchStep: "Queued for email delivery",
+          dispatchError: admin.firestore.FieldValue.delete(),
+        });
+        logger.info("Order email queued", { hotelUid, orderId, supplierId });
+        return;
       }
 
       const requestStillActive = await isRequestStillActive();
