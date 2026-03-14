@@ -36,7 +36,8 @@ import {
   getStorage,
   ref,
   uploadBytes,
-  getDownloadURL
+  getDownloadURL,
+  deleteObject
 } from 'firebase/storage';
 
 const {
@@ -93,6 +94,7 @@ export {
   ref,
   uploadBytes,
   getDownloadURL,
+  deleteObject,
   auth,
   signOut,
   signInWithEmailAndPassword
