@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { Play, Plus } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getContracts } from "../../services/firebaseContracts";
+import { getContracts, triggerContractReminders } from "../../services/firebaseContracts";
 import { usePermission } from "../../hooks/usePermission";
 
 function isExpired(endDate) {
@@ -27,6 +27,7 @@ export default function ContractsPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("active");
+  const [runningReminders, setRunningReminders] = useState(false);
 
   const today = useMemo(
     () =>
@@ -42,6 +43,18 @@ export default function ContractsPage() {
     await signOut(auth);
     sessionStorage.clear();
     window.location.href = "/login";
+  };
+
+  const handleRunReminders = async () => {
+    if (!hotelUid || runningReminders) return;
+
+    setRunningReminders(true);
+    try {
+      const actor = auth.currentUser?.uid || "unknown";
+      await triggerContractReminders(hotelUid, actor);
+    } finally {
+      setRunningReminders(false);
+    }
   };
 
   useEffect(() => {
@@ -85,18 +98,32 @@ export default function ContractsPage() {
             <h1 className="text-3xl font-semibold">Contracts</h1>
             <p className="text-gray-600 mt-1">Manage supplier and service contracts.</p>
           </div>
-          <button
-            onClick={() => navigate("/contracts/new")}
-            disabled={!canCreateContracts}
-            className={`inline-flex items-center justify-center rounded-lg p-2 shadow ${
-              canCreateContracts
-                ? "bg-[#b41f1f] text-white hover:bg-[#961919]"
-                : "bg-gray-300 text-gray-500 cursor-not-allowed"
-            }`}
-            title="Create contract"
-          >
-            <Plus className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRunReminders}
+              disabled={runningReminders}
+              className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold shadow ${
+                runningReminders
+                  ? "bg-gray-300 text-gray-500"
+                  : "bg-white text-[#b41f1f] border border-[#b41f1f] hover:bg-red-50"
+              }`}
+              title="Run reminders now"
+            >
+              <Play className="h-4 w-4" /> Run reminders
+            </button>
+            <button
+              onClick={() => navigate("/contracts/new")}
+              disabled={!canCreateContracts}
+              className={`inline-flex items-center justify-center rounded-lg p-2 shadow ${
+                canCreateContracts
+                  ? "bg-[#b41f1f] text-white hover:bg-[#961919]"
+                  : "bg-gray-300 text-gray-500 cursor-not-allowed"
+              }`}
+              title="Create contract"
+            >
+              <Plus className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-[1fr_auto]">

@@ -33,6 +33,16 @@ export function calculateCancelBefore(endDate, terminationPeriodDays) {
   return endDateUtc.toISOString().slice(0, 10);
 }
 
+function sanitizeReminderDays(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(
+    value
+      .map((day) => Number(day))
+      .filter((day) => Number.isFinite(day) && day >= 0)
+      .map((day) => Math.floor(day))
+  )].sort((a, b) => b - a);
+}
+
 function buildContractPayload(contractData, actor, existingFileMeta = null) {
   const terminationPeriodDays = Number(contractData.terminationPeriodDays);
 
@@ -43,6 +53,7 @@ function buildContractPayload(contractData, actor, existingFileMeta = null) {
     terminationPeriodDays: Number.isFinite(terminationPeriodDays) ? Math.max(0, Math.floor(terminationPeriodDays)) : 0,
     cancelBefore: calculateCancelBefore(contractData.endDate, terminationPeriodDays),
     category: String(contractData.category || "").trim(),
+    reminderDays: sanitizeReminderDays(contractData.reminderDays),
     followers: Array.isArray(contractData.followers)
       ? contractData.followers
           .map((follower) => ({
@@ -123,4 +134,16 @@ export async function updateContract(hotelUid, contractId, contractData, contrac
 
   const payload = buildContractPayload(contractData, actor, fileMeta);
   await updateDoc(contractRef, payload);
+}
+
+
+export async function triggerContractReminders(hotelUid, actor) {
+  if (!hotelUid) throw new Error("hotelUid is verplicht!");
+
+  const runsCol = collection(db, `hotels/${hotelUid}/contractReminderRuns`);
+  await setDoc(doc(runsCol), {
+    status: "queued",
+    requestedAt: serverTimestamp(),
+    requestedBy: actor || "unknown",
+  });
 }

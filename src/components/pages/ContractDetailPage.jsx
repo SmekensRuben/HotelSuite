@@ -115,6 +115,10 @@ export default function ContractDetailPage() {
                   value={String(contract.terminationPeriodDays ?? "")}
                 />
                 <DetailField label="Cancel Before" value={contract.cancelBefore} />
+                <DetailField
+                  label="Reminder Days"
+                  value={Array.isArray(contract.reminderDays) ? contract.reminderDays.join(", ") : ""}
+                />
                 <DetailField label="File" value={contract.contractFile?.fileName} />
               </div>
             </Card>
