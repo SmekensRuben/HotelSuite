@@ -51,9 +51,9 @@ export default function ContractEditPage() {
     loadData();
   }, [hotelUid, contractId]);
 
-  const handleUpdate = async (payload, contractFile) => {
+  const handleUpdate = async (payload, contractFiles, remainingFiles) => {
     const actor = auth.currentUser?.uid || "unknown";
-    await updateContract(hotelUid, contractId, payload, contractFile, actor);
+    await updateContract(hotelUid, contractId, payload, contractFiles, remainingFiles, actor);
     navigate(`/contracts/${contractId}`);
   };
 

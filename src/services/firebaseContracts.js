@@ -11,6 +11,7 @@ import {
   ref,
   uploadBytes,
   getDownloadURL,
+  deleteObject,
 } from "../firebaseConfig";
 
 function normalizeDateInput(value) {
@@ -154,7 +155,7 @@ export async function createContract(hotelUid, contractData, contractFiles, acto
   return contractDocRef.id;
 }
 
-export async function updateContract(hotelUid, contractId, contractData, contractFiles, actor) {
+export async function updateContract(hotelUid, contractId, contractData, contractFiles, remainingFiles, actor) {
   if (!hotelUid || !contractId) throw new Error("hotelUid en contractId zijn verplicht!");
 
   const contractRef = doc(db, `hotels/${hotelUid}/contracts`, contractId);
@@ -164,9 +165,25 @@ export async function updateContract(hotelUid, contractId, contractData, contrac
   const existingData = existingSnap.data() || {};
   const existingFiles = sanitizeFiles(existingData.contractFiles || []);
   const fallbackLegacy = existingFiles.length ? [] : sanitizeFiles([existingData.contractFile]);
+  const currentFiles = [...existingFiles, ...fallbackLegacy];
+  const keptFiles = sanitizeFiles(remainingFiles);
+
+  const filesToDelete = currentFiles.filter((currentFile) =>
+    !keptFiles.some(
+      (keptFile) =>
+        (currentFile.filePath && keptFile.filePath && currentFile.filePath === keptFile.filePath) ||
+        (currentFile.downloadUrl && keptFile.downloadUrl && currentFile.downloadUrl === keptFile.downloadUrl)
+    )
+  );
+
+  await Promise.all(
+    filesToDelete
+      .filter((file) => file.filePath)
+      .map((file) => deleteObject(ref(storage, file.filePath)).catch(() => null))
+  );
 
   const uploadedFiles = await uploadContractFiles(hotelUid, contractId, toFileArray(contractFiles));
-  const allFiles = [...existingFiles, ...fallbackLegacy, ...uploadedFiles];
+  const allFiles = [...keptFiles, ...uploadedFiles];
 
   const payload = buildContractPayload(contractData, actor, allFiles);
   await updateDoc(contractRef, payload);
