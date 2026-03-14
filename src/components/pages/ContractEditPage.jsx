@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import ContractFormFields from "./ContractFormFields";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { createContract } from "../../services/firebaseContracts";
+import { getContract, updateContract } from "../../services/firebaseContracts";
 import { getAllUsers } from "../../services/firebaseUserManagement";
 
 function isUserInHotel(user, hotelUid) {
@@ -14,10 +14,13 @@ function isUserInHotel(user, hotelUid) {
   return hotelUids.includes(hotelUid);
 }
 
-export default function ContractCreatePage() {
+export default function ContractEditPage() {
   const navigate = useNavigate();
+  const { contractId } = useParams();
   const { hotelUid } = useHotelContext();
   const [users, setUsers] = useState([]);
+  const [contract, setContract] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   const today = useMemo(
     () =>
@@ -36,18 +39,21 @@ export default function ContractCreatePage() {
   };
 
   useEffect(() => {
-    const loadUsers = async () => {
-      if (!hotelUid) return;
-      const allUsers = await getAllUsers();
+    const loadData = async () => {
+      if (!hotelUid || !contractId) return;
+      setLoading(true);
+      const [contractData, allUsers] = await Promise.all([getContract(hotelUid, contractId), getAllUsers()]);
+      setContract(contractData);
       setUsers(allUsers.filter((user) => isUserInHotel(user, hotelUid)));
+      setLoading(false);
     };
 
-    loadUsers();
-  }, [hotelUid]);
+    loadData();
+  }, [hotelUid, contractId]);
 
-  const handleCreate = async (payload, contractFile) => {
+  const handleUpdate = async (payload, contractFile) => {
     const actor = auth.currentUser?.uid || "unknown";
-    const contractId = await createContract(hotelUid, payload, contractFile, actor);
+    await updateContract(hotelUid, contractId, payload, contractFile, actor);
     navigate(`/contracts/${contractId}`);
   };
 
@@ -57,17 +63,26 @@ export default function ContractCreatePage() {
       <PageContainer className="space-y-6">
         <div>
           <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
-          <h1 className="text-3xl font-semibold">Add Contract</h1>
+          <h1 className="text-3xl font-semibold">Edit Contract</h1>
         </div>
 
-        <Card>
-          <ContractFormFields
-            onSubmit={handleCreate}
-            savingLabel="Creating contract..."
-            submitLabel="Create Contract"
-            availableUsers={users}
-          />
-        </Card>
+        {loading ? (
+          <p className="text-gray-600">Loading contract...</p>
+        ) : !contract ? (
+          <Card>
+            <p className="text-gray-600">Contract not found.</p>
+          </Card>
+        ) : (
+          <Card>
+            <ContractFormFields
+              onSubmit={handleUpdate}
+              savingLabel="Saving contract..."
+              submitLabel="Save Contract"
+              initialValues={contract}
+              availableUsers={users}
+            />
+          </Card>
+        )}
       </PageContainer>
     </div>
   );

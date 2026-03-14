@@ -1,4 +1,5 @@
 const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
@@ -759,6 +760,89 @@ exports.processMailQueue = onDocumentCreated(
         dispatchedAt: admin.firestore.FieldValue.delete(),
       });
       throw error;
+    }
+  }
+);
+
+
+function toDateOnly(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const parsed = new Date(`${raw}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function diffInDaysUtc(fromDate, toDate) {
+  const msPerDay = 24 * 60 * 60 * 1000;
+  return Math.round((toDate.getTime() - fromDate.getTime()) / msPerDay);
+}
+
+async function sendContractReminderEmail({ to, hotelUid, contractId, contractName, endDate, cancelBefore, daysUntilCancel }) {
+  const resendApiKey = String(RESEND_API_KEY.value() || "").trim();
+  const from = String(RESEND_FROM.value() || "").trim();
+  if (!resendApiKey) throw new Error("Missing RESEND_API_KEY secret");
+  if (!from) throw new Error("Missing RESEND_FROM secret");
+
+  const resend = new Resend(resendApiKey);
+
+  await resend.emails.send({
+    from,
+    to,
+    subject: `Contract reminder: ${contractName || contractId}`,
+    text: `Contract reminder
+
+Hotel: ${hotelUid}
+Contract: ${contractName || contractId}
+End date: ${endDate || "-"}
+Cancel before: ${cancelBefore || "-"}
+Days until cancel-before: ${daysUntilCancel}`,
+  });
+}
+
+exports.sendContractCancellationReminders = onSchedule(
+  {
+    schedule: "0 6 * * *",
+    timeZone: "Europe/Brussels",
+    secrets: [RESEND_API_KEY, RESEND_FROM],
+  },
+  async () => {
+    const reminders = new Set([30, 15, 7]);
+    const now = new Date();
+    const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+    const contractsSnap = await admin.firestore().collectionGroup("contracts").get();
+
+    for (const contractDoc of contractsSnap.docs) {
+      const contract = contractDoc.data() || {};
+      const cancelBefore = toDateOnly(contract.cancelBefore);
+      if (!cancelBefore) continue;
+
+      const daysUntilCancel = diffInDaysUtc(todayUtc, cancelBefore);
+      if (!reminders.has(daysUntilCancel)) continue;
+
+      const followers = Array.isArray(contract.followers) ? contract.followers : [];
+      const to = [...new Set(followers.map((follower) => String(follower?.email || "").trim()).filter(Boolean))];
+      if (!to.length) continue;
+
+      const pathSegments = contractDoc.ref.path.split("/");
+      const hotelUid = pathSegments[1] || "unknown-hotel";
+
+      await sendContractReminderEmail({
+        to,
+        hotelUid,
+        contractId: contractDoc.id,
+        contractName: String(contract.name || "").trim(),
+        endDate: String(contract.endDate || "").trim(),
+        cancelBefore: String(contract.cancelBefore || "").trim(),
+        daysUntilCancel,
+      });
+
+      logger.info("Contract reminder email sent", {
+        hotelUid,
+        contractId: contractDoc.id,
+        daysUntilCancel,
+        recipients: to.length,
+      });
     }
   }
 );

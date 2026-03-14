@@ -30,6 +30,7 @@ import OrderEditPage from "./components/pages/OrderEditPage.jsx";
 import ContractsPage from "./components/pages/ContractsPage.jsx";
 import ContractCreatePage from "./components/pages/ContractCreatePage.jsx";
 import ContractDetailPage from "./components/pages/ContractDetailPage.jsx";
+import ContractEditPage from "./components/pages/ContractEditPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -241,6 +242,14 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="contracts" action="read">
             <ContractDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/contracts/:contractId/edit"
+        element={
+          <ProtectedRoute feature="contracts" action="update">
+            <ContractEditPage />
           </ProtectedRoute>
         }
       />
