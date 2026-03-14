@@ -62,9 +62,9 @@ export default function ContractCreatePage() {
               <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-red-100">
                 <Sparkles className="h-3.5 w-3.5" /> Contract management
               </p>
-              <h1 className="text-3xl font-semibold">Nieuw contract aanmaken</h1>
+              <h1 className="text-3xl font-semibold">Create new contract</h1>
               <p className="max-w-2xl text-sm text-red-100">
-                Voeg contractinformatie, documenten en volgers toe in één overzichtelijk formulier.
+                Add contract details, documents, and followers in one clear form.
               </p>
             </div>
             <button
@@ -72,7 +72,7 @@ export default function ContractCreatePage() {
               onClick={() => navigate("/contracts")}
               className="inline-flex items-center gap-2 rounded-lg border border-white/30 bg-white/10 px-4 py-2 text-sm font-medium text-white hover:bg-white/20"
             >
-              <ArrowLeft className="h-4 w-4" /> Terug naar overzicht
+              <ArrowLeft className="h-4 w-4" /> Back to overview
             </button>
           </div>
         </Card>
@@ -86,7 +86,7 @@ export default function ContractCreatePage() {
               <div>
                 <h2 className="text-sm font-semibold text-gray-900">Tip</h2>
                 <p className="mt-1 text-sm text-gray-600">
-                  Je kunt meerdere documenten toevoegen. Na opslaan kom je direct op de detailpagina.
+                  You can add multiple documents. After saving, you will go straight to the detail page.
                 </p>
               </div>
             </div>
@@ -95,8 +95,8 @@ export default function ContractCreatePage() {
           <Card className="border border-gray-100 bg-white/95 shadow-sm lg:col-span-2">
             <ContractFormFields
               onSubmit={handleCreate}
-              savingLabel="Contract wordt aangemaakt..."
-              submitLabel="Contract aanmaken"
+              savingLabel="Creating contract..."
+              submitLabel="Create Contract"
               availableUsers={users}
             />
           </Card>

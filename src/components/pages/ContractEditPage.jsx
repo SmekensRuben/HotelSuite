@@ -68,9 +68,9 @@ export default function ContractEditPage() {
               <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-red-100">
                 <Sparkles className="h-3.5 w-3.5" /> Contract management
               </p>
-              <h1 className="text-3xl font-semibold">Contract bewerken</h1>
+              <h1 className="text-3xl font-semibold">Edit contract</h1>
               <p className="max-w-2xl text-sm text-red-100">
-                Pas velden en documenten aan. Verwijderde documenten worden niet meer bewaard.
+                Update fields and documents. Removed documents will no longer be kept.
               </p>
             </div>
             <button
@@ -78,18 +78,18 @@ export default function ContractEditPage() {
               onClick={() => navigate(`/contracts/${contractId}`)}
               className="inline-flex items-center gap-2 rounded-lg border border-white/30 bg-white/10 px-4 py-2 text-sm font-medium text-white hover:bg-white/20"
             >
-              <ArrowLeft className="h-4 w-4" /> Terug naar detail
+              <ArrowLeft className="h-4 w-4" /> Back to details
             </button>
           </div>
         </Card>
 
         {loading ? (
           <Card className="border border-gray-100 bg-white/95 shadow-sm">
-            <p className="text-gray-600">Contract wordt geladen...</p>
+            <p className="text-gray-600">Loading contract...</p>
           </Card>
         ) : !contract ? (
           <Card className="border border-gray-100 bg-white/95 shadow-sm">
-            <p className="text-gray-600">Contract niet gevonden.</p>
+            <p className="text-gray-600">Contract not found.</p>
           </Card>
         ) : (
           <div className="grid gap-4 lg:grid-cols-3">
@@ -99,8 +99,8 @@ export default function ContractEditPage() {
                   <PencilLine className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="text-sm font-semibold text-gray-900">Je bewerkt nu</h2>
-                  <p className="mt-1 text-sm text-gray-600">{contract.name || "Onbenoemd contract"}</p>
+                  <h2 className="text-sm font-semibold text-gray-900">You are editing</h2>
+                  <p className="mt-1 text-sm text-gray-600">{contract.name || "Untitled contract"}</p>
                 </div>
               </div>
             </Card>
@@ -108,8 +108,8 @@ export default function ContractEditPage() {
             <Card className="border border-gray-100 bg-white/95 shadow-sm lg:col-span-2">
               <ContractFormFields
                 onSubmit={handleUpdate}
-                savingLabel="Contract wordt opgeslagen..."
-                submitLabel="Wijzigingen opslaan"
+                savingLabel="Saving contract..."
+                submitLabel="Save changes"
                 initialValues={contract}
                 availableUsers={users}
               />
