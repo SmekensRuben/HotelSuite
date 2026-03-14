@@ -318,7 +318,17 @@ function formatDeliveryDateForSftp(deliveryDate) {
 }
 
 function resolveOrderUserEmail(order = {}) {
-  const candidates = [order.userEmail, order.updatedBy, order.createdBy, order.email];
+  const candidates = [
+    order.userEmail,
+    order.dispatchRequestedByEmail,
+    order.requestedByEmail,
+    order.updatedByEmail,
+    order.createdByEmail,
+    order.updatedBy,
+    order.createdBy,
+    order.email,
+  ];
+
   const found = candidates
     .map((value) => String(value || "").trim())
     .find((value) => value.includes("@"));
@@ -342,17 +352,22 @@ function buildOrderSftpCsv(order = {}, supplier = {}) {
   };
 
   return rows
-    .map((item) => [
-      accountNumber,
-      item?.supplierSku || "",
-      Number(item?.qtyPurchaseUnits || 0),
-      orderId,
-      Number(item?.baseUnitsPerPurchaseUnit || 0),
-      item?.baseUnit || "",
-      item?.purchaseUnit || "",
-      deliveryDate,
-      userEmail,
-    ].map(escapeCell).join(";"))
+    .map((item) => {
+      const pricingModel = String(item?.pricingModel || "").trim();
+      const isPerBaseUnit = pricingModel === "Per Base Unit";
+
+      return [
+        accountNumber,
+        item?.supplierSku || "",
+        Number(item?.qtyPurchaseUnits || 0),
+        orderId,
+        isPerBaseUnit ? Number(item?.baseUnitsPerPurchaseUnit || 0) : "",
+        isPerBaseUnit ? (item?.baseUnit || "") : "",
+        item?.purchaseUnit || "",
+        deliveryDate,
+        userEmail,
+      ].map(escapeCell).join(";");
+    })
     .join("\n");
 }
 
@@ -375,6 +390,7 @@ async function buildOrderExcelBuffer(order = {}, supplier = {}, hotel = {}) {
   const worksheet = workbook.addWorksheet("Order");
   const supplierRows = getOrderSupplierProductRows(order);
   const currency = String(order.currency || "EUR").trim() || "EUR";
+  const exportTitle = buildOrderExportBaseFilename(order, supplier, hotel);
 
   worksheet.columns = [
     { key: "supplier", width: 28 },
@@ -388,7 +404,7 @@ async function buildOrderExcelBuffer(order = {}, supplier = {}, hotel = {}) {
 
   worksheet.mergeCells("A1:G1");
   const titleCell = worksheet.getCell("A1");
-  titleCell.value = `Order ${order.id || ""}`;
+  titleCell.value = exportTitle;
   titleCell.font = { size: 16, bold: true };
   titleCell.alignment = { horizontal: "left" };
 
@@ -408,7 +424,7 @@ async function buildOrderExcelBuffer(order = {}, supplier = {}, hotel = {}) {
   const headerRowIndex = 7;
   const headerRow = worksheet.getRow(headerRowIndex);
   headerRow.values = ["Supplier", "Article Number", "Product", "Packaging", "Price", "Quantity", "Total Price"];
-  headerRow.font = { bold: true };
+  headerRow.font = { bold: true, color: { argb: "FF1F2937" } };
   headerRow.fill = {
     type: "pattern",
     pattern: "solid",
@@ -431,8 +447,28 @@ async function buildOrderExcelBuffer(order = {}, supplier = {}, hotel = {}) {
   const lastDataRowIndex = firstDataRowIndex + supplierRows.length - 1;
   if (supplierRows.length > 0) {
     for (let rowIndex = firstDataRowIndex; rowIndex <= lastDataRowIndex; rowIndex += 1) {
-      worksheet.getCell(`E${rowIndex}`).numFmt = `#,##0.00 \"${currency}\"`;
-      worksheet.getCell(`G${rowIndex}`).numFmt = `#,##0.00 \"${currency}\"`;
+      worksheet.getCell(`E${rowIndex}`).numFmt = `#,##0.00 "${currency}"`;
+      worksheet.getCell(`G${rowIndex}`).numFmt = `#,##0.00 "${currency}"`;
+
+      const row = worksheet.getRow(rowIndex);
+      row.eachCell((cell) => {
+        cell.border = {
+          top: { style: "thin", color: { argb: "FFE2E8F0" } },
+          left: { style: "thin", color: { argb: "FFE2E8F0" } },
+          bottom: { style: "thin", color: { argb: "FFE2E8F0" } },
+          right: { style: "thin", color: { argb: "FFE2E8F0" } },
+        };
+      });
+
+      if ((rowIndex - firstDataRowIndex) % 2 === 0) {
+        row.eachCell((cell) => {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFF8FAFC" },
+          };
+        });
+      }
     }
   }
 
@@ -450,8 +486,9 @@ async function buildOrderPdfBuffer(order = {}, supplier = {}, hotel = {}) {
 
     const supplierRows = getOrderSupplierProductRows(order);
     const currency = String(order.currency || "EUR").trim() || "EUR";
+    const exportTitle = buildOrderExportBaseFilename(order, supplier, hotel);
 
-    doc.fontSize(18).text(`Order ${order.id || ""}`, { underline: true });
+    doc.fontSize(18).text(exportTitle, { underline: true });
     doc.moveDown(0.5);
     doc.fontSize(12).text(`Hotel: ${hotel.hotelName || ""}`);
     doc.text(`Supplier: ${supplier.name || ""}`);
@@ -532,14 +569,14 @@ function encodeAttachmentContent(content) {
 }
 
 async function buildOrderEmailAttachments(order = {}, supplier = {}, hotel = {}) {
-  const csv = buildOrderCsv(order);
+  const excelBuffer = await buildOrderExcelBuffer(order, supplier, hotel);
   const pdfBuffer = await buildOrderPdfBuffer(order, supplier, hotel);
   const baseFilename = buildOrderExportBaseFilename(order, supplier, hotel);
   const baseAttachments = [
     {
-      filename: `${baseFilename}.csv`,
-      content: encodeAttachmentContent(csv),
-      contentType: "text/csv",
+      filename: `${baseFilename}.xlsx`,
+      content: encodeAttachmentContent(excelBuffer),
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     },
     {
       filename: `${baseFilename}.pdf`,
@@ -597,7 +634,14 @@ async function buildOrderEmailPayload(order, supplier, hotel) {
   return {
     to: [to],
     subject: `${accountNumber} - ${hotelName} - Order ${supplierName} - Delivery ${deliveryDate}`,
-    text: `Beste ${supplier?.name || "supplier"},\n\nIn bijlage vind je order ${order.id}.\n\nMet vriendelijke groeten`,
+    text: `Beste ${supplier?.name || "supplier"},
+
+In bijlage vind je de order voor:
+- Hotel: ${hotelName || "-"}
+- Accountnummer: ${accountNumber || "-"}
+- Leverdatum: ${deliveryDate || "-"}
+
+Met vriendelijke groeten`,
     attachments: await buildOrderEmailAttachments(order, supplier, hotel),
   };
 }
