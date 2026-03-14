@@ -119,6 +119,10 @@ export async function updateOrder(hotelUid, orderId, payload, actor) {
     throw new Error("Enkel orders met status Created kunnen bewerkt worden");
   }
 
+  if (String(payload?.status || "") === "Ordered") {
+    throw new Error("Gebruik Confirm Order om verzending te starten; status wordt pas Ordered na succesvolle verzending");
+  }
+
   const nextPayload = {
     ...payload,
     updatedAt: serverTimestamp(),

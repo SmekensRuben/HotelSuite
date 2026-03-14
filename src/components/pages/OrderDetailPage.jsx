@@ -109,7 +109,7 @@ export default function OrderDetailPage() {
         return;
       }
 
-      if (confirmSubmitted && latestStatus === "Created") {
+      if (confirmSubmitted && latestStatus === "Created" && dispatchStatus === "failed") {
         const details = String(latestOrder?.dispatchError || "").trim();
         setProgressMessage(
           details
@@ -158,6 +158,8 @@ export default function OrderDetailPage() {
   const dispatchStatus = String(order.dispatchStatus || "").toLowerCase();
   const dispatchError = String(order.dispatchError || "").trim();
   const dispatchedVia = String(order.dispatchedVia || "").toLowerCase();
+  const dispatchStep = String(order.dispatchStep || "").trim();
+  const dispatchProgress = Number(order.dispatchProgress || 0);
   const expectedDeliveryMethod = supplierOrderSystem === "SFTP csv" ? "SFTP csv" : "Email";
 
   const items = Array.isArray(order.products) ? order.products : [];
@@ -225,6 +227,7 @@ export default function OrderDetailPage() {
         <Card>
           <div className="grid gap-3 md:grid-cols-3 text-sm">
             <p><span className="font-semibold">Status:</span> {order.status}</p>
+            <p><span className="font-semibold">Dispatch:</span> {dispatchStatus || "-"}</p>
             <p><span className="font-semibold">Supplier:</span> {supplierName || order.supplierId || "-"}</p>
             <p><span className="font-semibold">Delivery Date:</span> {order.deliveryDate || "-"}</p>
             <p><span className="font-semibold">Created By:</span> {createdByName}</p>
@@ -276,13 +279,13 @@ export default function OrderDetailPage() {
 
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
             <p className="font-semibold text-gray-800">Voortgang</p>
-            {ordering && <p className="mt-1 text-blue-700">Orderstatus wordt bijgewerkt naar Ordered...</p>}
-            {!ordering && confirmSubmitted && order.status === "Ordered" && dispatchStatus !== "sent" && dispatchStatus !== "failed" && (
-              <p className="mt-1 text-amber-700">Order bevestigd. Verzending is in verwerking...</p>
+            {ordering && <p className="mt-1 text-blue-700">Verzendverzoek wordt gestart...</p>}
+            {!ordering && confirmSubmitted && dispatchStatus === "processing" && (
+              <p className="mt-1 text-amber-700">Verzending is in verwerking...</p>
             )}
             {!ordering && dispatchStatus === "sent" && (
               <p className="mt-1 text-green-700">
-                Verzending succesvol via {dispatchedVia === "sftp" ? "SFTP" : "email"}.
+                Verzending succesvol via {dispatchedVia === "sftp" ? "SFTP" : "email"}. Status staat nu op Ordered.
               </p>
             )}
             {!ordering && dispatchStatus === "failed" && (
@@ -293,6 +296,18 @@ export default function OrderDetailPage() {
             {!ordering && !confirmSubmitted && order.status === "Created" && (
               <p className="mt-1 text-gray-600">Nog niet bevestigd.</p>
             )}
+            {dispatchStep && <p className="mt-1 text-xs text-gray-500">Stap: {dispatchStep}</p>}
+
+            <div className="mt-2">
+              <div className="h-2 w-full rounded bg-gray-200 overflow-hidden">
+                <div
+                  className="h-full bg-blue-600 transition-all duration-300"
+                  style={{ width: `${Math.max(0, Math.min(100, dispatchProgress))}%` }}
+                />
+              </div>
+              <p className="mt-1 text-xs text-gray-500">{Math.max(0, Math.min(100, dispatchProgress))}%</p>
+            </div>
+
             {progressMessage && <p className="mt-1 text-sm text-gray-700">{progressMessage}</p>}
           </div>
         </div>
@@ -321,7 +336,18 @@ export default function OrderDetailPage() {
               setProgressMessage("Bevestiging gestart. We wachten op verzendresultaat...");
               try {
                 const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-                await updateOrder(hotelUid, orderId, { status: "Ordered" }, actor);
+                await updateOrder(
+                  hotelUid,
+                  orderId,
+                  {
+                    dispatchRequestId: `${Date.now()}`,
+                    dispatchStatus: "processing",
+                    dispatchProgress: 5,
+                    dispatchStep: "Dispatch requested",
+                    dispatchError: "",
+                  },
+                  actor
+                );
                 await refreshOrder();
               } catch (error) {
                 setActionError(error?.message || "Kon order niet op Ordered zetten");

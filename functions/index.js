@@ -310,24 +310,28 @@ async function sendOrderByEmail(order, supplier) {
   const to = String(supplier?.orderEmail || "").trim();
   if (!to) throw new Error("Supplier heeft geen orderEmail");
 
-  const host = String(SMTP_HOST.value() || "").trim();
+  let host = "";
+  try {
+    host = String(SMTP_HOST.value() || "").trim();
+  } catch (error) {
+    throw new Error("failed fetching smtp host");
+  }
+
+  if (!host) {
+    throw new Error("failed fetching smtp host");
+  }
+
   const port = Number(SMTP_PORT.value() || 587);
   const user = String(SMTP_USER.value() || "").trim();
   const pass = String(SMTP_PASS.value() || "").trim();
   const from = String(SMTP_FROM.value() || user || "noreply@kitchenpilot.local").trim();
 
-  const transporter = host
-    ? nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: user ? { user, pass } : undefined,
-    })
-    : nodemailer.createTransport({
-      streamTransport: true,
-      newline: "unix",
-      buffer: true,
-    });
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: user ? { user, pass } : undefined,
+  });
 
   const csv = buildOrderCsv(order);
   await transporter.sendMail({
@@ -413,14 +417,32 @@ exports.sendOrderedSupplierOrder = onDocumentWritten(
     const after = event.data.after.data() || {};
     const beforeStatus = String(before.status || "");
     const afterStatus = String(after.status || "");
+    const beforeDispatchRequestId = String(before.dispatchRequestId || "").trim();
+    const afterDispatchRequestId = String(after.dispatchRequestId || "").trim();
 
-    if (!(beforeStatus === "Created" && afterStatus === "Ordered")) return;
+    if (beforeStatus !== "Created" || afterStatus !== "Created") return;
+    if (!afterDispatchRequestId || afterDispatchRequestId === beforeDispatchRequestId) return;
 
     const { hotelUid, orderId } = event.params;
+    const orderRef = event.data.after.ref;
+
+    const setProgress = async (progress, step, extra = {}) => {
+      await orderRef.update({
+        dispatchStatus: "processing",
+        dispatchProgress: progress,
+        dispatchStep: step,
+        ...extra,
+      });
+      logger.info("Order dispatch progress", { hotelUid, orderId, progress, step });
+    };
+
     try {
+      await setProgress(10, "Start dispatch request");
+
       const supplierId = String(after.supplierId || "").trim();
       if (!supplierId) throw new Error(`Order ${orderId} heeft geen supplierId`);
 
+      await setProgress(20, "Loading supplier configuration");
       const supplierRef = admin.firestore().doc(`hotels/${hotelUid}/suppliers/${supplierId}`);
       const supplierSnap = await supplierRef.get();
       if (!supplierSnap.exists) {
@@ -437,15 +459,20 @@ exports.sendOrderedSupplierOrder = onDocumentWritten(
 
       let sentVia = "email";
       if (orderSystem === "SFTP csv") {
+        await setProgress(45, "Connecting to SFTP");
         await sendOrderBySftp(orderData, supplier);
         sentVia = "sftp";
       } else {
+        await setProgress(45, "Preparing SMTP transport");
         await sendOrderByEmail(orderData, supplier);
         sentVia = "email";
       }
 
-      await event.data.after.ref.update({
+      await orderRef.update({
+        status: "Ordered",
         dispatchStatus: "sent",
+        dispatchProgress: 100,
+        dispatchStep: "Dispatch completed",
         dispatchedVia: sentVia,
         dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
         dispatchError: admin.firestore.FieldValue.delete(),
@@ -453,9 +480,10 @@ exports.sendOrderedSupplierOrder = onDocumentWritten(
 
       logger.info("Order verzonden naar supplier", { hotelUid, orderId, supplierId, sentVia });
     } catch (error) {
-      await event.data.after.ref.update({
-        status: "Created",
+      await orderRef.update({
         dispatchStatus: "failed",
+        dispatchProgress: 100,
+        dispatchStep: "Dispatch failed",
         dispatchError: String(error?.message || error),
         dispatchedVia: admin.firestore.FieldValue.delete(),
         dispatchedAt: admin.firestore.FieldValue.delete(),
