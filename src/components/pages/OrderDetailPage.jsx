@@ -376,6 +376,7 @@ export default function OrderDetailPage() {
                   orderId,
                   {
                     dispatchRequestId: `${Date.now()}`,
+                    dispatchRequestedByEmail: auth.currentUser?.email || "",
                     dispatchStatus: "processing",
                     dispatchProgress: 5,
                     dispatchStep: "Dispatch requested",

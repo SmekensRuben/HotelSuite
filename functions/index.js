@@ -267,17 +267,15 @@ exports.syncSupplierProductsToMeili = onDocumentWritten(
 
 
 function buildOrderCsv(order = {}) {
-  const rows = Array.isArray(order.products) ? order.products : [];
+  const rows = getOrderSupplierProductRows(order);
   const headers = [
-    "supplierProductId",
-    "supplierSku",
-    "supplierProductName",
-    "qtyPurchaseUnits",
-    "purchaseUnit",
-    "pricePerPurchaseUnit",
-    "currency",
-    "deliveryDate",
-    "outletId",
+    "Supplier",
+    "Article Number",
+    "Product",
+    "Packaging",
+    "Price",
+    "Quantity",
+    "Total Price",
   ];
 
   const escapeCell = (value) => {
@@ -290,29 +288,100 @@ function buildOrderCsv(order = {}) {
 
   const body = rows
     .map((item) => [
-      item?.supplierProductId || "",
+      item?.supplier || "",
       item?.supplierSku || "",
       item?.supplierProductName || "",
-      Number(item?.qtyPurchaseUnits || 0),
       item?.purchaseUnit || "",
       Number(item?.pricePerPurchaseUnit || 0),
-      item?.currency || order.currency || "EUR",
-      order.deliveryDate || "",
-      item?.outletId || "",
+      Number(item?.qtyPurchaseUnits || 0),
+      Number(item?.totalPrice || 0),
     ].map(escapeCell).join(","))
     .join("\n");
 
   return `${headers.join(",")}\n${body}`;
 }
 
+function formatDeliveryDateForSftp(deliveryDate) {
+  const raw = String(deliveryDate || "").trim();
+  if (!raw) return "";
+
+  const digitsOnly = raw.replace(/\D/g, "");
+  if (digitsOnly.length >= 8) return digitsOnly.slice(0, 8);
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}${month}${day}`;
+}
+
+function resolveOrderUserEmail(order = {}) {
+  const candidates = [
+    order.userEmail,
+    order.dispatchRequestedByEmail,
+    order.requestedByEmail,
+    order.updatedByEmail,
+    order.createdByEmail,
+    order.updatedBy,
+    order.createdBy,
+    order.email,
+  ];
+
+  const found = candidates
+    .map((value) => String(value || "").trim())
+    .find((value) => value.includes("@"));
+
+  return found || "";
+}
+
+function buildOrderSftpCsv(order = {}, supplier = {}) {
+  const rows = Array.isArray(order.products) ? order.products : [];
+  const deliveryDate = formatDeliveryDateForSftp(order.deliveryDate);
+  const accountNumber = String(supplier.accountNumber || "").trim();
+  const orderId = String(order.id || "").trim();
+  const userEmail = resolveOrderUserEmail(order);
+
+  const escapeCell = (value) => {
+    const text = String(value ?? "");
+    if (text.includes(";") || text.includes("\"") || text.includes("\n")) {
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+  };
+
+  return rows
+    .map((item) => {
+      const pricingModel = String(item?.pricingModel || "").trim();
+      const isPerBaseUnit = pricingModel === "Per Base Unit";
+
+      return [
+        accountNumber,
+        item?.supplierSku || "",
+        Number(item?.qtyPurchaseUnits || 0),
+        orderId,
+        isPerBaseUnit ? Number(item?.baseUnitsPerPurchaseUnit || 0) : "",
+        isPerBaseUnit ? (item?.baseUnit || "") : "",
+        item?.purchaseUnit || "",
+        deliveryDate,
+        userEmail,
+      ].map(escapeCell).join(";");
+    })
+    .join("\n");
+}
+
 function getOrderSupplierProductRows(order = {}) {
   const rows = Array.isArray(order.products) ? order.products : [];
+  const supplierName = String(order.supplierName || "").trim();
   return rows.map((item) => ({
-    supplierId: item?.supplierProductId || item?.supplierId || "",
+    supplier: supplierName || item?.supplierName || "",
     supplierSku: item?.supplierSku || "",
     supplierProductName: item?.supplierProductName || "",
     purchaseUnit: item?.purchaseUnit || "",
     pricePerPurchaseUnit: Number(item?.pricePerPurchaseUnit || 0),
+    qtyPurchaseUnits: Number(item?.qtyPurchaseUnits || 0),
+    totalPrice: Number(item?.qtyPurchaseUnits || 0) * Number(item?.pricePerPurchaseUnit || 0),
   }));
 }
 
@@ -321,18 +390,21 @@ async function buildOrderExcelBuffer(order = {}, supplier = {}, hotel = {}) {
   const worksheet = workbook.addWorksheet("Order");
   const supplierRows = getOrderSupplierProductRows(order);
   const currency = String(order.currency || "EUR").trim() || "EUR";
+  const exportTitle = buildOrderExportBaseFilename(order, supplier, hotel);
 
   worksheet.columns = [
-    { key: "supplierId", width: 20 },
+    { key: "supplier", width: 28 },
     { key: "supplierSku", width: 20 },
     { key: "supplierProductName", width: 40 },
     { key: "purchaseUnit", width: 20 },
-    { key: "pricePerPurchaseUnit", width: 22 },
+    { key: "pricePerPurchaseUnit", width: 16 },
+    { key: "qtyPurchaseUnits", width: 12 },
+    { key: "totalPrice", width: 16 },
   ];
 
-  worksheet.mergeCells("A1:E1");
+  worksheet.mergeCells("A1:G1");
   const titleCell = worksheet.getCell("A1");
-  titleCell.value = `Order ${order.id || ""}`;
+  titleCell.value = exportTitle;
   titleCell.font = { size: 16, bold: true };
   titleCell.alignment = { horizontal: "left" };
 
@@ -351,8 +423,8 @@ async function buildOrderExcelBuffer(order = {}, supplier = {}, hotel = {}) {
 
   const headerRowIndex = 7;
   const headerRow = worksheet.getRow(headerRowIndex);
-  headerRow.values = ["supplierId", "supplierSku", "supplierProductName", "purchaseUnit", "pricePerPurchaseUnit"];
-  headerRow.font = { bold: true };
+  headerRow.values = ["Supplier", "Article Number", "Product", "Packaging", "Price", "Quantity", "Total Price"];
+  headerRow.font = { bold: true, color: { argb: "FF1F2937" } };
   headerRow.fill = {
     type: "pattern",
     pattern: "solid",
@@ -361,11 +433,13 @@ async function buildOrderExcelBuffer(order = {}, supplier = {}, hotel = {}) {
 
   supplierRows.forEach((row) => {
     worksheet.addRow({
-      supplierId: row.supplierId,
+      supplier: row.supplier,
       supplierSku: row.supplierSku,
       supplierProductName: row.supplierProductName,
       purchaseUnit: row.purchaseUnit,
       pricePerPurchaseUnit: row.pricePerPurchaseUnit,
+      qtyPurchaseUnits: row.qtyPurchaseUnits,
+      totalPrice: row.totalPrice,
     });
   });
 
@@ -373,7 +447,28 @@ async function buildOrderExcelBuffer(order = {}, supplier = {}, hotel = {}) {
   const lastDataRowIndex = firstDataRowIndex + supplierRows.length - 1;
   if (supplierRows.length > 0) {
     for (let rowIndex = firstDataRowIndex; rowIndex <= lastDataRowIndex; rowIndex += 1) {
-      worksheet.getCell(`E${rowIndex}`).numFmt = `#,##0.00 \"${currency}\"`;
+      worksheet.getCell(`E${rowIndex}`).numFmt = `#,##0.00 "${currency}"`;
+      worksheet.getCell(`G${rowIndex}`).numFmt = `#,##0.00 "${currency}"`;
+
+      const row = worksheet.getRow(rowIndex);
+      row.eachCell((cell) => {
+        cell.border = {
+          top: { style: "thin", color: { argb: "FFE2E8F0" } },
+          left: { style: "thin", color: { argb: "FFE2E8F0" } },
+          bottom: { style: "thin", color: { argb: "FFE2E8F0" } },
+          right: { style: "thin", color: { argb: "FFE2E8F0" } },
+        };
+      });
+
+      if ((rowIndex - firstDataRowIndex) % 2 === 0) {
+        row.eachCell((cell) => {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFF8FAFC" },
+          };
+        });
+      }
     }
   }
 
@@ -391,8 +486,9 @@ async function buildOrderPdfBuffer(order = {}, supplier = {}, hotel = {}) {
 
     const supplierRows = getOrderSupplierProductRows(order);
     const currency = String(order.currency || "EUR").trim() || "EUR";
+    const exportTitle = buildOrderExportBaseFilename(order, supplier, hotel);
 
-    doc.fontSize(18).text(`Order ${order.id || ""}`, { underline: true });
+    doc.fontSize(18).text(exportTitle, { underline: true });
     doc.moveDown(0.5);
     doc.fontSize(12).text(`Hotel: ${hotel.hotelName || ""}`);
     doc.text(`Supplier: ${supplier.name || ""}`);
@@ -401,41 +497,65 @@ async function buildOrderPdfBuffer(order = {}, supplier = {}, hotel = {}) {
     doc.moveDown();
 
     const columns = [
-      { key: "supplierId", label: "supplierId", width: 85 },
-      { key: "supplierSku", label: "supplierSku", width: 85 },
-      { key: "supplierProductName", label: "supplierProductName", width: 180 },
-      { key: "purchaseUnit", label: "purchaseUnit", width: 90 },
-      { key: "pricePerPurchaseUnit", label: "pricePerPurchaseUnit", width: 100 },
+      { key: "supplier", label: "Supplier", width: 90, align: "left" },
+      { key: "supplierSku", label: "Article Number", width: 85, align: "left" },
+      { key: "supplierProductName", label: "Product", width: 130, align: "left" },
+      { key: "purchaseUnit", label: "Packaging", width: 60, align: "left" },
+      { key: "pricePerPurchaseUnit", label: "Price", width: 55, align: "right" },
+      { key: "qtyPurchaseUnits", label: "Quantity", width: 45, align: "right" },
+      { key: "totalPrice", label: "Total Price", width: 65, align: "right" },
     ];
 
-    const startX = doc.x;
+    const startX = doc.page.margins.left;
     let y = doc.y;
-    doc.font("Helvetica-Bold").fontSize(10);
-    let x = startX;
-    columns.forEach((column) => {
-      doc.text(column.label, x, y, { width: column.width });
-      x += column.width;
-    });
+    const tableWidth = columns.reduce((sum, col) => sum + col.width, 0);
+    const rowHeight = 20;
 
-    y += 18;
-    doc.font("Helvetica").fontSize(10);
-    supplierRows.forEach((row) => {
-      x = startX;
+    const drawHeader = () => {
+      doc.rect(startX, y, tableWidth, rowHeight).fill("#E8EEF8");
+      let x = startX;
+      doc.fillColor("#1F2937").font("Helvetica-Bold").fontSize(9);
+      columns.forEach((column) => {
+        doc.text(column.label, x + 4, y + 6, { width: column.width - 8, align: column.align || "left" });
+        doc.rect(x, y, column.width, rowHeight).stroke("#CBD5E1");
+        x += column.width;
+      });
+      y += rowHeight;
+    };
+
+    drawHeader();
+
+    doc.font("Helvetica").fontSize(9);
+    supplierRows.forEach((row, index) => {
+      if (y > doc.page.height - 80) {
+        doc.addPage();
+        y = doc.page.margins.top;
+        drawHeader();
+      }
+
+      if (index % 2 === 0) {
+        doc.rect(startX, y, tableWidth, rowHeight).fill("#F8FAFC");
+      }
+
+      let x = startX;
       const values = {
         ...row,
         pricePerPurchaseUnit: `${Number(row.pricePerPurchaseUnit || 0).toFixed(2)} ${currency}`,
+        qtyPurchaseUnits: Number(row.qtyPurchaseUnits || 0),
+        totalPrice: `${Number(row.totalPrice || 0).toFixed(2)} ${currency}`,
       };
 
       columns.forEach((column) => {
-        doc.text(String(values[column.key] || ""), x, y, { width: column.width });
+        doc.fillColor("#111827").text(String(values[column.key] || ""), x + 4, y + 6, {
+          width: column.width - 8,
+          align: column.align || "left",
+          ellipsis: true,
+        });
+        doc.rect(x, y, column.width, rowHeight).stroke("#E2E8F0");
         x += column.width;
       });
-      y += 16;
 
-      if (y > doc.page.height - 60) {
-        doc.addPage();
-        y = 50;
-      }
+      y += rowHeight;
     });
 
     doc.end();
@@ -451,14 +571,15 @@ function encodeAttachmentContent(content) {
 async function buildOrderEmailAttachments(order = {}, supplier = {}, hotel = {}) {
   const excelBuffer = await buildOrderExcelBuffer(order, supplier, hotel);
   const pdfBuffer = await buildOrderPdfBuffer(order, supplier, hotel);
+  const baseFilename = buildOrderExportBaseFilename(order, supplier, hotel);
   const baseAttachments = [
     {
-      filename: `order-${order.id}.xlsx`,
+      filename: `${baseFilename}.xlsx`,
       content: encodeAttachmentContent(excelBuffer),
       contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     },
     {
-      filename: `order-${order.id}.pdf`,
+      filename: `${baseFilename}.pdf`,
       content: encodeAttachmentContent(pdfBuffer),
       contentType: "application/pdf",
     },
@@ -485,6 +606,22 @@ async function buildOrderEmailAttachments(order = {}, supplier = {}, hotel = {})
   return [...baseAttachments, ...normalizedExtraAttachments];
 }
 
+function sanitizeFilenameSegment(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, " ")
+    .slice(0, 80);
+}
+
+function buildOrderExportBaseFilename(order = {}, supplier = {}, hotel = {}) {
+  const hotelName = sanitizeFilenameSegment(hotel.hotelName);
+  const accountNumber = sanitizeFilenameSegment(supplier.accountNumber);
+  const deliveryDate = sanitizeFilenameSegment(order.deliveryDate);
+
+  return [hotelName || "Hotel", accountNumber || "Account", deliveryDate || "Delivery date"].join(" - ");
+}
+
 async function buildOrderEmailPayload(order, supplier, hotel) {
   const to = String(supplier?.orderEmail || "").trim();
   if (!to) throw new Error("Supplier heeft geen orderEmail");
@@ -497,7 +634,14 @@ async function buildOrderEmailPayload(order, supplier, hotel) {
   return {
     to: [to],
     subject: `${accountNumber} - ${hotelName} - Order ${supplierName} - Delivery ${deliveryDate}`,
-    text: `Beste ${supplier?.name || "supplier"},\n\nIn bijlage vind je order ${order.id}.\n\nMet vriendelijke groeten`,
+    text: `Beste ${supplier?.name || "supplier"},
+
+In bijlage vind je de order voor:
+- Hotel: ${hotelName || "-"}
+- Accountnummer: ${accountNumber || "-"}
+- Leverdatum: ${deliveryDate || "-"}
+
+Met vriendelijke groeten`,
     attachments: await buildOrderEmailAttachments(order, supplier, hotel),
   };
 }
@@ -653,13 +797,49 @@ function resolveSftpConnectionOptions(supplier) {
   };
 }
 
-async function sendOrderBySftp(order, supplier) {
+async function sendOrderBySftp(order, supplier, context = {}) {
   const connection = resolveSftpConnectionOptions(supplier);
   const client = new SftpClient();
-  const csv = buildOrderCsv(order);
+  const csv = buildOrderSftpCsv(order, supplier);
+  const logContext = {
+    hotelUid: String(context.hotelUid || "").trim(),
+    orderId: String(context.orderId || order.id || "").trim(),
+    supplierId: String(context.supplierId || supplier.id || "").trim(),
+    host: connection.host,
+    port: connection.port,
+    remoteDir: connection.remoteDir,
+  };
 
   const safeRemoteDir = connection.remoteDir.endsWith("/") ? connection.remoteDir.slice(0, -1) : connection.remoteDir;
-  const remotePath = `${safeRemoteDir || ""}/order-${order.id}.csv`;
+  const baseFilename = buildOrderExportBaseFilename(order, supplier, { hotelName: order.hotelName });
+  const remotePath = `${safeRemoteDir || ""}/${baseFilename}.csv`;
+
+  const logDirectoryList = async (pathToList, label) => {
+    try {
+      const entries = await client.list(pathToList);
+      logger.info("SFTP directory listing", {
+        ...logContext,
+        label,
+        path: pathToList,
+        entryCount: entries.length,
+        entries: entries.slice(0, 50).map((entry) => ({
+          name: entry?.name,
+          type: entry?.type,
+          size: entry?.size,
+          modifyTime: entry?.modifyTime,
+        })),
+      });
+    } catch (error) {
+      logger.warn("SFTP directory listing failed", {
+        ...logContext,
+        label,
+        path: pathToList,
+        error: String(error?.message || error),
+      });
+    }
+  };
+
+  logger.info("SFTP connect attempt", { ...logContext, remotePath });
 
   await client.connect({
     host: connection.host,
@@ -669,7 +849,32 @@ async function sendOrderBySftp(order, supplier) {
   });
 
   try {
+    try {
+      const cwd = await client.cwd();
+      logger.info("SFTP connected", { ...logContext, cwd, remotePath });
+    } catch (error) {
+      logger.warn("SFTP cwd lookup failed", { ...logContext, error: String(error?.message || error) });
+    }
+
+    await logDirectoryList("/", "root");
+    await logDirectoryList(connection.remoteDir || "/", "configured-remote-dir");
+
+    const parentDir = safeRemoteDir && safeRemoteDir.includes("/")
+      ? safeRemoteDir.slice(0, safeRemoteDir.lastIndexOf("/")) || "/"
+      : "/";
+    await logDirectoryList(parentDir, "remote-parent-dir");
+
+    logger.info("SFTP upload start", { ...logContext, remotePath, bytes: Buffer.byteLength(csv, "utf8") });
     await client.put(Buffer.from(csv, "utf8"), remotePath);
+    logger.info("SFTP upload success", { ...logContext, remotePath });
+  } catch (error) {
+    logger.error("SFTP upload failed", {
+      ...logContext,
+      remotePath,
+      error: String(error?.message || error),
+      code: error?.code || null,
+    });
+    throw error;
   } finally {
     await client.end();
   }
@@ -735,13 +940,15 @@ exports.sendOrderedSupplierOrder = onDocumentWritten(
 
       const orderData = {
         id: orderId,
+        supplierName: String(supplier.name || "").trim(),
+        hotelName: String(hotel.hotelName || "").trim(),
         ...after,
       };
 
       let sentVia = "email";
       if (orderSystem === "SFTP csv") {
         await setProgress(45, "Connecting to SFTP");
-        await sendOrderBySftp(orderData, supplier);
+        await sendOrderBySftp(orderData, supplier, { hotelUid, orderId, supplierId });
         sentVia = "sftp";
       } else {
         await setProgress(45, "Queueing email for delivery");
