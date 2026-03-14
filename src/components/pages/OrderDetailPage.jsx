@@ -54,6 +54,34 @@ export default function OrderDetailPage() {
     window.location.href = "/login";
   };
 
+  const closeConfirmModal = async () => {
+    if ((dispatchStatus === "processing" || ordering) && String(order?.status || "") === "Created") {
+      try {
+        const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
+        await updateOrder(
+          hotelUid,
+          orderId,
+          {
+            dispatchStatus: "failed",
+            dispatchProgress: 100,
+            dispatchStep: "Dispatch cancelled by user (modal closed)",
+            dispatchError: "Dispatch cancelled because confirmation modal was closed while processing",
+            dispatchRequestId: "",
+          },
+          actor
+        );
+        await refreshOrder();
+      } catch (error) {
+        setActionError(error?.message || "Kon dispatch status niet bijwerken bij sluiten modal");
+      }
+    }
+
+    setShowOrderConfirmModal(false);
+    setConfirmSubmitted(false);
+    setConfirmStartedAt(0);
+    setProgressMessage("");
+  };
+
   const refreshOrder = async () => {
     if (!hotelUid || !orderId) return null;
     const result = await getOrderById(hotelUid, orderId);
@@ -273,12 +301,7 @@ export default function OrderDetailPage() {
 
       <Modal
         open={showOrderConfirmModal}
-        onClose={() => {
-          setShowOrderConfirmModal(false);
-          setConfirmSubmitted(false);
-          setConfirmStartedAt(0);
-          setProgressMessage("");
-        }}
+        onClose={closeConfirmModal}
         title="Confirm order en verzenden"
       >
         <div className="space-y-3 text-sm text-gray-700">
@@ -332,12 +355,7 @@ export default function OrderDetailPage() {
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
-            onClick={() => {
-              setShowOrderConfirmModal(false);
-              setConfirmSubmitted(false);
-              setConfirmStartedAt(0);
-              setProgressMessage("");
-            }}
+            onClick={closeConfirmModal}
             className="px-4 py-2 rounded border border-gray-300 text-gray-700"
           >
             {t("orderConfirm.close")}
