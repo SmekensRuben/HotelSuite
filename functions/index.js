@@ -797,14 +797,49 @@ function resolveSftpConnectionOptions(supplier) {
   };
 }
 
-async function sendOrderBySftp(order, supplier) {
+async function sendOrderBySftp(order, supplier, context = {}) {
   const connection = resolveSftpConnectionOptions(supplier);
   const client = new SftpClient();
   const csv = buildOrderSftpCsv(order, supplier);
+  const logContext = {
+    hotelUid: String(context.hotelUid || "").trim(),
+    orderId: String(context.orderId || order.id || "").trim(),
+    supplierId: String(context.supplierId || supplier.id || "").trim(),
+    host: connection.host,
+    port: connection.port,
+    remoteDir: connection.remoteDir,
+  };
 
   const safeRemoteDir = connection.remoteDir.endsWith("/") ? connection.remoteDir.slice(0, -1) : connection.remoteDir;
   const baseFilename = buildOrderExportBaseFilename(order, supplier, { hotelName: order.hotelName });
   const remotePath = `${safeRemoteDir || ""}/${baseFilename}.csv`;
+
+  const logDirectoryList = async (pathToList, label) => {
+    try {
+      const entries = await client.list(pathToList);
+      logger.info("SFTP directory listing", {
+        ...logContext,
+        label,
+        path: pathToList,
+        entryCount: entries.length,
+        entries: entries.slice(0, 50).map((entry) => ({
+          name: entry?.name,
+          type: entry?.type,
+          size: entry?.size,
+          modifyTime: entry?.modifyTime,
+        })),
+      });
+    } catch (error) {
+      logger.warn("SFTP directory listing failed", {
+        ...logContext,
+        label,
+        path: pathToList,
+        error: String(error?.message || error),
+      });
+    }
+  };
+
+  logger.info("SFTP connect attempt", { ...logContext, remotePath });
 
   await client.connect({
     host: connection.host,
@@ -814,7 +849,32 @@ async function sendOrderBySftp(order, supplier) {
   });
 
   try {
+    try {
+      const cwd = await client.cwd();
+      logger.info("SFTP connected", { ...logContext, cwd, remotePath });
+    } catch (error) {
+      logger.warn("SFTP cwd lookup failed", { ...logContext, error: String(error?.message || error) });
+    }
+
+    await logDirectoryList("/", "root");
+    await logDirectoryList(connection.remoteDir || "/", "configured-remote-dir");
+
+    const parentDir = safeRemoteDir && safeRemoteDir.includes("/")
+      ? safeRemoteDir.slice(0, safeRemoteDir.lastIndexOf("/")) || "/"
+      : "/";
+    await logDirectoryList(parentDir, "remote-parent-dir");
+
+    logger.info("SFTP upload start", { ...logContext, remotePath, bytes: Buffer.byteLength(csv, "utf8") });
     await client.put(Buffer.from(csv, "utf8"), remotePath);
+    logger.info("SFTP upload success", { ...logContext, remotePath });
+  } catch (error) {
+    logger.error("SFTP upload failed", {
+      ...logContext,
+      remotePath,
+      error: String(error?.message || error),
+      code: error?.code || null,
+    });
+    throw error;
   } finally {
     await client.end();
   }
@@ -888,7 +948,7 @@ exports.sendOrderedSupplierOrder = onDocumentWritten(
       let sentVia = "email";
       if (orderSystem === "SFTP csv") {
         await setProgress(45, "Connecting to SFTP");
-        await sendOrderBySftp(orderData, supplier);
+        await sendOrderBySftp(orderData, supplier, { hotelUid, orderId, supplierId });
         sentVia = "sftp";
       } else {
         await setProgress(45, "Queueing email for delivery");
