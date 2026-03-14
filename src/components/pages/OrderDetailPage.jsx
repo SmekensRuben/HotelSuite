@@ -72,7 +72,7 @@ export default function OrderDetailPage() {
         );
         await refreshOrder();
       } catch (error) {
-        setActionError(error?.message || "Kon dispatch status niet bijwerken bij sluiten modal");
+        setActionError(error?.message || "Could not update dispatch status when closing modal");
       }
     }
 
@@ -123,7 +123,7 @@ export default function OrderDetailPage() {
       const latestStatus = String(latestOrder?.status || "");
 
       if (dispatchStatus === "sent") {
-        setProgressMessage("Verzending is succesvol afgerond.");
+        setProgressMessage("Dispatch completed successfully.");
         clearInterval(interval);
         return;
       }
@@ -132,8 +132,8 @@ export default function OrderDetailPage() {
         const details = String(latestOrder?.dispatchError || "").trim();
         setProgressMessage(
           details
-            ? `Verzenden is mislukt. Foutmelding: ${details}`
-            : "Verzenden is mislukt. Controleer supplier-instellingen en probeer opnieuw."
+            ? `Dispatch failed. Error: ${details}`
+            : "Dispatch failed. Check supplier settings and try again."
         );
         clearInterval(interval);
         return;
@@ -143,8 +143,8 @@ export default function OrderDetailPage() {
         const details = String(latestOrder?.dispatchError || "").trim();
         setProgressMessage(
           details
-            ? `Order bleef op Created omdat verzenden faalde: ${details}`
-            : "Order bleef op Created omdat verzenden nog niet gelukt is."
+            ? `Order stayed in Created because dispatch failed: ${details}`
+            : "Order stayed in Created because dispatch did not succeed."
         );
       }
 
@@ -163,7 +163,7 @@ export default function OrderDetailPage() {
           },
           actor
         );
-        setProgressMessage("Verzending werd automatisch gestopt na 30 seconden zonder resultaat.");
+        setProgressMessage("Dispatch was automatically failed after 30 seconds without a result.");
         clearInterval(interval);
       }
     }, 2500);
@@ -235,7 +235,7 @@ export default function OrderDetailPage() {
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div className="flex items-center justify-between gap-3">
-          <h1 className="text-3xl font-semibold">Order detail</h1>
+          <h1 className="text-3xl font-semibold">Order Detail</h1>
           <div className="flex items-center gap-2">
             {isCreated && (
               <>
@@ -260,7 +260,7 @@ export default function OrderDetailPage() {
               onClick={() => navigate("/orders")}
               className="px-4 py-2 border border-gray-300 rounded font-semibold hover:bg-gray-100"
             >
-              Terug
+              Back
             </button>
           </div>
         </div>
@@ -273,12 +273,12 @@ export default function OrderDetailPage() {
             <p><span className="font-semibold">Delivery Date:</span> {order.deliveryDate || "-"}</p>
             <p><span className="font-semibold">Created By:</span> {createdByName}</p>
             <p><span className="font-semibold">Created At:</span> {order.createdAtDate ? new Date(order.createdAtDate).toLocaleString() : "-"}</p>
-            <p><span className="font-semibold">Totaal:</span> {Number(order.totalAmount || 0).toFixed(2)} {order.currency || "EUR"}</p>
+            <p><span className="font-semibold">Total:</span> {Number(order.totalAmount || 0).toFixed(2)} {order.currency || "EUR"}</p>
           </div>
         </Card>
 
         {actionError && <p className="text-sm text-red-600">{actionError}</p>}
-        <DataListTable columns={columns} rows={rows} emptyMessage="Geen orderregels gevonden." />
+        <DataListTable columns={columns} rows={rows} emptyMessage="No order lines found." />
 
         {isCreated && (
           <div className="flex justify-end">
@@ -302,7 +302,7 @@ export default function OrderDetailPage() {
       <Modal
         open={showOrderConfirmModal}
         onClose={closeConfirmModal}
-        title="Confirm order en verzenden"
+        title="Confirm Order & Dispatch"
       >
         <div className="space-y-3 text-sm text-gray-700">
           <p>
@@ -319,24 +319,24 @@ export default function OrderDetailPage() {
 
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
             <p className="font-semibold text-gray-800">{t("orderConfirm.progress")}</p>
-            {ordering && <p className="mt-1 text-blue-700">Verzendverzoek wordt gestart...</p>}
+            {ordering && <p className="mt-1 text-blue-700">Starting dispatch request...</p>}
             {!ordering && confirmSubmitted && dispatchStatus === "processing" && (
-              <p className="mt-1 text-amber-700">Verzending is in verwerking...</p>
+              <p className="mt-1 text-amber-700">Dispatch is processing...</p>
             )}
             {!ordering && dispatchStatus === "sent" && (
               <p className="mt-1 text-green-700">
-                Verzending succesvol via {dispatchedVia === "sftp" ? "SFTP" : "email"}. Status staat nu op Ordered.
+                Dispatch successful via {dispatchedVia === "sftp" ? "SFTP" : "email"}. Status is now Ordered.
               </p>
             )}
             {!ordering && dispatchStatus === "failed" && (
               <p className="mt-1 text-red-700">
-                Verzenden mislukt{dispatchError ? `: ${dispatchError}` : "."}
+                Dispatch failed{dispatchError ? `: ${dispatchError}` : "."}
               </p>
             )}
             {!ordering && !confirmSubmitted && order.status === "Created" && (
-              <p className="mt-1 text-gray-600">Nog niet bevestigd.</p>
+              <p className="mt-1 text-gray-600">Not confirmed yet.</p>
             )}
-            {dispatchStep && <p className="mt-1 text-xs text-gray-500">Stap: {dispatchStep}</p>}
+            {dispatchStep && <p className="mt-1 text-xs text-gray-500">Step: {dispatchStep}</p>}
 
             <div className="mt-2">
               <div className="h-2 w-full rounded bg-gray-200 overflow-hidden">
@@ -368,7 +368,7 @@ export default function OrderDetailPage() {
               setActionError("");
               setConfirmSubmitted(true);
               setConfirmStartedAt(Date.now());
-              setProgressMessage("Bevestiging gestart. We wachten op verzendresultaat...");
+              setProgressMessage("Confirmation started. Waiting for dispatch result...");
               try {
                 const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
                 await updateOrder(
@@ -385,7 +385,7 @@ export default function OrderDetailPage() {
                 );
                 await refreshOrder();
               } catch (error) {
-                setActionError(error?.message || "Kon order niet op Ordered zetten");
+                setActionError(error?.message || "Could not confirm and dispatch order");
               } finally {
                 setOrdering(false);
               }
@@ -398,7 +398,7 @@ export default function OrderDetailPage() {
       </Modal>
 
       <Modal open={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete order">
-        <p className="text-sm text-gray-700">Weet je zeker dat je deze order wil verwijderen?</p>
+        <p className="text-sm text-gray-700">Are you sure you want to delete this order?</p>
         <div className="mt-4 flex justify-end gap-2">
           <button type="button" onClick={() => setShowDeleteModal(false)} className="px-4 py-2 rounded border border-gray-300 text-gray-700">Cancel</button>
           <button
