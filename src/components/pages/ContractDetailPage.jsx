@@ -53,6 +53,12 @@ export default function ContractDetailPage() {
     loadContract();
   }, [hotelUid, contractId]);
 
+  const contractFiles = Array.isArray(contract?.contractFiles)
+    ? contract.contractFiles
+    : contract?.contractFile
+      ? [contract.contractFile]
+      : [];
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
@@ -62,19 +68,28 @@ export default function ContractDetailPage() {
             <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
             <h1 className="text-3xl font-semibold">Contract Detail</h1>
           </div>
-          <button
-            type="button"
-            onClick={() => navigate(`/contracts/${contractId}/edit`)}
-            disabled={!canEditContracts}
-            className={`inline-flex items-center justify-center rounded border p-2 ${
-              canEditContracts
-                ? "border-gray-300 text-gray-700 hover:bg-gray-100"
-                : "border-gray-200 text-gray-400 cursor-not-allowed"
-            }`}
-            title="Edit contract"
-          >
-            <Pencil className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate("/contracts")}
+              className="inline-flex items-center justify-center rounded border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
+            >
+              Back to contracts
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(`/contracts/${contractId}/edit`)}
+              disabled={!canEditContracts}
+              className={`inline-flex items-center justify-center rounded border p-2 ${
+                canEditContracts
+                  ? "border-gray-300 text-gray-700 hover:bg-gray-100"
+                  : "border-gray-200 text-gray-400 cursor-not-allowed"
+              }`}
+              title="Edit contract"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {loading ? (
@@ -91,17 +106,6 @@ export default function ContractDetailPage() {
                   <h2 className="text-2xl font-semibold text-gray-900">{contract.name || "-"}</h2>
                   <p className="text-gray-600 mt-1">Category: {contract.category || "-"}</p>
                 </div>
-                {contract.contractFile?.downloadUrl ? (
-                  <a
-                    href={contract.contractFile.downloadUrl}
-                    download={contract.contractFile.fileName || true}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white hover:bg-[#961919]"
-                  >
-                    <Download className="h-4 w-4" /> Download file
-                  </a>
-                ) : null}
               </div>
             </Card>
 
@@ -119,7 +123,6 @@ export default function ContractDetailPage() {
                   label="Reminder Days"
                   value={Array.isArray(contract.reminderDays) ? contract.reminderDays.join(", ") : ""}
                 />
-                <DetailField label="File" value={contract.contractFile?.fileName} />
               </div>
             </Card>
 
@@ -135,6 +138,33 @@ export default function ContractDetailPage() {
                 </ul>
               ) : (
                 <p className="text-sm text-gray-500">No followers assigned.</p>
+              )}
+            </Card>
+
+            <Card className="lg:col-span-2">
+              <h2 className="text-lg font-semibold mb-3">Documents</h2>
+              {contractFiles.length > 0 ? (
+                <ul className="space-y-2">
+                  {contractFiles.map((file, index) => (
+                    <li
+                      key={`${file.filePath || file.downloadUrl || file.fileName}-${index}`}
+                      className="flex items-center justify-between rounded border border-gray-200 px-3 py-2"
+                    >
+                      <span className="text-sm text-gray-700">{file.fileName || `Document ${index + 1}`}</span>
+                      <a
+                        href={file.downloadUrl}
+                        download={file.fileName || true}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[#961919]"
+                      >
+                        <Download className="h-4 w-4" /> Download
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-gray-500">No documents uploaded.</p>
               )}
             </Card>
           </div>

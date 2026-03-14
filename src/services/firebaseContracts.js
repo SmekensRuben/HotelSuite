@@ -43,14 +43,27 @@ function sanitizeReminderDays(value) {
   )].sort((a, b) => b - a);
 }
 
-function buildContractPayload(contractData, actor, existingFileMeta = null) {
+function sanitizeFiles(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((file) => ({
+      fileName: String(file?.fileName || "").trim(),
+      filePath: String(file?.filePath || "").trim(),
+      downloadUrl: String(file?.downloadUrl || "").trim(),
+    }))
+    .filter((file) => file.fileName && file.downloadUrl);
+}
+
+function buildContractPayload(contractData, actor, existingFiles = []) {
   const terminationPeriodDays = Number(contractData.terminationPeriodDays);
 
   return {
     name: String(contractData.name || "").trim(),
     startDate: normalizeDateInput(contractData.startDate),
     endDate: normalizeDateInput(contractData.endDate),
-    terminationPeriodDays: Number.isFinite(terminationPeriodDays) ? Math.max(0, Math.floor(terminationPeriodDays)) : 0,
+    terminationPeriodDays: Number.isFinite(terminationPeriodDays)
+      ? Math.max(0, Math.floor(terminationPeriodDays))
+      : 0,
     cancelBefore: calculateCancelBefore(contractData.endDate, terminationPeriodDays),
     category: String(contractData.category || "").trim(),
     reminderDays: sanitizeReminderDays(contractData.reminderDays),
@@ -63,7 +76,7 @@ function buildContractPayload(contractData, actor, existingFileMeta = null) {
           }))
           .filter((follower) => follower.id && follower.email)
       : [],
-    contractFile: existingFileMeta,
+    contractFiles: sanitizeFiles(existingFiles),
     updatedAt: serverTimestamp(),
     updatedBy: actor || "unknown",
   };
@@ -81,7 +94,18 @@ export async function getContract(hotelUid, contractId) {
   const contractDoc = doc(db, `hotels/${hotelUid}/contracts`, contractId);
   const snap = await getDoc(contractDoc);
   if (!snap.exists()) return null;
-  return { id: snap.id, ...snap.data() };
+
+  const data = snap.data() || {};
+  const contractFiles = sanitizeFiles(data.contractFiles);
+  const legacyFile = data.contractFile
+    ? sanitizeFiles([data.contractFile])
+    : [];
+
+  return {
+    id: snap.id,
+    ...data,
+    contractFiles: contractFiles.length ? contractFiles : legacyFile,
+  };
 }
 
 async function uploadContractFile(hotelUid, contractId, file) {
@@ -97,19 +121,31 @@ async function uploadContractFile(hotelUid, contractId, file) {
   };
 }
 
-export async function createContract(hotelUid, contractData, contractFile, actor) {
+async function uploadContractFiles(hotelUid, contractId, files) {
+  if (!Array.isArray(files) || files.length === 0) return [];
+  const uploads = await Promise.all(files.map((file) => uploadContractFile(hotelUid, contractId, file)));
+  return sanitizeFiles(uploads);
+}
+
+function toFileArray(value) {
+  if (!value) return [];
+  return Array.isArray(value) ? value.filter(Boolean) : [value].filter(Boolean);
+}
+
+export async function createContract(hotelUid, contractData, contractFiles, actor) {
   if (!hotelUid) throw new Error("hotelUid is verplicht!");
 
   const contractsCol = collection(db, `hotels/${hotelUid}/contracts`);
   const contractDocRef = doc(contractsCol);
 
-  let fileMeta = null;
-  if (contractFile) {
-    fileMeta = await uploadContractFile(hotelUid, contractDocRef.id, contractFile);
-  }
+  const uploadedFiles = await uploadContractFiles(
+    hotelUid,
+    contractDocRef.id,
+    toFileArray(contractFiles)
+  );
 
   const payload = {
-    ...buildContractPayload(contractData, actor, fileMeta),
+    ...buildContractPayload(contractData, actor, uploadedFiles),
     createdAt: serverTimestamp(),
     createdBy: actor || "unknown",
   };
@@ -118,7 +154,7 @@ export async function createContract(hotelUid, contractData, contractFile, actor
   return contractDocRef.id;
 }
 
-export async function updateContract(hotelUid, contractId, contractData, contractFile, actor) {
+export async function updateContract(hotelUid, contractId, contractData, contractFiles, actor) {
   if (!hotelUid || !contractId) throw new Error("hotelUid en contractId zijn verplicht!");
 
   const contractRef = doc(db, `hotels/${hotelUid}/contracts`, contractId);
@@ -126,16 +162,15 @@ export async function updateContract(hotelUid, contractId, contractData, contrac
   if (!existingSnap.exists()) throw new Error("Contract niet gevonden");
 
   const existingData = existingSnap.data() || {};
-  let fileMeta = existingData.contractFile || null;
+  const existingFiles = sanitizeFiles(existingData.contractFiles || []);
+  const fallbackLegacy = existingFiles.length ? [] : sanitizeFiles([existingData.contractFile]);
 
-  if (contractFile) {
-    fileMeta = await uploadContractFile(hotelUid, contractId, contractFile);
-  }
+  const uploadedFiles = await uploadContractFiles(hotelUid, contractId, toFileArray(contractFiles));
+  const allFiles = [...existingFiles, ...fallbackLegacy, ...uploadedFiles];
 
-  const payload = buildContractPayload(contractData, actor, fileMeta);
+  const payload = buildContractPayload(contractData, actor, allFiles);
   await updateDoc(contractRef, payload);
 }
-
 
 export async function triggerContractReminders(hotelUid, actor) {
   if (!hotelUid) throw new Error("hotelUid is verplicht!");

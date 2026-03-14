@@ -795,6 +795,8 @@ async function sendContractReminderEmail({ to, hotelUid, contractId, contractNam
 
   const resend = new Resend(resendApiKey);
 
+  const contractDetailUrl = `https://hoteltoolkit.eu/contracts/${contractId}`;
+
   await resend.emails.send({
     from,
     to,
@@ -805,7 +807,8 @@ Hotel: ${hotelUid}
 Contract: ${contractName || contractId}
 End date: ${endDate || "-"}
 Cancel before: ${cancelBefore || "-"}
-Days until cancel-before: ${daysUntilCancel}`,
+Days until cancel-before: ${daysUntilCancel}
+Contract link: ${contractDetailUrl}`,
   });
 }
 

@@ -46,7 +46,7 @@ export default function ContractFormFields({
   availableUsers = [],
 }) {
   const [formState, setFormState] = useState(INITIAL_STATE);
-  const [contractFile, setContractFile] = useState(null);
+  const [contractFiles, setContractFiles] = useState([]);
   const [saving, setSaving] = useState(false);
   const [selectedFollower, setSelectedFollower] = useState(null);
   const [newReminderDay, setNewReminderDay] = useState("");
@@ -143,7 +143,7 @@ export default function ContractFormFields({
           followers: sanitizeFollowers(formState.followers),
           reminderDays: sanitizeReminderDays(formState.reminderDays),
         },
-        contractFile
+        contractFiles
       );
     } finally {
       setSaving(false);
@@ -208,12 +208,18 @@ export default function ContractFormFields({
         </label>
 
         <label className="space-y-1 sm:col-span-2">
-          <span className="text-sm font-medium text-gray-700">Contract File</span>
+          <span className="text-sm font-medium text-gray-700">Contract Documents</span>
           <input
             type="file"
-            onChange={(event) => setContractFile(event.target.files?.[0] || null)}
+            multiple
+            onChange={(event) => setContractFiles(Array.from(event.target.files || []))}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-[#b41f1f] file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white"
           />
+          {contractFiles.length > 0 && (
+            <p className="mt-2 text-xs text-gray-500">
+              {contractFiles.length} file(s) selected: {contractFiles.map((file) => file.name).join(", ")}
+            </p>
+          )}
         </label>
       </div>
 
@@ -236,7 +242,9 @@ export default function ContractFormFields({
             onClick={addFollower}
             disabled={!selectedFollower}
             className={`rounded-lg px-4 py-2 text-sm font-semibold ${
-              selectedFollower ? "bg-[#b41f1f] text-white hover:bg-[#961919]" : "bg-gray-300 text-gray-500"
+              selectedFollower
+                ? "bg-[#b41f1f] text-white hover:bg-[#961919]"
+                : "bg-gray-300 text-gray-500"
             }`}
           >
             Add
@@ -252,7 +260,9 @@ export default function ContractFormFields({
                 key={follower.id}
                 className="flex items-center justify-between rounded border border-gray-200 px-3 py-2 text-sm"
               >
-                <span>{follower.name || follower.email || follower.id} ({follower.email || "no-email"})</span>
+                <span>
+                  {follower.name || follower.email || follower.id} ({follower.email || "no-email"})
+                </span>
                 <button
                   type="button"
                   onClick={() => removeFollower(follower.id)}
