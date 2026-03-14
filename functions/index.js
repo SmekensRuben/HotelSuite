@@ -4,6 +4,8 @@ const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
 const { Resend } = require("resend");
 const SftpClient = require("ssh2-sftp-client");
+const ExcelJS = require("exceljs");
+const PDFDocument = require("pdfkit");
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -303,19 +305,162 @@ function buildOrderCsv(order = {}) {
   return `${headers.join(",")}\n${body}`;
 }
 
+function getOrderSupplierProductRows(order = {}) {
+  const rows = Array.isArray(order.products) ? order.products : [];
+  return rows.map((item) => ({
+    supplierId: item?.supplierProductId || item?.supplierId || "",
+    supplierSku: item?.supplierSku || "",
+    supplierProductName: item?.supplierProductName || "",
+    purchaseUnit: item?.purchaseUnit || "",
+    pricePerPurchaseUnit: Number(item?.pricePerPurchaseUnit || 0),
+  }));
+}
+
+async function buildOrderExcelBuffer(order = {}, supplier = {}, hotel = {}) {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Order");
+  const supplierRows = getOrderSupplierProductRows(order);
+  const currency = String(order.currency || "EUR").trim() || "EUR";
+
+  worksheet.columns = [
+    { key: "supplierId", width: 20 },
+    { key: "supplierSku", width: 20 },
+    { key: "supplierProductName", width: 40 },
+    { key: "purchaseUnit", width: 20 },
+    { key: "pricePerPurchaseUnit", width: 22 },
+  ];
+
+  worksheet.mergeCells("A1:E1");
+  const titleCell = worksheet.getCell("A1");
+  titleCell.value = `Order ${order.id || ""}`;
+  titleCell.font = { size: 16, bold: true };
+  titleCell.alignment = { horizontal: "left" };
+
+  worksheet.getCell("A2").value = "Hotel";
+  worksheet.getCell("B2").value = String(hotel.hotelName || "");
+  worksheet.getCell("A3").value = "Supplier";
+  worksheet.getCell("B3").value = String(supplier.name || "");
+  worksheet.getCell("A4").value = "Delivery date";
+  worksheet.getCell("B4").value = String(order.deliveryDate || "");
+  worksheet.getCell("A5").value = "Account number";
+  worksheet.getCell("B5").value = String(supplier.accountNumber || "");
+
+  ["A2", "A3", "A4", "A5"].forEach((cellRef) => {
+    worksheet.getCell(cellRef).font = { bold: true };
+  });
+
+  const headerRowIndex = 7;
+  const headerRow = worksheet.getRow(headerRowIndex);
+  headerRow.values = ["supplierId", "supplierSku", "supplierProductName", "purchaseUnit", "pricePerPurchaseUnit"];
+  headerRow.font = { bold: true };
+  headerRow.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FFE8EEF8" },
+  };
+
+  supplierRows.forEach((row) => {
+    worksheet.addRow({
+      supplierId: row.supplierId,
+      supplierSku: row.supplierSku,
+      supplierProductName: row.supplierProductName,
+      purchaseUnit: row.purchaseUnit,
+      pricePerPurchaseUnit: row.pricePerPurchaseUnit,
+    });
+  });
+
+  const firstDataRowIndex = headerRowIndex + 1;
+  const lastDataRowIndex = firstDataRowIndex + supplierRows.length - 1;
+  if (supplierRows.length > 0) {
+    for (let rowIndex = firstDataRowIndex; rowIndex <= lastDataRowIndex; rowIndex += 1) {
+      worksheet.getCell(`E${rowIndex}`).numFmt = `#,##0.00 \"${currency}\"`;
+    }
+  }
+
+  return workbook.xlsx.writeBuffer();
+}
+
+async function buildOrderPdfBuffer(order = {}, supplier = {}, hotel = {}) {
+  const doc = new PDFDocument({ margin: 40 });
+  const chunks = [];
+
+  return new Promise((resolve, reject) => {
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const supplierRows = getOrderSupplierProductRows(order);
+    const currency = String(order.currency || "EUR").trim() || "EUR";
+
+    doc.fontSize(18).text(`Order ${order.id || ""}`, { underline: true });
+    doc.moveDown(0.5);
+    doc.fontSize(12).text(`Hotel: ${hotel.hotelName || ""}`);
+    doc.text(`Supplier: ${supplier.name || ""}`);
+    doc.text(`Delivery date: ${order.deliveryDate || ""}`);
+    doc.text(`Account number: ${supplier.accountNumber || ""}`);
+    doc.moveDown();
+
+    const columns = [
+      { key: "supplierId", label: "supplierId", width: 85 },
+      { key: "supplierSku", label: "supplierSku", width: 85 },
+      { key: "supplierProductName", label: "supplierProductName", width: 180 },
+      { key: "purchaseUnit", label: "purchaseUnit", width: 90 },
+      { key: "pricePerPurchaseUnit", label: "pricePerPurchaseUnit", width: 100 },
+    ];
+
+    const startX = doc.x;
+    let y = doc.y;
+    doc.font("Helvetica-Bold").fontSize(10);
+    let x = startX;
+    columns.forEach((column) => {
+      doc.text(column.label, x, y, { width: column.width });
+      x += column.width;
+    });
+
+    y += 18;
+    doc.font("Helvetica").fontSize(10);
+    supplierRows.forEach((row) => {
+      x = startX;
+      const values = {
+        ...row,
+        pricePerPurchaseUnit: `${Number(row.pricePerPurchaseUnit || 0).toFixed(2)} ${currency}`,
+      };
+
+      columns.forEach((column) => {
+        doc.text(String(values[column.key] || ""), x, y, { width: column.width });
+        x += column.width;
+      });
+      y += 16;
+
+      if (y > doc.page.height - 60) {
+        doc.addPage();
+        y = 50;
+      }
+    });
+
+    doc.end();
+  });
+}
+
 function encodeAttachmentContent(content) {
   if (content === null || content === undefined) return "";
   if (Buffer.isBuffer(content)) return content.toString("base64");
   return Buffer.from(String(content), "utf8").toString("base64");
 }
 
-function buildOrderEmailAttachments(order = {}) {
-  const csv = buildOrderCsv(order);
+async function buildOrderEmailAttachments(order = {}, supplier = {}, hotel = {}) {
+  const excelBuffer = await buildOrderExcelBuffer(order, supplier, hotel);
+  const pdfBuffer = await buildOrderPdfBuffer(order, supplier, hotel);
   const baseAttachments = [
     {
-      filename: `order-${order.id}.csv`,
-      content: encodeAttachmentContent(csv),
-      contentType: "text/csv",
+      filename: `order-${order.id}.xlsx`,
+      content: encodeAttachmentContent(excelBuffer),
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    },
+    {
+      filename: `order-${order.id}.pdf`,
+      content: encodeAttachmentContent(pdfBuffer),
+      contentType: "application/pdf",
     },
   ];
 
@@ -340,21 +485,26 @@ function buildOrderEmailAttachments(order = {}) {
   return [...baseAttachments, ...normalizedExtraAttachments];
 }
 
-function buildOrderEmailPayload(order, supplier) {
+async function buildOrderEmailPayload(order, supplier, hotel) {
   const to = String(supplier?.orderEmail || "").trim();
   if (!to) throw new Error("Supplier heeft geen orderEmail");
 
+  const accountNumber = String(supplier?.accountNumber || "").trim();
+  const hotelName = String(hotel?.hotelName || "").trim();
+  const supplierName = String(supplier?.name || "").trim();
+  const deliveryDate = String(order?.deliveryDate || "").trim();
+
   return {
     to: [to],
-    subject: `Order ${order.id} - levering ${order.deliveryDate || ""}`,
+    subject: `${accountNumber} - ${hotelName} - Order ${supplierName} - Delivery ${deliveryDate}`,
     text: `Beste ${supplier?.name || "supplier"},\n\nIn bijlage vind je order ${order.id}.\n\nMet vriendelijke groeten`,
-    attachments: buildOrderEmailAttachments(order),
+    attachments: await buildOrderEmailAttachments(order, supplier, hotel),
   };
 }
 
-async function enqueueOrderEmail({ hotelUid, orderId, dispatchRequestId, order, supplier, supplierId }) {
+async function enqueueOrderEmail({ hotelUid, orderId, dispatchRequestId, order, supplier, supplierId, hotel }) {
   const mailQueueRef = admin.firestore().collection(`hotels/${hotelUid}/mailQueue`).doc();
-  const payload = buildOrderEmailPayload(order, supplier);
+  const payload = await buildOrderEmailPayload(order, supplier, hotel);
   await mailQueueRef.set({
     type: "order-confirmation",
     hotelUid,
@@ -578,6 +728,9 @@ exports.sendOrderedSupplierOrder = onDocumentWritten(
       }
 
       const supplier = supplierSnap.data() || {};
+      const hotelRef = admin.firestore().doc(`hotels/${hotelUid}`);
+      const hotelSnap = await hotelRef.get();
+      const hotel = hotelSnap.exists ? (hotelSnap.data() || {}) : {};
       const orderSystem = String(supplier.orderSystem || "Email").trim();
 
       const orderData = {
@@ -599,6 +752,7 @@ exports.sendOrderedSupplierOrder = onDocumentWritten(
           order: orderData,
           supplier,
           supplierId,
+          hotel,
         });
         sentVia = "email";
       }
