@@ -819,21 +819,37 @@ async function processContractCancellationReminders({ hotelUidFilter } = {}) {
 
   for (const contractDoc of contractsSnap.docs) {
     const contract = contractDoc.data() || {};
+    const pathSegments = contractDoc.ref.path.split("/");
+    const hotelUid = hotelUidFilter || pathSegments[1] || "unknown-hotel";
     const cancelBefore = toDateOnly(contract.cancelBefore);
-    if (!cancelBefore) continue;
+
+    if (!cancelBefore) {
+      logger.info("Contract reminder scan (skipped: missing cancelBefore)", {
+        hotelUid,
+        contractId: contractDoc.id,
+        contractName: String(contract.name || "").trim() || null,
+      });
+      continue;
+    }
 
     const reminderDays = sanitizeReminderDays(contract.reminderDays);
-    if (!reminderDays.length) continue;
-
     const daysUntilCancel = diffInDaysUtc(todayUtc, cancelBefore);
+
+    logger.info("Contract reminder scan", {
+      hotelUid,
+      contractId: contractDoc.id,
+      contractName: String(contract.name || "").trim() || null,
+      cancelBefore: String(contract.cancelBefore || "").trim() || null,
+      daysUntilCancel,
+      reminderDays,
+    });
+
+    if (!reminderDays.length) continue;
     if (!reminderDays.includes(daysUntilCancel)) continue;
 
     const followers = Array.isArray(contract.followers) ? contract.followers : [];
     const to = [...new Set(followers.map((follower) => String(follower?.email || "").trim()).filter(Boolean))];
     if (!to.length) continue;
-
-    const pathSegments = contractDoc.ref.path.split("/");
-    const hotelUid = hotelUidFilter || pathSegments[1] || "unknown-hotel";
 
     await sendContractReminderEmail({
       to,
