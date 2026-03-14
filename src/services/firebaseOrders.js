@@ -269,6 +269,7 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
     if (resolvedDeliveryDate !== deliveryDate) {
       deliveryDateAdjustments.push({
         supplierId,
+        supplierName: String(supplier.name || "").trim() || supplierId,
         requestedDeliveryDate: deliveryDate,
         resolvedDeliveryDate,
       });
