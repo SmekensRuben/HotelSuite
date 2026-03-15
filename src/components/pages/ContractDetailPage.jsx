@@ -77,6 +77,7 @@ export default function ContractDetailPage() {
               <h1 className="text-3xl font-semibold">{contract?.name || "Contract information"}</h1>
               <div className="flex flex-wrap gap-2 text-xs text-red-100">
                 <span className="rounded-full bg-white/10 px-3 py-1">Category: {contract?.category || "-"}</span>
+                <span className="rounded-full bg-white/10 px-3 py-1">Subcategory: {contract?.subcategory || "-"}</span>
                 <span className="rounded-full bg-white/10 px-3 py-1">Files: {contractFiles.length}</span>
               </div>
             </div>
@@ -120,6 +121,8 @@ export default function ContractDetailPage() {
               <div className="grid gap-3 sm:grid-cols-2">
                 <DetailField label="Start date" value={formatDate(contract.startDate)} />
                 <DetailField label="End date" value={formatDate(contract.endDate)} />
+                <DetailField label="Category" value={contract.category} />
+                <DetailField label="Subcategory" value={contract.subcategory} />
                 <DetailField label="Termination period (days)" value={String(contract.terminationPeriodDays ?? "-")} />
                 <DetailField label="Cancel before" value={formatDate(contract.cancelBefore)} />
               </div>

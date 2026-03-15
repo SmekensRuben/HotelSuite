@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { Combobox } from "../ui/combobox";
+import { useHotelContext } from "../../contexts/HotelContext";
+import { getSettings } from "../../services/firebaseSettings";
 
 const INITIAL_STATE = {
   name: "",
@@ -8,6 +10,9 @@ const INITIAL_STATE = {
   endDate: "",
   terminationPeriodDays: "",
   category: "",
+  categoryId: "",
+  subcategory: "",
+  subcategoryId: "",
   followers: [],
   reminderDays: [30, 15, 7],
 };
@@ -45,12 +50,42 @@ export default function ContractFormFields({
   initialValues,
   availableUsers = [],
 }) {
+  const { hotelUid } = useHotelContext();
   const [formState, setFormState] = useState(INITIAL_STATE);
   const [contractFiles, setContractFiles] = useState([]);
   const [existingContractFiles, setExistingContractFiles] = useState([]);
   const [saving, setSaving] = useState(false);
   const [selectedFollower, setSelectedFollower] = useState(null);
   const [newReminderDay, setNewReminderDay] = useState("");
+  const [categoryOptions, setCategoryOptions] = useState([]);
+  const [subcategoryOptions, setSubcategoryOptions] = useState([]);
+
+  useEffect(() => {
+    if (!hotelUid) return;
+
+    const loadContractSettings = async () => {
+      const settings = await getSettings(hotelUid);
+      const loadedCategories = Object.entries(settings?.contractCategories || {}).map(
+        ([id, value]) => ({
+          id,
+          name: String(value?.name || "").trim(),
+        })
+      );
+      const validCategoryIds = new Set(loadedCategories.map((category) => category.id));
+      const loadedSubcategories = Object.entries(settings?.contractSubcategories || {})
+        .map(([id, value]) => ({
+          id,
+          name: String(value?.name || "").trim(),
+          categoryId: String(value?.categoryId || "").trim(),
+        }))
+        .filter((subcategory) => subcategory.categoryId && validCategoryIds.has(subcategory.categoryId));
+
+      setCategoryOptions(loadedCategories);
+      setSubcategoryOptions(loadedSubcategories);
+    };
+
+    loadContractSettings();
+  }, [hotelUid]);
 
   useEffect(() => {
     if (!initialValues) {
@@ -68,6 +103,9 @@ export default function ContractFormFields({
           ? String(initialValues.terminationPeriodDays)
           : "",
       category: String(initialValues.category || ""),
+      categoryId: String(initialValues.categoryId || ""),
+      subcategory: String(initialValues.subcategory || ""),
+      subcategoryId: String(initialValues.subcategoryId || ""),
       followers: sanitizeFollowers(initialValues.followers),
       reminderDays: sanitizeReminderDays(initialValues.reminderDays || [30, 15, 7]),
     });
@@ -79,6 +117,46 @@ export default function ContractFormFields({
         : [];
     setExistingContractFiles(initialContractFiles);
   }, [initialValues]);
+
+  useEffect(() => {
+    if (!categoryOptions.length) return;
+
+    setFormState((prev) => {
+      const matchedCategory = !prev.categoryId && prev.category
+        ? categoryOptions.find(
+            (category) => category.name.toLowerCase() === prev.category.toLowerCase()
+          )
+        : null;
+
+      if (!matchedCategory) return prev;
+
+      return {
+        ...prev,
+        categoryId: matchedCategory.id,
+      };
+    });
+  }, [categoryOptions]);
+
+  useEffect(() => {
+    if (!subcategoryOptions.length) return;
+
+    setFormState((prev) => {
+      const matchedSubcategory = !prev.subcategoryId && prev.subcategory
+        ? subcategoryOptions.find(
+            (subcategory) =>
+              subcategory.name.toLowerCase() === prev.subcategory.toLowerCase() &&
+              (!prev.categoryId || subcategory.categoryId === prev.categoryId)
+          )
+        : null;
+
+      if (!matchedSubcategory) return prev;
+
+      return {
+        ...prev,
+        subcategoryId: matchedSubcategory.id,
+      };
+    });
+  }, [subcategoryOptions]);
 
   const selectedFollowerIds = useMemo(
     () => new Set(formState.followers.map((follower) => follower.id)),
@@ -93,6 +171,14 @@ export default function ContractFormFields({
   const handleChange = (key, value) => {
     setFormState((prev) => ({ ...prev, [key]: value }));
   };
+
+  const availableSubcategoryOptions = useMemo(
+    () =>
+      formState.categoryId
+        ? subcategoryOptions.filter((subcategory) => subcategory.categoryId === formState.categoryId)
+        : [],
+    [subcategoryOptions, formState.categoryId]
+  );
 
   const addFollower = () => {
     if (!selectedFollower) return;
@@ -139,16 +225,24 @@ export default function ContractFormFields({
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!formState.name.trim()) return;
+    if (!formState.name.trim() || !formState.categoryId || !formState.subcategoryId) return;
 
     setSaving(true);
     try {
+      const selectedCategory = categoryOptions.find((category) => category.id === formState.categoryId);
+      const selectedSubcategory = availableSubcategoryOptions.find(
+        (subcategory) => subcategory.id === formState.subcategoryId
+      );
+
       await onSubmit(
         {
           ...formState,
           name: formState.name.trim(),
           terminationPeriodDays: Number(formState.terminationPeriodDays || 0),
-          category: formState.category.trim(),
+          category: selectedCategory?.name || "",
+          categoryId: selectedCategory?.id || "",
+          subcategory: selectedSubcategory?.name || "",
+          subcategoryId: selectedSubcategory?.id || "",
           followers: sanitizeFollowers(formState.followers),
           reminderDays: sanitizeReminderDays(formState.reminderDays),
         },
@@ -219,12 +313,49 @@ export default function ContractFormFields({
 
         <label className="space-y-1">
           <span className="text-sm font-medium text-gray-700">Category</span>
-          <input
-            type="text"
-            value={formState.category}
-            onChange={(event) => handleChange("category", event.target.value)}
+          <select
+            value={formState.categoryId}
+            onChange={(event) => {
+              const nextCategoryId = event.target.value;
+              setFormState((prev) => ({
+                ...prev,
+                categoryId: nextCategoryId,
+                subcategoryId: "",
+              }));
+            }}
+            required
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
-          />
+          >
+            <option value="">Select category</option>
+            {categoryOptions.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="space-y-1">
+          <span className="text-sm font-medium text-gray-700">Subcategory</span>
+          <select
+            value={formState.subcategoryId}
+            onChange={(event) => handleChange("subcategoryId", event.target.value)}
+            disabled={!formState.categoryId || availableSubcategoryOptions.length === 0}
+            required
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20 disabled:bg-gray-100"
+          >
+            <option value="">Select subcategory</option>
+            {availableSubcategoryOptions.map((subcategory) => (
+              <option key={subcategory.id} value={subcategory.id}>
+                {subcategory.name}
+              </option>
+            ))}
+          </select>
+          {formState.categoryId && availableSubcategoryOptions.length === 0 && (
+            <p className="text-xs text-gray-500">
+              No subcategories found for this category. Add one in contract settings first.
+            </p>
+          )}
         </label>
 
         <label className="space-y-1 sm:col-span-2">
