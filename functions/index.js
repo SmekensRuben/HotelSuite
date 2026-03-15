@@ -789,6 +789,8 @@ function sanitizeReminderDays(value) {
 }
 
 function ContractReminderEmailTemplate({ hotelName, contractId, contractName, endDate, cancelBefore, daysUntilCancel, contractDetailUrl }) {
+  const headline = contractName || contractId;
+
   return React.createElement(
     "div",
     {
@@ -805,7 +807,12 @@ function ContractReminderEmailTemplate({ hotelName, contractId, contractName, en
         cellPadding: "0",
         cellSpacing: "0",
         width: "100%",
-        style: { maxWidth: "640px", margin: "0 auto", backgroundColor: "#ffffff", borderRadius: "14px", overflow: "hidden", border: "1px solid #e5e7eb" },
+        style: {
+          maxWidth: "640px",
+          margin: "0 auto",
+          backgroundColor: "#ffffff",
+          border: "1px solid #e5e7eb",
+        },
       },
       React.createElement(
         "tbody",
@@ -815,9 +822,43 @@ function ContractReminderEmailTemplate({ hotelName, contractId, contractName, en
           null,
           React.createElement(
             "td",
-            { style: { background: "linear-gradient(90deg,#b41f1f,#7f1717)", color: "#ffffff", padding: "24px" } },
-            React.createElement("p", { style: { margin: "0 0 6px", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.08em", opacity: 0.9 } }, "Contract reminder"),
-            React.createElement("h1", { style: { margin: 0, fontSize: "24px", lineHeight: "30px" } }, contractName || contractId)
+            {
+              bgColor: "#8f1b1b",
+              style: {
+                backgroundColor: "#8f1b1b",
+                backgroundImage: "linear-gradient(90deg,#b41f1f,#7f1717)",
+                color: "#ffffff",
+                padding: "24px",
+              },
+            },
+            React.createElement(
+              "p",
+              {
+                style: {
+                  margin: "0 0 6px",
+                  fontSize: "12px",
+                  lineHeight: "18px",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                  color: "#ffffff",
+                  opacity: 0.95,
+                },
+              },
+              "Contract reminder"
+            ),
+            React.createElement(
+              "h1",
+              {
+                style: {
+                  margin: 0,
+                  fontSize: "24px",
+                  lineHeight: "30px",
+                  color: "#ffffff",
+                  fontWeight: 700,
+                },
+              },
+              headline
+            )
           )
         ),
         React.createElement(
@@ -825,17 +866,29 @@ function ContractReminderEmailTemplate({ hotelName, contractId, contractName, en
           null,
           React.createElement(
             "td",
-            { style: { padding: "24px" } },
-            React.createElement("p", { style: { margin: "0 0 16px", fontSize: "14px", color: "#111827" } }, `A contract needs attention for `, React.createElement("strong", null, hotelName || "Hotel"), "."),
+            { style: { backgroundColor: "#ffffff", padding: "24px" } },
+            React.createElement(
+              "p",
+              { style: { margin: "0 0 16px", fontSize: "14px", lineHeight: "20px", color: "#111827" } },
+              "A contract needs attention for ",
+              React.createElement("strong", { style: { color: "#111827" } }, hotelName || "Hotel"),
+              "."
+            ),
             React.createElement(
               "table",
-              { role: "presentation", cellPadding: "0", cellSpacing: "0", width: "100%", style: { borderCollapse: "collapse", marginBottom: "18px" } },
+              {
+                role: "presentation",
+                cellPadding: "0",
+                cellSpacing: "0",
+                width: "100%",
+                style: { borderCollapse: "collapse", marginBottom: "22px", backgroundColor: "#ffffff" },
+              },
               React.createElement(
                 "tbody",
                 null,
                 ...[
                   ["Hotel", hotelName || "-"],
-                  ["Contract", contractName || contractId || "-"],
+                  ["Contract", headline || "-"],
                   ["End date", endDate || "-"],
                   ["Cancel before", cancelBefore || "-"],
                   ["Days until cancel-before", String(daysUntilCancel)],
@@ -843,28 +896,83 @@ function ContractReminderEmailTemplate({ hotelName, contractId, contractName, en
                   React.createElement(
                     "tr",
                     { key: label },
-                    React.createElement("td", { style: { padding: "8px 0", fontSize: "13px", color: "#6b7280", width: "190px" } }, label),
-                    React.createElement("td", { style: { padding: "8px 0", fontSize: "13px", color: "#111827", fontWeight: 600 } }, value)
+                    React.createElement(
+                      "td",
+                      {
+                        style: {
+                          padding: "8px 0",
+                          fontSize: "13px",
+                          lineHeight: "18px",
+                          color: "#4b5563",
+                          width: "190px",
+                          backgroundColor: "#ffffff",
+                        },
+                      },
+                      label
+                    ),
+                    React.createElement(
+                      "td",
+                      {
+                        style: {
+                          padding: "8px 0",
+                          fontSize: "13px",
+                          lineHeight: "18px",
+                          color: "#111827",
+                          fontWeight: 600,
+                          backgroundColor: "#ffffff",
+                        },
+                      },
+                      value
+                    )
                   )
                 )
               )
             ),
             React.createElement(
-              "a",
+              "table",
               {
-                href: contractDetailUrl,
-                style: {
-                  display: "inline-block",
-                  backgroundColor: "#b41f1f",
-                  color: "#ffffff",
-                  textDecoration: "none",
-                  fontSize: "14px",
-                  fontWeight: 700,
-                  padding: "10px 16px",
-                  borderRadius: "8px",
-                },
+                role: "presentation",
+                cellPadding: "0",
+                cellSpacing: "0",
+                style: { borderCollapse: "separate" },
               },
-              "Open contract"
+              React.createElement(
+                "tbody",
+                null,
+                React.createElement(
+                  "tr",
+                  null,
+                  React.createElement(
+                    "td",
+                    {
+                      bgColor: "#b41f1f",
+                      style: {
+                        backgroundColor: "#b41f1f",
+                        borderRadius: "8px",
+                        padding: "0",
+                      },
+                    },
+                    React.createElement(
+                      "a",
+                      {
+                        href: contractDetailUrl,
+                        style: {
+                          display: "inline-block",
+                          padding: "12px 20px",
+                          lineHeight: "20px",
+                          backgroundColor: "#b41f1f",
+                          color: "#ffffff",
+                          textDecoration: "none",
+                          fontSize: "14px",
+                          fontWeight: 700,
+                          borderRadius: "8px",
+                        },
+                      },
+                      "Open contract"
+                    )
+                  )
+                )
+              )
             )
           )
         )
@@ -872,6 +980,7 @@ function ContractReminderEmailTemplate({ hotelName, contractId, contractName, en
     )
   );
 }
+
 
 const hotelNameCache = new Map();
 
