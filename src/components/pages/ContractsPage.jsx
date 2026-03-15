@@ -83,6 +83,7 @@ export default function ContractsPage() {
   const columns = [
     { key: "name", label: "Name" },
     { key: "category", label: "Category" },
+    { key: "subcategory", label: "Subcategory" },
     { key: "startDate", label: "Start Date" },
     { key: "endDate", label: "End Date" },
     { key: "terminationPeriodDays", label: "Termination Period (days)" },
