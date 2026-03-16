@@ -14,7 +14,7 @@ export default function SupplierOutletAccountCreatePage() {
   const { hotelUid } = useHotelContext();
   const [suppliers, setSuppliers] = useState([]);
   const [outlets, setOutlets] = useState([]);
-  const [formState, setFormState] = useState({ supplier: "", outlet: "", accountNumber: "" });
+  const [formState, setFormState] = useState({ supplier: "", outletId: "", accountNumber: "" });
   const [saving, setSaving] = useState(false);
 
   const today = useMemo(
@@ -93,7 +93,8 @@ export default function SupplierOutletAccountCreatePage() {
         {
           supplierId: supplier.id,
           supplierName: String(supplier.name || "").trim() || supplier.id,
-          outlet: String(formState.outlet || "").trim(),
+          outletId: String(formState.outletId || "").trim(),
+          outletName: String((outlets.find((outlet) => String(outlet.id || "") === String(formState.outletId || ""))?.name) || formState.outletId || "").trim(),
           accountNumber: String(formState.accountNumber || "").trim(),
         },
         actor
@@ -148,13 +149,13 @@ export default function SupplierOutletAccountCreatePage() {
               Outlet *
               <select
                 required
-                value={formState.outlet}
-                onChange={(event) => setFormState((prev) => ({ ...prev, outlet: event.target.value }))}
+                value={formState.outletId}
+                onChange={(event) => setFormState((prev) => ({ ...prev, outletId: event.target.value }))}
                 className="rounded border border-gray-300 px-3 py-2 text-sm"
               >
                 <option value="">Kies outlet</option>
                 {outlets.map((outlet) => (
-                  <option key={outlet.id || outlet.name} value={outlet.name || outlet.id}>
+                  <option key={outlet.id || outlet.name} value={outlet.id || outlet.name}>
                     {outlet.name || outlet.id}
                   </option>
                 ))}

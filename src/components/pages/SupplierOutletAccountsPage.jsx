@@ -45,7 +45,7 @@ export default function SupplierOutletAccountsPage() {
 
   const columns = [
     { key: "supplierName", label: "Supplier", render: (row) => row.supplierName || row.supplierId || "-" },
-    { key: "outlet", label: "Outlet" },
+    { key: "outlet", label: "Outlet", render: (row) => row.outletName || row.outletId || "-" },
     { key: "accountNumber", label: "Account Number" },
   ];
 

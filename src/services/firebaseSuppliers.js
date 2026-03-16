@@ -71,7 +71,7 @@ export async function getSupplierOutletAccounts(hotelUid, options = {}) {
         String(b.supplierName || b.supplierId || "")
       );
       if (supplierCompare !== 0) return supplierCompare;
-      const outletCompare = String(a.outlet || "").localeCompare(String(b.outlet || ""));
+      const outletCompare = String(a.outletName || a.outletId || "").localeCompare(String(b.outletName || b.outletId || ""));
       if (outletCompare !== 0) return outletCompare;
       return String(a.accountNumber || "").localeCompare(String(b.accountNumber || ""));
     });
@@ -82,10 +82,11 @@ export async function createSupplierOutletAccount(hotelUid, payload, actor) {
 
   const supplierId = String(payload?.supplierId || "").trim();
   const supplierName = String(payload?.supplierName || "").trim();
-  const outlet = String(payload?.outlet || "").trim();
+  const outletId = String(payload?.outletId || "").trim();
+  const outletName = String(payload?.outletName || "").trim();
   const accountNumber = String(payload?.accountNumber || "").trim();
 
-  if (!supplierId || !outlet || !accountNumber) {
+  if (!supplierId || !outletId || !accountNumber) {
     throw new Error("supplier, outlet en accountNumber zijn verplicht");
   }
 
@@ -93,7 +94,8 @@ export async function createSupplierOutletAccount(hotelUid, payload, actor) {
   const docRef = await addDoc(accountsCol, {
     supplierId,
     supplierName,
-    outlet,
+    outletId,
+    outletName,
     accountNumber,
     createdAt: serverTimestamp(),
     createdBy: actor || "unknown",
