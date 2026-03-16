@@ -34,11 +34,20 @@ const EXCEL_HEADERS = [
 const TEMPLATE_HEADERS = EXCEL_HEADERS.filter((header) => header !== "documentId");
 
 
-function formatContent(product) {
-  const amount = Number(product?.baseUnitsPerPurchaseUnit || 0);
-  const unit = String(product?.baseUnit || "").trim();
-  if (!(amount > 0) || !unit) return "-";
-  return `${amount} ${unit}`;
+function resolveDisplayPrice(product) {
+  const pricingModel = String(product?.pricingModel || "").trim();
+  const rawPrice = pricingModel === "Per Base Unit" ? product?.pricePerBaseUnit : product?.pricePerPurchaseUnit;
+  const amount = Number(rawPrice);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function formatDisplayPrice(product) {
+  const pricingModel = String(product?.pricingModel || "").trim();
+  const isPerBaseUnit = pricingModel === "Per Base Unit";
+  const unit = String(isPerBaseUnit ? product?.baseUnit || "" : product?.purchaseUnit || "").trim();
+  const price = resolveDisplayPrice(product);
+  const formattedPrice = `€${price}`;
+  return unit ? `${formattedPrice}/${unit}` : formattedPrice;
 }
 
 const EXPORT_TEMPLATE_ROW = {
@@ -146,14 +155,12 @@ export default function SupplierProductsPage() {
     { key: "supplierId", label: "Supplier ID" },
     { key: "supplierSku", label: "Supplier SKU" },
     { key: "supplierProductName", label: "Supplier Product Name" },
-    { key: "purchaseUnit", label: "Purchase Unit" },
     {
-      key: "content",
-      label: "Content",
-      sortValue: (product) => formatContent(product),
-      render: (product) => formatContent(product),
+      key: "price",
+      label: "Price",
+      sortValue: (product) => resolveDisplayPrice(product),
+      render: (product) => formatDisplayPrice(product),
     },
-    { key: "pricingModel", label: "Pricing Model" },
     {
       key: "active",
       label: t("products.columns.status"),
