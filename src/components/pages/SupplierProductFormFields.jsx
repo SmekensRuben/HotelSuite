@@ -30,6 +30,7 @@ function toFormState(initialData) {
   return {
     ...defaultState,
     ...initialData,
+    supplierId: initialData.supplierName || initialData.supplierId || "",
     pricePerBaseUnit: initialData.pricePerBaseUnit != null ? String(initialData.pricePerBaseUnit) : "",
     pricePerPurchaseUnit: initialData.pricePerPurchaseUnit != null ? String(initialData.pricePerPurchaseUnit) : "",
     baseUnitsPerPurchaseUnit:
@@ -70,6 +71,27 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
   const [formState, setFormState] = useState(() => toFormState(initialData));
   const [saving, setSaving] = useState(false);
   const [suppliers, setSuppliers] = useState([]);
+
+  const supplierLookup = useMemo(() => {
+    const byName = {};
+    const byId = {};
+
+    suppliers.forEach((supplier) => {
+      const id = String(supplier?.id || "").trim();
+      const name = String(supplier?.name || "").trim();
+      if (id) byId[id.toLowerCase()] = id;
+      if (!name) return;
+
+      const key = name.toLowerCase();
+      if (!byName[key]) {
+        byName[key] = id;
+      } else {
+        byName[key] = null;
+      }
+    });
+
+    return { byName, byId };
+  }, [suppliers]);
 
   useEffect(() => {
     setFormState(toFormState(initialData));
@@ -159,8 +181,14 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
     const isPerBaseUnit = formState.pricingModel === "Per Base Unit";
     const completedVariants = computedVariants.filter((variant) => variant.isComplete);
 
+    const enteredSupplier = formState.supplierId.trim();
+    const resolvedSupplierId =
+      supplierLookup.byName[enteredSupplier.toLowerCase()] ||
+      supplierLookup.byId[enteredSupplier.toLowerCase()] ||
+      enteredSupplier;
+
     const payload = {
-      supplierId: formState.supplierId.trim(),
+      supplierId: resolvedSupplierId,
       supplierSku: formState.supplierSku.trim(),
       supplierProductName: formState.supplierProductName.trim(),
       currency: formState.currency.trim() || "EUR",
@@ -211,12 +239,10 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
           />
           <datalist id="supplier-options">
             {suppliers.map((supplier) => (
-              <option key={supplier.id} value={supplier.id}>
-                {supplier.name ? `${supplier.name} (${supplier.id})` : supplier.id}
-              </option>
+              <option key={supplier.id} value={supplier.name || supplier.id} />
             ))}
           </datalist>
-          <span className="text-xs font-normal text-gray-500">Gebruik het bestaande supplier ID.</span>
+          <span className="text-xs font-normal text-gray-500">Selecteer een bestaande supplierName (ID enkel fallback).</span>
         </label>
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           Supplier SKU *
