@@ -318,7 +318,7 @@ export default function SupplierProductsPage() {
       );
     } catch (error) {
       console.error("Failed to import products", error);
-      window.alert(t("products.import.failed"));
+      window.alert(String(error?.message || t("products.import.failed")));
     } finally {
       setBusy(false);
     }

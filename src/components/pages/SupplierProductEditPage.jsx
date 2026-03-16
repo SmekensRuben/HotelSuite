@@ -53,6 +53,10 @@ export default function SupplierProductEditPage() {
       const updatedProductId = await updateSupplierProduct(hotelUid, productId, payload, actor);
       navigate(`/catalog/supplier-products/${updatedProductId}`);
     } catch (error) {
+      if (error?.code === "invalid-supplier-id") {
+        window.alert("Selecteer een bestaande supplier.");
+        return;
+      }
       if (error?.code === "supplier-product-exists") {
         setPendingPayload(payload);
         setShowOverwriteModal(true);

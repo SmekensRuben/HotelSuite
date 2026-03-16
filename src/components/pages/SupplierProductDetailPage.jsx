@@ -150,7 +150,7 @@ export default function SupplierProductDetailPage() {
                     <h2 className="text-3xl font-semibold mt-2">{product.supplierProductName || "-"}</h2>
                     <div className="mt-4 flex flex-wrap gap-2">
                       <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">SKU: {product.supplierSku || "-"}</span>
-                      <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">Supplier: {product.supplierId || "-"}</span>
+                      <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">Supplier: {product.supplierName || product.supplierId || "-"}</span>
                       <span
                         className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
                           product.active !== false ? "bg-emerald-400/20 text-emerald-200" : "bg-white/10 text-slate-200"
@@ -167,7 +167,7 @@ export default function SupplierProductDetailPage() {
                 <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_160px] items-start">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <DetailField label="Supplier SKU" value={product.supplierSku} />
-                    <DetailField label="Supplier" value={product.supplierId} />
+                    <DetailField label="Supplier" value={product.supplierName || product.supplierId} />
                     <DetailField label="Pricing Model" value={product.pricingModel || "Per Purchase Unit"} />
                     <DetailField label="Currency" value={product.currency || "EUR"} />
                   </div>

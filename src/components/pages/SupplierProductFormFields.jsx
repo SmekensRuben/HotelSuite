@@ -69,7 +69,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
   const { hotelUid } = useHotelContext();
   const [formState, setFormState] = useState(() => toFormState(initialData));
   const [saving, setSaving] = useState(false);
-  const [supplierNames, setSupplierNames] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
 
   useEffect(() => {
     setFormState(toFormState(initialData));
@@ -80,20 +80,22 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
 
     const loadSuppliers = async () => {
       if (!hotelUid) {
-        setSupplierNames([]);
+        setSuppliers([]);
         return;
       }
 
       const suppliers = await getSuppliers(hotelUid);
       if (!active) return;
 
-      const names = [...new Set(
-        suppliers
-          .map((supplier) => String(supplier?.name || "").trim())
-          .filter(Boolean)
-      )].sort((left, right) => left.localeCompare(right));
+      const normalizedSuppliers = suppliers
+        .map((supplier) => ({
+          id: String(supplier?.id || "").trim(),
+          name: String(supplier?.name || "").trim(),
+        }))
+        .filter((supplier) => supplier.id)
+        .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
 
-      setSupplierNames(names);
+      setSuppliers(normalizedSuppliers);
     };
 
     loadSuppliers();
@@ -198,20 +200,23 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
     <form onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2">
       <SectionCard title="Basic Information">
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          Supplier ID *
+          Supplier *
           <input
             required
-            list="supplier-id-options"
+            list="supplier-options"
             value={formState.supplierId}
             onChange={(event) => updateField("supplierId", event.target.value)}
-            placeholder="Kies of typ supplier naam"
+            placeholder="Kies een bestaande supplier"
             className="rounded border border-gray-300 px-3 py-2 text-sm"
           />
-          <datalist id="supplier-id-options">
-            {supplierNames.map((supplierName) => (
-              <option key={supplierName} value={supplierName} />
+          <datalist id="supplier-options">
+            {suppliers.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.name ? `${supplier.name} (${supplier.id})` : supplier.id}
+              </option>
             ))}
           </datalist>
+          <span className="text-xs font-normal text-gray-500">Gebruik het bestaande supplier ID.</span>
         </label>
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           Supplier SKU *

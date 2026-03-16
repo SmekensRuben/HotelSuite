@@ -23,6 +23,7 @@ import {
   getDownloadURL
 } from "../firebaseConfig";
 import { normalizeDocumentId } from "./productIdUtils";
+import { getSupplier, getSuppliers } from "./firebaseSuppliers";
 
 // Simple in-memory cache for indexed products per hotel
 const productsIndexedCache = {};
@@ -709,6 +710,19 @@ export async function importSupplierProducts(hotelUid, products, options = {}) {
   const strategy = options.onExisting === "overwrite" ? "overwrite" : "skip";
   const actor = options.actor || "unknown";
 
+  const suppliers = await getSuppliers(hotelUid);
+  const suppliersByNormalizedName = suppliers.reduce((acc, supplier) => {
+    const supplierName = String(supplier?.name || "").trim();
+    const normalizedName = supplierName.toLowerCase();
+    if (!normalizedName) return acc;
+    if (!acc[normalizedName]) {
+      acc[normalizedName] = supplier;
+    } else {
+      acc[normalizedName] = null;
+    }
+    return acc;
+  }, {});
+
   const productsCol = collection(db, `hotels/${hotelUid}/supplierproducts`);
   const snapshot = await getDocs(productsCol);
   const existingIds = new Set(snapshot.docs.map((docSnap) => docSnap.id));
@@ -717,7 +731,15 @@ export async function importSupplierProducts(hotelUid, products, options = {}) {
   let skipped = 0;
 
   for (const product of products) {
-    const supplierId = String(product.supplierId || "").trim();
+    const supplierNameInput = String(product.supplierId || "").trim();
+    const normalizedSupplierNameInput = supplierNameInput.toLowerCase();
+    const supplier = suppliersByNormalizedName[normalizedSupplierNameInput];
+    if (!supplierNameInput || !supplier) {
+      throw new Error(`Import geannuleerd: supplier '${supplierNameInput || "(leeg)"}' bestaat niet of is niet uniek.`);
+    }
+
+    const supplierId = String(supplier.id || "").trim();
+    const supplierName = String(supplier.name || "").trim();
     const supplierSku = String(product.supplierSku || "").trim();
     const providedDocumentId = String(product.documentId || product.id || "").trim();
     const generatedSupplierDocumentId = normalizeDocumentId(`${supplierId}_${supplierSku}`);
@@ -730,6 +752,7 @@ export async function importSupplierProducts(hotelUid, products, options = {}) {
     const payload = normalizeSupplierProductPricingPayload(sanitizeSupplierProductPayload({
       ...product,
       supplierId,
+      supplierName,
       supplierSku,
     }));
     const exists = existingIds.has(documentId);
@@ -820,6 +843,14 @@ async function createEntityProduct(hotelUid, productData, actor, entityCollectio
     if (!supplierId || !supplierSku) {
       throw new Error("supplierId en supplierSku zijn verplicht voor supplier products");
     }
+    const supplier = await getSupplier(hotelUid, supplierId);
+    if (!supplier) {
+      const error = new Error("De geselecteerde supplier bestaat niet.");
+      error.code = "invalid-supplier-id";
+      throw error;
+    }
+    payload.supplierName = String(supplier.name || "").trim() || supplierId;
+
     const supplierProductId = normalizeDocumentId(`${supplierId}_${supplierSku}`);
     if (!supplierProductId) {
       throw new Error("supplierId en supplierSku bevatten geen geldige tekens voor een product ID");
@@ -886,6 +917,13 @@ async function updateEntityProduct(hotelUid, productId, productData, actor, enti
     if (!supplierId || !supplierSku) {
       throw new Error("supplierId en supplierSku zijn verplicht voor supplier products");
     }
+    const supplier = await getSupplier(hotelUid, supplierId);
+    if (!supplier) {
+      const error = new Error("De geselecteerde supplier bestaat niet.");
+      error.code = "invalid-supplier-id";
+      throw error;
+    }
+    normalizedProductData.supplierName = String(supplier.name || "").trim() || supplierId;
 
     const nextProductId = normalizeDocumentId(`${supplierId}_${supplierSku}`);
     if (!nextProductId) {
