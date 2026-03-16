@@ -88,13 +88,6 @@ export default function HeaderBar({ today, onLogout }) {
       const results = await Promise.all(
         hotelUids.map(async (uid) => {
           try {
-            const settingsSnap = await getDoc(doc(db, `hotels/${uid}/settings`, uid));
-            const settingsData = settingsSnap.exists() ? settingsSnap.data() : {};
-
-            if (settingsData.hotelName) {
-              return { uid, name: settingsData.hotelName };
-            }
-
             const hotelSnap = await getDoc(doc(db, "hotels", uid));
             const hotelData = hotelSnap.exists() ? hotelSnap.data() : {};
             return { uid, name: hotelData.hotelName || uid };
