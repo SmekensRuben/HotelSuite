@@ -67,6 +67,9 @@ function buildContractPayload(contractData, actor, existingFiles = []) {
       : 0,
     cancelBefore: calculateCancelBefore(contractData.endDate, terminationPeriodDays),
     category: String(contractData.category || "").trim(),
+    categoryId: String(contractData.categoryId || "").trim(),
+    subcategory: String(contractData.subcategory || "").trim(),
+    subcategoryId: String(contractData.subcategoryId || "").trim(),
     reminderDays: sanitizeReminderDays(contractData.reminderDays),
     followers: Array.isArray(contractData.followers)
       ? contractData.followers

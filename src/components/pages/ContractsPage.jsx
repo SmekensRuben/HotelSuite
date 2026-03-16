@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Play, Plus } from "lucide-react";
+import { Play, Plus, Settings } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
@@ -23,6 +23,7 @@ export default function ContractsPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
   const canCreateContracts = usePermission("contracts", "create");
+  const canReadSettings = usePermission("settings", "read");
   const [contracts, setContracts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -82,6 +83,7 @@ export default function ContractsPage() {
   const columns = [
     { key: "name", label: "Name" },
     { key: "category", label: "Category" },
+    { key: "subcategory", label: "Subcategory" },
     { key: "startDate", label: "Start Date" },
     { key: "endDate", label: "End Date" },
     { key: "terminationPeriodDays", label: "Termination Period (days)" },
@@ -99,6 +101,18 @@ export default function ContractsPage() {
             <p className="text-gray-600 mt-1">Manage supplier and service contracts.</p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate("/contracts/settings")}
+              disabled={!canReadSettings}
+              className={`inline-flex items-center justify-center rounded-lg p-2 shadow ${
+                canReadSettings
+                  ? "bg-white text-gray-700 border border-gray-300 hover:bg-gray-100"
+                  : "bg-gray-300 text-gray-500 cursor-not-allowed"
+              }`}
+              title="Manage contract categories"
+            >
+              <Settings className="h-5 w-5" />
+            </button>
             <button
               onClick={handleRunReminders}
               disabled={runningReminders}

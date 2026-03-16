@@ -7,6 +7,7 @@ const { Resend } = require("resend");
 const SftpClient = require("ssh2-sftp-client");
 const ExcelJS = require("exceljs");
 const PDFDocument = require("pdfkit");
+const React = require("react");
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -787,7 +788,215 @@ function sanitizeReminderDays(value) {
   )];
 }
 
-async function sendContractReminderEmail({ to, hotelUid, contractId, contractName, endDate, cancelBefore, daysUntilCancel }) {
+function ContractReminderEmailTemplate({ hotelName, contractId, contractName, endDate, cancelBefore, daysUntilCancel, contractDetailUrl }) {
+  const headline = contractName || contractId;
+
+  return React.createElement(
+    "div",
+    {
+      style: {
+        backgroundColor: "#f3f4f6",
+        fontFamily: "Inter,Segoe UI,Roboto,Helvetica,Arial,sans-serif",
+        padding: "24px 0",
+      },
+    },
+    React.createElement(
+      "table",
+      {
+        role: "presentation",
+        cellPadding: "0",
+        cellSpacing: "0",
+        width: "100%",
+        style: {
+          maxWidth: "640px",
+          margin: "0 auto",
+          backgroundColor: "#ffffff",
+          border: "1px solid #e5e7eb",
+        },
+      },
+      React.createElement(
+        "tbody",
+        null,
+        React.createElement(
+          "tr",
+          null,
+          React.createElement(
+            "td",
+            {
+              bgColor: "#8f1b1b",
+              style: {
+                backgroundColor: "#8f1b1b",
+                backgroundImage: "linear-gradient(90deg,#b41f1f,#7f1717)",
+                color: "#ffffff",
+                padding: "24px",
+              },
+            },
+            React.createElement(
+              "p",
+              {
+                style: {
+                  margin: "0 0 6px",
+                  fontSize: "12px",
+                  lineHeight: "18px",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                  color: "#ffffff",
+                  opacity: 0.95,
+                },
+              },
+              "Contract reminder"
+            ),
+            React.createElement(
+              "h1",
+              {
+                style: {
+                  margin: 0,
+                  fontSize: "24px",
+                  lineHeight: "30px",
+                  color: "#ffffff",
+                  fontWeight: 700,
+                },
+              },
+              headline
+            )
+          )
+        ),
+        React.createElement(
+          "tr",
+          null,
+          React.createElement(
+            "td",
+            { style: { backgroundColor: "#ffffff", padding: "24px" } },
+            React.createElement(
+              "p",
+              { style: { margin: "0 0 16px", fontSize: "14px", lineHeight: "20px", color: "#111827" } },
+              "A contract needs attention for ",
+              React.createElement("strong", { style: { color: "#111827" } }, hotelName || "Hotel"),
+              "."
+            ),
+            React.createElement(
+              "table",
+              {
+                role: "presentation",
+                cellPadding: "0",
+                cellSpacing: "0",
+                width: "100%",
+                style: { borderCollapse: "collapse", marginBottom: "22px", backgroundColor: "#ffffff" },
+              },
+              React.createElement(
+                "tbody",
+                null,
+                ...[
+                  ["Hotel", hotelName || "-"],
+                  ["Contract", headline || "-"],
+                  ["End date", endDate || "-"],
+                  ["Cancel before", cancelBefore || "-"],
+                  ["Days until cancel-before", String(daysUntilCancel)],
+                ].map(([label, value]) =>
+                  React.createElement(
+                    "tr",
+                    { key: label },
+                    React.createElement(
+                      "td",
+                      {
+                        style: {
+                          padding: "8px 0",
+                          fontSize: "13px",
+                          lineHeight: "18px",
+                          color: "#4b5563",
+                          width: "190px",
+                          backgroundColor: "#ffffff",
+                        },
+                      },
+                      label
+                    ),
+                    React.createElement(
+                      "td",
+                      {
+                        style: {
+                          padding: "8px 0",
+                          fontSize: "13px",
+                          lineHeight: "18px",
+                          color: "#111827",
+                          fontWeight: 600,
+                          backgroundColor: "#ffffff",
+                        },
+                      },
+                      value
+                    )
+                  )
+                )
+              )
+            ),
+            React.createElement(
+              "table",
+              {
+                role: "presentation",
+                cellPadding: "0",
+                cellSpacing: "0",
+                style: { borderCollapse: "separate" },
+              },
+              React.createElement(
+                "tbody",
+                null,
+                React.createElement(
+                  "tr",
+                  null,
+                  React.createElement(
+                    "td",
+                    {
+                      bgColor: "#b41f1f",
+                      style: {
+                        backgroundColor: "#b41f1f",
+                        borderRadius: "8px",
+                        padding: "0",
+                      },
+                    },
+                    React.createElement(
+                      "a",
+                      {
+                        href: contractDetailUrl,
+                        style: {
+                          display: "inline-block",
+                          padding: "12px 20px",
+                          lineHeight: "20px",
+                          backgroundColor: "#b41f1f",
+                          color: "#ffffff",
+                          textDecoration: "none",
+                          fontSize: "14px",
+                          fontWeight: 700,
+                          borderRadius: "8px",
+                        },
+                      },
+                      "Open contract"
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  );
+}
+
+
+const hotelNameCache = new Map();
+
+async function resolveHotelName(hotelUid) {
+  const normalizedHotelUid = String(hotelUid || "").trim();
+  if (!normalizedHotelUid) return "Hotel";
+  if (hotelNameCache.has(normalizedHotelUid)) return hotelNameCache.get(normalizedHotelUid);
+
+  const hotelSnap = await admin.firestore().doc(`hotels/${normalizedHotelUid}`).get();
+  const hotelData = hotelSnap.exists ? (hotelSnap.data() || {}) : {};
+  const hotelName = String(hotelData.hotelName || "").trim() || normalizedHotelUid;
+  hotelNameCache.set(normalizedHotelUid, hotelName);
+  return hotelName;
+}
+
+async function sendContractReminderEmail({ to, hotelName, contractId, contractName, endDate, cancelBefore, daysUntilCancel }) {
   const resendApiKey = String(RESEND_API_KEY.value() || "").trim();
   const from = String(RESEND_FROM.value() || "").trim();
   if (!resendApiKey) throw new Error("Missing RESEND_API_KEY secret");
@@ -803,12 +1012,21 @@ async function sendContractReminderEmail({ to, hotelUid, contractId, contractNam
     subject: `Contract reminder: ${contractName || contractId}`,
     text: `Contract reminder
 
-Hotel: ${hotelUid}
+Hotel: ${hotelName || "-"}
 Contract: ${contractName || contractId}
 End date: ${endDate || "-"}
 Cancel before: ${cancelBefore || "-"}
 Days until cancel-before: ${daysUntilCancel}
 Contract link: ${contractDetailUrl}`,
+    react: React.createElement(ContractReminderEmailTemplate, {
+      hotelName,
+      contractId,
+      contractName,
+      endDate,
+      cancelBefore,
+      daysUntilCancel,
+      contractDetailUrl,
+    }),
   });
 }
 
@@ -824,11 +1042,13 @@ async function processContractCancellationReminders({ hotelUidFilter } = {}) {
     const contract = contractDoc.data() || {};
     const pathSegments = contractDoc.ref.path.split("/");
     const hotelUid = hotelUidFilter || pathSegments[1] || "unknown-hotel";
+    const hotelName = await resolveHotelName(hotelUid);
     const cancelBefore = toDateOnly(contract.cancelBefore);
 
     if (!cancelBefore) {
       logger.info("Contract reminder scan (skipped: missing cancelBefore)", {
         hotelUid,
+        hotelName,
         contractId: contractDoc.id,
         contractName: String(contract.name || "").trim() || null,
       });
@@ -840,6 +1060,7 @@ async function processContractCancellationReminders({ hotelUidFilter } = {}) {
 
     logger.info("Contract reminder scan", {
       hotelUid,
+      hotelName,
       contractId: contractDoc.id,
       contractName: String(contract.name || "").trim() || null,
       cancelBefore: String(contract.cancelBefore || "").trim() || null,
@@ -856,7 +1077,7 @@ async function processContractCancellationReminders({ hotelUidFilter } = {}) {
 
     await sendContractReminderEmail({
       to,
-      hotelUid,
+      hotelName,
       contractId: contractDoc.id,
       contractName: String(contract.name || "").trim(),
       endDate: String(contract.endDate || "").trim(),
@@ -866,6 +1087,7 @@ async function processContractCancellationReminders({ hotelUidFilter } = {}) {
 
     logger.info("Contract reminder email sent", {
       hotelUid,
+      hotelName,
       contractId: contractDoc.id,
       daysUntilCancel,
       recipients: to.length,
