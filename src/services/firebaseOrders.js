@@ -34,6 +34,9 @@ function normalizeOrder(docSnap) {
     products: Array.isArray(data.products) ? data.products : [],
     totalAmount: Number(data.totalAmount || 0),
     supplierId: data.supplierId || "",
+    outletId: data.outletId || "",
+    outletName: data.outletName || "",
+    accountNumber: data.accountNumber || "",
     currency: data.currency || "EUR",
   };
 }
@@ -203,6 +206,33 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
     return byName || null;
   };
 
+  const outletsSnap = await getDocs(collection(db, `hotels/${hotelUid}/outlets`));
+  const outletsById = {};
+  outletsSnap.forEach((outletDoc) => {
+    const outletData = outletDoc.data() || {};
+    const outletId = String(outletData.id || outletDoc.id || "").trim();
+    if (!outletId) return;
+    outletsById[outletId] = {
+      id: outletId,
+      name: String(outletData.name || outletId).trim() || outletId,
+    };
+  });
+
+  const supplierOutletAccountsSnap = await getDocs(collection(db, `hotels/${hotelUid}/supplierOutletAccounts`));
+  const supplierOutletAccountsByKey = {};
+  supplierOutletAccountsSnap.forEach((accountDoc) => {
+    const accountData = accountDoc.data() || {};
+    const supplierId = String(accountData.supplierId || "").trim();
+    const outletId = String(accountData.outletId || "").trim();
+    if (!supplierId || !outletId) return;
+    supplierOutletAccountsByKey[`${supplierId}__${outletId}`] = {
+      ...accountData,
+      supplierId,
+      outletId,
+      accountNumber: String(accountData.accountNumber || "").trim(),
+    };
+  });
+
   const uniqueSupplierProductIds = [...new Set(items
     .map((item) => String(item?.supplierProductId || "").trim())
     .filter(Boolean))];
@@ -244,16 +274,27 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
       );
     }
 
+    const outletId = String(item.outletId || "").trim();
+    const outletName = String(outletsById[outletId]?.name || outletId).trim();
+
     return {
       ...item,
       supplierId: resolvedSupplierId,
+      outletId,
+      outletName,
     };
   });
 
-  const groupedBySupplier = normalizedCartItems.reduce((acc, item) => {
+  const groupedBySupplierAndOutlet = normalizedCartItems.reduce((acc, item) => {
     const supplierId = String(item.supplierId || "Onbekend").trim() || "Onbekend";
-    if (!acc[supplierId]) acc[supplierId] = [];
-    acc[supplierId].push(item);
+    const outletId = String(item.outletId || "").trim();
+    const key = `${supplierId}__${outletId}`;
+
+    if (!acc[key]) {
+      acc[key] = { supplierId, outletId, items: [] };
+    }
+
+    acc[key].items.push(item);
     return acc;
   }, {});
 
@@ -261,14 +302,21 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
   const createdOrderIds = [];
   const deliveryDateAdjustments = [];
 
-  for (const [supplierId, supplierItems] of Object.entries(groupedBySupplier)) {
+  for (const group of Object.values(groupedBySupplierAndOutlet)) {
+    const supplierId = String(group.supplierId || "").trim();
+    const outletId = String(group.outletId || "").trim();
+    const supplierItems = Array.isArray(group.items) ? group.items : [];
     const totalAmount = supplierItems.reduce(
       (sum, item) => sum + (Number(item.pricePerPurchaseUnit || 0) * Number(item.qtyPurchaseUnits || 0)),
       0
     );
 
-    const supplier = suppliersById[supplierId] || {};
+    const supplier = resolveSupplier(supplierId) || suppliersById[supplierId] || {};
     const resolvedDeliveryDate = resolveSupplierDeliveryDate(deliveryDate, supplier.deliveryDays);
+    const outletName = String(outletsById[outletId]?.name || supplierItems[0]?.outletName || outletId).trim();
+    const supplierOutletAccount = supplierOutletAccountsByKey[`${supplierId}__${outletId}`] || null;
+    const resolvedAccountNumber =
+      String(supplierOutletAccount?.accountNumber || "").trim() || String(supplier.accountNumber || "").trim();
 
     if (resolvedDeliveryDate !== deliveryDate) {
       deliveryDateAdjustments.push({
@@ -284,6 +332,9 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
       deliveryDate: resolvedDeliveryDate,
       shoppingCartId,
       supplierId,
+      outletId,
+      outletName,
+      accountNumber: resolvedAccountNumber,
       createdBy: actor || "unknown",
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),

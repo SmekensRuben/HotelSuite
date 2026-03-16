@@ -98,6 +98,7 @@ function buildSupplierProductDocument(productId, hotelUid, productData = {}) {
     pricePerBaseUnit: toNumberOrNull(productData.pricePerBaseUnit),
     pricePerPurchaseUnit: toNumberOrNull(productData.pricePerPurchaseUnit),
     supplierId: String(productData.supplierId || "").trim(),
+    supplierName: String(productData.supplierName || "").trim(),
     pricingModel: String(productData.pricingModel || "").trim(),
     priceUpdatedOn: toMillisOrNull(productData.priceUpdatedOn),
     purchaseUnit: String(productData.purchaseUnit || "").trim(),
@@ -353,10 +354,16 @@ function buildSupplierOrderReference(supplierName = "") {
   return `${year}${month}${day}${supplierPrefix}`;
 }
 
+function resolveOrderAccountNumber(order = {}, supplier = {}) {
+  const orderAccountNumber = String(order?.accountNumber || "").trim();
+  if (orderAccountNumber) return orderAccountNumber;
+  return String(supplier?.accountNumber || "").trim();
+}
+
 function buildOrderSftpCsv(order = {}, supplier = {}) {
   const rows = Array.isArray(order.products) ? order.products : [];
   const deliveryDate = formatDeliveryDateForSftp(order.deliveryDate);
-  const accountNumber = String(supplier.accountNumber || "").trim();
+  const accountNumber = resolveOrderAccountNumber(order, supplier);
   const supplierOrderReference = buildSupplierOrderReference(supplier?.name);
   const userEmail = resolveOrderUserEmail(order);
 
@@ -432,7 +439,7 @@ async function buildOrderExcelBuffer(order = {}, supplier = {}, hotel = {}) {
   worksheet.getCell("A4").value = "Delivery date";
   worksheet.getCell("B4").value = String(order.deliveryDate || "");
   worksheet.getCell("A5").value = "Account number";
-  worksheet.getCell("B5").value = String(supplier.accountNumber || "");
+  worksheet.getCell("B5").value = resolveOrderAccountNumber(order, supplier);
 
   ["A2", "A3", "A4", "A5"].forEach((cellRef) => {
     worksheet.getCell(cellRef).font = { bold: true };
@@ -510,7 +517,7 @@ async function buildOrderPdfBuffer(order = {}, supplier = {}, hotel = {}) {
     doc.fontSize(12).text(`Hotel: ${hotel.hotelName || ""}`);
     doc.text(`Supplier: ${supplier.name || ""}`);
     doc.text(`Delivery date: ${order.deliveryDate || ""}`);
-    doc.text(`Account number: ${supplier.accountNumber || ""}`);
+    doc.text(`Account number: ${resolveOrderAccountNumber(order, supplier)}`);
     doc.moveDown();
 
     const columns = [
@@ -633,7 +640,7 @@ function sanitizeFilenameSegment(value) {
 
 function buildOrderExportBaseFilename(order = {}, supplier = {}, hotel = {}) {
   const hotelName = sanitizeFilenameSegment(hotel.hotelName);
-  const accountNumber = sanitizeFilenameSegment(supplier.accountNumber);
+  const accountNumber = sanitizeFilenameSegment(resolveOrderAccountNumber(order, supplier));
   const deliveryDate = sanitizeFilenameSegment(order.deliveryDate);
 
   return [hotelName || "Hotel", accountNumber || "Account", deliveryDate || "Delivery date"].join(" - ");
@@ -643,7 +650,7 @@ async function buildOrderEmailPayload(order, supplier, hotel) {
   const to = String(supplier?.orderEmail || "").trim();
   if (!to) throw new Error("Supplier heeft geen orderEmail");
 
-  const accountNumber = String(supplier?.accountNumber || "").trim();
+  const accountNumber = resolveOrderAccountNumber(order, supplier);
   const hotelName = String(hotel?.hotelName || "").trim();
   const supplierName = String(supplier?.name || "").trim();
   const deliveryDate = String(order?.deliveryDate || "").trim();

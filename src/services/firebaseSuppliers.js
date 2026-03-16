@@ -55,3 +55,53 @@ export async function deleteSupplier(hotelUid, supplierId) {
   const supplierDoc = doc(db, `hotels/${hotelUid}/suppliers`, supplierId);
   await deleteDoc(supplierDoc);
 }
+
+export async function getSupplierOutletAccounts(hotelUid, options = {}) {
+  if (!hotelUid) return [];
+
+  const supplierIdFilter = String(options.supplierId || "").trim();
+  const accountsCol = collection(db, `hotels/${hotelUid}/supplierOutletAccounts`);
+  const snap = await getDocs(accountsCol);
+
+  return snap.docs
+    .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+    .filter((item) => !supplierIdFilter || String(item.supplierId || "").trim() === supplierIdFilter)
+    .sort((a, b) => {
+      const supplierCompare = String(a.supplierName || a.supplierId || "").localeCompare(
+        String(b.supplierName || b.supplierId || "")
+      );
+      if (supplierCompare !== 0) return supplierCompare;
+      const outletCompare = String(a.outletName || a.outletId || "").localeCompare(String(b.outletName || b.outletId || ""));
+      if (outletCompare !== 0) return outletCompare;
+      return String(a.accountNumber || "").localeCompare(String(b.accountNumber || ""));
+    });
+}
+
+export async function createSupplierOutletAccount(hotelUid, payload, actor) {
+  if (!hotelUid) throw new Error("hotelUid is verplicht!");
+
+  const supplierId = String(payload?.supplierId || "").trim();
+  const supplierName = String(payload?.supplierName || "").trim();
+  const outletId = String(payload?.outletId || "").trim();
+  const outletName = String(payload?.outletName || "").trim();
+  const accountNumber = String(payload?.accountNumber || "").trim();
+
+  if (!supplierId || !outletId || !accountNumber) {
+    throw new Error("supplier, outlet en accountNumber zijn verplicht");
+  }
+
+  const accountsCol = collection(db, `hotels/${hotelUid}/supplierOutletAccounts`);
+  const docRef = await addDoc(accountsCol, {
+    supplierId,
+    supplierName,
+    outletId,
+    outletName,
+    accountNumber,
+    createdAt: serverTimestamp(),
+    createdBy: actor || "unknown",
+    updatedAt: serverTimestamp(),
+    updatedBy: actor || "unknown",
+  });
+
+  return docRef.id;
+}

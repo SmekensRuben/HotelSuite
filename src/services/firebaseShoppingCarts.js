@@ -84,6 +84,7 @@ function mapSupplierProductToCartItem(supplierProduct, qtyPurchaseUnits) {
 
   return {
     supplierId: supplierProduct?.supplierId || "",
+    supplierName: supplierProduct?.supplierName || supplierProduct?.supplierId || "",
     supplierProductId: supplierProduct?.id || "",
     variantId: firstVariant?.id || "",
     qtyPurchaseUnits: Number(qtyPurchaseUnits) > 0 ? Number(qtyPurchaseUnits) : 1,

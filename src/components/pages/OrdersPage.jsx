@@ -183,6 +183,7 @@ export default function OrdersPage() {
       .map((order) => ({
         ...order,
         supplier: supplierNameMap[order.supplierId] || order.supplierId || "-",
+        outlet: order.outletName || order.outletId || "-",
         createdByLabel: createdByMap[order.createdBy] || order.createdBy || "-",
         createdAtLabel: order.createdAtDate ? new Date(order.createdAtDate).toLocaleString() : "-",
         itemCount: Array.isArray(order.products) ? order.products.length : 0,
@@ -204,6 +205,7 @@ export default function OrdersPage() {
   const columns = [
     { key: "status", label: "Status" },
     { key: "supplier", label: "Supplier" },
+    { key: "outlet", label: "Outlet" },
     { key: "deliveryDate", label: "Delivery Date" },
     { key: "createdByLabel", label: "Created By" },
     { key: "createdAtLabel", label: "Created At" },

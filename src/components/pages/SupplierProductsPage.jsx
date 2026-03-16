@@ -142,17 +142,29 @@ export default function SupplierProductsPage() {
     loadProductsPage(0, null);
   }, [hotelUid, debouncedSearchTerm, selectedSupplierId, selectedStatus]);
 
-  const supplierIds = useMemo(() => {
-    const values = new Set(
-      products
-        .map((product) => String(product.supplierId || "").trim())
-        .filter(Boolean)
-    );
-    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  const supplierFilters = useMemo(() => {
+    const map = new Map();
+    products.forEach((product) => {
+      const supplierId = String(product.supplierId || "").trim();
+      if (!supplierId) return;
+      const supplierName = String(product.supplierName || supplierId).trim();
+      if (!map.has(supplierId)) {
+        map.set(supplierId, supplierName);
+      }
+    });
+
+    return Array.from(map.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }, [products]);
 
   const columns = [
-    { key: "supplierId", label: "Supplier ID" },
+    {
+      key: "supplier",
+      label: "Supplier Name",
+      render: (product) => product.supplierName || product.supplierId || "-",
+      sortValue: (product) => String(product.supplierName || product.supplierId || ""),
+    },
     { key: "supplierSku", label: "Supplier SKU" },
     { key: "supplierProductName", label: "Supplier Product Name" },
     {
@@ -209,10 +221,35 @@ export default function SupplierProductsPage() {
     setShowExportModal(false);
   };
 
-  const handleExportFullList = () => {
-    const rows = products.map((product) => normalizeExportRow({ documentId: product.id, ...product }));
-    downloadExcel(rows, EXCEL_HEADERS, "supplier-products-full.xlsx");
-    setShowExportModal(false);
+  const handleExportFullList = async () => {
+    if (!hotelUid) return;
+
+    setBusy(true);
+    try {
+      const allProducts = [];
+      let cursor = null;
+      let hasMore = true;
+
+      while (hasMore) {
+        const result = await getSupplierProducts(hotelUid, {
+          pageSize: 200,
+          cursor,
+        });
+
+        allProducts.push(...(Array.isArray(result?.products) ? result.products : []));
+        cursor = result?.cursor || null;
+        hasMore = Boolean(result?.hasMore && cursor);
+      }
+
+      const rows = allProducts.map((product) => normalizeExportRow({ documentId: product.id, ...product }));
+      downloadExcel(rows, EXCEL_HEADERS, "supplier-products-full.xlsx");
+      setShowExportModal(false);
+    } catch (error) {
+      console.error("Failed to export full supplier products list", error);
+      window.alert("Kon de volledige supplier products lijst niet exporteren.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleImportButton = () => {
@@ -318,7 +355,7 @@ export default function SupplierProductsPage() {
       );
     } catch (error) {
       console.error("Failed to import products", error);
-      window.alert(t("products.import.failed"));
+      window.alert(String(error?.message || t("products.import.failed")));
     } finally {
       setBusy(false);
     }
@@ -381,7 +418,7 @@ export default function SupplierProductsPage() {
             type="text"
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search by supplier id, supplier sku or name"
+            placeholder="Search by supplier name, supplier sku or product name"
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
           />
         </div>
@@ -393,9 +430,9 @@ export default function SupplierProductsPage() {
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
           >
             <option value="">All suppliers</option>
-            {supplierIds.map((supplierId) => (
-              <option key={supplierId} value={supplierId}>
-                {supplierId}
+            {supplierFilters.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.name}
               </option>
             ))}
           </select>

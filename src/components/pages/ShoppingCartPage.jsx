@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ShoppingCart } from "lucide-react";
+import { ArrowLeft, ShoppingCart, Trash2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
@@ -98,6 +98,7 @@ export default function ShoppingCartPage() {
     return {
       id: `${item.supplierProductId || "row"}-${index}`,
       supplierId: item.supplierId || "-",
+      supplierName: item.supplierName || item.supplierId || "-",
       supplierProductName: item.supplierProductName || "-",
       imageUrl: item.imageUrl || "",
       supplierSku: item.supplierSku || "-",
@@ -113,7 +114,16 @@ export default function ShoppingCartPage() {
   });
 
   const columns = [
-    { key: "supplierId", label: "Supplier" },
+    {
+      key: "supplier",
+      label: "Supplier",
+      render: (row) => (
+        <span className="inline-block max-w-[120px] truncate" title={row.supplierName}>
+          {row.supplierName}
+        </span>
+      ),
+      sortValue: (row) => String(row.supplierName || ""),
+    },
     {
       key: "imageUrl",
       label: "Image",
@@ -169,7 +179,7 @@ export default function ShoppingCartPage() {
             await updateShoppingCartItemQty(hotelUid, cartId, row.supplierProductId, event.target.value);
             await refreshCart();
           }}
-          className="w-24 border border-gray-300 rounded px-2 py-1"
+          className="w-16 border border-gray-300 rounded px-2 py-1"
         />
       ),
     },
@@ -186,9 +196,11 @@ export default function ShoppingCartPage() {
             await removeShoppingCartItem(hotelUid, cartId, row.supplierProductId);
             await refreshCart();
           }}
-          className="text-red-600 hover:text-red-800 font-semibold"
+          className="inline-flex items-center justify-center text-red-600 hover:text-red-800"
+          title="Verwijderen"
+          aria-label="Verwijderen"
         >
-          Verwijderen
+          <Trash2 className="h-4 w-4" />
         </button>
       ),
     },

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Pencil, Settings, Trash2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
@@ -122,6 +122,22 @@ export default function SupplierDetailPage() {
             <h1 className="text-3xl font-semibold">Supplier Detail</h1>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate("/catalog/suppliers")}
+              className="inline-flex items-center justify-center rounded border border-gray-300 p-2 text-gray-700 hover:bg-gray-100"
+              title="Back to suppliers"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(`/catalog/suppliers/${supplierId}/outlet-accounts`)}
+              className="inline-flex items-center justify-center rounded border border-gray-300 p-2 text-gray-700 hover:bg-gray-100"
+              title="Supplier outlet accounts"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
             <button
               type="button"
               onClick={() => navigate(`/catalog/suppliers/${supplierId}/edit`)}
