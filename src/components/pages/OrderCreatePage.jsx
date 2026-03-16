@@ -113,11 +113,17 @@ export default function OrderCreatePage() {
     loadProductsPage(0, null);
   }, [hotelUid, debouncedSearchTerm, selectedSupplierId, selectedStatus]);
 
-  const supplierIds = useMemo(() => {
-    const values = new Set(
-      products.map((product) => String(product.supplierId || "").trim()).filter(Boolean)
-    );
-    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  const supplierOptions = useMemo(() => {
+    const map = new Map();
+    products.forEach((product) => {
+      const supplierId = String(product.supplierId || "").trim();
+      if (!supplierId || map.has(supplierId)) return;
+      map.set(supplierId, String(product.supplierName || supplierId).trim() || supplierId);
+    });
+
+    return Array.from(map.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }, [products]);
 
   const rows = useMemo(
@@ -160,7 +166,12 @@ export default function OrderCreatePage() {
         )
       ),
     },
-    { key: "supplierId", label: "Supplier" },
+    {
+      key: "supplier",
+      label: "Supplier",
+      render: (row) => row.supplierName || row.supplierId || "-",
+      sortValue: (row) => String(row.supplierName || row.supplierId || ""),
+    },
     { key: "supplierProductName", label: "Product" },
     { key: "supplierSku", label: "SKU" },
     { key: "purchaseUnit", label: "Purchase Unit" },
@@ -250,9 +261,9 @@ export default function OrderCreatePage() {
               className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
             >
               <option value="">Alle suppliers</option>
-              {supplierIds.map((supplierId) => (
-                <option key={supplierId} value={supplierId}>
-                  {supplierId}
+              {supplierOptions.map((supplier) => (
+                <option key={supplier.id} value={supplier.id}>
+                  {supplier.name}
                 </option>
               ))}
             </select>
