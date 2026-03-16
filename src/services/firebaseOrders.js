@@ -311,7 +311,7 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
       0
     );
 
-    const supplier = suppliersById[supplierId] || {};
+    const supplier = resolveSupplier(supplierId) || suppliersById[supplierId] || {};
     const resolvedDeliveryDate = resolveSupplierDeliveryDate(deliveryDate, supplier.deliveryDays);
     const outletName = String(outletsById[outletId]?.name || supplierItems[0]?.outletName || outletId).trim();
     const supplierOutletAccount = supplierOutletAccountsByKey[`${supplierId}__${outletId}`] || null;
