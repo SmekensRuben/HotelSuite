@@ -221,10 +221,35 @@ export default function SupplierProductsPage() {
     setShowExportModal(false);
   };
 
-  const handleExportFullList = () => {
-    const rows = products.map((product) => normalizeExportRow({ documentId: product.id, ...product }));
-    downloadExcel(rows, EXCEL_HEADERS, "supplier-products-full.xlsx");
-    setShowExportModal(false);
+  const handleExportFullList = async () => {
+    if (!hotelUid) return;
+
+    setBusy(true);
+    try {
+      const allProducts = [];
+      let cursor = null;
+      let hasMore = true;
+
+      while (hasMore) {
+        const result = await getSupplierProducts(hotelUid, {
+          pageSize: 200,
+          cursor,
+        });
+
+        allProducts.push(...(Array.isArray(result?.products) ? result.products : []));
+        cursor = result?.cursor || null;
+        hasMore = Boolean(result?.hasMore && cursor);
+      }
+
+      const rows = allProducts.map((product) => normalizeExportRow({ documentId: product.id, ...product }));
+      downloadExcel(rows, EXCEL_HEADERS, "supplier-products-full.xlsx");
+      setShowExportModal(false);
+    } catch (error) {
+      console.error("Failed to export full supplier products list", error);
+      window.alert("Kon de volledige supplier products lijst niet exporteren.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleImportButton = () => {
