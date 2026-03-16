@@ -41,6 +41,13 @@ function formatContent(product) {
   return `${amount} ${unit}`;
 }
 
+function resolveDisplayPrice(product) {
+  const pricingModel = String(product?.pricingModel || "").trim();
+  const rawPrice = pricingModel === "Per Base Unit" ? product?.pricePerBaseUnit : product?.pricePerPurchaseUnit;
+  const amount = Number(rawPrice);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
 const EXPORT_TEMPLATE_ROW = {
   supplierId: "",
   supplierSku: "",
@@ -154,6 +161,12 @@ export default function SupplierProductsPage() {
       render: (product) => formatContent(product),
     },
     { key: "pricingModel", label: "Pricing Model" },
+    {
+      key: "price",
+      label: "Price",
+      sortValue: (product) => resolveDisplayPrice(product),
+      render: (product) => resolveDisplayPrice(product),
+    },
     {
       key: "active",
       label: t("products.columns.status"),
