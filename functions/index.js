@@ -339,11 +339,25 @@ function resolveOrderUserEmail(order = {}) {
   return found || "";
 }
 
+function buildSupplierOrderReference(supplierName = "") {
+  const now = new Date();
+  const year = String(now.getFullYear()).slice(-2);
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+
+  const supplierPrefix = String(supplierName || "")
+    .trim()
+    .slice(0, 3)
+    .padEnd(3, "X");
+
+  return `${year}${month}${day}${supplierPrefix}`;
+}
+
 function buildOrderSftpCsv(order = {}, supplier = {}) {
   const rows = Array.isArray(order.products) ? order.products : [];
   const deliveryDate = formatDeliveryDateForSftp(order.deliveryDate);
   const accountNumber = String(supplier.accountNumber || "").trim();
-  const orderId = String(order.id || "").trim();
+  const supplierOrderReference = buildSupplierOrderReference(supplier?.name);
   const userEmail = resolveOrderUserEmail(order);
 
   const escapeCell = (value) => {
@@ -363,7 +377,7 @@ function buildOrderSftpCsv(order = {}, supplier = {}) {
         accountNumber,
         item?.supplierSku || "",
         Number(item?.qtyPurchaseUnits || 0),
-        orderId,
+        supplierOrderReference,
         isPerBaseUnit ? Number(item?.baseUnitsPerPurchaseUnit || 0) : "",
         isPerBaseUnit ? (item?.baseUnit || "") : "",
         item?.purchaseUnit || "",
