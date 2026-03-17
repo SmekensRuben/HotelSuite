@@ -912,7 +912,46 @@ const handlePriceCheckedButtonClick = async (button, row, rows) => {
   }
 };
 
-const SLIGRO_SUPPLIER_ID = "Sligro";
+const SLIGRO_SUPPLIER_NAME = "Sligro";
+const supplierIdCache = new Map();
+
+const resolveSupplierIdByName = async (hotelUid, supplierName) => {
+  const normalizedHotelUid = String(hotelUid || "").trim();
+  const normalizedSupplierName = String(supplierName || "").trim();
+  if (!normalizedHotelUid || !normalizedSupplierName) {
+    throw new Error("Hotel en suppliernaam zijn verplicht om supplierId op te halen.");
+  }
+
+  const cacheKey = `${normalizedHotelUid}::${normalizedSupplierName.toLowerCase()}`;
+  if (supplierIdCache.has(cacheKey)) {
+    return supplierIdCache.get(cacheKey);
+  }
+
+  const suppliersRef = collection(db, `hotels/${normalizedHotelUid}/suppliers`);
+  const supplierNameQuery = query(suppliersRef, where("supplierName", "==", normalizedSupplierName), limit(2));
+  const supplierNameSnapshot = await getDocs(supplierNameQuery);
+
+  let matches = supplierNameSnapshot.docs;
+  if (!matches.length) {
+    const fallbackNameQuery = query(suppliersRef, where("name", "==", normalizedSupplierName), limit(2));
+    const fallbackNameSnapshot = await getDocs(fallbackNameQuery);
+    matches = fallbackNameSnapshot.docs;
+  }
+
+  if (matches.length !== 1) {
+    throw new Error(
+      `Kon supplierId voor '${normalizedSupplierName}' niet uniek bepalen (${matches.length} gevonden).`
+    );
+  }
+
+  const supplierId = String(matches[0].id || "").trim();
+  if (!supplierId) {
+    throw new Error(`Supplier '${normalizedSupplierName}' heeft geen geldig document-ID.`);
+  }
+
+  supplierIdCache.set(cacheKey, supplierId);
+  return supplierId;
+};
 
 const handleCreateArticleClick = async (row) => {
   if (!selectedHotelUid) {
@@ -920,7 +959,7 @@ const handleCreateArticleClick = async (row) => {
     return;
   }
 
-  const supplierId = SLIGRO_SUPPLIER_ID;
+  const supplierId = await resolveSupplierIdByName(selectedHotelUid, SLIGRO_SUPPLIER_NAME);
   const supplierSku = String(row?.articleNumber || "").trim();
   const supplierProductName = String(row?.name || "").trim();
   const unitValue = String(row?.packaging || "").trim();
