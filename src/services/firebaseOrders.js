@@ -225,10 +225,11 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
     const supplierId = String(accountData.supplierId || "").trim();
     const outletId = String(accountData.outletId || "").trim();
     if (!supplierId || !outletId) return;
+    const linkedSupplier = suppliersById[supplierId] || resolveSupplier(supplierId) || {};
     supplierOutletAccountsByKey[`${supplierId}__${outletId}`] = {
       ...accountData,
       supplierId,
-      supplierName: String(supplier.name || "").trim() || supplierId,
+      supplierName: String(accountData.supplierName || linkedSupplier.name || "").trim() || supplierId,
       outletId,
       accountNumber: String(accountData.accountNumber || "").trim(),
     };
