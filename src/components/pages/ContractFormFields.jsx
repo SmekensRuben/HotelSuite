@@ -8,6 +8,7 @@ const INITIAL_STATE = {
   name: "",
   startDate: "",
   endDate: "",
+  pricePerMonth: "",
   terminationPeriodDays: "",
   category: "",
   categoryId: "",
@@ -98,6 +99,10 @@ export default function ContractFormFields({
       name: String(initialValues.name || ""),
       startDate: String(initialValues.startDate || ""),
       endDate: String(initialValues.endDate || ""),
+      pricePerMonth:
+        initialValues.pricePerMonth === 0 || initialValues.pricePerMonth
+          ? String(initialValues.pricePerMonth)
+          : "",
       terminationPeriodDays:
         initialValues.terminationPeriodDays === 0 || initialValues.terminationPeriodDays
           ? String(initialValues.terminationPeriodDays)
@@ -238,6 +243,7 @@ export default function ContractFormFields({
         {
           ...formState,
           name: formState.name.trim(),
+          pricePerMonth: Number(formState.pricePerMonth),
           terminationPeriodDays: Number(formState.terminationPeriodDays || 0),
           category: selectedCategory?.name || "",
           categoryId: selectedCategory?.id || "",
@@ -294,6 +300,19 @@ export default function ContractFormFields({
             type="date"
             value={formState.endDate}
             onChange={(event) => handleChange("endDate", event.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+          />
+        </label>
+
+        <label className="space-y-1">
+          <span className="text-sm font-medium text-gray-700">Price / Month (€)</span>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={formState.pricePerMonth}
+            onChange={(event) => handleChange("pricePerMonth", event.target.value)}
+            placeholder="e.g. 499.99"
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
           />
         </label>
