@@ -269,6 +269,38 @@ exports.syncSupplierProductsToMeili = onDocumentWritten(
   }
 );
 
+// ---------- Firestore Trigger: syncFileImportSettingsIndex (Gen 2) ----------
+exports.syncFileImportSettingsIndex = onDocumentWritten(
+  {
+    document: "hotels/{hotelUid}/fileImportSettings/{fileImportSettingId}",
+  },
+  async (event) => {
+    const { hotelUid, fileImportSettingId } = event.params;
+    const indexRef = admin.firestore().doc(`fileImportSettingsIndex/${fileImportSettingId}`);
+
+    if (!event.data?.after?.exists) {
+      await indexRef.delete();
+      logger.info("fileImportSettingsIndex delete ok", {
+        fileImportSettingId,
+        hotelUid,
+      });
+      return;
+    }
+
+    const data = event.data.after.data() || {};
+    await indexRef.set({
+      ...data,
+      id: fileImportSettingId,
+      hotelUid,
+    });
+
+    logger.info("fileImportSettingsIndex upsert ok", {
+      fileImportSettingId,
+      hotelUid,
+    });
+  }
+);
+
 
 function buildOrderCsv(order = {}) {
   const rows = getOrderSupplierProductRows(order);
