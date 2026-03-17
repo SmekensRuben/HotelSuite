@@ -120,12 +120,11 @@ function getFirstAvailableImportAttachment(payload = {}) {
 }
 
 async function fetchResendAttachmentBuffer(emailData = {}, attachmentId = "") {
-  const emailId = String(
-    emailData.id || emailData.emailId || emailData.messageId || emailData.message_id || ""
-  ).trim();
+  const emailId = String(emailData.email_id || "").trim();
   const normalizedAttachmentId = String(attachmentId || "").trim();
+
   if (!emailId || !normalizedAttachmentId) {
-    throw new Error("Missing emailId or attachmentId for Resend attachment fetch");
+    throw new Error("Missing email_id or attachmentId for Resend attachment fetch");
   }
 
   const resendApiKey = (RESEND_API_KEY.value() || "").trim();
@@ -133,35 +132,41 @@ async function fetchResendAttachmentBuffer(emailData = {}, attachmentId = "") {
     throw new Error("Missing RESEND_API_KEY secret");
   }
 
-  const endpoint = `https://api.resend.com/emails/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(normalizedAttachmentId)}`;
-  const response = await fetch(endpoint, {
+  const endpoint = `https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(normalizedAttachmentId)}`;
+
+  const metaResponse = await fetch(endpoint, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${resendApiKey}`,
-      Accept: "application/json, application/octet-stream, */*",
+      Accept: "application/json",
     },
   });
 
-  if (!response.ok) {
-    const responseText = await response.text();
-    throw new Error(`Failed to fetch Resend attachment (${response.status}): ${responseText}`);
+  if (!metaResponse.ok) {
+    const responseText = await metaResponse.text();
+    throw new Error(`Failed to fetch Resend attachment metadata (${metaResponse.status}): ${responseText}`);
   }
 
-  const responseContentType = (response.headers.get("content-type") || "").toLowerCase();
-  if (responseContentType.includes("application/json")) {
-    const jsonBody = await response.json();
-    const base64 = String(
-      jsonBody?.contentBase64 || jsonBody?.content || jsonBody?.data || jsonBody?.attachment || ""
-    ).trim();
-    if (!base64) {
-      throw new Error("Resend attachment response missing base64 content");
-    }
-    return Buffer.from(base64, "base64");
+  const metaJson = await metaResponse.json();
+  const downloadUrl = String(metaJson?.download_url || "").trim();
+
+  if (!downloadUrl) {
+    throw new Error("Resend attachment response missing download_url");
   }
 
-  const arrayBuffer = await response.arrayBuffer();
+  const downloadResponse = await fetch(downloadUrl, {
+    method: "GET",
+  });
+
+  if (!downloadResponse.ok) {
+    const responseText = await downloadResponse.text();
+    throw new Error(`Failed to download Resend attachment (${downloadResponse.status}): ${responseText}`);
+  }
+
+  const arrayBuffer = await downloadResponse.arrayBuffer();
   return Buffer.from(arrayBuffer);
 }
+
 
 function normalizeFileType(value) {
   const cleaned = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
