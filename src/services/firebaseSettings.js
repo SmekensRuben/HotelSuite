@@ -141,6 +141,88 @@ export async function createOutlet(hotelUid, outletInput) {
   return payload;
 }
 
+export async function getOutletById(hotelUid, outletId) {
+  if (!hotelUid || !outletId) return null;
+
+  const outletRef = doc(db, `hotels/${hotelUid}/outlets`, outletId);
+  const snap = await getDoc(outletRef);
+  if (!snap.exists()) return null;
+
+  const data = snap.data() || {};
+  return {
+    ...data,
+    id: String(data.id || snap.id || "").trim() || snap.id,
+    name: String(data.name || "").trim(),
+  };
+}
+
+export async function updateOutlet(hotelUid, outletId, outletInput) {
+  if (!hotelUid || !outletId) throw new Error("hotelUid en outletId zijn verplicht");
+
+  const cleanedName = String(outletInput?.name || "").trim();
+  if (!cleanedName) throw new Error("Outlet name is verplicht");
+
+  const outletRef = doc(db, `hotels/${hotelUid}/outlets`, outletId);
+  await updateDoc(outletRef, {
+    name: cleanedName,
+    updatedAt: new Date(),
+    updatedBy: outletInput?.updatedBy || null,
+  });
+}
+
+export async function getOutletApprovers(hotelUid, outletId) {
+  if (!hotelUid || !outletId) return [];
+
+  const approversCol = collection(db, `hotels/${hotelUid}/outlets/${outletId}/approvers`);
+  const snapshot = await getDocs(approversCol);
+
+  return snapshot.docs.map((docSnap) => {
+    const data = docSnap.data() || {};
+    return {
+      id: docSnap.id,
+      email: String(data.email || "").trim(),
+      firstName: String(data.firstName || "").trim(),
+      lastName: String(data.lastName || "").trim(),
+      displayName: String(data.displayName || "").trim(),
+    };
+  });
+}
+
+export async function setOutletApprovers(hotelUid, outletId, approvers) {
+  if (!hotelUid || !outletId) throw new Error("hotelUid en outletId zijn verplicht");
+
+  const approversCol = collection(db, `hotels/${hotelUid}/outlets/${outletId}/approvers`);
+  const existingSnapshot = await getDocs(approversCol);
+  const incomingIds = new Set(
+    (Array.isArray(approvers) ? approvers : [])
+      .map((approver) => String(approver?.id || "").trim())
+      .filter(Boolean)
+  );
+
+  const batch = writeBatch(db);
+
+  existingSnapshot.forEach((docSnap) => {
+    if (!incomingIds.has(docSnap.id)) {
+      batch.delete(docSnap.ref);
+    }
+  });
+
+  (Array.isArray(approvers) ? approvers : []).forEach((approver) => {
+    const approverId = String(approver?.id || "").trim();
+    if (!approverId) return;
+    const approverRef = doc(db, `hotels/${hotelUid}/outlets/${outletId}/approvers`, approverId);
+    batch.set(approverRef, {
+      email: String(approver?.email || "").trim(),
+      firstName: String(approver?.firstName || "").trim(),
+      lastName: String(approver?.lastName || "").trim(),
+      displayName: String(approver?.displayName || "").trim(),
+      updatedAt: new Date(),
+    });
+  });
+
+  await batch.commit();
+}
+
 export async function transferOutletsToCollection(hotelUid) {
   if (!hotelUid) return { transferred: 0 };
 

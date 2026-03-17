@@ -22,6 +22,8 @@ import SupplierOutletAccountCreatePage from "./components/pages/SupplierOutletAc
 import SettingsCatalogPage from "./components/pages/SettingsCatalogPage.jsx";
 import OutletSettingsPage from "./components/pages/OutletSettingsPage.jsx";
 import OutletCreatePage from "./components/pages/OutletCreatePage.jsx";
+import OutletDetailPage from "./components/pages/OutletDetailPage.jsx";
+import OutletEditPage from "./components/pages/OutletEditPage.jsx";
 import UserManagementPage from "./components/pages/UserManagementPage.jsx";
 import UserDetailPage from "./components/pages/UserDetailPage.jsx";
 import OrdersPage from "./components/pages/OrdersPage.jsx";
@@ -189,6 +191,22 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="settings" action="create">
             <OutletCreatePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/outlets/:outletId"
+        element={
+          <ProtectedRoute feature="settings" action="read">
+            <OutletDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/outlets/:outletId/edit"
+        element={
+          <ProtectedRoute feature="settings" action="update">
+            <OutletEditPage />
           </ProtectedRoute>
         }
       />
