@@ -13,10 +13,6 @@ function formatHotelUid(user) {
   return userHotelUids.join(", ") || "-";
 }
 
-function formatPermissions(user) {
-  return Array.isArray(user.permissions) ? user.permissions.join(", ") || "-" : "-";
-}
-
 export default function UserManagementPage() {
   const navigate = useNavigate();
   const canUpdateUsers = usePermission("users", "update");
@@ -67,7 +63,6 @@ export default function UserManagementPage() {
       filteredUsers.map((user) => ({
         ...user,
         hotelUidLabel: formatHotelUid(user),
-        permissionsLabel: formatPermissions(user),
       })),
     [filteredUsers]
   );
@@ -77,7 +72,6 @@ export default function UserManagementPage() {
     { key: "lastName", label: "Last name" },
     { key: "email", label: "Email" },
     { key: "hotelUidLabel", label: "Hotel UID", sortable: false },
-    { key: "permissionsLabel", label: "Permissions", sortable: false },
   ];
 
   return (
