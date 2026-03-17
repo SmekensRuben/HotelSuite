@@ -92,7 +92,7 @@ function toEmailList(value) {
     .filter(Boolean);
 }
 
-function getFirstAvailableCsvAttachment(payload = {}) {
+function getFirstAvailableImportAttachment(payload = {}) {
   const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
 
   for (const attachment of attachments) {
@@ -103,8 +103,10 @@ function getFirstAvailableCsvAttachment(payload = {}) {
       .trim()
       .toLowerCase();
 
-    const isCsv = filename.toLowerCase().endsWith(".csv") || contentType.includes("text/csv") || contentType.includes("csv");
-    if (!isCsv) continue;
+    const lowerFilename = filename.toLowerCase();
+    const isCsv = lowerFilename.endsWith(".csv") || contentType.includes("text/csv") || contentType.includes("csv");
+    const isTxt = lowerFilename.endsWith(".txt") || contentType.includes("text/plain") || contentType.includes("plain");
+    if (!isCsv && !isTxt) continue;
 
     const contentBase64 = String(
       attachment.contentBase64 || attachment.content || attachment.data || ""
@@ -113,7 +115,9 @@ function getFirstAvailableCsvAttachment(payload = {}) {
     if (!contentBase64) continue;
 
     return {
-      filename: filename || "attachment.csv",
+      filename: filename || (isTxt ? "attachment.txt" : "attachment.csv"),
+      extension: isTxt ? "txt" : "csv",
+      contentType: isTxt ? "text/plain" : "text/csv",
       buffer: Buffer.from(contentBase64, "base64"),
     };
   }
@@ -382,9 +386,9 @@ exports.handleResendEmailReceivedWebhook = onRequest(async (req, res) => {
       return;
     }
 
-    const csvAttachment = getFirstAvailableCsvAttachment(emailData);
-    if (!csvAttachment) {
-      res.status(400).json({ error: "No CSV attachment found" });
+    const importAttachment = getFirstAvailableImportAttachment(emailData);
+    if (!importAttachment) {
+      res.status(400).json({ error: "No CSV or TXT attachment found" });
       return;
     }
 
@@ -413,13 +417,13 @@ exports.handleResendEmailReceivedWebhook = onRequest(async (req, res) => {
 
     const fileType = normalizeFileType(matchedSetting.fileType);
     const timestamp = Date.now();
-    const storagePath = `imports/${hotelUid}/${fileType}/${timestamp}.csv`;
+    const storagePath = `imports/${hotelUid}/${fileType}/${timestamp}.${importAttachment.extension}`;
 
     const bucket = admin.storage().bucket();
     const file = bucket.file(storagePath);
 
-    await file.save(csvAttachment.buffer, {
-      contentType: "text/csv",
+    await file.save(importAttachment.buffer, {
+      contentType: importAttachment.contentType,
       metadata: {
         metadata: {
           hotelUid,
