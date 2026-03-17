@@ -1,4 +1,5 @@
 const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { onRequest } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
@@ -67,6 +68,55 @@ function toMillisOrNull(value) {
   }
 
   return null;
+}
+
+function extractEmailAddress(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  const match = raw.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+  return match ? match[0].toLowerCase() : raw;
+}
+
+function toEmailList(value) {
+  if (Array.isArray(value)) return value.map(extractEmailAddress).filter(Boolean);
+  return String(value || "")
+    .split(/[;,]/)
+    .map((item) => extractEmailAddress(item))
+    .filter(Boolean);
+}
+
+function getFirstAvailableCsvAttachment(payload = {}) {
+  const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
+
+  for (const attachment of attachments) {
+    if (!attachment || typeof attachment !== "object") continue;
+
+    const filename = String(attachment.filename || attachment.name || "").trim();
+    const contentType = String(attachment.contentType || attachment.content_type || attachment.type || "")
+      .trim()
+      .toLowerCase();
+
+    const isCsv = filename.toLowerCase().endsWith(".csv") || contentType.includes("text/csv") || contentType.includes("csv");
+    if (!isCsv) continue;
+
+    const contentBase64 = String(
+      attachment.contentBase64 || attachment.content || attachment.data || ""
+    ).trim();
+
+    if (!contentBase64) continue;
+
+    return {
+      filename: filename || "attachment.csv",
+      buffer: Buffer.from(contentBase64, "base64"),
+    };
+  }
+
+  return null;
+}
+
+function normalizeFileType(value) {
+  const cleaned = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  return cleaned || "csv";
 }
 
 function buildCatalogProductDocument(productId, hotelUid, productData = {}) {
@@ -301,6 +351,92 @@ exports.syncFileImportSettingsIndex = onDocumentWritten(
   }
 );
 
+
+exports.handleResendEmailReceivedWebhook = onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method Not Allowed" });
+    return;
+  }
+
+  try {
+    const payload = req.body && typeof req.body === "object" ? req.body : {};
+    const fromEmail = extractEmailAddress(payload.from || payload.sender || payload.fromEmail);
+    const toCandidates = [
+      ...toEmailList(payload.to),
+      ...toEmailList(payload.deliveredTo),
+      ...toEmailList(payload.recipient),
+    ];
+    const toEmailSet = new Set(toCandidates);
+    const subject = String(payload.subject || "").trim().toLowerCase();
+
+    if (!fromEmail || toEmailSet.size === 0 || !subject) {
+      res.status(400).json({ error: "Missing from/to/subject in payload" });
+      return;
+    }
+
+    const csvAttachment = getFirstAvailableCsvAttachment(payload);
+    if (!csvAttachment) {
+      res.status(400).json({ error: "No CSV attachment found" });
+      return;
+    }
+
+    const indexSnapshot = await admin.firestore().collection("fileImportSettingsIndex").get();
+    const matchedSetting = indexSnapshot.docs
+      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+      .find((setting) => {
+        const settingFrom = extractEmailAddress(setting.fromEmail);
+        const settingTo = extractEmailAddress(setting.toEmail);
+        const subjectContains = String(setting.subjectContains || setting.subject || "").trim().toLowerCase();
+
+        if (!settingFrom || !settingTo || !subjectContains) return false;
+        return settingFrom === fromEmail && toEmailSet.has(settingTo) && subject.includes(subjectContains);
+      });
+
+    if (!matchedSetting) {
+      res.status(404).json({ error: "No matching file import setting found" });
+      return;
+    }
+
+    const hotelUid = String(matchedSetting.hotelUid || "").trim();
+    if (!hotelUid) {
+      res.status(422).json({ error: "Matched setting has no hotelUid" });
+      return;
+    }
+
+    const fileType = normalizeFileType(matchedSetting.fileType);
+    const timestamp = Date.now();
+    const storagePath = `imports/${hotelUid}/${fileType}/${timestamp}.csv`;
+
+    const bucket = admin.storage().bucket();
+    const file = bucket.file(storagePath);
+
+    await file.save(csvAttachment.buffer, {
+      contentType: "text/csv",
+      metadata: {
+        metadata: {
+          hotelUid,
+          fileType,
+          fromEmail,
+          toEmail: Array.from(toEmailSet).join(","),
+          subject,
+          matchedSettingId: String(matchedSetting.id || ""),
+        },
+      },
+    });
+
+    logger.info("Resend webhook import stored", {
+      hotelUid,
+      fileType,
+      storagePath,
+      matchedSettingId: matchedSetting.id,
+    });
+
+    res.status(200).json({ ok: true, storagePath, hotelUid, fileType });
+  } catch (error) {
+    logger.error("handleResendEmailReceivedWebhook failed", { message: error?.message || String(error) });
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
 
 function buildOrderCsv(order = {}) {
   const rows = getOrderSupplierProductRows(order);

@@ -14,7 +14,7 @@ const initialValues = {
   reportName: "",
   fromEmail: "",
   toEmail: "",
-  subject: "",
+  subjectContains: "",
   fileType: "",
 };
 
@@ -52,7 +52,7 @@ export default function FileImportSettingEditPage() {
           reportName: data.reportName || "",
           fromEmail: data.fromEmail || "",
           toEmail: data.toEmail || "",
-          subject: data.subject || "",
+          subjectContains: data.subjectContains || "",
           fileType: data.fileType || "",
         });
       }
@@ -134,14 +134,14 @@ export default function FileImportSettingEditPage() {
               </div>
 
               <div>
-                <label htmlFor="subject" className="block text-sm font-medium text-gray-700 mb-1">
-                  Subject
+                <label htmlFor="subjectContains" className="block text-sm font-medium text-gray-700 mb-1">
+                  Subject Contains
                 </label>
                 <input
-                  id="subject"
+                  id="subjectContains"
                   type="text"
-                  value={formValues.subject}
-                  onChange={handleChange("subject")}
+                  value={formValues.subjectContains}
+                  onChange={handleChange("subjectContains")}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
               </div>

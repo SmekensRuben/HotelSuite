@@ -115,7 +115,7 @@ export default function FileImportSettingDetailPage() {
               <DetailField label="Report Name" value={fileImportSetting.reportName} />
               <DetailField label="From Email" value={fileImportSetting.fromEmail} />
               <DetailField label="To Email" value={fileImportSetting.toEmail} />
-              <DetailField label="Subject" value={fileImportSetting.subject} />
+              <DetailField label="Subject Contains" value={fileImportSetting.subjectContains} />
               <DetailField label="File Type" value={fileImportSetting.fileType} />
             </div>
           </Card>
