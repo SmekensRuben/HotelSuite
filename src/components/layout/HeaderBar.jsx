@@ -43,6 +43,12 @@ export default function HeaderBar({ today, onLogout }) {
       visible: canViewSettings,
     },
     {
+      label: "File Import Settings",
+      action: () => navigate("/settings/file-import"),
+      icon: Settings2,
+      visible: canViewSettings,
+    },
+    {
       label: "User Management",
       action: () => navigate("/settings/users"),
       icon: Users,

@@ -36,6 +36,10 @@ import ContractCreatePage from "./components/pages/ContractCreatePage.jsx";
 import ContractDetailPage from "./components/pages/ContractDetailPage.jsx";
 import ContractEditPage from "./components/pages/ContractEditPage.jsx";
 import ContractSettingsPage from "./components/pages/ContractSettingsPage.jsx";
+import FileImportSettingsPage from "./components/pages/FileImportSettingsPage.jsx";
+import FileImportSettingCreatePage from "./components/pages/FileImportSettingCreatePage.jsx";
+import FileImportSettingDetailPage from "./components/pages/FileImportSettingDetailPage.jsx";
+import FileImportSettingEditPage from "./components/pages/FileImportSettingEditPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -207,6 +211,38 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="settings" action="update">
             <OutletEditPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/file-import"
+        element={
+          <ProtectedRoute feature="settings" action="read">
+            <FileImportSettingsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/file-import/new"
+        element={
+          <ProtectedRoute feature="settings" action="create">
+            <FileImportSettingCreatePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/file-import/:fileImportSettingId"
+        element={
+          <ProtectedRoute feature="settings" action="read">
+            <FileImportSettingDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/file-import/:fileImportSettingId/edit"
+        element={
+          <ProtectedRoute feature="settings" action="update">
+            <FileImportSettingEditPage />
           </ProtectedRoute>
         }
       />
