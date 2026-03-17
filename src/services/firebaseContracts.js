@@ -57,11 +57,15 @@ function sanitizeFiles(value) {
 
 function buildContractPayload(contractData, actor, existingFiles = []) {
   const terminationPeriodDays = Number(contractData.terminationPeriodDays);
+  const pricePerMonth = Number(contractData.pricePerMonth);
 
   return {
     name: String(contractData.name || "").trim(),
     startDate: normalizeDateInput(contractData.startDate),
     endDate: normalizeDateInput(contractData.endDate),
+    pricePerMonth: Number.isFinite(pricePerMonth)
+      ? Math.max(0, Math.round(pricePerMonth * 100) / 100)
+      : 0,
     terminationPeriodDays: Number.isFinite(terminationPeriodDays)
       ? Math.max(0, Math.floor(terminationPeriodDays))
       : 0,
