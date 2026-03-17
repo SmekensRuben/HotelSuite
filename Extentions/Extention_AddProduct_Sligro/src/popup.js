@@ -700,10 +700,10 @@ const firebaseIndexCache = {
 const PRICE_DIFF_THRESHOLD = 0.005;
 
 const normalizeDocumentId = (value) => {
-  const raw = String(value || "").trim().toLowerCase();
+  const raw = String(value || "").trim();
   if (!raw) return "";
   return raw
-    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
 };
@@ -915,7 +915,7 @@ const handlePriceCheckedButtonClick = async (button, row, rows) => {
 const SLIGRO_SUPPLIER_NAME = "Sligro";
 const supplierIdCache = new Map();
 
-const resolveSupplierIdByName = async (hotelUid, supplierName) => {
+const resolveSupplierByName = async (hotelUid, supplierName) => {
   const normalizedHotelUid = String(hotelUid || "").trim();
   const normalizedSupplierName = String(supplierName || "").trim();
   if (!normalizedHotelUid || !normalizedSupplierName) {
@@ -944,13 +944,20 @@ const resolveSupplierIdByName = async (hotelUid, supplierName) => {
     );
   }
 
-  const supplierId = String(matches[0].id || "").trim();
+  const supplierDoc = matches[0];
+  const supplierId = String(supplierDoc.id || "").trim();
   if (!supplierId) {
     throw new Error(`Supplier '${normalizedSupplierName}' heeft geen geldig document-ID.`);
   }
 
-  supplierIdCache.set(cacheKey, supplierId);
-  return supplierId;
+  const supplierData = supplierDoc.data?.() || {};
+  const resolvedSupplierName = String(
+    supplierData.supplierName || supplierData.name || normalizedSupplierName
+  ).trim() || normalizedSupplierName;
+
+  const supplier = { supplierId, supplierName: resolvedSupplierName };
+  supplierIdCache.set(cacheKey, supplier);
+  return supplier;
 };
 
 const handleCreateArticleClick = async (row) => {
@@ -959,7 +966,7 @@ const handleCreateArticleClick = async (row) => {
     return;
   }
 
-  const supplierId = await resolveSupplierIdByName(selectedHotelUid, SLIGRO_SUPPLIER_NAME);
+  const { supplierId, supplierName } = await resolveSupplierByName(selectedHotelUid, SLIGRO_SUPPLIER_NAME);
   const supplierSku = String(row?.articleNumber || "").trim();
   const supplierProductName = String(row?.name || "").trim();
   const unitValue = String(row?.packaging || "").trim();
@@ -997,6 +1004,7 @@ const handleCreateArticleClick = async (row) => {
 
     const payload = {
       supplierId,
+      supplierName,
       supplierSku,
       supplierProductName,
       pricingModel,
