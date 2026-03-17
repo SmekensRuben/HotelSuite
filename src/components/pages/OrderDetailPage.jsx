@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { deleteOrder, getOrderById, updateOrder } from "../../services/firebaseOrders";
+import { getOutletApprovers } from "../../services/firebaseSettings";
 import { getUserDisplayName } from "../../services/firebaseUserManagement";
 import { getSupplier } from "../../services/firebaseSuppliers";
 
@@ -37,6 +38,8 @@ export default function OrderDetailPage() {
   const [confirmSubmitted, setConfirmSubmitted] = useState(false);
   const [confirmStartedAt, setConfirmStartedAt] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
+  const [canConfirmOrder, setCanConfirmOrder] = useState(false);
+  const [approverWarning, setApproverWarning] = useState("");
 
   const today = useMemo(
     () =>
@@ -98,6 +101,21 @@ export default function OrderDetailPage() {
     } else {
       setSupplierName("-");
       setSupplierOrderSystem("Email");
+    }
+
+    const currentUid = String(auth.currentUser?.uid || "").trim();
+    if (result?.outletId && currentUid) {
+      const approvers = await getOutletApprovers(hotelUid, result.outletId);
+      const isAllowed = approvers.some((approver) => String(approver.id || "").trim() === currentUid);
+      setCanConfirmOrder(isAllowed);
+      if (!isAllowed) {
+        setApproverWarning("Only outlet approvers can confirm this order.");
+      } else {
+        setApproverWarning("");
+      }
+    } else {
+      setCanConfirmOrder(false);
+      setApproverWarning("No outlet approvers configured for this order.");
     }
 
     return result;
@@ -281,7 +299,9 @@ export default function OrderDetailPage() {
         <DataListTable columns={columns} rows={rows} emptyMessage="No order lines found." />
 
         {isCreated && (
-          <div className="flex justify-end">
+          <div className="space-y-2">
+            {approverWarning && <p className="text-sm text-amber-700">{approverWarning}</p>}
+            <div className="flex justify-end">
             <button
               type="button"
               onClick={() => {
@@ -291,10 +311,12 @@ export default function OrderDetailPage() {
                 setProgressMessage("");
                 setShowOrderConfirmModal(true);
               }}
-              className="px-4 py-2 border border-green-300 text-green-700 rounded font-semibold hover:bg-green-50"
+              disabled={!canConfirmOrder}
+              className="px-4 py-2 border border-green-300 text-green-700 rounded font-semibold hover:bg-green-50 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Confirm Order
             </button>
+            </div>
           </div>
         )}
       </PageContainer>
@@ -362,7 +384,7 @@ export default function OrderDetailPage() {
           </button>
           <button
             type="button"
-            disabled={ordering || order.status !== "Created" || dispatchStatus === "processing"}
+            disabled={ordering || order.status !== "Created" || dispatchStatus === "processing" || !canConfirmOrder}
             onClick={async () => {
               setOrdering(true);
               setActionError("");

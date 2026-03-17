@@ -228,6 +228,7 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
     supplierOutletAccountsByKey[`${supplierId}__${outletId}`] = {
       ...accountData,
       supplierId,
+      supplierName: String(supplier.name || "").trim() || supplierId,
       outletId,
       accountNumber: String(accountData.accountNumber || "").trim(),
     };
@@ -332,6 +333,7 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
       deliveryDate: resolvedDeliveryDate,
       shoppingCartId,
       supplierId,
+      supplierName: String(supplier.name || "").trim() || supplierId,
       outletId,
       outletName,
       accountNumber: resolvedAccountNumber,

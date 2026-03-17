@@ -95,7 +95,12 @@ export default function OutletSettingsPage() {
         {loading ? (
           <p className="text-gray-600">Loading outlets...</p>
         ) : (
-          <DataListTable columns={columns} rows={filteredOutlets} emptyMessage="No outlets found." />
+          <DataListTable
+            columns={columns}
+            rows={filteredOutlets}
+            emptyMessage="No outlets found."
+            onRowClick={(row) => navigate(`/settings/outlets/${row.id}`)}
+          />
         )}
       </PageContainer>
     </div>

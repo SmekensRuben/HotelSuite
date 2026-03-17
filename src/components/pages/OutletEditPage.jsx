@@ -1,20 +1,26 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getAllUsers } from "../../services/firebaseUserManagement";
-import { createOutlet, setOutletApprovers } from "../../services/firebaseSettings";
+import {
+  getOutletApprovers,
+  getOutletById,
+  setOutletApprovers,
+  updateOutlet,
+} from "../../services/firebaseSettings";
 
 function isUserInHotel(user, hotelUid) {
   const hotelUids = Array.isArray(user?.hotelUid) ? user.hotelUid : user?.hotelUid ? [user.hotelUid] : [];
   return hotelUids.includes(hotelUid);
 }
 
-export default function OutletCreatePage() {
+export default function OutletEditPage() {
   const navigate = useNavigate();
+  const { outletId } = useParams();
   const { hotelUid } = useHotelContext();
   const [name, setName] = useState("");
   const [users, setUsers] = useState([]);
@@ -38,29 +44,35 @@ export default function OutletCreatePage() {
   };
 
   useEffect(() => {
-    const loadUsers = async () => {
-      if (!hotelUid) return;
-      const allUsers = await getAllUsers();
-      setUsers(allUsers.filter((user) => isUserInHotel(user, hotelUid)));
+    const init = async () => {
+      if (!hotelUid || !outletId) return;
+      const [allUsers, outlet, approvers] = await Promise.all([
+        getAllUsers(),
+        getOutletById(hotelUid, outletId),
+        getOutletApprovers(hotelUid, outletId),
+      ]);
+      const filteredUsers = allUsers.filter((user) => isUserInHotel(user, hotelUid));
+      setUsers(filteredUsers);
+      setName(String(outlet?.name || ""));
+      setSelectedApproverIds(approvers.map((item) => item.id));
     };
 
-    loadUsers();
-  }, [hotelUid]);
+    init();
+  }, [hotelUid, outletId]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!hotelUid || !name.trim()) return;
+    if (!hotelUid || !outletId || !name.trim()) return;
 
     setSaving(true);
-    const outlet = await createOutlet(hotelUid, {
-      name: name.trim(),
-      createdBy: auth.currentUser?.uid || "unknown",
-    });
-
     const selectedUsers = users.filter((user) => selectedApproverIds.includes(user.id));
+    await updateOutlet(hotelUid, outletId, {
+      name: name.trim(),
+      updatedBy: auth.currentUser?.uid || "unknown",
+    });
     await setOutletApprovers(
       hotelUid,
-      outlet.id,
+      outletId,
       selectedUsers.map((user) => ({
         id: user.id,
         email: user.email || "",
@@ -69,9 +81,8 @@ export default function OutletCreatePage() {
         displayName: `${user.firstName || ""} ${user.lastName || ""}`.trim(),
       }))
     );
-
     setSaving(false);
-    navigate("/settings/outlets");
+    navigate(`/settings/outlets/${outletId}`);
   };
 
   const toggleApprover = (userId) => {
@@ -86,7 +97,7 @@ export default function OutletCreatePage() {
       <PageContainer className="space-y-6">
         <div>
           <p className="text-sm text-gray-500 uppercase tracking-wide">Settings</p>
-          <h1 className="text-3xl font-semibold">Add Outlet</h1>
+          <h1 className="text-3xl font-semibold">Edit Outlet</h1>
         </div>
 
         <Card>
@@ -101,7 +112,7 @@ export default function OutletCreatePage() {
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="Outlet name"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 required
               />
             </div>
@@ -128,7 +139,7 @@ export default function OutletCreatePage() {
             <div className="flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => navigate("/settings/outlets")}
+                onClick={() => navigate(`/settings/outlets/${outletId}`)}
                 className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium hover:bg-gray-100"
               >
                 Cancel
