@@ -71,7 +71,10 @@ function toMillisOrNull(value) {
 }
 
 function extractEmailAddress(value) {
-  const raw = String(value || "").trim().toLowerCase();
+  const primitive = typeof value === "object" && value !== null
+    ? (value.email || value.address || value.value || "")
+    : value;
+  const raw = String(primitive || "").trim().toLowerCase();
   if (!raw) return "";
   const match = raw.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
   return match ? match[0].toLowerCase() : raw;
@@ -79,6 +82,10 @@ function extractEmailAddress(value) {
 
 function toEmailList(value) {
   if (Array.isArray(value)) return value.map(extractEmailAddress).filter(Boolean);
+  if (typeof value === "object" && value !== null) {
+    const single = extractEmailAddress(value);
+    return single ? [single] : [];
+  }
   return String(value || "")
     .split(/[;,]/)
     .map((item) => extractEmailAddress(item))
@@ -360,21 +367,22 @@ exports.handleResendEmailReceivedWebhook = onRequest(async (req, res) => {
 
   try {
     const payload = req.body && typeof req.body === "object" ? req.body : {};
-    const fromEmail = extractEmailAddress(payload.from || payload.sender || payload.fromEmail);
+    const emailData = payload?.data && typeof payload.data === "object" ? payload.data : payload;
+    const fromEmail = extractEmailAddress(emailData.from || emailData.sender || emailData.fromEmail);
     const toCandidates = [
-      ...toEmailList(payload.to),
-      ...toEmailList(payload.deliveredTo),
-      ...toEmailList(payload.recipient),
+      ...toEmailList(emailData.to),
+      ...toEmailList(emailData.deliveredTo),
+      ...toEmailList(emailData.recipient),
     ];
     const toEmailSet = new Set(toCandidates);
-    const subject = String(payload.subject || "").trim().toLowerCase();
+    const subject = String(emailData.subject || "").trim().toLowerCase();
 
     if (!fromEmail || toEmailSet.size === 0 || !subject) {
       res.status(400).json({ error: "Missing from/to/subject in payload" });
       return;
     }
 
-    const csvAttachment = getFirstAvailableCsvAttachment(payload);
+    const csvAttachment = getFirstAvailableCsvAttachment(emailData);
     if (!csvAttachment) {
       res.status(400).json({ error: "No CSV attachment found" });
       return;
