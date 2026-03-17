@@ -384,6 +384,7 @@ async function searchSupplierProducts(hotelUid, criteria, pageSize, cursor) {
       limit: pageSize,
       offset,
       filter: meiliFilters,
+      attributesToSearchOn: ["supplierName", "supplierSku", "supplierProductName"],
     }),
   });
 
@@ -457,11 +458,11 @@ async function searchSupplierProductsWithFirestore(hotelUid, criteria, pageSize,
     products = products.filter((product) => {
       const supplierSku = String(product.supplierSku || "").toLowerCase();
       const supplierProductName = String(product.supplierProductName || "").toLowerCase();
-      const candidateSupplierId = String(product.supplierId || "").toLowerCase();
+      const candidateSupplierName = String(product.supplierName || "").toLowerCase();
       return (
         supplierSku.includes(lowerTerm)
         || supplierProductName.includes(lowerTerm)
-        || candidateSupplierId.includes(lowerTerm)
+        || candidateSupplierName.includes(lowerTerm)
       );
     });
   }

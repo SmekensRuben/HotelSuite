@@ -10,6 +10,7 @@ import Modal from "../shared/Modal";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSupplierProducts, importSupplierProducts } from "../../services/firebaseProducts";
+import { getSuppliers } from "../../services/firebaseSuppliers";
 import { usePermission } from "../../hooks/usePermission";
 
 const PAGE_SIZE = 50;
@@ -74,6 +75,7 @@ export default function SupplierProductsPage() {
   const fileInputRef = useRef(null);
   const canCreateProducts = usePermission("supplierproducts", "create");
   const [products, setProducts] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
@@ -142,21 +144,41 @@ export default function SupplierProductsPage() {
     loadProductsPage(0, null);
   }, [hotelUid, debouncedSearchTerm, selectedSupplierId, selectedStatus]);
 
-  const supplierFilters = useMemo(() => {
-    const map = new Map();
-    products.forEach((product) => {
-      const supplierId = String(product.supplierId || "").trim();
-      if (!supplierId) return;
-      const supplierName = String(product.supplierName || supplierId).trim();
-      if (!map.has(supplierId)) {
-        map.set(supplierId, supplierName);
-      }
-    });
+  useEffect(() => {
+    let active = true;
 
-    return Array.from(map.entries())
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [products]);
+    const loadSuppliers = async () => {
+      if (!hotelUid) {
+        setSuppliers([]);
+        return;
+      }
+
+      const supplierRows = await getSuppliers(hotelUid);
+      if (!active) return;
+
+      const normalizedSuppliers = supplierRows
+        .map((supplier) => ({
+          id: String(supplier?.id || "").trim(),
+          name: String(supplier?.name || "").trim(),
+        }))
+        .filter((supplier) => supplier.id)
+        .sort((left, right) => (left.name || left.id).localeCompare(right.name || right.id));
+
+      setSuppliers(normalizedSuppliers);
+    };
+
+    loadSuppliers();
+    return () => {
+      active = false;
+    };
+  }, [hotelUid]);
+
+  const supplierFilters = useMemo(() => {
+    return suppliers.map((supplier) => ({
+      id: supplier.id,
+      name: supplier.name || supplier.id,
+    }));
+  }, [suppliers]);
 
   const columns = [
     {
