@@ -108,21 +108,59 @@ function getFirstAvailableImportAttachment(payload = {}) {
     const isTxt = lowerFilename.endsWith(".txt") || contentType.includes("text/plain") || contentType.includes("plain");
     if (!isCsv && !isTxt) continue;
 
-    const contentBase64 = String(
-      attachment.contentBase64 || attachment.content || attachment.data || ""
-    ).trim();
-
-    if (!contentBase64) continue;
-
     return {
+      id: String(attachment.id || attachment.attachmentId || "").trim(),
       filename: filename || (isTxt ? "attachment.txt" : "attachment.csv"),
       extension: isTxt ? "txt" : "csv",
       contentType: isTxt ? "text/plain" : "text/csv",
-      buffer: Buffer.from(contentBase64, "base64"),
     };
   }
 
   return null;
+}
+
+async function fetchResendAttachmentBuffer(emailData = {}, attachmentId = "") {
+  const emailId = String(
+    emailData.id || emailData.emailId || emailData.messageId || emailData.message_id || ""
+  ).trim();
+  const normalizedAttachmentId = String(attachmentId || "").trim();
+  if (!emailId || !normalizedAttachmentId) {
+    throw new Error("Missing emailId or attachmentId for Resend attachment fetch");
+  }
+
+  const resendApiKey = (RESEND_API_KEY.value() || "").trim();
+  if (!resendApiKey) {
+    throw new Error("Missing RESEND_API_KEY secret");
+  }
+
+  const endpoint = `https://api.resend.com/emails/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(normalizedAttachmentId)}`;
+  const response = await fetch(endpoint, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      Accept: "application/json, application/octet-stream, */*",
+    },
+  });
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw new Error(`Failed to fetch Resend attachment (${response.status}): ${responseText}`);
+  }
+
+  const responseContentType = (response.headers.get("content-type") || "").toLowerCase();
+  if (responseContentType.includes("application/json")) {
+    const jsonBody = await response.json();
+    const base64 = String(
+      jsonBody?.contentBase64 || jsonBody?.content || jsonBody?.data || jsonBody?.attachment || ""
+    ).trim();
+    if (!base64) {
+      throw new Error("Resend attachment response missing base64 content");
+    }
+    return Buffer.from(base64, "base64");
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
 }
 
 function normalizeFileType(value) {
@@ -363,7 +401,7 @@ exports.syncFileImportSettingsIndex = onDocumentWritten(
 );
 
 
-exports.handleResendEmailReceivedWebhook = onRequest(async (req, res) => {
+exports.handleResendEmailReceivedWebhook = onRequest({ secrets: [RESEND_API_KEY] }, async (req, res) => {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method Not Allowed" });
     return;
@@ -389,6 +427,11 @@ exports.handleResendEmailReceivedWebhook = onRequest(async (req, res) => {
     const importAttachment = getFirstAvailableImportAttachment(emailData);
     if (!importAttachment) {
       res.status(400).json({ error: "No CSV or TXT attachment found" });
+      return;
+    }
+
+    if (!importAttachment.id) {
+      res.status(400).json({ error: "Attachment metadata missing id" });
       return;
     }
 
@@ -422,7 +465,9 @@ exports.handleResendEmailReceivedWebhook = onRequest(async (req, res) => {
     const bucket = admin.storage().bucket();
     const file = bucket.file(storagePath);
 
-    await file.save(importAttachment.buffer, {
+    const attachmentBuffer = await fetchResendAttachmentBuffer(emailData, importAttachment.id);
+
+    await file.save(attachmentBuffer, {
       contentType: importAttachment.contentType,
       metadata: {
         metadata: {
