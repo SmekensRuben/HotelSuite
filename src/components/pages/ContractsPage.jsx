@@ -84,9 +84,14 @@ export default function ContractsPage() {
     { key: "name", label: "Name" },
     { key: "category", label: "Category" },
     { key: "subcategory", label: "Subcategory" },
+    {
+      key: "pricePerMonth",
+      label: "Price / Month",
+      sortValue: (row) => Number(row.pricePerMonth || 0),
+      render: (row) => `€${Number(row.pricePerMonth || 0).toFixed(2)}`,
+    },
     { key: "startDate", label: "Start Date" },
     { key: "endDate", label: "End Date" },
-    { key: "terminationPeriodDays", label: "Termination Period (days)" },
     { key: "cancelBefore", label: "Cancel Before" },
   ];
 

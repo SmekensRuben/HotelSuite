@@ -18,6 +18,12 @@ function DetailField({ label, value }) {
   );
 }
 
+function formatPrice(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) return "€0.00";
+  return `€${amount.toFixed(2)}`;
+}
+
 function formatDate(value) {
   if (!value) return "-";
   const parsed = new Date(value);
@@ -123,6 +129,7 @@ export default function ContractDetailPage() {
                 <DetailField label="End date" value={formatDate(contract.endDate)} />
                 <DetailField label="Category" value={contract.category} />
                 <DetailField label="Subcategory" value={contract.subcategory} />
+                <DetailField label="Price / month" value={formatPrice(contract.pricePerMonth)} />
                 <DetailField label="Termination period (days)" value={String(contract.terminationPeriodDays ?? "-")} />
                 <DetailField label="Cancel before" value={formatDate(contract.cancelBefore)} />
               </div>
