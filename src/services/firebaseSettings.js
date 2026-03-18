@@ -258,6 +258,123 @@ export async function transferOutletsToCollection(hotelUid) {
   return { transferred };
 }
 
+// *** FILE IMPORT SETTINGS ***
+export async function getFileImportSettings(hotelUid) {
+  if (!hotelUid) return [];
+
+  const settingsCol = collection(db, `hotels/${hotelUid}/fileImportSettings`);
+  const snapshot = await getDocs(settingsCol);
+
+  const fileImportSettings = snapshot.docs.map((docSnap) => {
+    const data = docSnap.data() || {};
+    return {
+      id: String(data.id || docSnap.id || "").trim() || docSnap.id,
+      reportName: String(data.reportName || "").trim(),
+      fromEmail: String(data.fromEmail || "").trim(),
+      toEmail: String(data.toEmail || "").trim(),
+      subjectContains: String(data.subjectContains || data.subject || "").trim(),
+      fileType: String(data.fileType || "").trim(),
+    };
+  });
+
+  return fileImportSettings.sort((a, b) =>
+    String(a?.reportName || "").localeCompare(String(b?.reportName || ""), undefined, {
+      sensitivity: "base",
+      numeric: true,
+    })
+  );
+}
+
+export async function createFileImportSetting(hotelUid, input) {
+  if (!hotelUid) return null;
+
+  const reportName = String(input?.reportName || "").trim();
+  if (!reportName) return null;
+
+  const fileImportSettingsCol = collection(db, `hotels/${hotelUid}/fileImportSettings`);
+  const fileImportSettingRef = doc(fileImportSettingsCol);
+
+  const payload = {
+    id: fileImportSettingRef.id,
+    reportName,
+    fromEmail: String(input?.fromEmail || "").trim(),
+    toEmail: String(input?.toEmail || "").trim(),
+    subjectContains: String(input?.subjectContains || "").trim(),
+    fileType: String(input?.fileType || "").trim(),
+    createdBy: input?.createdBy || null,
+    createdAt: new Date(),
+  };
+
+  await setDoc(fileImportSettingRef, payload);
+  return payload;
+}
+
+export async function getFileImportSettingById(hotelUid, fileImportSettingId) {
+  if (!hotelUid || !fileImportSettingId) return null;
+
+  const fileImportSettingRef = doc(
+    db,
+    `hotels/${hotelUid}/fileImportSettings`,
+    fileImportSettingId
+  );
+  const snap = await getDoc(fileImportSettingRef);
+  if (!snap.exists()) return null;
+
+  const data = snap.data() || {};
+  return {
+    id: String(data.id || snap.id || "").trim() || snap.id,
+    reportName: String(data.reportName || "").trim(),
+    fromEmail: String(data.fromEmail || "").trim(),
+    toEmail: String(data.toEmail || "").trim(),
+    subjectContains: String(data.subjectContains || data.subject || "").trim(),
+    fileType: String(data.fileType || "").trim(),
+    createdBy: data.createdBy || null,
+    createdAt: data.createdAt || null,
+    updatedBy: data.updatedBy || null,
+    updatedAt: data.updatedAt || null,
+  };
+}
+
+export async function updateFileImportSetting(hotelUid, fileImportSettingId, input) {
+  if (!hotelUid || !fileImportSettingId) {
+    throw new Error("hotelUid en fileImportSettingId zijn verplicht");
+  }
+
+  const reportName = String(input?.reportName || "").trim();
+  if (!reportName) {
+    throw new Error("Report name is verplicht");
+  }
+
+  const fileImportSettingRef = doc(
+    db,
+    `hotels/${hotelUid}/fileImportSettings`,
+    fileImportSettingId
+  );
+
+  await updateDoc(fileImportSettingRef, {
+    reportName,
+    fromEmail: String(input?.fromEmail || "").trim(),
+    toEmail: String(input?.toEmail || "").trim(),
+    subjectContains: String(input?.subjectContains || "").trim(),
+    fileType: String(input?.fileType || "").trim(),
+    updatedBy: input?.updatedBy || null,
+    updatedAt: new Date(),
+  });
+}
+
+export async function deleteFileImportSetting(hotelUid, fileImportSettingId) {
+  if (!hotelUid || !fileImportSettingId) {
+    throw new Error("hotelUid en fileImportSettingId zijn verplicht");
+  }
+
+  const fileImportSettingRef = doc(
+    db,
+    `hotels/${hotelUid}/fileImportSettings`,
+    fileImportSettingId
+  );
+  await deleteDoc(fileImportSettingRef);
+}
+
 // *** CATEGORIEËN ***
 export async function getCategories() {
   const hotelId = getSelectedHotelUid();

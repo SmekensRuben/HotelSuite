@@ -1,4 +1,5 @@
 const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { onRequest } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
@@ -67,6 +68,109 @@ function toMillisOrNull(value) {
   }
 
   return null;
+}
+
+function extractEmailAddress(value) {
+  const primitive = typeof value === "object" && value !== null
+    ? (value.email || value.address || value.value || "")
+    : value;
+  const raw = String(primitive || "").trim().toLowerCase();
+  if (!raw) return "";
+  const match = raw.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+  return match ? match[0].toLowerCase() : raw;
+}
+
+function toEmailList(value) {
+  if (Array.isArray(value)) return value.map(extractEmailAddress).filter(Boolean);
+  if (typeof value === "object" && value !== null) {
+    const single = extractEmailAddress(value);
+    return single ? [single] : [];
+  }
+  return String(value || "")
+    .split(/[;,]/)
+    .map((item) => extractEmailAddress(item))
+    .filter(Boolean);
+}
+
+function getFirstAvailableImportAttachment(payload = {}) {
+  const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
+
+  for (const attachment of attachments) {
+    if (!attachment || typeof attachment !== "object") continue;
+
+    const filename = String(attachment.filename || attachment.name || "").trim();
+    const contentType = String(attachment.contentType || attachment.content_type || attachment.type || "")
+      .trim()
+      .toLowerCase();
+
+    const lowerFilename = filename.toLowerCase();
+    const isCsv = lowerFilename.endsWith(".csv") || contentType.includes("text/csv") || contentType.includes("csv");
+    const isTxt = lowerFilename.endsWith(".txt") || contentType.includes("text/plain") || contentType.includes("plain");
+    if (!isCsv && !isTxt) continue;
+
+    return {
+      id: String(attachment.id || attachment.attachmentId || "").trim(),
+      filename: filename || (isTxt ? "attachment.txt" : "attachment.csv"),
+      extension: isTxt ? "txt" : "csv",
+      contentType: isTxt ? "text/plain" : "text/csv",
+    };
+  }
+
+  return null;
+}
+
+async function fetchResendAttachmentBuffer(emailData = {}, attachmentId = "") {
+  const emailId = String(emailData.email_id || "").trim();
+  const normalizedAttachmentId = String(attachmentId || "").trim();
+
+  if (!emailId || !normalizedAttachmentId) {
+    throw new Error("Missing email_id or attachmentId for Resend attachment fetch");
+  }
+
+  const resendApiKey = (RESEND_API_KEY.value() || "").trim();
+  if (!resendApiKey) {
+    throw new Error("Missing RESEND_API_KEY secret");
+  }
+
+  const endpoint = `https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(normalizedAttachmentId)}`;
+
+  const metaResponse = await fetch(endpoint, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      Accept: "application/json",
+    },
+  });
+
+  if (!metaResponse.ok) {
+    const responseText = await metaResponse.text();
+    throw new Error(`Failed to fetch Resend attachment metadata (${metaResponse.status}): ${responseText}`);
+  }
+
+  const metaJson = await metaResponse.json();
+  const downloadUrl = String(metaJson?.download_url || "").trim();
+
+  if (!downloadUrl) {
+    throw new Error("Resend attachment response missing download_url");
+  }
+
+  const downloadResponse = await fetch(downloadUrl, {
+    method: "GET",
+  });
+
+  if (!downloadResponse.ok) {
+    const responseText = await downloadResponse.text();
+    throw new Error(`Failed to download Resend attachment (${downloadResponse.status}): ${responseText}`);
+  }
+
+  const arrayBuffer = await downloadResponse.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+
+function normalizeFileType(value) {
+  const cleaned = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  return cleaned || "csv";
 }
 
 function buildCatalogProductDocument(productId, hotelUid, productData = {}) {
@@ -269,6 +373,132 @@ exports.syncSupplierProductsToMeili = onDocumentWritten(
   }
 );
 
+// ---------- Firestore Trigger: syncFileImportSettingsIndex (Gen 2) ----------
+exports.syncFileImportSettingsIndex = onDocumentWritten(
+  {
+    document: "hotels/{hotelUid}/fileImportSettings/{fileImportSettingId}",
+  },
+  async (event) => {
+    const { hotelUid, fileImportSettingId } = event.params;
+    const indexRef = admin.firestore().doc(`fileImportSettingsIndex/${fileImportSettingId}`);
+
+    if (!event.data?.after?.exists) {
+      await indexRef.delete();
+      logger.info("fileImportSettingsIndex delete ok", {
+        fileImportSettingId,
+        hotelUid,
+      });
+      return;
+    }
+
+    const data = event.data.after.data() || {};
+    await indexRef.set({
+      ...data,
+      id: fileImportSettingId,
+      hotelUid,
+    });
+
+    logger.info("fileImportSettingsIndex upsert ok", {
+      fileImportSettingId,
+      hotelUid,
+    });
+  }
+);
+
+
+exports.handleResendEmailReceivedWebhook = onRequest({ secrets: [RESEND_API_KEY] }, async (req, res) => {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method Not Allowed" });
+    return;
+  }
+
+  try {
+    const payload = req.body && typeof req.body === "object" ? req.body : {};
+    const emailData = payload?.data && typeof payload.data === "object" ? payload.data : payload;
+    const fromEmail = extractEmailAddress(emailData.from || emailData.sender || emailData.fromEmail);
+    const toCandidates = [
+      ...toEmailList(emailData.to),
+      ...toEmailList(emailData.deliveredTo),
+      ...toEmailList(emailData.recipient),
+    ];
+    const toEmailSet = new Set(toCandidates);
+    const subject = String(emailData.subject || "").trim().toLowerCase();
+
+    if (!fromEmail || toEmailSet.size === 0 || !subject) {
+      res.status(400).json({ error: "Missing from/to/subject in payload" });
+      return;
+    }
+
+    const importAttachment = getFirstAvailableImportAttachment(emailData);
+    if (!importAttachment) {
+      res.status(400).json({ error: "No CSV or TXT attachment found" });
+      return;
+    }
+
+    if (!importAttachment.id) {
+      res.status(400).json({ error: "Attachment metadata missing id" });
+      return;
+    }
+
+    const indexSnapshot = await admin.firestore().collection("fileImportSettingsIndex").get();
+    const matchedSetting = indexSnapshot.docs
+      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+      .find((setting) => {
+        const settingFrom = extractEmailAddress(setting.fromEmail);
+        const settingTo = extractEmailAddress(setting.toEmail);
+        const subjectContains = String(setting.subjectContains || setting.subject || "").trim().toLowerCase();
+
+        if (!settingFrom || !settingTo || !subjectContains) return false;
+        return settingFrom === fromEmail && toEmailSet.has(settingTo) && subject.includes(subjectContains);
+      });
+
+    if (!matchedSetting) {
+      res.status(404).json({ error: "No matching file import setting found" });
+      return;
+    }
+
+    const hotelUid = String(matchedSetting.hotelUid || "").trim();
+    if (!hotelUid) {
+      res.status(422).json({ error: "Matched setting has no hotelUid" });
+      return;
+    }
+
+    const fileType = normalizeFileType(matchedSetting.fileType);
+    const timestamp = Date.now();
+    const storagePath = `imports/${hotelUid}/${fileType}/${timestamp}.${importAttachment.extension}`;
+
+    const bucket = admin.storage().bucket();
+    const file = bucket.file(storagePath);
+
+    const attachmentBuffer = await fetchResendAttachmentBuffer(emailData, importAttachment.id);
+
+    await file.save(attachmentBuffer, {
+      contentType: importAttachment.contentType,
+      metadata: {
+        metadata: {
+          hotelUid,
+          fileType,
+          fromEmail,
+          toEmail: Array.from(toEmailSet).join(","),
+          subject,
+          matchedSettingId: String(matchedSetting.id || ""),
+        },
+      },
+    });
+
+    logger.info("Resend webhook import stored", {
+      hotelUid,
+      fileType,
+      storagePath,
+      matchedSettingId: matchedSetting.id,
+    });
+
+    res.status(200).json({ ok: true, storagePath, hotelUid, fileType });
+  } catch (error) {
+    logger.error("handleResendEmailReceivedWebhook failed", { message: error?.message || String(error) });
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
 
 function buildOrderCsv(order = {}) {
   const rows = getOrderSupplierProductRows(order);
