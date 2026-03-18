@@ -86,13 +86,62 @@ function buildLogicalRecords(content, delimiter, hasHeaderRow) {
   return { headerRow, dataRows };
 }
 
+function parseWholeFileRecords(content, delimiter, hasHeaderRow) {
+  const parsedRows = parse(String(content || ""), {
+    bom: true,
+    columns: false,
+    delimiter,
+    escape: '"',
+    quote: '"',
+    record_delimiter: ["\r\n", "\n", "\r"],
+    relax_column_count: true,
+    relax_quotes: true,
+    skip_empty_lines: true,
+    trim: false,
+  });
+
+  if (!Array.isArray(parsedRows) || parsedRows.length === 0) {
+    return { headerRow: [], dataRows: [] };
+  }
+
+  const headerRow = hasHeaderRow ? parsedRows[0] : parsedRows[0];
+  const dataRows = hasHeaderRow ? parsedRows.slice(1) : parsedRows;
+  return { headerRow, dataRows };
+}
+
+function scoreParsedRows(rows, expectedColumnCount) {
+  if (!Array.isArray(rows) || rows.length === 0 || !expectedColumnCount) return 0;
+
+  let exactMatches = 0;
+  let usableRows = 0;
+
+  rows.forEach((row) => {
+    if (!Array.isArray(row)) return;
+    if (row.length === expectedColumnCount) exactMatches += 1;
+    if (row.length > 0) usableRows += 1;
+  });
+
+  return (exactMatches * 1000) + usableRows;
+}
+
 function parseCsvDocuments(content, fileImportType) {
   const delimiter = normalizeDelimiter(fileImportType?.delimiter);
   const normalizedMappings = normalizeColumnMappings(fileImportType);
   if (normalizedMappings.length === 0) return [];
 
   const hasHeaderRow = fileImportType?.hasHeaderRow !== false;
-  const { headerRow: rawHeaderRow, dataRows } = buildLogicalRecords(content, delimiter, hasHeaderRow);
+  const directRecords = parseWholeFileRecords(content, delimiter, hasHeaderRow);
+  const bufferedRecords = buildLogicalRecords(content, delimiter, hasHeaderRow);
+  const directHeaderLength = Array.isArray(directRecords.headerRow) ? directRecords.headerRow.length : 0;
+  const bufferedHeaderLength = Array.isArray(bufferedRecords.headerRow) ? bufferedRecords.headerRow.length : 0;
+  const expectedColumnCount = directHeaderLength || bufferedHeaderLength;
+
+  const selectedRecords = scoreParsedRows(directRecords.dataRows, expectedColumnCount) >=
+    scoreParsedRows(bufferedRecords.dataRows, expectedColumnCount)
+    ? directRecords
+    : bufferedRecords;
+
+  const { headerRow: rawHeaderRow, dataRows } = selectedRecords;
   if (!Array.isArray(rawHeaderRow) || rawHeaderRow.length === 0) return [];
 
   const headerRow = hasHeaderRow
