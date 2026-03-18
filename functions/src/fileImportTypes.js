@@ -53,17 +53,8 @@ function normalizeHeader(value, index) {
   return cleaned || `column${index + 1}`;
 }
 
-function mapRows(parsedRows, fileImportType) {
-  const rows = Array.isArray(parsedRows) ? parsedRows : [];
-  if (rows.length === 0) return [];
-
-  const hasHeaderRow = fileImportType?.hasHeaderRow !== false;
-  const headerRow = hasHeaderRow
-    ? rows[0].map((value, index) => normalizeHeader(value, index))
-    : rows[0].map((_, index) => `column${index + 1}`);
-  const dataRows = hasHeaderRow ? rows.slice(1) : rows;
-
-  const normalizedMappings = Array.isArray(fileImportType?.columnMappings)
+function normalizeColumnMappings(fileImportType) {
+  return Array.isArray(fileImportType?.columnMappings)
     ? fileImportType.columnMappings
         .map((mapping) => ({
           csvHeader: String(mapping?.csvHeader || "").trim(),
@@ -71,24 +62,43 @@ function mapRows(parsedRows, fileImportType) {
         }))
         .filter((mapping) => mapping.csvHeader && mapping.databaseField)
     : [];
+}
 
-  return dataRows.map((values, index) => {
-    const rawRow = {};
-    headerRow.forEach((header, valueIndex) => {
-      rawRow[header] = String(values?.[valueIndex] || "").trim();
-    });
+function parseCsvDocuments(content, fileImportType) {
+  const delimiter = normalizeDelimiter(fileImportType?.delimiter);
+  const parsedRows = parseDelimitedText(content, delimiter);
+  if (parsedRows.length === 0) return [];
 
-    const mappedRow = {};
-    normalizedMappings.forEach((mapping) => {
-      mappedRow[mapping.databaseField] = String(rawRow[mapping.csvHeader] || "").trim();
-    });
+  const normalizedMappings = normalizeColumnMappings(fileImportType);
+  if (normalizedMappings.length === 0) return [];
 
-    return {
-      rowIndex: index,
-      rawRow,
-      mappedRow,
-    };
-  });
+  const hasHeaderRow = fileImportType?.hasHeaderRow !== false;
+  const headerRow = hasHeaderRow
+    ? parsedRows[0].map((value, index) => normalizeHeader(value, index))
+    : parsedRows[0].map((_, index) => `column${index + 1}`);
+  const dataRows = hasHeaderRow ? parsedRows.slice(1) : parsedRows;
+
+  return dataRows
+    .map((values, index) => {
+      const csvRow = {};
+      headerRow.forEach((header, valueIndex) => {
+        csvRow[header] = String(values?.[valueIndex] || "").trim();
+      });
+
+      const mappedDocument = {};
+      normalizedMappings.forEach((mapping) => {
+        mappedDocument[mapping.databaseField] = String(csvRow[mapping.csvHeader] || "").trim();
+      });
+
+      const hasMappedValue = Object.values(mappedDocument).some((value) => value !== "");
+      if (!hasMappedValue) return null;
+
+      return {
+        rowIndex: index,
+        mappedDocument,
+      };
+    })
+    .filter(Boolean);
 }
 
 function formatDateValue(value) {
@@ -239,13 +249,24 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1" },
     return;
   }
 
+  const parserType = String(fileImportType.parserType || "").trim().toLowerCase();
+  if (parserType !== "csv") {
+    logger.warn("Import skipped: unsupported parserType", {
+      objectName,
+      hotelUid,
+      fileType,
+      fileImportTypeId: fileImportType.id,
+      parserType,
+    });
+    return;
+  }
+
   const bucket = admin.storage().bucket(object.bucket);
   const [buffer] = await bucket.file(objectName).download();
-  const parsedRows = parseDelimitedText(buffer.toString("utf8"), normalizeDelimiter(fileImportType.delimiter));
-  const mappedRows = mapRows(parsedRows, fileImportType);
+  const mappedDocuments = parseCsvDocuments(buffer.toString("utf8"), fileImportType);
 
-  if (mappedRows.length === 0) {
-    logger.warn("Import skipped: no data rows found", {
+  if (mappedDocuments.length === 0) {
+    logger.warn("Import skipped: no mapped CSV rows found", {
       objectName,
       hotelUid,
       fileType,
@@ -255,37 +276,23 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1" },
   }
 
   const writeResults = [];
-  for (const row of mappedRows) {
+  for (const documentRow of mappedDocuments) {
     const context = buildTemplateContext({
       hotelUid,
       fileType,
       fileImportType,
-      mappedRow: row.mappedRow,
+      mappedRow: documentRow.mappedDocument,
       object,
-      rowIndex: row.rowIndex,
+      rowIndex: documentRow.rowIndex,
     });
 
     const resolvedPath = resolveFirestorePath(fileImportType, context);
-    const payload = {
-      ...row.mappedRow,
-      _importMeta: {
-        hotelUid,
-        fileType,
-        fileImportTypeId: fileImportType.id,
-        sourceObjectName: objectName,
-        sourceBucket: object.bucket || "",
-        importedAt: admin.firestore.FieldValue.serverTimestamp(),
-        rowIndex: row.rowIndex,
-        rawRow: row.rawRow,
-      },
-    };
-
     const writtenPath = await writeRowToFirestore({
       db,
       fileImportType,
       resolvedPath,
       context,
-      payload,
+      payload: documentRow.mappedDocument,
     });
 
     writeResults.push(writtenPath);
