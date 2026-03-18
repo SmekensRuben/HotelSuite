@@ -49,6 +49,12 @@ export default function HeaderBar({ today, onLogout }) {
       visible: canViewSettings,
     },
     {
+      label: "File Import Types",
+      action: () => navigate("/settings/file-import-types"),
+      icon: Settings2,
+      visible: canViewSettings,
+    },
+    {
       label: "User Management",
       action: () => navigate("/settings/users"),
       icon: Users,

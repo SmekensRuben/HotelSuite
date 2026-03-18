@@ -375,6 +375,110 @@ export async function deleteFileImportSetting(hotelUid, fileImportSettingId) {
   await deleteDoc(fileImportSettingRef);
 }
 
+// *** FILE IMPORT TYPES ***
+function normalizeFileImportType(data = {}, fallbackId = "") {
+  return {
+    id: String(data.id || fallbackId || "").trim() || fallbackId,
+    fileType: String(data.fileType || "").trim(),
+    parserType: String(data.parserType || "").trim(),
+    delimiter: String(data.delimiter || "").trim(),
+    hasHeaderRow: Boolean(data.hasHeaderRow),
+    targetCollection: String(data.targetCollection || "").trim(),
+    writeMode: String(data.writeMode || "").trim(),
+    enabled: Boolean(data.enabled),
+    createdBy: data.createdBy || null,
+    createdAt: data.createdAt || null,
+    updatedBy: data.updatedBy || null,
+    updatedAt: data.updatedAt || null,
+  };
+}
+
+export async function getFileImportTypes(hotelUid) {
+  if (!hotelUid) return [];
+
+  const fileImportTypesCol = collection(db, `hotels/${hotelUid}/fileImportTypes`);
+  const snapshot = await getDocs(fileImportTypesCol);
+
+  return snapshot.docs
+    .map((docSnap) => normalizeFileImportType(docSnap.data() || {}, docSnap.id))
+    .sort((a, b) =>
+      String(a?.fileType || "").localeCompare(String(b?.fileType || ""), undefined, {
+        sensitivity: "base",
+        numeric: true,
+      })
+    );
+}
+
+export async function createFileImportType(hotelUid, input) {
+  if (!hotelUid) return null;
+
+  const fileType = String(input?.fileType || "").trim();
+  if (!fileType) return null;
+
+  const fileImportTypesCol = collection(db, `hotels/${hotelUid}/fileImportTypes`);
+  const fileImportTypeRef = doc(fileImportTypesCol);
+
+  const payload = {
+    id: fileImportTypeRef.id,
+    fileType,
+    parserType: String(input?.parserType || "").trim(),
+    delimiter: String(input?.delimiter || "").trim(),
+    hasHeaderRow: Boolean(input?.hasHeaderRow),
+    targetCollection: String(input?.targetCollection || "").trim(),
+    writeMode: String(input?.writeMode || "").trim(),
+    enabled: Boolean(input?.enabled),
+    createdBy: input?.createdBy || null,
+    createdAt: new Date(),
+  };
+
+  await setDoc(fileImportTypeRef, payload);
+  return payload;
+}
+
+export async function getFileImportTypeById(hotelUid, fileImportTypeId) {
+  if (!hotelUid || !fileImportTypeId) return null;
+
+  const fileImportTypeRef = doc(db, `hotels/${hotelUid}/fileImportTypes`, fileImportTypeId);
+  const snap = await getDoc(fileImportTypeRef);
+  if (!snap.exists()) return null;
+
+  return normalizeFileImportType(snap.data() || {}, snap.id);
+}
+
+export async function updateFileImportType(hotelUid, fileImportTypeId, input) {
+  if (!hotelUid || !fileImportTypeId) {
+    throw new Error("hotelUid en fileImportTypeId zijn verplicht");
+  }
+
+  const fileType = String(input?.fileType || "").trim();
+  if (!fileType) {
+    throw new Error("File type is verplicht");
+  }
+
+  const fileImportTypeRef = doc(db, `hotels/${hotelUid}/fileImportTypes`, fileImportTypeId);
+
+  await updateDoc(fileImportTypeRef, {
+    fileType,
+    parserType: String(input?.parserType || "").trim(),
+    delimiter: String(input?.delimiter || "").trim(),
+    hasHeaderRow: Boolean(input?.hasHeaderRow),
+    targetCollection: String(input?.targetCollection || "").trim(),
+    writeMode: String(input?.writeMode || "").trim(),
+    enabled: Boolean(input?.enabled),
+    updatedBy: input?.updatedBy || null,
+    updatedAt: new Date(),
+  });
+}
+
+export async function deleteFileImportType(hotelUid, fileImportTypeId) {
+  if (!hotelUid || !fileImportTypeId) {
+    throw new Error("hotelUid en fileImportTypeId zijn verplicht");
+  }
+
+  const fileImportTypeRef = doc(db, `hotels/${hotelUid}/fileImportTypes`, fileImportTypeId);
+  await deleteDoc(fileImportTypeRef);
+}
+
 // *** CATEGORIEËN ***
 export async function getCategories() {
   const hotelId = getSelectedHotelUid();

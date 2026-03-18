@@ -40,6 +40,10 @@ import FileImportSettingsPage from "./components/pages/FileImportSettingsPage.js
 import FileImportSettingCreatePage from "./components/pages/FileImportSettingCreatePage.jsx";
 import FileImportSettingDetailPage from "./components/pages/FileImportSettingDetailPage.jsx";
 import FileImportSettingEditPage from "./components/pages/FileImportSettingEditPage.jsx";
+import FileImportTypesPage from "./components/pages/FileImportTypesPage.jsx";
+import FileImportTypeCreatePage from "./components/pages/FileImportTypeCreatePage.jsx";
+import FileImportTypeDetailPage from "./components/pages/FileImportTypeDetailPage.jsx";
+import FileImportTypeEditPage from "./components/pages/FileImportTypeEditPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -243,6 +247,38 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="settings" action="update">
             <FileImportSettingEditPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/file-import-types"
+        element={
+          <ProtectedRoute feature="settings" action="read">
+            <FileImportTypesPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/file-import-types/new"
+        element={
+          <ProtectedRoute feature="settings" action="create">
+            <FileImportTypeCreatePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/file-import-types/:fileImportTypeId"
+        element={
+          <ProtectedRoute feature="settings" action="read">
+            <FileImportTypeDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/file-import-types/:fileImportTypeId/edit"
+        element={
+          <ProtectedRoute feature="settings" action="update">
+            <FileImportTypeEditPage />
           </ProtectedRoute>
         }
       />
