@@ -518,6 +518,8 @@ const processMailQueue = onDocumentCreated(
 );
 
 module.exports = {
+  buildOrderSftpCsv,
+  buildOrderExportBaseFilename,
   processMailQueue,
   enqueueOrderEmail,
 };

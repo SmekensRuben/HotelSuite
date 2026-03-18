@@ -1,6 +1,8 @@
 const { onDocumentWritten, logger, admin, MEILI_API_KEY, MEILI_HOST, MEILI_INDEX, SUPPLIER_PRODUCTS_INDEX_UID } = require("./config");
 const { getIndexUid, buildCatalogProductDocument, buildSupplierProductDocument, meiliRequest, meiliJson } = require("./common");
 
+const ensuredIndexUids = new Set();
+
 async function ensureIndex(indexUid) {
   if (ensuredIndexUids.has(indexUid)) return;
 

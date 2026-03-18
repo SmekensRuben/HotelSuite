@@ -1,4 +1,4 @@
-const { RESEND_API_KEY, MEILI_HOST, MEILI_INDEX } = require("./config");
+const { RESEND_API_KEY, MEILI_HOST, MEILI_INDEX, MEILI_API_KEY } = require("./config");
 
 function requireMeiliHost() {
   const host = (MEILI_HOST.value() || "").trim().replace(/\/$/, "");
