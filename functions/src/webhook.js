@@ -26,7 +26,7 @@ const handleResendEmailReceivedWebhook = onRequest({ secrets: [RESEND_API_KEY] }
 
     const importAttachment = getFirstAvailableImportAttachment(emailData);
     if (!importAttachment) {
-      res.status(400).json({ error: "No CSV or TXT attachment found" });
+      res.status(400).json({ error: "No CSV, TXT, or XML attachment found" });
       return;
     }
 
