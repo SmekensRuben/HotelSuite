@@ -53,6 +53,7 @@ export default function FileImportTypesPage() {
         item.parserType,
         item.delimiter,
         item.targetCollection,
+        item.targetPath,
         item.writeMode,
         item.enabled ? "enabled" : "disabled",
       ].map((value) => String(value || "").toLowerCase());
@@ -71,6 +72,7 @@ export default function FileImportTypesPage() {
       render: (row) => (row.hasHeaderRow ? "Yes" : "No"),
     },
     { key: "targetCollection", label: "Target Collection" },
+    { key: "targetPath", label: "Target Path" },
     { key: "writeMode", label: "Write Mode" },
     {
       key: "enabled",

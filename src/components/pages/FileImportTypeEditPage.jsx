@@ -14,8 +14,10 @@ const initialValues = {
   delimiter: ",",
   hasHeaderRow: true,
   targetCollection: "",
+  targetPath: "",
   writeMode: "",
   enabled: true,
+  columnsMappings: [],
 };
 
 export default function FileImportTypeEditPage() {
@@ -54,8 +56,10 @@ export default function FileImportTypeEditPage() {
           delimiter: result.delimiter || ",",
           hasHeaderRow: Boolean(result.hasHeaderRow),
           targetCollection: result.targetCollection || "",
+          targetPath: result.targetPath || "",
           writeMode: result.writeMode || "",
           enabled: Boolean(result.enabled),
+          columnsMappings: Array.isArray(result.columnsMappings) ? result.columnsMappings : [],
         });
       }
       setLoading(false);
@@ -64,7 +68,34 @@ export default function FileImportTypeEditPage() {
     loadFileImportType();
   }, [hotelUid, fileImportTypeId]);
 
-  const handleChange = (field) => (event) => {
+  const handleChange = (field, index, key) => (event) => {
+    if (field === "addColumnMapping") {
+      setFormValues((prev) => ({
+        ...prev,
+        columnsMappings: [...prev.columnsMappings, { csvHeader: "", databaseField: "" }],
+      }));
+      return;
+    }
+
+    if (field === "removeColumnMapping") {
+      setFormValues((prev) => ({
+        ...prev,
+        columnsMappings: prev.columnsMappings.filter((_, mappingIndex) => mappingIndex !== index),
+      }));
+      return;
+    }
+
+    if (field === "columnMappingField") {
+      const nextValue = event?.target?.value || "";
+      setFormValues((prev) => ({
+        ...prev,
+        columnsMappings: prev.columnsMappings.map((mapping, mappingIndex) =>
+          mappingIndex === index ? { ...mapping, [key]: nextValue } : mapping
+        ),
+      }));
+      return;
+    }
+
     const nextValue = event?.target?.type === "checkbox" ? event.target.checked : event.target.value;
     setFormValues((prev) => ({ ...prev, [field]: nextValue }));
   };

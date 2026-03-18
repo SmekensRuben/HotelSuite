@@ -405,6 +405,38 @@ exports.syncFileImportSettingsIndex = onDocumentWritten(
   }
 );
 
+// ---------- Firestore Trigger: syncFileImportTypesIndex (Gen 2) ----------
+exports.syncFileImportTypesIndex = onDocumentWritten(
+  {
+    document: "hotels/{hotelUid}/fileImportTypes/{fileImportTypeId}",
+  },
+  async (event) => {
+    const { hotelUid, fileImportTypeId } = event.params;
+    const indexRef = admin.firestore().doc(`fileImportTypesIndex/${fileImportTypeId}`);
+
+    if (!event.data?.after?.exists) {
+      await indexRef.delete();
+      logger.info("fileImportTypesIndex delete ok", {
+        fileImportTypeId,
+        hotelUid,
+      });
+      return;
+    }
+
+    const data = event.data.after.data() || {};
+    await indexRef.set({
+      ...data,
+      id: fileImportTypeId,
+      hotelUid,
+    });
+
+    logger.info("fileImportTypesIndex upsert ok", {
+      fileImportTypeId,
+      hotelUid,
+    });
+  }
+);
+
 
 exports.handleResendEmailReceivedWebhook = onRequest({ secrets: [RESEND_API_KEY] }, async (req, res) => {
   if (req.method !== "POST") {

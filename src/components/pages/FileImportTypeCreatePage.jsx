@@ -14,8 +14,10 @@ const initialValues = {
   delimiter: ",",
   hasHeaderRow: true,
   targetCollection: "",
+  targetPath: "",
   writeMode: "",
   enabled: true,
+  columnsMappings: [],
 };
 
 export default function FileImportTypeCreatePage() {
@@ -40,7 +42,34 @@ export default function FileImportTypeCreatePage() {
     window.location.href = "/login";
   };
 
-  const handleChange = (field) => (event) => {
+  const handleChange = (field, index, key) => (event) => {
+    if (field === "addColumnMapping") {
+      setFormValues((prev) => ({
+        ...prev,
+        columnsMappings: [...prev.columnsMappings, { csvHeader: "", databaseField: "" }],
+      }));
+      return;
+    }
+
+    if (field === "removeColumnMapping") {
+      setFormValues((prev) => ({
+        ...prev,
+        columnsMappings: prev.columnsMappings.filter((_, mappingIndex) => mappingIndex !== index),
+      }));
+      return;
+    }
+
+    if (field === "columnMappingField") {
+      const nextValue = event?.target?.value || "";
+      setFormValues((prev) => ({
+        ...prev,
+        columnsMappings: prev.columnsMappings.map((mapping, mappingIndex) =>
+          mappingIndex === index ? { ...mapping, [key]: nextValue } : mapping
+        ),
+      }));
+      return;
+    }
+
     const nextValue = event?.target?.type === "checkbox" ? event.target.checked : event.target.value;
     setFormValues((prev) => ({ ...prev, [field]: nextValue }));
   };

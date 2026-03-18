@@ -376,6 +376,17 @@ export async function deleteFileImportSetting(hotelUid, fileImportSettingId) {
 }
 
 // *** FILE IMPORT TYPES ***
+function normalizeFileImportTypeMappings(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((mapping) => ({
+      csvHeader: String(mapping?.csvHeader || "").trim(),
+      databaseField: String(mapping?.databaseField || "").trim(),
+    }))
+    .filter((mapping) => mapping.csvHeader || mapping.databaseField);
+}
+
 function normalizeFileImportType(data = {}, fallbackId = "") {
   return {
     id: String(data.id || fallbackId || "").trim() || fallbackId,
@@ -384,8 +395,10 @@ function normalizeFileImportType(data = {}, fallbackId = "") {
     delimiter: String(data.delimiter || "").trim(),
     hasHeaderRow: Boolean(data.hasHeaderRow),
     targetCollection: String(data.targetCollection || "").trim(),
+    targetPath: String(data.targetPath || "").trim(),
     writeMode: String(data.writeMode || "").trim(),
     enabled: Boolean(data.enabled),
+    columnsMappings: normalizeFileImportTypeMappings(data.columnsMappings),
     createdBy: data.createdBy || null,
     createdAt: data.createdAt || null,
     updatedBy: data.updatedBy || null,
@@ -425,8 +438,10 @@ export async function createFileImportType(hotelUid, input) {
     delimiter: String(input?.delimiter || "").trim(),
     hasHeaderRow: Boolean(input?.hasHeaderRow),
     targetCollection: String(input?.targetCollection || "").trim(),
+    targetPath: String(input?.targetPath || "").trim(),
     writeMode: String(input?.writeMode || "").trim(),
     enabled: Boolean(input?.enabled),
+    columnsMappings: normalizeFileImportTypeMappings(input?.columnsMappings),
     createdBy: input?.createdBy || null,
     createdAt: new Date(),
   };
@@ -463,8 +478,10 @@ export async function updateFileImportType(hotelUid, fileImportTypeId, input) {
     delimiter: String(input?.delimiter || "").trim(),
     hasHeaderRow: Boolean(input?.hasHeaderRow),
     targetCollection: String(input?.targetCollection || "").trim(),
+    targetPath: String(input?.targetPath || "").trim(),
     writeMode: String(input?.writeMode || "").trim(),
     enabled: Boolean(input?.enabled),
+    columnsMappings: normalizeFileImportTypeMappings(input?.columnsMappings),
     updatedBy: input?.updatedBy || null,
     updatedAt: new Date(),
   });

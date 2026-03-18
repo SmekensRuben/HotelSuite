@@ -116,9 +116,44 @@ export default function FileImportTypeDetailPage() {
                 value={fileImportType.hasHeaderRow ? "Yes" : "No"}
               />
               <DetailRow label="Target Collection" value={fileImportType.targetCollection} />
+              <DetailRow label="Target Path" value={fileImportType.targetPath} />
               <DetailRow label="Write Mode" value={fileImportType.writeMode} />
               <DetailRow label="Enabled" value={fileImportType.enabled ? "Yes" : "No"} />
             </dl>
+
+            <div className="mt-6">
+              <h2 className="text-sm font-semibold text-gray-900">Column Mappings</h2>
+              <div className="mt-3 overflow-hidden rounded-lg border border-gray-200">
+                <table className="min-w-full divide-y divide-gray-200 bg-white">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        CSV Header
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        Database Field
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {fileImportType.columnsMappings.length === 0 ? (
+                      <tr>
+                        <td className="px-4 py-4 text-sm text-gray-500" colSpan={2}>
+                          No column mappings configured.
+                        </td>
+                      </tr>
+                    ) : (
+                      fileImportType.columnsMappings.map((mapping, index) => (
+                        <tr key={`${mapping.csvHeader}-${mapping.databaseField}-${index}`}>
+                          <td className="px-4 py-3 text-sm text-gray-700">{mapping.csvHeader || "-"}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{mapping.databaseField || "-"}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </Card>
         )}
 
