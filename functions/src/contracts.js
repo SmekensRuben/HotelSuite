@@ -376,6 +376,7 @@ const runContractCancellationRemindersNow = onDocumentCreated(
 );
 
 module.exports = {
+  resolveHotelName,
   sendContractCancellationReminders,
   runContractCancellationRemindersNow,
 };

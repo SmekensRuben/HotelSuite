@@ -1,4 +1,5 @@
 const { onDocumentCreated, logger, admin, Resend, React, RESEND_API_KEY, RESEND_FROM } = require("./config");
+const { resolveHotelName } = require("./contracts");
 
 function OrderApprovalRequestEmailTemplate({ hotelName, outletName, orderId, supplierName, deliveryDate, orderDetailUrl }) {
   return React.createElement(
