@@ -6,6 +6,13 @@ const defaultMapping = {
   databaseField: "",
 };
 
+const delimiterOptions = [
+  { value: ",", label: "Comma (,)" },
+  { value: ";", label: "Semicolon (;)" },
+  { value: "\t", label: "Tab" },
+  { value: "|", label: "Pipe (|)" },
+];
+
 export const initialFileImportTypeValues = {
   fileType: "csv",
   parserType: "csv",
@@ -82,15 +89,23 @@ export default function FileImportTypeForm({
           />
         </Field>
 
-        <Field label="Delimiter" htmlFor="delimiter">
-          <input
+        <Field
+          label="Delimiter"
+          htmlFor="delimiter"
+          hint="Choose how columns are separated in the incoming file. Use Tab for tab-delimited TXT/CSV files."
+        >
+          <select
             id="delimiter"
-            type="text"
             value={formValues.delimiter}
             onChange={onChange("delimiter")}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            placeholder=","
-          />
+          >
+            {delimiterOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </Field>
 
         <Field

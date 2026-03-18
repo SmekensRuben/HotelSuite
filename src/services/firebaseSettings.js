@@ -376,12 +376,21 @@ export async function deleteFileImportSetting(hotelUid, fileImportSettingId) {
 }
 
 // *** FILE IMPORT TYPES ***
+function normalizeFileImportDelimiter(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw || raw == "," || raw === "comma") return ",";
+  if (raw == ";" || raw === "semicolon" || raw === "semi-colon") return ";";
+  if (raw === "\t" || raw === "tab") return "\t";
+  if (raw === "|") return "|";
+  return String(value || "").trim();
+}
+
 function normalizeFileImportType(data = {}, fallbackId = "") {
   return {
     id: String(data.id || fallbackId || "").trim() || fallbackId,
     fileType: String(data.fileType || "").trim(),
     parserType: String(data.parserType || "").trim(),
-    delimiter: String(data.delimiter || "").trim(),
+    delimiter: normalizeFileImportDelimiter(data.delimiter),
     hasHeaderRow: Boolean(data.hasHeaderRow),
     targetCollection: String(data.targetCollection || "").trim(),
     basePath: String(data.basePath || "").trim(),
@@ -409,7 +418,7 @@ function buildFileImportTypePayload(input, existingId = null) {
     id: String(input?.id || existingId || "").trim() || existingId,
     fileType: String(input?.fileType || "").trim(),
     parserType: String(input?.parserType || "").trim(),
-    delimiter: String(input?.delimiter || "").trim(),
+    delimiter: normalizeFileImportDelimiter(input?.delimiter),
     hasHeaderRow: Boolean(input?.hasHeaderRow),
     targetCollection: String(input?.targetCollection || "").trim(),
     basePath: String(input?.basePath || "").trim(),
