@@ -115,7 +115,11 @@ export default function FileImportTypeDetailPage() {
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <DetailField label="File Type" value={fileImportType.fileType} />
                 <DetailField label="Parser Type" value={fileImportType.parserType} />
-                <DetailField label="Delimiter" value={fileImportType.delimiter} />
+                <DetailField label="Delimiter" value={fileImportType.parserType === "csv" ? fileImportType.delimiter : "-"} />
+                <DetailField
+                  label="Record Node Name"
+                  value={fileImportType.parserType === "xml" ? fileImportType.recordNodeName : "-"}
+                />
                 <DetailField label="Has Header Row" value={fileImportType.hasHeaderRow ? "Yes" : "No"} />
                 <DetailField label="Target Collection" value={fileImportType.targetCollection} />
                 <DetailField label="Base Path" value={fileImportType.basePath} />
@@ -128,8 +132,14 @@ export default function FileImportTypeDetailPage() {
                       : "Current Date"
                   }
                 />
-                <DetailField label="Record Parsing Mode" value={fileImportType.recordParsingMode} />
-                <DetailField label="Expected Column Count" value={fileImportType.expectedColumnCount} />
+                <DetailField
+                  label="Record Parsing Mode"
+                  value={fileImportType.parserType === "csv" ? fileImportType.recordParsingMode : "-"}
+                />
+                <DetailField
+                  label="Expected Column Count"
+                  value={fileImportType.parserType === "csv" ? fileImportType.expectedColumnCount : "-"}
+                />
                 <DetailField label="Write Mode" value={fileImportType.writeMode} />
                 <DetailField label="Enabled" value={fileImportType.enabled ? "Yes" : "No"} />
               </div>
@@ -139,7 +149,7 @@ export default function FileImportTypeDetailPage() {
               <div className="space-y-4">
                 <div>
                   <h2 className="text-lg font-semibold text-gray-900">Column Mappings</h2>
-                  <p className="text-sm text-gray-500">Configured CSV header to database field mappings.</p>
+                  <p className="text-sm text-gray-500">Configured source field to database field mappings.</p>
                 </div>
 
                 {fileImportType.columnMappings.length === 0 ? (
@@ -150,7 +160,7 @@ export default function FileImportTypeDetailPage() {
                       <thead className="bg-gray-50">
                         <tr>
                           <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                            CSV Header
+                            Source Field
                           </th>
                           <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                             Database Field
@@ -159,8 +169,8 @@ export default function FileImportTypeDetailPage() {
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {fileImportType.columnMappings.map((mapping, index) => (
-                          <tr key={`${mapping.csvHeader}-${mapping.databaseField}-${index}`}>
-                            <td className="px-4 py-3 text-sm text-gray-700">{mapping.csvHeader || "-"}</td>
+                          <tr key={`${mapping.sourceField || mapping.csvHeader}-${mapping.databaseField}-${index}`}>
+                            <td className="px-4 py-3 text-sm text-gray-700">{mapping.sourceField || mapping.csvHeader || "-"}</td>
                             <td className="px-4 py-3 text-sm text-gray-700">{mapping.databaseField || "-"}</td>
                           </tr>
                         ))}

@@ -392,8 +392,9 @@ function normalizeFileImportType(data = {}, fallbackId = "") {
   return {
     id: String(data.id || fallbackId || "").trim() || fallbackId,
     fileType: String(data.fileType || "").trim(),
-    parserType: String(data.parserType || "").trim(),
+    parserType: String(data.parserType || "csv").trim().toLowerCase() || "csv",
     delimiter: normalizeFileImportDelimiter(data.delimiter),
+    recordNodeName: String(data.recordNodeName || "").trim(),
     hasHeaderRow: Boolean(data.hasHeaderRow),
     targetCollection: String(data.targetCollection || "").trim(),
     basePath: String(data.basePath || "").trim(),
@@ -410,7 +411,7 @@ function normalizeFileImportType(data = {}, fallbackId = "") {
     enabled: Boolean(data.enabled),
     columnMappings: Array.isArray(data.columnMappings)
       ? data.columnMappings.map((mapping) => ({
-          csvHeader: String(mapping?.csvHeader || "").trim(),
+          sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
           databaseField: String(mapping?.databaseField || "").trim(),
         }))
       : [],
@@ -425,8 +426,9 @@ function buildFileImportTypePayload(input, existingId = null) {
   const payload = {
     id: String(input?.id || existingId || "").trim() || existingId,
     fileType: String(input?.fileType || "").trim(),
-    parserType: String(input?.parserType || "").trim(),
+    parserType: String(input?.parserType || "csv").trim().toLowerCase() || "csv",
     delimiter: normalizeFileImportDelimiter(input?.delimiter),
+    recordNodeName: String(input?.recordNodeName || "").trim(),
     hasHeaderRow: Boolean(input?.hasHeaderRow),
     targetCollection: String(input?.targetCollection || "").trim(),
     basePath: String(input?.basePath || "").trim(),
@@ -444,15 +446,23 @@ function buildFileImportTypePayload(input, existingId = null) {
     columnMappings: Array.isArray(input?.columnMappings)
       ? input.columnMappings
           .map((mapping) => ({
-            csvHeader: String(mapping?.csvHeader || "").trim(),
+            sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
             databaseField: String(mapping?.databaseField || "").trim(),
           }))
-          .filter((mapping) => mapping.csvHeader || mapping.databaseField)
+          .filter((mapping) => mapping.sourceField || mapping.databaseField)
       : [],
   };
 
   if (!payload.fileType) {
     throw new Error("File type is verplicht");
+  }
+
+  if (!["csv", "xml"].includes(payload.parserType)) {
+    throw new Error("Parser type moet CSV of XML zijn");
+  }
+
+  if (payload.parserType === "xml" && !payload.recordNodeName) {
+    throw new Error("Record Node Name is verplicht voor XML imports");
   }
 
   if (payload.targetDateSourceType !== "currentDate" && payload.targetDateSourceType !== "databaseField") {
