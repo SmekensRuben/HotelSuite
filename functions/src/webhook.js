@@ -1,4 +1,4 @@
-const { onRequest, admin, RESEND_API_KEY } = require("./config");
+const { onRequest, logger, admin, RESEND_API_KEY } = require("./config");
 const { extractEmailAddress, toEmailList, getFirstAvailableImportAttachment, fetchResendAttachmentBuffer, normalizeFileType } = require("./common");
 
 const handleResendEmailReceivedWebhook = onRequest({ secrets: [RESEND_API_KEY] }, async (req, res) => {
