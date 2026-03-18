@@ -304,18 +304,19 @@ function parseDateFromFormat(value, format) {
   const tokenPattern = normalizedFormat
     .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
     .replace(/yyyy/g, "(\\d{4})")
+    .replace(/yy/g, "(\\d{2})")
     .replace(/MM/g, "(\\d{1,2})")
     .replace(/dd/g, "(\\d{1,2})");
   const match = new RegExp(`^${tokenPattern}$`).exec(raw);
   if (!match) return null;
 
-  const tokenMatches = normalizedFormat.match(/yyyy|MM|dd/g) || [];
+  const tokenMatches = normalizedFormat.match(/yyyy|yy|MM|dd/g) || [];
   const tokenValues = {};
   tokenMatches.forEach((token, index) => {
     tokenValues[token] = Number(match[index + 1]);
   });
 
-  const year = tokenValues.yyyy;
+  const year = tokenValues.yyyy ?? (tokenValues.yy !== undefined ? 2000 + tokenValues.yy : undefined);
   const month = tokenValues.MM;
   const day = tokenValues.dd;
   if (!year || !month || !day) return null;

@@ -45,6 +45,7 @@ const dateFormatOptions = [
   { value: "MM-dd-yyyy", label: "MM-dd-yyyy" },
   { value: "yyyy/MM/dd", label: "yyyy/MM/dd" },
   { value: "dd.MM.yyyy", label: "dd.MM.yyyy" },
+  { value: "dd.MM.yy", label: "dd.MM.yy" },
   { value: "MM.dd.yyyy", label: "MM.dd.yyyy" },
 ];
 
