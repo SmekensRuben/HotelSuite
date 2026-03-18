@@ -118,7 +118,16 @@ export default function FileImportTypeDetailPage() {
                 <DetailField label="Delimiter" value={fileImportType.delimiter} />
                 <DetailField label="Has Header Row" value={fileImportType.hasHeaderRow ? "Yes" : "No"} />
                 <DetailField label="Target Collection" value={fileImportType.targetCollection} />
+                <DetailField label="Base Path" value={fileImportType.basePath} />
                 <DetailField label="Target Path" value={fileImportType.targetPath} />
+                <DetailField
+                  label="Date Source"
+                  value={
+                    fileImportType.targetDateSourceType === "databaseField"
+                      ? `Database Field: ${fileImportType.targetDateSourceField || "-"}`
+                      : "Current Date"
+                  }
+                />
                 <DetailField label="Write Mode" value={fileImportType.writeMode} />
                 <DetailField label="Enabled" value={fileImportType.enabled ? "Yes" : "No"} />
               </div>

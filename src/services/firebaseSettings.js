@@ -384,7 +384,11 @@ function normalizeFileImportType(data = {}, fallbackId = "") {
     delimiter: String(data.delimiter || "").trim(),
     hasHeaderRow: Boolean(data.hasHeaderRow),
     targetCollection: String(data.targetCollection || "").trim(),
+    basePath: String(data.basePath || "").trim(),
     targetPath: String(data.targetPath || "").trim(),
+    targetDateSourceType:
+      String(data.targetDateSourceType || "currentDate").trim() || "currentDate",
+    targetDateSourceField: String(data.targetDateSourceField || "").trim(),
     writeMode: String(data.writeMode || "").trim(),
     enabled: Boolean(data.enabled),
     columnMappings: Array.isArray(data.columnMappings)
@@ -408,7 +412,11 @@ function buildFileImportTypePayload(input, existingId = null) {
     delimiter: String(input?.delimiter || "").trim(),
     hasHeaderRow: Boolean(input?.hasHeaderRow),
     targetCollection: String(input?.targetCollection || "").trim(),
+    basePath: String(input?.basePath || "").trim(),
     targetPath: String(input?.targetPath || "").trim(),
+    targetDateSourceType:
+      String(input?.targetDateSourceType || "currentDate").trim() || "currentDate",
+    targetDateSourceField: String(input?.targetDateSourceField || "").trim(),
     writeMode: String(input?.writeMode || "").trim(),
     enabled: Boolean(input?.enabled),
     columnMappings: Array.isArray(input?.columnMappings)
@@ -423,6 +431,23 @@ function buildFileImportTypePayload(input, existingId = null) {
 
   if (!payload.fileType) {
     throw new Error("File type is verplicht");
+  }
+
+  if (payload.targetDateSourceType !== "currentDate" && payload.targetDateSourceType !== "databaseField") {
+    payload.targetDateSourceType = "currentDate";
+  }
+
+  if (payload.targetDateSourceType === "databaseField") {
+    if (!payload.targetDateSourceField) {
+      throw new Error("Date database field is verplicht wanneer Date Source op Database Field staat");
+    }
+
+    const availableDatabaseFields = new Set(payload.columnMappings.map((mapping) => mapping.databaseField));
+    if (!availableDatabaseFields.has(payload.targetDateSourceField)) {
+      throw new Error("Date database field moet overeenkomen met een database field uit de column mappings");
+    }
+  } else {
+    payload.targetDateSourceField = "";
   }
 
   return payload;

@@ -52,7 +52,9 @@ export default function FileImportTypesPage() {
         fileImportType.fileType,
         fileImportType.parserType,
         fileImportType.targetCollection,
+        fileImportType.basePath,
         fileImportType.targetPath,
+        fileImportType.targetDateSourceField,
         fileImportType.writeMode,
       ].map((value) => String(value || "").toLowerCase());
 
@@ -63,7 +65,7 @@ export default function FileImportTypesPage() {
   const columns = [
     { key: "fileType", label: "File Type" },
     { key: "parserType", label: "Parser Type" },
-    { key: "targetCollection", label: "Target Collection" },
+    { key: "basePath", label: "Base Path" },
     { key: "writeMode", label: "Write Mode" },
     {
       key: "enabled",

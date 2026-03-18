@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
 const defaultMapping = {
@@ -12,19 +12,23 @@ export const initialFileImportTypeValues = {
   delimiter: ",",
   hasHeaderRow: true,
   targetCollection: "",
+  basePath: "",
   targetPath: "",
+  targetDateSourceType: "currentDate",
+  targetDateSourceField: "",
   writeMode: "overwrite",
   enabled: true,
   columnMappings: [defaultMapping],
 };
 
-function Field({ label, htmlFor, children }) {
+function Field({ label, htmlFor, children, hint }) {
   return (
     <div>
       <label htmlFor={htmlFor} className="block text-sm font-medium text-gray-700 mb-1">
         {label}
       </label>
       {children}
+      {hint ? <p className="mt-1 text-xs text-gray-500">{hint}</p> : null}
     </div>
   );
 }
@@ -41,6 +45,17 @@ export default function FileImportTypeForm({
   saving,
   submitLabel,
 }) {
+  const databaseFieldOptions = useMemo(
+    () =>
+      formValues.columnMappings
+        .map((mapping) => ({
+          csvHeader: String(mapping?.csvHeader || "").trim(),
+          databaseField: String(mapping?.databaseField || "").trim(),
+        }))
+        .filter((mapping) => mapping.csvHeader && mapping.databaseField),
+    [formValues.columnMappings]
+  );
+
   return (
     <form onSubmit={onSubmit} className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2">
@@ -78,7 +93,11 @@ export default function FileImportTypeForm({
           />
         </Field>
 
-        <Field label="Target Collection" htmlFor="target-collection">
+        <Field
+          label="Target Collection"
+          htmlFor="target-collection"
+          hint="Optional. Leave empty when the Firestore write path is fully defined through Base Path + Target Path."
+        >
           <input
             id="target-collection"
             type="text"
@@ -89,15 +108,71 @@ export default function FileImportTypeForm({
           />
         </Field>
 
-        <Field label="Target Path" htmlFor="target-path">
+        <Field
+          label="Base Path"
+          htmlFor="base-path"
+          hint='Example: hotels/{hotelUid}/reports/operaReports/'
+        >
+          <input
+            id="base-path"
+            type="text"
+            value={formValues.basePath}
+            onChange={onChange("basePath")}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            placeholder="hotels/{hotelUid}/reports/operaReports/"
+          />
+        </Field>
+
+        <Field
+          label="Target Path"
+          htmlFor="target-path"
+          hint='Example: {fileType}/{date}/{documentId}'
+        >
           <input
             id="target-path"
             type="text"
             value={formValues.targetPath}
             onChange={onChange("targetPath")}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            placeholder="products/items"
+            placeholder="{fileType}/{date}/{documentId}"
           />
+        </Field>
+
+        <Field label="Date Source" htmlFor="target-date-source-type">
+          <select
+            id="target-date-source-type"
+            value={formValues.targetDateSourceType}
+            onChange={onChange("targetDateSourceType")}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          >
+            <option value="currentDate">Current Date</option>
+            <option value="databaseField">Database Field</option>
+          </select>
+        </Field>
+
+        <Field
+          label="Date Database Field"
+          htmlFor="target-date-source-field"
+          hint={
+            formValues.targetDateSourceType === "databaseField"
+              ? "Choose a database field from the configured column mappings. The mapped CSV value will later be parsed as a date."
+              : "Only used when Date Source is set to Database Field."
+          }
+        >
+          <select
+            id="target-date-source-field"
+            value={formValues.targetDateSourceField}
+            onChange={onChange("targetDateSourceField")}
+            disabled={formValues.targetDateSourceType !== "databaseField"}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
+          >
+            <option value="">Select a database field</option>
+            {databaseFieldOptions.map((mapping) => (
+              <option key={`${mapping.databaseField}-${mapping.csvHeader}`} value={mapping.databaseField}>
+                {mapping.databaseField} ← {mapping.csvHeader}
+              </option>
+            ))}
+          </select>
         </Field>
 
         <Field label="Write Mode" htmlFor="write-mode">
@@ -151,7 +226,10 @@ export default function FileImportTypeForm({
 
         <div className="space-y-3">
           {formValues.columnMappings.map((mapping, index) => (
-            <div key={`mapping-${index}`} className="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 md:grid-cols-[1fr_1fr_auto]">
+            <div
+              key={`mapping-${index}`}
+              className="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 md:grid-cols-[1fr_1fr_auto]"
+            >
               <Field label="CSV Header" htmlFor={`csv-header-${index}`}>
                 <input
                   id={`csv-header-${index}`}

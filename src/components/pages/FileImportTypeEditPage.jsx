@@ -44,7 +44,10 @@ export default function FileImportTypeEditPage() {
           delimiter: data.delimiter || "",
           hasHeaderRow: Boolean(data.hasHeaderRow),
           targetCollection: data.targetCollection || "",
+          basePath: data.basePath || "",
           targetPath: data.targetPath || "",
+          targetDateSourceType: data.targetDateSourceType || "currentDate",
+          targetDateSourceField: data.targetDateSourceField || "",
           writeMode: data.writeMode || "",
           enabled: Boolean(data.enabled),
           columnMappings:
