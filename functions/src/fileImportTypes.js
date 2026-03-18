@@ -31,6 +31,56 @@ function normalizeColumnMappings(fileImportType) {
     : [];
 }
 
+function stitchFragmentedRows(rows, expectedColumnCount) {
+  if (!Array.isArray(rows) || rows.length === 0 || !expectedColumnCount) return rows || [];
+
+  const stitchedRows = [];
+  let buffer = null;
+
+  const flushBuffer = () => {
+    if (buffer) {
+      stitchedRows.push(buffer);
+      buffer = null;
+    }
+  };
+
+  rows.forEach((row) => {
+    const normalizedRow = Array.isArray(row)
+      ? row.map((value) => String(value ?? ""))
+      : [String(row ?? "")];
+
+    if (!buffer) {
+      buffer = normalizedRow;
+      return;
+    }
+
+    if (buffer.length >= expectedColumnCount) {
+      flushBuffer();
+      buffer = normalizedRow;
+      return;
+    }
+
+    if (normalizedRow.length === 0) {
+      return;
+    }
+
+    const mergedRow = [...buffer];
+    const lastIndex = mergedRow.length - 1;
+    mergedRow[lastIndex] = `${mergedRow[lastIndex]} ${normalizedRow[0]}`.trim();
+    if (normalizedRow.length > 1) {
+      mergedRow.push(...normalizedRow.slice(1));
+    }
+    buffer = mergedRow;
+
+    if (buffer.length >= expectedColumnCount) {
+      flushBuffer();
+    }
+  });
+
+  flushBuffer();
+  return stitchedRows;
+}
+
 function parseCsvDocuments(content, fileImportType) {
   const delimiter = normalizeDelimiter(fileImportType?.delimiter);
   const normalizedMappings = normalizeColumnMappings(fileImportType);
@@ -55,7 +105,8 @@ function parseCsvDocuments(content, fileImportType) {
   const headerRow = hasHeaderRow
     ? parsedRows[0].map((value, index) => normalizeHeader(value, index))
     : parsedRows[0].map((_, index) => `column${index + 1}`);
-  const dataRows = hasHeaderRow ? parsedRows.slice(1) : parsedRows;
+  const rawDataRows = hasHeaderRow ? parsedRows.slice(1) : parsedRows;
+  const dataRows = stitchFragmentedRows(rawDataRows, headerRow.length);
 
   return dataRows
     .map((values, index) => {
