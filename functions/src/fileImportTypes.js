@@ -53,14 +53,22 @@ function normalizeHeader(value, index) {
   return cleaned || `column${index + 1}`;
 }
 
+function normalizeLookupKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 function normalizeColumnMappings(fileImportType) {
   return Array.isArray(fileImportType?.columnMappings)
     ? fileImportType.columnMappings
         .map((mapping) => ({
           csvHeader: String(mapping?.csvHeader || "").trim(),
+          csvHeaderKey: normalizeLookupKey(mapping?.csvHeader || ""),
           databaseField: String(mapping?.databaseField || "").trim(),
         }))
-        .filter((mapping) => mapping.csvHeader && mapping.databaseField)
+        .filter((mapping) => mapping.csvHeaderKey && mapping.databaseField)
     : [];
 }
 
@@ -82,12 +90,12 @@ function parseCsvDocuments(content, fileImportType) {
     .map((values, index) => {
       const csvRow = {};
       headerRow.forEach((header, valueIndex) => {
-        csvRow[header] = String(values?.[valueIndex] || "").trim();
+        csvRow[normalizeLookupKey(header)] = String(values?.[valueIndex] || "").trim();
       });
 
       const mappedDocument = {};
       normalizedMappings.forEach((mapping) => {
-        mappedDocument[mapping.databaseField] = String(csvRow[mapping.csvHeader] || "").trim();
+        mappedDocument[mapping.databaseField] = String(csvRow[mapping.csvHeaderKey] || "").trim();
       });
 
       const hasMappedValue = Object.values(mappedDocument).some((value) => value !== "");
