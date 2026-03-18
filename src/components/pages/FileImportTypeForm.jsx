@@ -2,7 +2,7 @@ import React, { useMemo } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
 const defaultMapping = {
-  csvHeader: "",
+  sourceField: "",
   databaseField: "",
 };
 
@@ -31,6 +31,7 @@ export const initialFileImportTypeValues = {
   targetDateSourceField: "",
   recordParsingMode: "auto",
   expectedColumnCount: "",
+  recordNodeName: "",
   writeMode: "overwrite",
   enabled: true,
   columnMappings: [defaultMapping],
@@ -60,14 +61,16 @@ export default function FileImportTypeForm({
   saving,
   submitLabel,
 }) {
+  const isXmlParser = formValues.parserType === "xml";
+
   const databaseFieldOptions = useMemo(
     () =>
       formValues.columnMappings
         .map((mapping) => ({
-          csvHeader: String(mapping?.csvHeader || "").trim(),
+          sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
           databaseField: String(mapping?.databaseField || "").trim(),
         }))
-        .filter((mapping) => mapping.csvHeader && mapping.databaseField),
+        .filter((mapping) => mapping.sourceField && mapping.databaseField),
     [formValues.columnMappings]
   );
 
@@ -87,34 +90,53 @@ export default function FileImportTypeForm({
         </Field>
 
         <Field label="Parser Type" htmlFor="parser-type">
-          <input
+          <select
             id="parser-type"
-            type="text"
             value={formValues.parserType}
             onChange={onChange("parserType")}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            placeholder="csv"
-          />
-        </Field>
-
-        <Field
-          label="Delimiter"
-          htmlFor="delimiter"
-          hint="Choose how columns are separated in the incoming file. Use Tab for tab-delimited TXT/CSV files."
-        >
-          <select
-            id="delimiter"
-            value={formValues.delimiter}
-            onChange={onChange("delimiter")}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
           >
-            {delimiterOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
+            <option value="csv">CSV</option>
+            <option value="xml">XML</option>
           </select>
         </Field>
+
+        {isXmlParser ? (
+          <Field
+            label="Record Node Name"
+            htmlFor="record-node-name"
+            hint="Required for XML imports. This is the repeating XML node that represents one record; source fields map to child nodes within it."
+          >
+            <input
+              id="record-node-name"
+              type="text"
+              value={formValues.recordNodeName}
+              onChange={onChange("recordNodeName")}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              placeholder="record"
+              required={isXmlParser}
+            />
+          </Field>
+        ) : (
+          <Field
+            label="Delimiter"
+            htmlFor="delimiter"
+            hint="Choose how columns are separated in the incoming file. Use Tab for tab-delimited TXT/CSV files."
+          >
+            <select
+              id="delimiter"
+              value={formValues.delimiter}
+              onChange={onChange("delimiter")}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              {delimiterOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
 
         <Field
           label="Target Collection"
@@ -178,7 +200,7 @@ export default function FileImportTypeForm({
           htmlFor="target-date-source-field"
           hint={
             formValues.targetDateSourceType === "databaseField"
-              ? "Choose a database field from the configured column mappings. The mapped CSV value will later be parsed as a date."
+              ? `Choose a database field from the configured column mappings. The mapped ${isXmlParser ? "XML node value" : "source value"} will later be parsed as a date.`
               : "Only used when Date Source is set to Database Field."
           }
         >
@@ -191,47 +213,51 @@ export default function FileImportTypeForm({
           >
             <option value="">Select a database field</option>
             {databaseFieldOptions.map((mapping) => (
-              <option key={`${mapping.databaseField}-${mapping.csvHeader}`} value={mapping.databaseField}>
-                {mapping.databaseField} ← {mapping.csvHeader}
+              <option key={`${mapping.databaseField}-${mapping.sourceField}`} value={mapping.databaseField}>
+                {mapping.databaseField} ← {mapping.sourceField}
               </option>
             ))}
           </select>
         </Field>
 
-        <Field
-          label="Record Parsing Mode"
-          htmlFor="record-parsing-mode"
-          hint="Use Auto by default. Switch to Direct or Buffered only if a specific import type consistently parses better with one strategy."
-        >
-          <select
-            id="record-parsing-mode"
-            value={formValues.recordParsingMode}
-            onChange={onChange("recordParsingMode")}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        {!isXmlParser ? (
+          <Field
+            label="Record Parsing Mode"
+            htmlFor="record-parsing-mode"
+            hint="Use Auto by default. Switch to Direct or Buffered only if a specific import type consistently parses better with one strategy."
           >
-            {recordParsingModeOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </Field>
+            <select
+              id="record-parsing-mode"
+              value={formValues.recordParsingMode}
+              onChange={onChange("recordParsingMode")}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              {recordParsingModeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
 
-        <Field
-          label="Expected Column Count"
-          htmlFor="expected-column-count"
-          hint="Optional. Helps the parser decide when a row is incomplete or accidentally split over multiple physical lines."
-        >
-          <input
-            id="expected-column-count"
-            type="number"
-            min="1"
-            value={formValues.expectedColumnCount}
-            onChange={onChange("expectedColumnCount")}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            placeholder="Leave empty to derive from header"
-          />
-        </Field>
+        {!isXmlParser ? (
+          <Field
+            label="Expected Column Count"
+            htmlFor="expected-column-count"
+            hint="Optional. Helps the parser decide when a row is incomplete or accidentally split over multiple physical lines."
+          >
+            <input
+              id="expected-column-count"
+              type="number"
+              min="1"
+              value={formValues.expectedColumnCount}
+              onChange={onChange("expectedColumnCount")}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              placeholder="Leave empty to derive from header"
+            />
+          </Field>
+        ) : null}
 
         <Field label="Write Mode" htmlFor="write-mode">
           <input
@@ -246,15 +272,19 @@ export default function FileImportTypeForm({
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <label className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <input
-            type="checkbox"
-            checked={formValues.hasHeaderRow}
-            onChange={onToggle("hasHeaderRow")}
-            className="h-4 w-4 rounded border-gray-300 text-[#b41f1f]"
-          />
-          <span className="text-sm font-medium text-gray-700">Has Header Row</span>
-        </label>
+        {!isXmlParser ? (
+          <label className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+            <input
+              type="checkbox"
+              checked={formValues.hasHeaderRow}
+              onChange={onToggle("hasHeaderRow")}
+              className="h-4 w-4 rounded border-gray-300 text-[#b41f1f]"
+            />
+            <span className="text-sm font-medium text-gray-700">Has Header Row</span>
+          </label>
+        ) : (
+          <div />
+        )}
 
         <label className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
           <input
@@ -271,7 +301,9 @@ export default function FileImportTypeForm({
         <div className="flex items-center justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Column Mappings</h2>
-            <p className="text-sm text-gray-500">Map CSV headers to database fields.</p>
+            <p className="text-sm text-gray-500">
+              Map source fields to database fields. For XML imports, source fields are child nodes inside the configured record node.
+            </p>
           </div>
           <button
             type="button"
@@ -288,14 +320,14 @@ export default function FileImportTypeForm({
               key={`mapping-${index}`}
               className="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 md:grid-cols-[1fr_1fr_auto]"
             >
-              <Field label="CSV Header" htmlFor={`csv-header-${index}`}>
+              <Field label="Source Field" htmlFor={`source-field-${index}`}>
                 <input
-                  id={`csv-header-${index}`}
+                  id={`source-field-${index}`}
                   type="text"
-                  value={mapping.csvHeader}
-                  onChange={onMappingChange(index, "csvHeader")}
+                  value={mapping.sourceField ?? mapping.csvHeader ?? ""}
+                  onChange={onMappingChange(index, "sourceField")}
                   className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-                  placeholder="sku"
+                  placeholder={isXmlParser ? "ProductCode" : "sku"}
                 />
               </Field>
 

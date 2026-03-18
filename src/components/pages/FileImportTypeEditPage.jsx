@@ -49,6 +49,7 @@ export default function FileImportTypeEditPage() {
           targetDateSourceType: data.targetDateSourceType || "currentDate",
           targetDateSourceField: data.targetDateSourceField || "",
           recordParsingMode: data.recordParsingMode || "auto",
+          recordNodeName: data.recordNodeName || "",
           expectedColumnCount:
             data.expectedColumnCount === null || data.expectedColumnCount === undefined
               ? ""
@@ -57,8 +58,11 @@ export default function FileImportTypeEditPage() {
           enabled: Boolean(data.enabled),
           columnMappings:
             Array.isArray(data.columnMappings) && data.columnMappings.length > 0
-              ? data.columnMappings
-              : [{ csvHeader: "", databaseField: "" }],
+              ? data.columnMappings.map((mapping) => ({
+                  sourceField: mapping?.sourceField || mapping?.csvHeader || "",
+                  databaseField: mapping?.databaseField || "",
+                }))
+              : [{ sourceField: "", databaseField: "" }],
         });
       }
       setLoading(false);
@@ -88,7 +92,7 @@ export default function FileImportTypeEditPage() {
   const handleAddMapping = () => {
     setFormValues((prev) => ({
       ...prev,
-      columnMappings: [...prev.columnMappings, { csvHeader: "", databaseField: "" }],
+      columnMappings: [...prev.columnMappings, { sourceField: "", databaseField: "" }],
     }));
   };
 

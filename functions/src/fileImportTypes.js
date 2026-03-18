@@ -1,4 +1,5 @@
 const { parse } = require("csv-parse/sync");
+const { XMLParser } = require("fast-xml-parser");
 const { onObjectFinalized, logger, admin } = require("./config");
 
 function normalizeDelimiter(value) {
@@ -23,11 +24,11 @@ function normalizeColumnMappings(fileImportType) {
   return Array.isArray(fileImportType?.columnMappings)
     ? fileImportType.columnMappings
         .map((mapping) => ({
-          csvHeader: String(mapping?.csvHeader || "").trim(),
-          csvHeaderKey: normalizeLookupKey(mapping?.csvHeader || ""),
+          sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
+          sourceFieldKey: normalizeLookupKey(mapping?.sourceField || mapping?.csvHeader || ""),
           databaseField: String(mapping?.databaseField || "").trim(),
         }))
-        .filter((mapping) => mapping.csvHeaderKey && mapping.databaseField)
+        .filter((mapping) => mapping.sourceFieldKey && mapping.databaseField)
     : [];
 }
 
@@ -62,8 +63,7 @@ function buildLogicalRecords(content, delimiter, hasHeaderRow, configuredExpecte
   const nonEmptyLines = physicalLines.filter((line) => line !== "");
   if (nonEmptyLines.length === 0) return { headerRow: [], dataRows: [] };
 
-  const headerSource = nonEmptyLines[0];
-  const headerRow = hasHeaderRow ? parsePhysicalLine(headerSource, delimiter) : parsePhysicalLine(nonEmptyLines[0], delimiter);
+  const headerRow = parsePhysicalLine(nonEmptyLines[0], delimiter);
   const expectedColumnCount = resolveExpectedColumnCount(configuredExpectedColumnCount, headerRow.length);
   const startIndex = hasHeaderRow ? 1 : 0;
   const dataRows = [];
@@ -112,7 +112,7 @@ function parseWholeFileRecords(content, delimiter, hasHeaderRow) {
     return { headerRow: [], dataRows: [] };
   }
 
-  const headerRow = hasHeaderRow ? parsedRows[0] : parsedRows[0];
+  const headerRow = parsedRows[0];
   const dataRows = hasHeaderRow ? parsedRows.slice(1) : parsedRows;
   return { headerRow, dataRows };
 }
@@ -130,6 +130,25 @@ function scoreParsedRows(rows, expectedColumnCount) {
   });
 
   return (exactMatches * 1000) + usableRows;
+}
+
+function mapDocumentsFromFlatRecords(records, normalizedMappings) {
+  return records
+    .map((record, index) => {
+      const mappedDocument = {};
+      normalizedMappings.forEach((mapping) => {
+        mappedDocument[mapping.databaseField] = String(record?.[mapping.sourceFieldKey] ?? "").trim();
+      });
+
+      const hasMappedValue = Object.values(mappedDocument).some((value) => value !== "");
+      if (!hasMappedValue) return null;
+
+      return {
+        rowIndex: index,
+        mappedDocument,
+      };
+    })
+    .filter(Boolean);
 }
 
 function parseCsvDocuments(content, fileImportType) {
@@ -165,27 +184,93 @@ function parseCsvDocuments(content, fileImportType) {
     ? rawHeaderRow.map((value, index) => normalizeHeader(value, index))
     : rawHeaderRow.map((_, index) => `column${index + 1}`);
 
-  return dataRows
-    .map((values, index) => {
-      const csvRow = {};
-      headerRow.forEach((header, valueIndex) => {
-        csvRow[normalizeLookupKey(header)] = String(values?.[valueIndex] ?? "").trim();
-      });
+  const flatRecords = dataRows.map((values) => {
+    const csvRow = {};
+    headerRow.forEach((header, valueIndex) => {
+      csvRow[normalizeLookupKey(header)] = String(values?.[valueIndex] ?? "").trim();
+    });
+    return csvRow;
+  });
 
-      const mappedDocument = {};
-      normalizedMappings.forEach((mapping) => {
-        mappedDocument[mapping.databaseField] = String(csvRow[mapping.csvHeaderKey] ?? "").trim();
-      });
+  return mapDocumentsFromFlatRecords(flatRecords, normalizedMappings);
+}
 
-      const hasMappedValue = Object.values(mappedDocument).some((value) => value !== "");
-      if (!hasMappedValue) return null;
+function collectValuesByNodeName(value, normalizedNodeName, results = []) {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectValuesByNodeName(item, normalizedNodeName, results));
+    return results;
+  }
 
-      return {
-        rowIndex: index,
-        mappedDocument,
-      };
-    })
-    .filter(Boolean);
+  if (!value || typeof value !== "object") {
+    return results;
+  }
+
+  Object.entries(value).forEach(([key, child]) => {
+    if (normalizeLookupKey(key) === normalizedNodeName) {
+      if (Array.isArray(child)) {
+        child.forEach((item) => results.push(item));
+      } else {
+        results.push(child);
+      }
+    }
+
+    collectValuesByNodeName(child, normalizedNodeName, results);
+  });
+
+  return results;
+}
+
+function flattenXmlRecord(value, prefix = "", target = {}) {
+  if (Array.isArray(value)) {
+    target[normalizeLookupKey(prefix)] = value.map((item) => String(item ?? "").trim()).join(", ");
+    return target;
+  }
+
+  if (value && typeof value === "object") {
+    Object.entries(value).forEach(([key, child]) => {
+      const nextPrefix = prefix ? `${prefix}.${key}` : key;
+      flattenXmlRecord(child, nextPrefix, target);
+    });
+    return target;
+  }
+
+  if (prefix) {
+    target[normalizeLookupKey(prefix)] = String(value ?? "").trim();
+  }
+  return target;
+}
+
+function parseXmlDocuments(content, fileImportType) {
+  const normalizedMappings = normalizeColumnMappings(fileImportType);
+  if (normalizedMappings.length === 0) return [];
+
+  const recordNodeName = String(fileImportType?.recordNodeName || "").trim();
+  if (!recordNodeName) return [];
+
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: "@_",
+    parseTagValue: true,
+    trimValues: true,
+  });
+
+  const parsedXml = parser.parse(String(content || ""));
+  const recordNodes = collectValuesByNodeName(parsedXml, normalizeLookupKey(recordNodeName));
+  if (recordNodes.length === 0) return [];
+
+  const flatRecords = recordNodes
+    .map((recordNode) => flattenXmlRecord(recordNode))
+    .filter((recordNode) => Object.keys(recordNode).length > 0);
+
+  return mapDocumentsFromFlatRecords(flatRecords, normalizedMappings);
+}
+
+function parseImportedDocuments(content, fileImportType) {
+  const parserType = String(fileImportType?.parserType || "csv").trim().toLowerCase();
+  if (parserType === "xml") {
+    return parseXmlDocuments(content, fileImportType);
+  }
+  return parseCsvDocuments(content, fileImportType);
 }
 
 function formatDateValue(value) {
@@ -336,8 +421,8 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1" },
     return;
   }
 
-  const parserType = String(fileImportType.parserType || "").trim().toLowerCase();
-  if (parserType !== "csv") {
+  const parserType = String(fileImportType.parserType || "csv").trim().toLowerCase() || "csv";
+  if (!["csv", "xml"].includes(parserType)) {
     logger.warn("Import skipped: unsupported parserType", {
       objectName,
       hotelUid,
@@ -350,14 +435,15 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1" },
 
   const bucket = admin.storage().bucket(object.bucket);
   const [buffer] = await bucket.file(objectName).download();
-  const mappedDocuments = parseCsvDocuments(buffer.toString("utf8"), fileImportType);
+  const mappedDocuments = parseImportedDocuments(buffer.toString("utf8"), fileImportType);
 
   if (mappedDocuments.length === 0) {
-    logger.warn("Import skipped: no mapped CSV rows found", {
+    logger.warn("Import skipped: no mapped rows found", {
       objectName,
       hotelUid,
       fileType,
       fileImportTypeId: fileImportType.id,
+      parserType,
     });
     return;
   }
@@ -390,6 +476,7 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1" },
     hotelUid,
     fileType,
     fileImportTypeId: fileImportType.id,
+    parserType,
     writtenCount: writeResults.length,
     firstWrittenPath: writeResults[0] || null,
   });
