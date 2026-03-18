@@ -1,51 +1,10 @@
+const Papa = require("papaparse");
 const { onObjectFinalized, logger, admin } = require("./config");
 
 function normalizeDelimiter(value) {
   const raw = String(value || ",");
   if (raw === "\\t" || raw.toLowerCase() === "tab") return "\t";
   return raw || ",";
-}
-
-function parseCsvLine(line, delimiter) {
-  const values = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i];
-    const next = line[i + 1];
-
-    if (char === '"') {
-      if (inQuotes && next === '"') {
-        current += '"';
-        i += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-
-    if (char === delimiter && !inQuotes) {
-      values.push(current);
-      current = "";
-      continue;
-    }
-
-    current += char;
-  }
-
-  values.push(current);
-  return values.map((value) => value.trim());
-}
-
-function parseDelimitedText(content, delimiter) {
-  const lines = String(content || "")
-    .replace(/^\uFEFF/, "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  return lines.map((line) => parseCsvLine(line, delimiter));
 }
 
 function normalizeHeader(value, index) {
@@ -74,13 +33,26 @@ function normalizeColumnMappings(fileImportType) {
 
 function parseCsvDocuments(content, fileImportType) {
   const delimiter = normalizeDelimiter(fileImportType?.delimiter);
-  const parsedRows = parseDelimitedText(content, delimiter);
-  if (parsedRows.length === 0) return [];
-
   const normalizedMappings = normalizeColumnMappings(fileImportType);
   if (normalizedMappings.length === 0) return [];
 
   const hasHeaderRow = fileImportType?.hasHeaderRow !== false;
+  const parseResult = Papa.parse(String(content || "").replace(/^\uFEFF/, ""), {
+    delimiter,
+    newline: "",
+    quoteChar: '"',
+    escapeChar: '"',
+    skipEmptyLines: "greedy",
+  });
+
+  if (Array.isArray(parseResult.errors) && parseResult.errors.length > 0) {
+    const errorMessages = parseResult.errors.map((error) => error?.message).filter(Boolean).join("; ");
+    throw new Error(`CSV parse failed: ${errorMessages || "unknown parsing error"}`);
+  }
+
+  const parsedRows = Array.isArray(parseResult.data) ? parseResult.data : [];
+  if (parsedRows.length === 0) return [];
+
   const headerRow = hasHeaderRow
     ? parsedRows[0].map((value, index) => normalizeHeader(value, index))
     : parsedRows[0].map((_, index) => `column${index + 1}`);
@@ -90,12 +62,12 @@ function parseCsvDocuments(content, fileImportType) {
     .map((values, index) => {
       const csvRow = {};
       headerRow.forEach((header, valueIndex) => {
-        csvRow[normalizeLookupKey(header)] = String(values?.[valueIndex] || "").trim();
+        csvRow[normalizeLookupKey(header)] = String(values?.[valueIndex] ?? "").trim();
       });
 
       const mappedDocument = {};
       normalizedMappings.forEach((mapping) => {
-        mappedDocument[mapping.databaseField] = String(csvRow[mapping.csvHeaderKey] || "").trim();
+        mappedDocument[mapping.databaseField] = String(csvRow[mapping.csvHeaderKey] ?? "").trim();
       });
 
       const hasMappedValue = Object.values(mappedDocument).some((value) => value !== "");
