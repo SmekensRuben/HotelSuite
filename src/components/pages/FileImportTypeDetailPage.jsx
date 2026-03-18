@@ -19,6 +19,14 @@ function DetailField({ label, value }) {
   );
 }
 
+function formatSeparatorLabel(value) {
+  if (value === "\t") return "Tab";
+  if (value === ",") return "Comma (,)";
+  if (value === ";") return "Semicolon (;)";
+  if (value === "|") return "Pipe (|)";
+  return value || "-";
+}
+
 export default function FileImportTypeDetailPage() {
   const navigate = useNavigate();
   const { fileImportTypeId } = useParams();
@@ -165,6 +173,18 @@ export default function FileImportTypeDetailPage() {
                           <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                             Database Field
                           </th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                            Target Type
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                            Seperator
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                            Import Format
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                            Target Format
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -172,6 +192,16 @@ export default function FileImportTypeDetailPage() {
                           <tr key={`${mapping.sourceField || mapping.csvHeader}-${mapping.databaseField}-${index}`}>
                             <td className="px-4 py-3 text-sm text-gray-700">{mapping.sourceField || mapping.csvHeader || "-"}</td>
                             <td className="px-4 py-3 text-sm text-gray-700">{mapping.databaseField || "-"}</td>
+                            <td className="px-4 py-3 text-sm text-gray-700">{mapping.targetType || "string"}</td>
+                            <td className="px-4 py-3 text-sm text-gray-700">
+                              {mapping.targetType === "array" ? formatSeparatorLabel(mapping.seperator) : "-"}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-700">
+                              {mapping.targetType === "date" ? mapping.importFormat || "-" : "-"}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-700">
+                              {mapping.targetType === "date" ? mapping.targetFormat || "-" : "-"}
+                            </td>
                           </tr>
                         ))}
                       </tbody>

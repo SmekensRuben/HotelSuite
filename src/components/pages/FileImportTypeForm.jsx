@@ -4,6 +4,10 @@ import { Plus, Trash2 } from "lucide-react";
 const defaultMapping = {
   sourceField: "",
   databaseField: "",
+  targetType: "string",
+  seperator: ",",
+  importFormat: "",
+  targetFormat: "",
 };
 
 const delimiterOptions = [
@@ -17,6 +21,31 @@ const recordParsingModeOptions = [
   { value: "auto", label: "Auto" },
   { value: "direct", label: "Direct parse" },
   { value: "buffered", label: "Buffered recovery" },
+];
+
+const targetTypeOptions = [
+  { value: "string", label: "String" },
+  { value: "number", label: "Number" },
+  { value: "array", label: "Array" },
+  { value: "date", label: "Date" },
+];
+
+const separatorOptions = [
+  { value: ",", label: "Komma (,)" },
+  { value: "\t", label: "Tab" },
+  { value: ";", label: "Semicolon (;)" },
+  { value: "|", label: "Pipe (|)" },
+];
+
+const dateFormatOptions = [
+  { value: "yyyy-MM-dd", label: "yyyy-MM-dd" },
+  { value: "MM/dd/yyyy", label: "MM/dd/yyyy" },
+  { value: "dd/MM/yyyy", label: "dd/MM/yyyy" },
+  { value: "dd-MM-yyyy", label: "dd-MM-yyyy" },
+  { value: "MM-dd-yyyy", label: "MM-dd-yyyy" },
+  { value: "yyyy/MM/dd", label: "yyyy/MM/dd" },
+  { value: "dd.MM.yyyy", label: "dd.MM.yyyy" },
+  { value: "MM.dd.yyyy", label: "MM.dd.yyyy" },
 ];
 
 export const initialFileImportTypeValues = {
@@ -318,7 +347,7 @@ export default function FileImportTypeForm({
           {formValues.columnMappings.map((mapping, index) => (
             <div
               key={`mapping-${index}`}
-              className="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 md:grid-cols-[1fr_1fr_auto]"
+              className="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_180px_180px_180px_180px_auto]"
             >
               <Field label="Source Field" htmlFor={`source-field-${index}`}>
                 <input
@@ -340,6 +369,83 @@ export default function FileImportTypeForm({
                   className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
                   placeholder="productSku"
                 />
+              </Field>
+
+              <Field label="Target Type" htmlFor={`target-type-${index}`}>
+                <select
+                  id={`target-type-${index}`}
+                  value={mapping.targetType || "string"}
+                  onChange={onMappingChange(index, "targetType")}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                >
+                  {targetTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field
+                label="Seperator"
+                htmlFor={`separator-${index}`}
+                hint={mapping.targetType === "array" ? "Used to split the incoming value into array items." : "Only used when Target Type is Array."}
+              >
+                <select
+                  id={`separator-${index}`}
+                  value={mapping.seperator || ","}
+                  onChange={onMappingChange(index, "seperator")}
+                  disabled={mapping.targetType !== "array"}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
+                >
+                  {separatorOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field
+                label="Import Format"
+                htmlFor={`import-format-${index}`}
+                hint={mapping.targetType === "date" ? "Format of the incoming source value." : "Only used when Target Type is Date."}
+              >
+                <select
+                  id={`import-format-${index}`}
+                  value={mapping.importFormat || ""}
+                  onChange={onMappingChange(index, "importFormat")}
+                  disabled={mapping.targetType !== "date"}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
+                >
+                  <option value="">Select import format</option>
+                  {dateFormatOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field
+                label="Target Format"
+                htmlFor={`target-format-${index}`}
+                hint={mapping.targetType === "date" ? "Format used when writing the parsed date value." : "Only used when Target Type is Date."}
+              >
+                <select
+                  id={`target-format-${index}`}
+                  value={mapping.targetFormat || ""}
+                  onChange={onMappingChange(index, "targetFormat")}
+                  disabled={mapping.targetType !== "date"}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
+                >
+                  <option value="">Select target format</option>
+                  {dateFormatOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </Field>
 
               <div className="flex items-end">

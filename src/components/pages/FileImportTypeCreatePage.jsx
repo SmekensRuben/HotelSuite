@@ -51,7 +51,17 @@ export default function FileImportTypeCreatePage() {
   const handleAddMapping = () => {
     setFormValues((prev) => ({
       ...prev,
-      columnMappings: [...prev.columnMappings, { sourceField: "", databaseField: "" }],
+      columnMappings: [
+        ...prev.columnMappings,
+        {
+          sourceField: "",
+          databaseField: "",
+          targetType: "string",
+          seperator: ",",
+          importFormat: "",
+          targetFormat: "",
+        },
+      ],
     }));
   };
 

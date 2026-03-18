@@ -61,8 +61,21 @@ export default function FileImportTypeEditPage() {
               ? data.columnMappings.map((mapping) => ({
                   sourceField: mapping?.sourceField || mapping?.csvHeader || "",
                   databaseField: mapping?.databaseField || "",
+                  targetType: mapping?.targetType || "string",
+                  seperator: mapping?.seperator || ",",
+                  importFormat: mapping?.importFormat || "",
+                  targetFormat: mapping?.targetFormat || "",
                 }))
-              : [{ sourceField: "", databaseField: "" }],
+              : [
+                  {
+                    sourceField: "",
+                    databaseField: "",
+                    targetType: "string",
+                    seperator: ",",
+                    importFormat: "",
+                    targetFormat: "",
+                  },
+                ],
         });
       }
       setLoading(false);
@@ -92,7 +105,17 @@ export default function FileImportTypeEditPage() {
   const handleAddMapping = () => {
     setFormValues((prev) => ({
       ...prev,
-      columnMappings: [...prev.columnMappings, { sourceField: "", databaseField: "" }],
+      columnMappings: [
+        ...prev.columnMappings,
+        {
+          sourceField: "",
+          databaseField: "",
+          targetType: "string",
+          seperator: ",",
+          importFormat: "",
+          targetFormat: "",
+        },
+      ],
     }));
   };
 

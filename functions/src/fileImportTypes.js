@@ -20,6 +20,19 @@ function normalizeLookupKey(value) {
     .replace(/\s+/g, " ");
 }
 
+function normalizeTargetType(value) {
+  const normalized = String(value || "string").trim().toLowerCase();
+  return ["string", "number", "array", "date"].includes(normalized) ? normalized : "string";
+}
+
+function normalizeSeparator(value) {
+  const raw = String(value || ",");
+  if (raw === "\\t" || raw === "\t" || raw.toLowerCase() === "tab") return "\t";
+  if (raw === ";" || raw.toLowerCase() === "semicolon") return ";";
+  if (raw === "|" || raw.toLowerCase() === "pipe") return "|";
+  return ",";
+}
+
 function normalizeColumnMappings(fileImportType) {
   return Array.isArray(fileImportType?.columnMappings)
     ? fileImportType.columnMappings
@@ -27,6 +40,10 @@ function normalizeColumnMappings(fileImportType) {
           sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
           sourceFieldKey: normalizeLookupKey(mapping?.sourceField || mapping?.csvHeader || ""),
           databaseField: String(mapping?.databaseField || "").trim(),
+          targetType: normalizeTargetType(mapping?.targetType),
+          seperator: normalizeSeparator(mapping?.seperator),
+          importFormat: String(mapping?.importFormat || "").trim(),
+          targetFormat: String(mapping?.targetFormat || "").trim(),
         }))
         .filter((mapping) => mapping.sourceFieldKey && mapping.databaseField)
     : [];
@@ -137,10 +154,16 @@ function mapDocumentsFromFlatRecords(records, normalizedMappings) {
     .map((record, index) => {
       const mappedDocument = {};
       normalizedMappings.forEach((mapping) => {
-        mappedDocument[mapping.databaseField] = String(record?.[mapping.sourceFieldKey] ?? "").trim();
+        mappedDocument[mapping.databaseField] = transformMappedValue(
+          record?.[mapping.sourceFieldKey],
+          mapping
+        );
       });
 
-      const hasMappedValue = Object.values(mappedDocument).some((value) => value !== "");
+      const hasMappedValue = Object.values(mappedDocument).some((value) => {
+        if (Array.isArray(value)) return value.length > 0;
+        return value !== "";
+      });
       if (!hasMappedValue) return null;
 
       return {
@@ -273,32 +296,103 @@ function parseImportedDocuments(content, fileImportType) {
   return parseCsvDocuments(content, fileImportType);
 }
 
+function parseDateFromFormat(value, format) {
+  const raw = String(value || "").trim();
+  const normalizedFormat = String(format || "").trim();
+  if (!raw) return null;
+
+  const tokenPattern = normalizedFormat
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/yyyy/g, "(\\d{4})")
+    .replace(/MM/g, "(\\d{1,2})")
+    .replace(/dd/g, "(\\d{1,2})");
+  const match = new RegExp(`^${tokenPattern}$`).exec(raw);
+  if (!match) return null;
+
+  const tokenMatches = normalizedFormat.match(/yyyy|MM|dd/g) || [];
+  const tokenValues = {};
+  tokenMatches.forEach((token, index) => {
+    tokenValues[token] = Number(match[index + 1]);
+  });
+
+  const year = tokenValues.yyyy;
+  const month = tokenValues.MM;
+  const day = tokenValues.dd;
+  if (!year || !month || !day) return null;
+
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return { year, month, day };
+}
+
+function formatParsedDate(parts, format) {
+  if (!parts) return "";
+
+  const tokens = {
+    yyyy: String(parts.year).padStart(4, "0"),
+    MM: String(parts.month).padStart(2, "0"),
+    dd: String(parts.day).padStart(2, "0"),
+  };
+
+  return String(format || "yyyy-MM-dd").replace(/yyyy|MM|dd/g, (token) => tokens[token] || token);
+}
+
+function convertDateValue(value, importFormat, targetFormat) {
+  const parsedFromFormat = parseDateFromFormat(value, importFormat);
+  if (parsedFromFormat) {
+    return formatParsedDate(parsedFromFormat, targetFormat || "yyyy-MM-dd");
+  }
+
+  const direct = new Date(String(value || "").trim());
+  if (!Number.isNaN(direct.getTime())) {
+    return formatParsedDate(
+      {
+        year: direct.getUTCFullYear(),
+        month: direct.getUTCMonth() + 1,
+        day: direct.getUTCDate(),
+      },
+      targetFormat || "yyyy-MM-dd"
+    );
+  }
+
+  return String(value || "").trim();
+}
+
+function transformMappedValue(rawValue, mapping) {
+  const trimmedValue = String(rawValue ?? "").trim();
+
+  switch (mapping?.targetType) {
+    case "number": {
+      if (!trimmedValue) return "";
+      const normalizedNumber = Number(trimmedValue.replace(/\s+/g, "").replace(",", "."));
+      return Number.isFinite(normalizedNumber) ? normalizedNumber : trimmedValue;
+    }
+    case "array":
+      if (!trimmedValue) return [];
+      return trimmedValue
+        .split(mapping?.seperator || ",")
+        .map((item) => String(item).trim())
+        .filter(Boolean);
+    case "date":
+      if (!trimmedValue) return "";
+      return convertDateValue(trimmedValue, mapping?.importFormat, mapping?.targetFormat);
+    case "string":
+    default:
+      return trimmedValue;
+  }
+}
+
 function formatDateValue(value) {
   if (!value) return "";
-
-  const direct = new Date(value);
-  if (!Number.isNaN(direct.getTime())) {
-    return direct.toISOString().slice(0, 10);
-  }
-
-  const raw = String(value).trim();
-  const dateMatch = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
-  if (dateMatch) {
-    const [, first, second, yearRaw] = dateMatch;
-    const year = yearRaw.length === 2 ? `20${yearRaw}` : yearRaw;
-    const firstNumber = Number(first);
-    const secondNumber = Number(second);
-    const assumedMonthFirst = firstNumber <= 12;
-    const month = assumedMonthFirst ? firstNumber : secondNumber;
-    const day = assumedMonthFirst ? secondNumber : firstNumber;
-    const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    const parsed = new Date(iso);
-    if (!Number.isNaN(parsed.getTime())) {
-      return iso;
-    }
-  }
-
-  return raw;
+  return convertDateValue(value, "yyyy-MM-dd", "yyyy-MM-dd");
 }
 
 function buildTemplateContext({ hotelUid, fileType, fileImportType, mappedRow, object, rowIndex }) {
