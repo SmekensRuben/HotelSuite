@@ -189,7 +189,7 @@ async function writeRowToFirestore({ db, fileImportType, resolvedPath, context, 
   return docRef.path;
 }
 
-const processImportedFileToFirestore = onObjectFinalized(async (event) => {
+const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1" }, async (event) => {
   const object = event.data || {};
   const objectName = String(object.name || "").trim();
   if (!objectName.startsWith("imports/")) {
