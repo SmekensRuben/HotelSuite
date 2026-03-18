@@ -31,54 +31,59 @@ function normalizeColumnMappings(fileImportType) {
     : [];
 }
 
-function stitchFragmentedRows(rows, expectedColumnCount) {
-  if (!Array.isArray(rows) || rows.length === 0 || !expectedColumnCount) return rows || [];
-
-  const stitchedRows = [];
-  let buffer = null;
-
-  const flushBuffer = () => {
-    if (buffer) {
-      stitchedRows.push(buffer);
-      buffer = null;
-    }
-  };
-
-  rows.forEach((row) => {
-    const normalizedRow = Array.isArray(row)
-      ? row.map((value) => String(value ?? ""))
-      : [String(row ?? "")];
-
-    if (!buffer) {
-      buffer = normalizedRow;
-      return;
-    }
-
-    if (buffer.length >= expectedColumnCount) {
-      flushBuffer();
-      buffer = normalizedRow;
-      return;
-    }
-
-    if (normalizedRow.length === 0) {
-      return;
-    }
-
-    const mergedRow = [...buffer];
-    const lastIndex = mergedRow.length - 1;
-    mergedRow[lastIndex] = `${mergedRow[lastIndex]} ${normalizedRow[0]}`.trim();
-    if (normalizedRow.length > 1) {
-      mergedRow.push(...normalizedRow.slice(1));
-    }
-    buffer = mergedRow;
-
-    if (buffer.length >= expectedColumnCount) {
-      flushBuffer();
-    }
+function parsePhysicalLine(line, delimiter) {
+  const parsed = parse(line, {
+    bom: false,
+    columns: false,
+    delimiter,
+    escape: '"',
+    quote: '"',
+    record_delimiter: ["\r\n", "\n", "\r"],
+    relax_column_count: true,
+    relax_quotes: true,
+    skip_empty_lines: false,
+    trim: false,
   });
 
-  flushBuffer();
-  return stitchedRows;
+  return Array.isArray(parsed) && parsed[0] ? parsed[0] : [];
+}
+
+function buildLogicalRecords(content, delimiter, hasHeaderRow) {
+  const normalizedContent = String(content || "").replace(/^\uFEFF/, "");
+  const physicalLines = normalizedContent.split(/\r\n|\n|\r/);
+  const nonEmptyLines = physicalLines.filter((line) => line !== "");
+  if (nonEmptyLines.length === 0) return { headerRow: [], dataRows: [] };
+
+  const headerSource = nonEmptyLines[0];
+  const headerRow = hasHeaderRow ? parsePhysicalLine(headerSource, delimiter) : parsePhysicalLine(nonEmptyLines[0], delimiter);
+  const expectedColumnCount = headerRow.length;
+  const startIndex = hasHeaderRow ? 1 : 0;
+  const dataRows = [];
+  let buffer = "";
+
+  for (let index = startIndex; index < nonEmptyLines.length; index += 1) {
+    buffer = buffer ? `${buffer}\n${nonEmptyLines[index]}` : nonEmptyLines[index];
+    const parsedCandidate = parsePhysicalLine(buffer, delimiter);
+
+    if (expectedColumnCount > 0 && parsedCandidate.length < expectedColumnCount && index < nonEmptyLines.length - 1) {
+      continue;
+    }
+
+    if (expectedColumnCount > 0 && parsedCandidate.length > expectedColumnCount) {
+      const normalizedCandidate = [...parsedCandidate.slice(0, expectedColumnCount - 1)];
+      normalizedCandidate.push(parsedCandidate.slice(expectedColumnCount - 1).join(" "));
+      dataRows.push(normalizedCandidate);
+    } else {
+      dataRows.push(parsedCandidate);
+    }
+    buffer = "";
+  }
+
+  if (buffer) {
+    dataRows.push(parsePhysicalLine(buffer, delimiter));
+  }
+
+  return { headerRow, dataRows };
 }
 
 function parseCsvDocuments(content, fileImportType) {
@@ -87,26 +92,12 @@ function parseCsvDocuments(content, fileImportType) {
   if (normalizedMappings.length === 0) return [];
 
   const hasHeaderRow = fileImportType?.hasHeaderRow !== false;
-  const parsedRows = parse(String(content || ""), {
-    bom: true,
-    columns: false,
-    delimiter,
-    escape: '"',
-    quote: '"',
-    record_delimiter: ["\r\n", "\n", "\r"],
-    relax_column_count: true,
-    relax_quotes: true,
-    skip_empty_lines: true,
-    trim: false,
-  });
-
-  if (!Array.isArray(parsedRows) || parsedRows.length === 0) return [];
+  const { headerRow: rawHeaderRow, dataRows } = buildLogicalRecords(content, delimiter, hasHeaderRow);
+  if (!Array.isArray(rawHeaderRow) || rawHeaderRow.length === 0) return [];
 
   const headerRow = hasHeaderRow
-    ? parsedRows[0].map((value, index) => normalizeHeader(value, index))
-    : parsedRows[0].map((_, index) => `column${index + 1}`);
-  const rawDataRows = hasHeaderRow ? parsedRows.slice(1) : parsedRows;
-  const dataRows = stitchFragmentedRows(rawDataRows, headerRow.length);
+    ? rawHeaderRow.map((value, index) => normalizeHeader(value, index))
+    : rawHeaderRow.map((_, index) => `column${index + 1}`);
 
   return dataRows
     .map((values, index) => {
