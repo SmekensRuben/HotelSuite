@@ -1,5 +1,6 @@
 const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onRequest } = require("firebase-functions/v2/https");
+const { onObjectFinalized } = require("firebase-functions/v2/storage");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
@@ -25,6 +26,7 @@ module.exports = {
   onDocumentCreated,
   onDocumentWritten,
   onRequest,
+  onObjectFinalized,
   onSchedule,
   logger,
   admin,
