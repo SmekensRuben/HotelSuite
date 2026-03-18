@@ -1,4 +1,4 @@
-const Papa = require("papaparse");
+const { parse } = require("csv-parse/sync");
 const { onObjectFinalized, logger, admin } = require("./config");
 
 function normalizeDelimiter(value) {
@@ -37,21 +37,20 @@ function parseCsvDocuments(content, fileImportType) {
   if (normalizedMappings.length === 0) return [];
 
   const hasHeaderRow = fileImportType?.hasHeaderRow !== false;
-  const parseResult = Papa.parse(String(content || "").replace(/^\uFEFF/, ""), {
+  const parsedRows = parse(String(content || ""), {
+    bom: true,
+    columns: false,
     delimiter,
-    newline: "",
-    quoteChar: '"',
-    escapeChar: '"',
-    skipEmptyLines: "greedy",
+    escape: '"',
+    quote: '"',
+    record_delimiter: ["\r\n", "\n", "\r"],
+    relax_column_count: true,
+    relax_quotes: true,
+    skip_empty_lines: true,
+    trim: false,
   });
 
-  if (Array.isArray(parseResult.errors) && parseResult.errors.length > 0) {
-    const errorMessages = parseResult.errors.map((error) => error?.message).filter(Boolean).join("; ");
-    throw new Error(`CSV parse failed: ${errorMessages || "unknown parsing error"}`);
-  }
-
-  const parsedRows = Array.isArray(parseResult.data) ? parseResult.data : [];
-  if (parsedRows.length === 0) return [];
+  if (!Array.isArray(parsedRows) || parsedRows.length === 0) return [];
 
   const headerRow = hasHeaderRow
     ? parsedRows[0].map((value, index) => normalizeHeader(value, index))
