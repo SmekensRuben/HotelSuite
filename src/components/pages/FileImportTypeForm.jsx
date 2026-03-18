@@ -23,6 +23,8 @@ export const initialFileImportTypeValues = {
   targetPath: "",
   targetDateSourceType: "currentDate",
   targetDateSourceField: "",
+  recordParsingMode: "auto",
+  expectedColumnCount: "",
   writeMode: "overwrite",
   enabled: true,
   columnMappings: [defaultMapping],
@@ -188,6 +190,41 @@ export default function FileImportTypeForm({
               </option>
             ))}
           </select>
+        </Field>
+
+        <Field
+          label="Record Parsing Mode"
+          htmlFor="record-parsing-mode"
+          hint="Use Auto by default. Switch to Direct or Buffered only if a specific import type consistently parses better with one strategy."
+        >
+          <select
+            id="record-parsing-mode"
+            value={formValues.recordParsingMode}
+            onChange={onChange("recordParsingMode")}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          >
+            {recordParsingModeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field
+          label="Expected Column Count"
+          htmlFor="expected-column-count"
+          hint="Optional. Helps the parser decide when a row is incomplete or accidentally split over multiple physical lines."
+        >
+          <input
+            id="expected-column-count"
+            type="number"
+            min="1"
+            value={formValues.expectedColumnCount}
+            onChange={onChange("expectedColumnCount")}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            placeholder="Leave empty to derive from header"
+          />
         </Field>
 
         <Field label="Write Mode" htmlFor="write-mode">

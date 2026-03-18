@@ -128,6 +128,8 @@ export default function FileImportTypeDetailPage() {
                       : "Current Date"
                   }
                 />
+                <DetailField label="Record Parsing Mode" value={fileImportType.recordParsingMode} />
+                <DetailField label="Expected Column Count" value={fileImportType.expectedColumnCount} />
                 <DetailField label="Write Mode" value={fileImportType.writeMode} />
                 <DetailField label="Enabled" value={fileImportType.enabled ? "Yes" : "No"} />
               </div>

@@ -48,6 +48,11 @@ export default function FileImportTypeEditPage() {
           targetPath: data.targetPath || "",
           targetDateSourceType: data.targetDateSourceType || "currentDate",
           targetDateSourceField: data.targetDateSourceField || "",
+          recordParsingMode: data.recordParsingMode || "auto",
+          expectedColumnCount:
+            data.expectedColumnCount === null || data.expectedColumnCount === undefined
+              ? ""
+              : String(data.expectedColumnCount),
           writeMode: data.writeMode || "",
           enabled: Boolean(data.enabled),
           columnMappings:

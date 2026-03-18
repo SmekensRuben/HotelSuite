@@ -401,6 +401,11 @@ function normalizeFileImportType(data = {}, fallbackId = "") {
     targetDateSourceType:
       String(data.targetDateSourceType || "currentDate").trim() || "currentDate",
     targetDateSourceField: String(data.targetDateSourceField || "").trim(),
+    recordParsingMode: String(data.recordParsingMode || "auto").trim() || "auto",
+    expectedColumnCount:
+      data.expectedColumnCount === null || data.expectedColumnCount === undefined || data.expectedColumnCount === ""
+        ? null
+        : Number(data.expectedColumnCount),
     writeMode: String(data.writeMode || "").trim(),
     enabled: Boolean(data.enabled),
     columnMappings: Array.isArray(data.columnMappings)
@@ -429,6 +434,11 @@ function buildFileImportTypePayload(input, existingId = null) {
     targetDateSourceType:
       String(input?.targetDateSourceType || "currentDate").trim() || "currentDate",
     targetDateSourceField: String(input?.targetDateSourceField || "").trim(),
+    recordParsingMode: String(input?.recordParsingMode || "auto").trim() || "auto",
+    expectedColumnCount:
+      input?.expectedColumnCount === null || input?.expectedColumnCount === undefined || input?.expectedColumnCount === ""
+        ? null
+        : Number(input.expectedColumnCount),
     writeMode: String(input?.writeMode || "").trim(),
     enabled: Boolean(input?.enabled),
     columnMappings: Array.isArray(input?.columnMappings)
@@ -447,6 +457,14 @@ function buildFileImportTypePayload(input, existingId = null) {
 
   if (payload.targetDateSourceType !== "currentDate" && payload.targetDateSourceType !== "databaseField") {
     payload.targetDateSourceType = "currentDate";
+  }
+
+  if (!["auto", "direct", "buffered"].includes(payload.recordParsingMode)) {
+    payload.recordParsingMode = "auto";
+  }
+
+  if (!Number.isFinite(payload.expectedColumnCount) || payload.expectedColumnCount <= 0) {
+    payload.expectedColumnCount = null;
   }
 
   if (payload.targetDateSourceType === "databaseField") {

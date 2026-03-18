@@ -48,7 +48,15 @@ function parsePhysicalLine(line, delimiter) {
   return Array.isArray(parsed) && parsed[0] ? parsed[0] : [];
 }
 
-function buildLogicalRecords(content, delimiter, hasHeaderRow) {
+function resolveExpectedColumnCount(configuredValue, headerLength) {
+  const parsedConfiguredValue = Number(configuredValue);
+  if (Number.isFinite(parsedConfiguredValue) && parsedConfiguredValue > 0) {
+    return parsedConfiguredValue;
+  }
+  return headerLength || 0;
+}
+
+function buildLogicalRecords(content, delimiter, hasHeaderRow, configuredExpectedColumnCount = null) {
   const normalizedContent = String(content || "").replace(/^\uFEFF/, "");
   const physicalLines = normalizedContent.split(/\r\n|\n|\r/);
   const nonEmptyLines = physicalLines.filter((line) => line !== "");
@@ -56,7 +64,7 @@ function buildLogicalRecords(content, delimiter, hasHeaderRow) {
 
   const headerSource = nonEmptyLines[0];
   const headerRow = hasHeaderRow ? parsePhysicalLine(headerSource, delimiter) : parsePhysicalLine(nonEmptyLines[0], delimiter);
-  const expectedColumnCount = headerRow.length;
+  const expectedColumnCount = resolveExpectedColumnCount(configuredExpectedColumnCount, headerRow.length);
   const startIndex = hasHeaderRow ? 1 : 0;
   const dataRows = [];
   let buffer = "";
@@ -130,16 +138,25 @@ function parseCsvDocuments(content, fileImportType) {
   if (normalizedMappings.length === 0) return [];
 
   const hasHeaderRow = fileImportType?.hasHeaderRow !== false;
+  const configuredExpectedColumnCount = Number(fileImportType?.expectedColumnCount);
   const directRecords = parseWholeFileRecords(content, delimiter, hasHeaderRow);
-  const bufferedRecords = buildLogicalRecords(content, delimiter, hasHeaderRow);
+  const bufferedRecords = buildLogicalRecords(content, delimiter, hasHeaderRow, configuredExpectedColumnCount);
   const directHeaderLength = Array.isArray(directRecords.headerRow) ? directRecords.headerRow.length : 0;
   const bufferedHeaderLength = Array.isArray(bufferedRecords.headerRow) ? bufferedRecords.headerRow.length : 0;
-  const expectedColumnCount = directHeaderLength || bufferedHeaderLength;
+  const expectedColumnCount = resolveExpectedColumnCount(
+    configuredExpectedColumnCount,
+    directHeaderLength || bufferedHeaderLength
+  );
 
-  const selectedRecords = scoreParsedRows(directRecords.dataRows, expectedColumnCount) >=
-    scoreParsedRows(bufferedRecords.dataRows, expectedColumnCount)
+  const recordParsingMode = String(fileImportType?.recordParsingMode || "auto").trim().toLowerCase();
+  const selectedRecords = recordParsingMode === "direct"
     ? directRecords
-    : bufferedRecords;
+    : recordParsingMode === "buffered"
+      ? bufferedRecords
+      : scoreParsedRows(directRecords.dataRows, expectedColumnCount) >=
+          scoreParsedRows(bufferedRecords.dataRows, expectedColumnCount)
+        ? directRecords
+        : bufferedRecords;
 
   const { headerRow: rawHeaderRow, dataRows } = selectedRecords;
   if (!Array.isArray(rawHeaderRow) || rawHeaderRow.length === 0) return [];
