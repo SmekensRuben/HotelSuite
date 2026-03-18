@@ -377,12 +377,15 @@ export async function deleteFileImportSetting(hotelUid, fileImportSettingId) {
 
 // *** FILE IMPORT TYPES ***
 function normalizeFileImportDelimiter(value) {
-  const raw = String(value || "").trim().toLowerCase();
-  if (!raw || raw == "," || raw === "comma") return ",";
-  if (raw == ";" || raw === "semicolon" || raw === "semi-colon") return ";";
-  if (raw === "\t" || raw === "tab") return "\t";
+  const original = String(value ?? "");
+  const raw = original.toLowerCase().trim();
+
+  if (original === "	" || raw === "tab") return "	";
+  if (!raw || raw === "," || raw === "comma") return ",";
+  if (raw === ";" || raw === "semicolon" || raw === "semi-colon") return ";";
   if (raw === "|") return "|";
-  return String(value || "").trim();
+
+  return original.trim();
 }
 
 function normalizeFileImportType(data = {}, fallbackId = "") {
