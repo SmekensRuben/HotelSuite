@@ -133,6 +133,10 @@ export default function FileImportTypeDetailPage() {
                 <DetailField label="Base Path" value={fileImportType.basePath} />
                 <DetailField label="Target Path" value={fileImportType.targetPath} />
                 <DetailField
+                  label="ID Format"
+                  value={Array.isArray(fileImportType.idFormat) && fileImportType.idFormat.length > 0 ? fileImportType.idFormat.join("_") : "-"}
+                />
+                <DetailField
                   label="Date Source"
                   value={
                     fileImportType.targetDateSourceType === "databaseField"

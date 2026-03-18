@@ -46,6 +46,7 @@ export default function FileImportTypeEditPage() {
           targetCollection: data.targetCollection || "",
           basePath: data.basePath || "",
           targetPath: data.targetPath || "",
+          idFormat: Array.isArray(data.idFormat) ? data.idFormat : [],
           targetDateSourceType: data.targetDateSourceType || "currentDate",
           targetDateSourceField: data.targetDateSourceField || "",
           recordParsingMode: data.recordParsingMode || "auto",
@@ -90,6 +91,20 @@ export default function FileImportTypeEditPage() {
 
   const handleToggle = (field) => (event) => {
     setFormValues((prev) => ({ ...prev, [field]: event.target.checked }));
+  };
+
+  const handleIdFormatToggle = (databaseField) => {
+    setFormValues((prev) => {
+      const currentValues = Array.isArray(prev.idFormat) ? prev.idFormat : [];
+      const nextValues = currentValues.includes(databaseField)
+        ? currentValues.filter((value) => value !== databaseField)
+        : [...currentValues, databaseField];
+
+      return {
+        ...prev,
+        idFormat: nextValues,
+      };
+    });
   };
 
   const handleMappingChange = (index, field) => (event) => {
@@ -157,6 +172,7 @@ export default function FileImportTypeEditPage() {
               onChange={handleChange}
               onToggle={handleToggle}
               onMappingChange={handleMappingChange}
+              onIdFormatToggle={handleIdFormatToggle}
               onAddMapping={handleAddMapping}
               onRemoveMapping={handleRemoveMapping}
               onSubmit={handleSubmit}

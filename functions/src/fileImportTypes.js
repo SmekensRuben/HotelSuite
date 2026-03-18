@@ -396,6 +396,21 @@ function formatDateValue(value) {
   return convertDateValue(value, "yyyy-MM-dd", "yyyy-MM-dd");
 }
 
+function buildDocumentId(mappedRow, fileImportType, fallbackValue) {
+  const configuredIdFormat = Array.isArray(fileImportType?.idFormat) ? fileImportType.idFormat : [];
+  const configuredSegments = configuredIdFormat
+    .map((databaseField) => mappedRow?.[databaseField])
+    .flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+
+  if (configuredSegments.length > 0) {
+    return configuredSegments.join("_");
+  }
+
+  return String(mappedRow?.documentId || "").trim() || fallbackValue;
+}
+
 function buildTemplateContext({ hotelUid, fileType, fileImportType, mappedRow, object, rowIndex }) {
   const dateValue = fileImportType?.targetDateSourceType === "databaseField"
     ? formatDateValue(mappedRow?.[fileImportType.targetDateSourceField])
@@ -403,12 +418,13 @@ function buildTemplateContext({ hotelUid, fileType, fileImportType, mappedRow, o
 
   const sourceName = String(object?.name || "").split("/").pop() || "import-file";
   const sourceBaseName = sourceName.replace(/\.[^.]+$/, "") || "import-file";
+  const fallbackDocumentId = `${sourceBaseName}-${rowIndex + 1}`;
 
   return {
     hotelUid,
     fileType,
     date: dateValue,
-    documentId: String(mappedRow?.documentId || "").trim() || `${sourceBaseName}-${rowIndex + 1}`,
+    documentId: buildDocumentId(mappedRow, fileImportType, fallbackDocumentId),
     sourceFileName: sourceName,
     ...mappedRow,
   };

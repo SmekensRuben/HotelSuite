@@ -422,6 +422,14 @@ function normalizeDateFormat(value) {
   return supportedFormats.has(normalized) ? normalized : "";
 }
 
+function normalizeIdFormat(value) {
+  return Array.isArray(value)
+    ? value
+        .map((entry) => String(entry || "").trim())
+        .filter(Boolean)
+    : [];
+}
+
 function normalizeFileImportType(data = {}, fallbackId = "") {
   return {
     id: String(data.id || fallbackId || "").trim() || fallbackId,
@@ -433,6 +441,7 @@ function normalizeFileImportType(data = {}, fallbackId = "") {
     targetCollection: String(data.targetCollection || "").trim(),
     basePath: String(data.basePath || "").trim(),
     targetPath: String(data.targetPath || "").trim(),
+    idFormat: normalizeIdFormat(data.idFormat),
     targetDateSourceType:
       String(data.targetDateSourceType || "currentDate").trim() || "currentDate",
     targetDateSourceField: String(data.targetDateSourceField || "").trim(),
@@ -471,6 +480,7 @@ function buildFileImportTypePayload(input, existingId = null) {
     targetCollection: String(input?.targetCollection || "").trim(),
     basePath: String(input?.basePath || "").trim(),
     targetPath: String(input?.targetPath || "").trim(),
+    idFormat: normalizeIdFormat(input?.idFormat),
     targetDateSourceType:
       String(input?.targetDateSourceType || "currentDate").trim() || "currentDate",
     targetDateSourceField: String(input?.targetDateSourceField || "").trim(),
@@ -548,6 +558,11 @@ function buildFileImportTypePayload(input, existingId = null) {
 
     return mapping;
   });
+
+  if (payload.idFormat.length > 0) {
+    const availableDatabaseFields = new Set(payload.columnMappings.map((mapping) => mapping.databaseField));
+    payload.idFormat = payload.idFormat.filter((databaseField) => availableDatabaseFields.has(databaseField));
+  }
 
   return payload;
 }

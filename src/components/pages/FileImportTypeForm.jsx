@@ -57,6 +57,7 @@ export const initialFileImportTypeValues = {
   targetCollection: "",
   basePath: "",
   targetPath: "",
+  idFormat: [],
   targetDateSourceType: "currentDate",
   targetDateSourceField: "",
   recordParsingMode: "auto",
@@ -84,6 +85,7 @@ export default function FileImportTypeForm({
   onChange,
   onToggle,
   onMappingChange,
+  onIdFormatToggle,
   onAddMapping,
   onRemoveMapping,
   onSubmit,
@@ -211,6 +213,44 @@ export default function FileImportTypeForm({
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
             placeholder="{fileType}/{date}/{documentId}"
           />
+        </Field>
+
+        <Field
+          label="ID Format"
+          htmlFor="id-format"
+          hint="Choose one or more database fields from the column mappings. When multiple fields are selected, the generated documentId uses underscores between them."
+        >
+          <div
+            id="id-format"
+            className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3"
+          >
+            {databaseFieldOptions.length === 0 ? (
+              <p className="text-sm text-gray-500">Add column mappings with database fields first.</p>
+            ) : (
+              databaseFieldOptions.map((mapping) => {
+                const checked = Array.isArray(formValues.idFormat)
+                  ? formValues.idFormat.includes(mapping.databaseField)
+                  : false;
+
+                return (
+                  <label
+                    key={`id-format-${mapping.databaseField}-${mapping.sourceField}`}
+                    className="flex items-center gap-3"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => onIdFormatToggle(mapping.databaseField)}
+                      className="h-4 w-4 rounded border-gray-300 text-[#b41f1f]"
+                    />
+                    <span className="text-sm text-gray-700">
+                      {mapping.databaseField} ← {mapping.sourceField}
+                    </span>
+                  </label>
+                );
+              })
+            )}
+          </div>
         </Field>
 
         <Field label="Date Source" htmlFor="target-date-source-type">
