@@ -388,6 +388,48 @@ function normalizeFileImportDelimiter(value) {
   return original.trim();
 }
 
+function normalizeMappingTargetType(value) {
+  const normalized = String(value || "string").trim().toLowerCase();
+  return ["string", "number", "array", "date"].includes(normalized) ? normalized : "string";
+}
+
+function normalizeMappingSeparator(value) {
+  const original = String(value ?? ",");
+  const raw = original.toLowerCase().trim();
+
+  if (original === "\t" || raw === "tab") return "\t";
+  if (!raw || raw === "," || raw === "comma") return ",";
+  if (raw === ";" || raw === "semicolon" || raw === "semi-colon") return ";";
+  if (raw === "|" || raw === "pipe") return "|";
+
+  return ",";
+}
+
+function normalizeDateFormat(value) {
+  const normalized = String(value || "").trim();
+  const supportedFormats = new Set([
+    "yyyy-MM-dd",
+    "MM/dd/yyyy",
+    "dd/MM/yyyy",
+    "dd-MM-yyyy",
+    "MM-dd-yyyy",
+    "yyyy/MM/dd",
+    "dd.MM.yyyy",
+    "dd.MM.yy",
+    "MM.dd.yyyy",
+  ]);
+
+  return supportedFormats.has(normalized) ? normalized : "";
+}
+
+function normalizeIdFormat(value) {
+  return Array.isArray(value)
+    ? value
+        .map((entry) => String(entry || "").trim())
+        .filter(Boolean)
+    : [];
+}
+
 function normalizeFileImportType(data = {}, fallbackId = "") {
   return {
     id: String(data.id || fallbackId || "").trim() || fallbackId,
@@ -399,6 +441,7 @@ function normalizeFileImportType(data = {}, fallbackId = "") {
     targetCollection: String(data.targetCollection || "").trim(),
     basePath: String(data.basePath || "").trim(),
     targetPath: String(data.targetPath || "").trim(),
+    idFormat: normalizeIdFormat(data.idFormat),
     targetDateSourceType:
       String(data.targetDateSourceType || "currentDate").trim() || "currentDate",
     targetDateSourceField: String(data.targetDateSourceField || "").trim(),
@@ -413,6 +456,10 @@ function normalizeFileImportType(data = {}, fallbackId = "") {
       ? data.columnMappings.map((mapping) => ({
           sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
           databaseField: String(mapping?.databaseField || "").trim(),
+          targetType: normalizeMappingTargetType(mapping?.targetType),
+          seperator: normalizeMappingSeparator(mapping?.seperator),
+          importFormat: normalizeDateFormat(mapping?.importFormat),
+          targetFormat: normalizeDateFormat(mapping?.targetFormat),
         }))
       : [],
     createdBy: data.createdBy || null,
@@ -433,6 +480,7 @@ function buildFileImportTypePayload(input, existingId = null) {
     targetCollection: String(input?.targetCollection || "").trim(),
     basePath: String(input?.basePath || "").trim(),
     targetPath: String(input?.targetPath || "").trim(),
+    idFormat: normalizeIdFormat(input?.idFormat),
     targetDateSourceType:
       String(input?.targetDateSourceType || "currentDate").trim() || "currentDate",
     targetDateSourceField: String(input?.targetDateSourceField || "").trim(),
@@ -448,6 +496,10 @@ function buildFileImportTypePayload(input, existingId = null) {
           .map((mapping) => ({
             sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
             databaseField: String(mapping?.databaseField || "").trim(),
+            targetType: normalizeMappingTargetType(mapping?.targetType),
+            seperator: normalizeMappingSeparator(mapping?.seperator),
+            importFormat: normalizeDateFormat(mapping?.importFormat),
+            targetFormat: normalizeDateFormat(mapping?.targetFormat),
           }))
           .filter((mapping) => mapping.sourceField || mapping.databaseField)
       : [],
@@ -488,6 +540,28 @@ function buildFileImportTypePayload(input, existingId = null) {
     }
   } else {
     payload.targetDateSourceField = "";
+  }
+
+  payload.columnMappings = payload.columnMappings.map((mapping) => {
+    if (mapping.targetType === "date") {
+      if (!mapping.importFormat || !mapping.targetFormat) {
+        throw new Error("Date mappings vereisen zowel een Import Format als Target Format");
+      }
+    } else {
+      mapping.importFormat = "";
+      mapping.targetFormat = "";
+    }
+
+    if (mapping.targetType !== "array") {
+      mapping.seperator = ",";
+    }
+
+    return mapping;
+  });
+
+  if (payload.idFormat.length > 0) {
+    const availableDatabaseFields = new Set(payload.columnMappings.map((mapping) => mapping.databaseField));
+    payload.idFormat = payload.idFormat.filter((databaseField) => availableDatabaseFields.has(databaseField));
   }
 
   return payload;

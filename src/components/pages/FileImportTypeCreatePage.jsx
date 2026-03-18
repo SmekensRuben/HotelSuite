@@ -38,6 +38,20 @@ export default function FileImportTypeCreatePage() {
     setFormValues((prev) => ({ ...prev, [field]: event.target.checked }));
   };
 
+  const handleIdFormatToggle = (databaseField) => {
+    setFormValues((prev) => {
+      const currentValues = Array.isArray(prev.idFormat) ? prev.idFormat : [];
+      const nextValues = currentValues.includes(databaseField)
+        ? currentValues.filter((value) => value !== databaseField)
+        : [...currentValues, databaseField];
+
+      return {
+        ...prev,
+        idFormat: nextValues,
+      };
+    });
+  };
+
   const handleMappingChange = (index, field) => (event) => {
     const value = event.target.value;
     setFormValues((prev) => ({
@@ -51,7 +65,17 @@ export default function FileImportTypeCreatePage() {
   const handleAddMapping = () => {
     setFormValues((prev) => ({
       ...prev,
-      columnMappings: [...prev.columnMappings, { sourceField: "", databaseField: "" }],
+      columnMappings: [
+        ...prev.columnMappings,
+        {
+          sourceField: "",
+          databaseField: "",
+          targetType: "string",
+          seperator: ",",
+          importFormat: "",
+          targetFormat: "",
+        },
+      ],
     }));
   };
 
@@ -96,6 +120,7 @@ export default function FileImportTypeCreatePage() {
             onChange={handleChange}
             onToggle={handleToggle}
             onMappingChange={handleMappingChange}
+            onIdFormatToggle={handleIdFormatToggle}
             onAddMapping={handleAddMapping}
             onRemoveMapping={handleRemoveMapping}
             onSubmit={handleSubmit}

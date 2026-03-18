@@ -46,6 +46,7 @@ export default function FileImportTypeEditPage() {
           targetCollection: data.targetCollection || "",
           basePath: data.basePath || "",
           targetPath: data.targetPath || "",
+          idFormat: Array.isArray(data.idFormat) ? data.idFormat : [],
           targetDateSourceType: data.targetDateSourceType || "currentDate",
           targetDateSourceField: data.targetDateSourceField || "",
           recordParsingMode: data.recordParsingMode || "auto",
@@ -61,8 +62,21 @@ export default function FileImportTypeEditPage() {
               ? data.columnMappings.map((mapping) => ({
                   sourceField: mapping?.sourceField || mapping?.csvHeader || "",
                   databaseField: mapping?.databaseField || "",
+                  targetType: mapping?.targetType || "string",
+                  seperator: mapping?.seperator || ",",
+                  importFormat: mapping?.importFormat || "",
+                  targetFormat: mapping?.targetFormat || "",
                 }))
-              : [{ sourceField: "", databaseField: "" }],
+              : [
+                  {
+                    sourceField: "",
+                    databaseField: "",
+                    targetType: "string",
+                    seperator: ",",
+                    importFormat: "",
+                    targetFormat: "",
+                  },
+                ],
         });
       }
       setLoading(false);
@@ -79,6 +93,20 @@ export default function FileImportTypeEditPage() {
     setFormValues((prev) => ({ ...prev, [field]: event.target.checked }));
   };
 
+  const handleIdFormatToggle = (databaseField) => {
+    setFormValues((prev) => {
+      const currentValues = Array.isArray(prev.idFormat) ? prev.idFormat : [];
+      const nextValues = currentValues.includes(databaseField)
+        ? currentValues.filter((value) => value !== databaseField)
+        : [...currentValues, databaseField];
+
+      return {
+        ...prev,
+        idFormat: nextValues,
+      };
+    });
+  };
+
   const handleMappingChange = (index, field) => (event) => {
     const value = event.target.value;
     setFormValues((prev) => ({
@@ -92,7 +120,17 @@ export default function FileImportTypeEditPage() {
   const handleAddMapping = () => {
     setFormValues((prev) => ({
       ...prev,
-      columnMappings: [...prev.columnMappings, { sourceField: "", databaseField: "" }],
+      columnMappings: [
+        ...prev.columnMappings,
+        {
+          sourceField: "",
+          databaseField: "",
+          targetType: "string",
+          seperator: ",",
+          importFormat: "",
+          targetFormat: "",
+        },
+      ],
     }));
   };
 
@@ -134,6 +172,7 @@ export default function FileImportTypeEditPage() {
               onChange={handleChange}
               onToggle={handleToggle}
               onMappingChange={handleMappingChange}
+              onIdFormatToggle={handleIdFormatToggle}
               onAddMapping={handleAddMapping}
               onRemoveMapping={handleRemoveMapping}
               onSubmit={handleSubmit}
