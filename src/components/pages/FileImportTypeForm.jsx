@@ -13,6 +13,12 @@ const delimiterOptions = [
   { value: "|", label: "Pipe (|)" },
 ];
 
+const recordParsingModeOptions = [
+  { value: "auto", label: "Auto" },
+  { value: "direct", label: "Direct parse" },
+  { value: "buffered", label: "Buffered recovery" },
+];
+
 export const initialFileImportTypeValues = {
   fileType: "csv",
   parserType: "csv",
