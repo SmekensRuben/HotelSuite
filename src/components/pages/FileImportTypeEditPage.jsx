@@ -49,6 +49,10 @@ export default function FileImportTypeEditPage() {
           idFormat: Array.isArray(data.idFormat) ? data.idFormat : [],
           targetDateSourceType: data.targetDateSourceType || "currentDate",
           targetDateSourceField: data.targetDateSourceField || "",
+          targetDateOffsetDays:
+            data.targetDateOffsetDays === null || data.targetDateOffsetDays === undefined
+              ? "0"
+              : String(data.targetDateOffsetDays),
           recordParsingMode: data.recordParsingMode || "auto",
           recordNodeName: data.recordNodeName || "",
           expectedColumnCount:

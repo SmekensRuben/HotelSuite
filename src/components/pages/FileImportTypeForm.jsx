@@ -60,6 +60,7 @@ export const initialFileImportTypeValues = {
   idFormat: [],
   targetDateSourceType: "currentDate",
   targetDateSourceField: "",
+  targetDateOffsetDays: "0",
   recordParsingMode: "auto",
   expectedColumnCount: "",
   recordNodeName: "",
@@ -263,6 +264,27 @@ export default function FileImportTypeForm({
             <option value="currentDate">Current Date</option>
             <option value="databaseField">Database Field</option>
           </select>
+        </Field>
+
+        <Field
+          label="Date Offset (days)"
+          htmlFor="target-date-offset-days"
+          hint={
+            formValues.targetDateSourceType === "currentDate"
+              ? "Use 0 for today, a positive number for future dates, or a negative number for past dates when {date} is used in the target path."
+              : "Only used when Date Source is set to Current Date."
+          }
+        >
+          <input
+            id="target-date-offset-days"
+            type="number"
+            step="1"
+            value={formValues.targetDateOffsetDays ?? "0"}
+            onChange={onChange("targetDateOffsetDays")}
+            disabled={formValues.targetDateSourceType !== "currentDate"}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
+            placeholder="0"
+          />
         </Field>
 
         <Field
