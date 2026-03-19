@@ -396,6 +396,14 @@ function formatDateValue(value) {
   return convertDateValue(value, "yyyy-MM-dd", "yyyy-MM-dd");
 }
 
+function resolveCurrentDateWithOffset(offsetDays) {
+  const normalizedOffset = Number.isInteger(Number(offsetDays)) ? Number(offsetDays) : 0;
+  const currentDate = new Date();
+  currentDate.setUTCHours(0, 0, 0, 0);
+  currentDate.setUTCDate(currentDate.getUTCDate() + normalizedOffset);
+  return currentDate.toISOString().slice(0, 10);
+}
+
 function buildDocumentId(mappedRow, fileImportType, fallbackValue) {
   const configuredIdFormat = Array.isArray(fileImportType?.idFormat) ? fileImportType.idFormat : [];
   const configuredSegments = configuredIdFormat
@@ -414,7 +422,7 @@ function buildDocumentId(mappedRow, fileImportType, fallbackValue) {
 function buildTemplateContext({ hotelUid, fileType, fileImportType, mappedRow, object, rowIndex }) {
   const dateValue = fileImportType?.targetDateSourceType === "databaseField"
     ? formatDateValue(mappedRow?.[fileImportType.targetDateSourceField])
-    : new Date().toISOString().slice(0, 10);
+    : resolveCurrentDateWithOffset(fileImportType?.targetDateOffsetDays);
 
   const sourceName = String(object?.name || "").split("/").pop() || "import-file";
   const sourceBaseName = sourceName.replace(/\.[^.]+$/, "") || "import-file";

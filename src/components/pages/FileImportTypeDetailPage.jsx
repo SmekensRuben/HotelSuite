@@ -141,7 +141,13 @@ export default function FileImportTypeDetailPage() {
                   value={
                     fileImportType.targetDateSourceType === "databaseField"
                       ? `Database Field: ${fileImportType.targetDateSourceField || "-"}`
-                      : "Current Date"
+                      : `Current Date${
+                          Number(fileImportType.targetDateOffsetDays || 0) === 0
+                            ? ""
+                            : ` (${
+                                Number(fileImportType.targetDateOffsetDays) > 0 ? "+" : ""
+                              }${Number(fileImportType.targetDateOffsetDays)} days)`
+                        }`
                   }
                 />
                 <DetailField

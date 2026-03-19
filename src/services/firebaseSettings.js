@@ -430,6 +430,12 @@ function normalizeIdFormat(value) {
     : [];
 }
 
+function normalizeTargetDateOffsetDays(value) {
+  if (value === "" || value === null || value === undefined) return 0;
+  const parsedValue = Number(value);
+  return Number.isInteger(parsedValue) ? parsedValue : 0;
+}
+
 function normalizeFileImportType(data = {}, fallbackId = "") {
   return {
     id: String(data.id || fallbackId || "").trim() || fallbackId,
@@ -445,6 +451,7 @@ function normalizeFileImportType(data = {}, fallbackId = "") {
     targetDateSourceType:
       String(data.targetDateSourceType || "currentDate").trim() || "currentDate",
     targetDateSourceField: String(data.targetDateSourceField || "").trim(),
+    targetDateOffsetDays: normalizeTargetDateOffsetDays(data.targetDateOffsetDays),
     recordParsingMode: String(data.recordParsingMode || "auto").trim() || "auto",
     expectedColumnCount:
       data.expectedColumnCount === null || data.expectedColumnCount === undefined || data.expectedColumnCount === ""
@@ -484,6 +491,7 @@ function buildFileImportTypePayload(input, existingId = null) {
     targetDateSourceType:
       String(input?.targetDateSourceType || "currentDate").trim() || "currentDate",
     targetDateSourceField: String(input?.targetDateSourceField || "").trim(),
+    targetDateOffsetDays: normalizeTargetDateOffsetDays(input?.targetDateOffsetDays),
     recordParsingMode: String(input?.recordParsingMode || "auto").trim() || "auto",
     expectedColumnCount:
       input?.expectedColumnCount === null || input?.expectedColumnCount === undefined || input?.expectedColumnCount === ""
