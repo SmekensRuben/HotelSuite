@@ -303,6 +303,21 @@ function resolveXmlSourceValue(recordNode, mapping, flattenedRecord) {
     if (directValue !== undefined) {
       return directValue;
     }
+
+    const nestedNodeMatches = collectValuesByNodeName(recordNode, normalizeLookupKey(pathSegments[pathSegments.length - 1]));
+    if (nestedNodeMatches.length > 0) {
+      if (mapping?.targetType === "list") {
+        return nestedNodeMatches;
+      }
+
+      const primitiveMatches = nestedNodeMatches
+        .filter((value) => value === null || value === undefined || typeof value !== "object")
+        .map((value) => String(value ?? "").trim());
+
+      if (primitiveMatches.length > 0) {
+        return primitiveMatches[0];
+      }
+    }
   }
 
   return flattenedRecord?.[mapping?.sourceFieldKey];
