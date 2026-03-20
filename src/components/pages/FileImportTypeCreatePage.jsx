@@ -100,9 +100,11 @@ export default function FileImportTypeCreatePage() {
   };
 
   const handleAddMapping = (path = []) => {
+    const normalizedPath = Array.isArray(path) ? path : [];
+
     setFormValues((prev) => ({
       ...prev,
-      columnMappings: updateMappingsAtPath(prev.columnMappings, path, (currentValue) => {
+      columnMappings: updateMappingsAtPath(prev.columnMappings, normalizedPath, (currentValue) => {
         if (Array.isArray(currentValue)) {
           return [...currentValue, createEmptyMapping()];
         }
