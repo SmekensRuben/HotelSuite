@@ -22,7 +22,7 @@ function normalizeLookupKey(value) {
 
 function normalizeTargetType(value) {
   const normalized = String(value || "string").trim().toLowerCase();
-  return ["string", "number", "array", "date"].includes(normalized) ? normalized : "string";
+  return ["string", "number", "array", "date", "list"].includes(normalized) ? normalized : "string";
 }
 
 function normalizeSeparator(value) {
@@ -34,17 +34,22 @@ function normalizeSeparator(value) {
 }
 
 function normalizeColumnMappings(fileImportType) {
+  const normalizeMapping = (mapping) => ({
+    sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
+    sourceFieldKey: normalizeLookupKey(mapping?.sourceField || mapping?.csvHeader || ""),
+    databaseField: String(mapping?.databaseField || "").trim(),
+    targetType: normalizeTargetType(mapping?.targetType),
+    seperator: normalizeSeparator(mapping?.seperator),
+    importFormat: String(mapping?.importFormat || "").trim(),
+    targetFormat: String(mapping?.targetFormat || "").trim(),
+    childMappings: Array.isArray(mapping?.childMappings)
+      ? mapping.childMappings.map((childMapping) => normalizeMapping(childMapping))
+      : [],
+  });
+
   return Array.isArray(fileImportType?.columnMappings)
     ? fileImportType.columnMappings
-        .map((mapping) => ({
-          sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
-          sourceFieldKey: normalizeLookupKey(mapping?.sourceField || mapping?.csvHeader || ""),
-          databaseField: String(mapping?.databaseField || "").trim(),
-          targetType: normalizeTargetType(mapping?.targetType),
-          seperator: normalizeSeparator(mapping?.seperator),
-          importFormat: String(mapping?.importFormat || "").trim(),
-          targetFormat: String(mapping?.targetFormat || "").trim(),
-        }))
+        .map((mapping) => normalizeMapping(mapping))
         .filter((mapping) => mapping.sourceFieldKey && mapping.databaseField)
     : [];
 }
@@ -263,6 +268,77 @@ function flattenXmlRecord(value, prefix = "", target = {}) {
   return target;
 }
 
+function getXmlNodeByPath(value, pathSegments) {
+  if (!pathSegments.length) return value;
+
+  const [currentSegment, ...rest] = pathSegments;
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => {
+      const resolved = getXmlNodeByPath(item, pathSegments);
+      return Array.isArray(resolved) ? resolved : [resolved];
+    });
+  }
+
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const matchingEntry = Object.entries(value).find(
+    ([key]) => normalizeLookupKey(key) === normalizeLookupKey(currentSegment)
+  );
+
+  if (!matchingEntry) return undefined;
+  const [, child] = matchingEntry;
+  return rest.length === 0 ? child : getXmlNodeByPath(child, rest);
+}
+
+function resolveXmlSourceValue(recordNode, mapping, flattenedRecord) {
+  const pathSegments = String(mapping?.sourceField || "")
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (pathSegments.length > 0) {
+    const directValue = getXmlNodeByPath(recordNode, pathSegments);
+    if (directValue !== undefined) {
+      return directValue;
+    }
+  }
+
+  return flattenedRecord?.[mapping?.sourceFieldKey];
+}
+
+function mapXmlObject(recordNode, mappings) {
+  const flattenedRecord = flattenXmlRecord(recordNode);
+  const mappedDocument = {};
+
+  mappings.forEach((mapping) => {
+    const resolvedValue = resolveXmlSourceValue(recordNode, mapping, flattenedRecord);
+
+    if (mapping.targetType === "list") {
+      const sourceItems = Array.isArray(resolvedValue)
+        ? resolvedValue
+        : resolvedValue === undefined || resolvedValue === null
+          ? []
+          : [resolvedValue];
+
+      mappedDocument[mapping.databaseField] = sourceItems
+        .map((item) => mapXmlObject(item, mapping.childMappings || []))
+        .filter((childItem) =>
+          Object.values(childItem).some((value) => {
+            if (Array.isArray(value)) return value.length > 0;
+            return value !== "";
+          })
+        );
+      return;
+    }
+
+    mappedDocument[mapping.databaseField] = transformMappedValue(resolvedValue, mapping);
+  });
+
+  return mappedDocument;
+}
+
 function parseXmlDocuments(content, fileImportType) {
   const normalizedMappings = normalizeColumnMappings(fileImportType);
   if (normalizedMappings.length === 0) return [];
@@ -281,11 +357,22 @@ function parseXmlDocuments(content, fileImportType) {
   const recordNodes = collectValuesByNodeName(parsedXml, normalizeLookupKey(recordNodeName));
   if (recordNodes.length === 0) return [];
 
-  const flatRecords = recordNodes
-    .map((recordNode) => flattenXmlRecord(recordNode))
-    .filter((recordNode) => Object.keys(recordNode).length > 0);
+  return recordNodes
+    .map((recordNode, index) => {
+      const mappedDocument = mapXmlObject(recordNode, normalizedMappings);
+      const hasMappedValue = Object.values(mappedDocument).some((value) => {
+        if (Array.isArray(value)) return value.length > 0;
+        return value !== "";
+      });
 
-  return mapDocumentsFromFlatRecords(flatRecords, normalizedMappings);
+      if (!hasMappedValue) return null;
+
+      return {
+        rowIndex: index,
+        mappedDocument,
+      };
+    })
+    .filter(Boolean);
 }
 
 function parseImportedDocuments(content, fileImportType) {

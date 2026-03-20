@@ -63,23 +63,21 @@ export default function FileImportTypeEditPage() {
           enabled: Boolean(data.enabled),
           columnMappings:
             Array.isArray(data.columnMappings) && data.columnMappings.length > 0
-              ? data.columnMappings.map((mapping) => ({
-                  sourceField: mapping?.sourceField || mapping?.csvHeader || "",
-                  databaseField: mapping?.databaseField || "",
-                  targetType: mapping?.targetType || "string",
-                  seperator: mapping?.seperator || ",",
-                  importFormat: mapping?.importFormat || "",
-                  targetFormat: mapping?.targetFormat || "",
-                }))
+              ? data.columnMappings.map(function normalizeMapping(mapping) {
+                  return {
+                    sourceField: mapping?.sourceField || mapping?.csvHeader || "",
+                    databaseField: mapping?.databaseField || "",
+                    targetType: mapping?.targetType || "string",
+                    seperator: mapping?.seperator || ",",
+                    importFormat: mapping?.importFormat || "",
+                    targetFormat: mapping?.targetFormat || "",
+                    childMappings: Array.isArray(mapping?.childMappings)
+                      ? mapping.childMappings.map(normalizeMapping)
+                      : [],
+                  };
+                })
               : [
-                  {
-                    sourceField: "",
-                    databaseField: "",
-                    targetType: "string",
-                    seperator: ",",
-                    importFormat: "",
-                    targetFormat: "",
-                  },
+                  createEmptyMapping(),
                 ],
         });
       }
@@ -111,37 +109,76 @@ export default function FileImportTypeEditPage() {
     });
   };
 
-  const handleMappingChange = (index, field) => (event) => {
+  const createEmptyMapping = () => ({
+    sourceField: "",
+    databaseField: "",
+    targetType: "string",
+    seperator: ",",
+    importFormat: "",
+    targetFormat: "",
+    childMappings: [],
+  });
+
+  const updateMappingsAtPath = (mappings, path, updater) => {
+    if (!Array.isArray(mappings)) return mappings;
+    if (path.length === 0) return updater(mappings);
+
+    const [segment, ...rest] = path;
+    if (typeof segment !== 'number') return mappings;
+
+    return mappings.map((mapping, index) => {
+      if (index !== segment) return mapping;
+      if (rest.length === 0) return updater(mapping);
+
+      const [nextSegment, ...nestedRest] = rest;
+      if (nextSegment !== 'childMappings') return mapping;
+
+      return {
+        ...mapping,
+        childMappings: updateMappingsAtPath(
+          Array.isArray(mapping.childMappings) ? mapping.childMappings : [],
+          nestedRest,
+          updater
+        ),
+      };
+    });
+  };
+
+  const handleMappingChange = (path, field) => (event) => {
     const value = event.target.value;
     setFormValues((prev) => ({
       ...prev,
-      columnMappings: prev.columnMappings.map((mapping, mappingIndex) =>
-        mappingIndex === index ? { ...mapping, [field]: value } : mapping
-      ),
+      columnMappings: updateMappingsAtPath(prev.columnMappings, path, (mapping) => ({
+        ...mapping,
+        [field]: value,
+        ...(field === 'targetType' && value !== 'list' ? { childMappings: [] } : {}),
+      })),
     }));
   };
 
-  const handleAddMapping = () => {
+  const handleAddMapping = (path = []) => {
     setFormValues((prev) => ({
       ...prev,
-      columnMappings: [
-        ...prev.columnMappings,
-        {
-          sourceField: "",
-          databaseField: "",
-          targetType: "string",
-          seperator: ",",
-          importFormat: "",
-          targetFormat: "",
-        },
-      ],
+      columnMappings: updateMappingsAtPath(prev.columnMappings, path, (currentValue) => {
+        if (Array.isArray(currentValue)) {
+          return [...currentValue, createEmptyMapping()];
+        }
+        return currentValue;
+      }),
     }));
   };
 
-  const handleRemoveMapping = (index) => {
+  const handleRemoveMapping = (path) => {
+    if (!Array.isArray(path) || path.length === 0) return;
+    const targetIndex = path[path.length - 1];
+    const parentPath = path.slice(0, -1);
+
     setFormValues((prev) => ({
       ...prev,
-      columnMappings: prev.columnMappings.filter((_, mappingIndex) => mappingIndex !== index),
+      columnMappings: updateMappingsAtPath(prev.columnMappings, parentPath, (currentValue) => {
+        if (!Array.isArray(currentValue) || currentValue.length <= 1) return currentValue;
+        return currentValue.filter((_, mappingIndex) => mappingIndex !== targetIndex);
+      }),
     }));
   };
 

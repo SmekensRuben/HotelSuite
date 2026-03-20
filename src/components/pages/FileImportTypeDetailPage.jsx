@@ -27,6 +27,35 @@ function formatSeparatorLabel(value) {
   return value || "-";
 }
 
+function renderMappingRows(mappings, level = 0) {
+  return mappings.map((mapping, index) => (
+    <React.Fragment key={`${mapping.sourceField || mapping.csvHeader}-${mapping.databaseField}-${level}-${index}`}>
+      <tr>
+        <td className="px-4 py-3 text-sm text-gray-700">
+          <span style={{ paddingLeft: `${level * 16}px` }}>
+            {level > 0 ? "↳ " : ""}
+            {mapping.sourceField || mapping.csvHeader || "-"}
+          </span>
+        </td>
+        <td className="px-4 py-3 text-sm text-gray-700">{mapping.databaseField || "-"}</td>
+        <td className="px-4 py-3 text-sm text-gray-700">{mapping.targetType || "string"}</td>
+        <td className="px-4 py-3 text-sm text-gray-700">
+          {mapping.targetType === "array" ? formatSeparatorLabel(mapping.seperator) : "-"}
+        </td>
+        <td className="px-4 py-3 text-sm text-gray-700">
+          {mapping.targetType === "date" ? mapping.importFormat || "-" : "-"}
+        </td>
+        <td className="px-4 py-3 text-sm text-gray-700">
+          {mapping.targetType === "date" ? mapping.targetFormat || "-" : "-"}
+        </td>
+      </tr>
+      {mapping.targetType === "list" && Array.isArray(mapping.childMappings)
+        ? renderMappingRows(mapping.childMappings, level + 1)
+        : null}
+    </React.Fragment>
+  ));
+}
+
 export default function FileImportTypeDetailPage() {
   const navigate = useNavigate();
   const { fileImportTypeId } = useParams();
@@ -198,22 +227,7 @@ export default function FileImportTypeDetailPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                        {fileImportType.columnMappings.map((mapping, index) => (
-                          <tr key={`${mapping.sourceField || mapping.csvHeader}-${mapping.databaseField}-${index}`}>
-                            <td className="px-4 py-3 text-sm text-gray-700">{mapping.sourceField || mapping.csvHeader || "-"}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700">{mapping.databaseField || "-"}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700">{mapping.targetType || "string"}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700">
-                              {mapping.targetType === "array" ? formatSeparatorLabel(mapping.seperator) : "-"}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-700">
-                              {mapping.targetType === "date" ? mapping.importFormat || "-" : "-"}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-700">
-                              {mapping.targetType === "date" ? mapping.targetFormat || "-" : "-"}
-                            </td>
-                          </tr>
-                        ))}
+                        {renderMappingRows(fileImportType.columnMappings)}
                       </tbody>
                     </table>
                   </div>

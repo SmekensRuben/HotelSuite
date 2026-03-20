@@ -390,7 +390,7 @@ function normalizeFileImportDelimiter(value) {
 
 function normalizeMappingTargetType(value) {
   const normalized = String(value || "string").trim().toLowerCase();
-  return ["string", "number", "array", "date"].includes(normalized) ? normalized : "string";
+  return ["string", "number", "array", "date", "list"].includes(normalized) ? normalized : "string";
 }
 
 function normalizeMappingSeparator(value) {
@@ -420,6 +420,60 @@ function normalizeDateFormat(value) {
   ]);
 
   return supportedFormats.has(normalized) ? normalized : "";
+}
+
+function normalizeColumnMapping(mapping = {}) {
+  return {
+    sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
+    databaseField: String(mapping?.databaseField || "").trim(),
+    targetType: normalizeMappingTargetType(mapping?.targetType),
+    seperator: normalizeMappingSeparator(mapping?.seperator),
+    importFormat: normalizeDateFormat(mapping?.importFormat),
+    targetFormat: normalizeDateFormat(mapping?.targetFormat),
+    childMappings: Array.isArray(mapping?.childMappings)
+      ? mapping.childMappings.map((childMapping) => normalizeColumnMapping(childMapping))
+      : [],
+  };
+}
+
+function sanitizeColumnMappings(columnMappings, parserType) {
+  return columnMappings
+    .map((mapping) => {
+      const normalizedMapping = normalizeColumnMapping(mapping);
+
+      if (normalizedMapping.targetType === "list") {
+        if (parserType !== "xml") {
+          throw new Error("List target type is alleen beschikbaar voor XML imports");
+        }
+
+        normalizedMapping.seperator = ",";
+        normalizedMapping.importFormat = "";
+        normalizedMapping.targetFormat = "";
+        normalizedMapping.childMappings = sanitizeColumnMappings(
+          normalizedMapping.childMappings,
+          parserType
+        );
+        return normalizedMapping;
+      }
+
+      normalizedMapping.childMappings = [];
+
+      if (normalizedMapping.targetType === "date") {
+        if (!normalizedMapping.importFormat || !normalizedMapping.targetFormat) {
+          throw new Error("Date mappings vereisen zowel een Import Format als Target Format");
+        }
+      } else {
+        normalizedMapping.importFormat = "";
+        normalizedMapping.targetFormat = "";
+      }
+
+      if (normalizedMapping.targetType !== "array") {
+        normalizedMapping.seperator = ",";
+      }
+
+      return normalizedMapping;
+    })
+    .filter((mapping) => mapping.sourceField || mapping.databaseField);
 }
 
 function normalizeIdFormat(value) {
@@ -460,14 +514,7 @@ function normalizeFileImportType(data = {}, fallbackId = "") {
     writeMode: String(data.writeMode || "").trim(),
     enabled: Boolean(data.enabled),
     columnMappings: Array.isArray(data.columnMappings)
-      ? data.columnMappings.map((mapping) => ({
-          sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
-          databaseField: String(mapping?.databaseField || "").trim(),
-          targetType: normalizeMappingTargetType(mapping?.targetType),
-          seperator: normalizeMappingSeparator(mapping?.seperator),
-          importFormat: normalizeDateFormat(mapping?.importFormat),
-          targetFormat: normalizeDateFormat(mapping?.targetFormat),
-        }))
+      ? data.columnMappings.map((mapping) => normalizeColumnMapping(mapping))
       : [],
     createdBy: data.createdBy || null,
     createdAt: data.createdAt || null,
@@ -500,16 +547,10 @@ function buildFileImportTypePayload(input, existingId = null) {
     writeMode: String(input?.writeMode || "").trim(),
     enabled: Boolean(input?.enabled),
     columnMappings: Array.isArray(input?.columnMappings)
-      ? input.columnMappings
-          .map((mapping) => ({
-            sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
-            databaseField: String(mapping?.databaseField || "").trim(),
-            targetType: normalizeMappingTargetType(mapping?.targetType),
-            seperator: normalizeMappingSeparator(mapping?.seperator),
-            importFormat: normalizeDateFormat(mapping?.importFormat),
-            targetFormat: normalizeDateFormat(mapping?.targetFormat),
-          }))
-          .filter((mapping) => mapping.sourceField || mapping.databaseField)
+      ? sanitizeColumnMappings(
+          input.columnMappings,
+          String(input?.parserType || "csv").trim().toLowerCase() || "csv"
+        )
       : [],
   };
 
@@ -549,23 +590,6 @@ function buildFileImportTypePayload(input, existingId = null) {
   } else {
     payload.targetDateSourceField = "";
   }
-
-  payload.columnMappings = payload.columnMappings.map((mapping) => {
-    if (mapping.targetType === "date") {
-      if (!mapping.importFormat || !mapping.targetFormat) {
-        throw new Error("Date mappings vereisen zowel een Import Format als Target Format");
-      }
-    } else {
-      mapping.importFormat = "";
-      mapping.targetFormat = "";
-    }
-
-    if (mapping.targetType !== "array") {
-      mapping.seperator = ",";
-    }
-
-    return mapping;
-  });
 
   if (payload.idFormat.length > 0) {
     const availableDatabaseFields = new Set(payload.columnMappings.map((mapping) => mapping.databaseField));
