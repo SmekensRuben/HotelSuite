@@ -154,22 +154,38 @@ function scoreParsedRows(rows, expectedColumnCount) {
   return (exactMatches * 1000) + usableRows;
 }
 
+function hasMappedValue(value) {
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === "object") {
+    return Object.values(value).some((childValue) => hasMappedValue(childValue));
+  }
+  return value !== "";
+}
+
+function mapFlatObject(record, mappings) {
+  const mappedDocument = {};
+
+  mappings.forEach((mapping) => {
+    if (mapping.targetType === "list") {
+      const childItem = mapFlatObject(record, mapping.childMappings || []);
+      mappedDocument[mapping.databaseField] = hasMappedValue(childItem) ? [childItem] : [];
+      return;
+    }
+
+    mappedDocument[mapping.databaseField] = transformMappedValue(
+      record?.[mapping.sourceFieldKey],
+      mapping
+    );
+  });
+
+  return mappedDocument;
+}
+
 function mapDocumentsFromFlatRecords(records, normalizedMappings) {
   return records
     .map((record, index) => {
-      const mappedDocument = {};
-      normalizedMappings.forEach((mapping) => {
-        mappedDocument[mapping.databaseField] = transformMappedValue(
-          record?.[mapping.sourceFieldKey],
-          mapping
-        );
-      });
-
-      const hasMappedValue = Object.values(mappedDocument).some((value) => {
-        if (Array.isArray(value)) return value.length > 0;
-        return value !== "";
-      });
-      if (!hasMappedValue) return null;
+      const mappedDocument = mapFlatObject(record, normalizedMappings);
+      if (!hasMappedValue(mappedDocument)) return null;
 
       return {
         rowIndex: index,
@@ -339,12 +355,7 @@ function mapXmlObject(recordNode, mappings) {
 
       mappedDocument[mapping.databaseField] = sourceItems
         .map((item) => mapXmlObject(item, mapping.childMappings || []))
-        .filter((childItem) =>
-          Object.values(childItem).some((value) => {
-            if (Array.isArray(value)) return value.length > 0;
-            return value !== "";
-          })
-        );
+        .filter((childItem) => hasMappedValue(childItem));
       return;
     }
 
@@ -375,12 +386,7 @@ function parseXmlDocuments(content, fileImportType) {
   return recordNodes
     .map((recordNode, index) => {
       const mappedDocument = mapXmlObject(recordNode, normalizedMappings);
-      const hasMappedValue = Object.values(mappedDocument).some((value) => {
-        if (Array.isArray(value)) return value.length > 0;
-        return value !== "";
-      });
-
-      if (!hasMappedValue) return null;
+      if (!hasMappedValue(mappedDocument)) return null;
 
       return {
         rowIndex: index,
@@ -560,6 +566,49 @@ function resolveFirestorePath(fileImportType, context) {
     .replace(/^\/+|\/+$/g, "");
 }
 
+function mergeMappedDocuments(existingDocument, incomingDocument, mappings) {
+  const mergedDocument = {
+    ...(existingDocument && typeof existingDocument === "object" ? existingDocument : {}),
+  };
+
+  mappings.forEach((mapping) => {
+    const fieldName = mapping?.databaseField;
+    if (!fieldName) return;
+
+    if (mapping.targetType === "list") {
+      const existingItems = Array.isArray(mergedDocument[fieldName]) ? mergedDocument[fieldName] : [];
+      const incomingItems = Array.isArray(incomingDocument?.[fieldName]) ? incomingDocument[fieldName] : [];
+      mergedDocument[fieldName] = [...existingItems, ...incomingItems];
+      return;
+    }
+
+    const incomingValue = incomingDocument?.[fieldName];
+    if (incomingValue !== undefined && hasMappedValue(incomingValue)) {
+      mergedDocument[fieldName] = incomingValue;
+    }
+  });
+
+  return mergedDocument;
+}
+
+function aggregateMappedDocuments(mappedDocuments, buildRowDetails, mappings) {
+  const aggregatedDocuments = new Map();
+
+  mappedDocuments.forEach((documentRow) => {
+    const rowDetails = buildRowDetails(documentRow);
+    const existingRow = aggregatedDocuments.get(rowDetails.resolvedPath);
+
+    if (!existingRow) {
+      aggregatedDocuments.set(rowDetails.resolvedPath, rowDetails);
+      return;
+    }
+
+    existingRow.payload = mergeMappedDocuments(existingRow.payload, rowDetails.payload, mappings);
+  });
+
+  return Array.from(aggregatedDocuments.values());
+}
+
 async function writeRowToFirestore({ db, fileImportType, resolvedPath, context, payload }) {
   if (!resolvedPath) {
     throw new Error("Resolved Firestore path is leeg");
@@ -669,24 +718,36 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1" },
     return;
   }
 
-  const writeResults = [];
-  for (const documentRow of mappedDocuments) {
-    const context = buildTemplateContext({
-      hotelUid,
-      fileType,
-      fileImportType,
-      mappedRow: documentRow.mappedDocument,
-      object,
-      rowIndex: documentRow.rowIndex,
-    });
+  const normalizedMappings = normalizeColumnMappings(fileImportType);
+  const rowsToWrite = aggregateMappedDocuments(
+    mappedDocuments,
+    (documentRow) => {
+      const context = buildTemplateContext({
+        hotelUid,
+        fileType,
+        fileImportType,
+        mappedRow: documentRow.mappedDocument,
+        object,
+        rowIndex: documentRow.rowIndex,
+      });
 
-    const resolvedPath = resolveFirestorePath(fileImportType, context);
+      return {
+        context,
+        resolvedPath: resolveFirestorePath(fileImportType, context),
+        payload: documentRow.mappedDocument,
+      };
+    },
+    normalizedMappings
+  );
+
+  const writeResults = [];
+  for (const rowToWrite of rowsToWrite) {
     const writtenPath = await writeRowToFirestore({
       db,
       fileImportType,
-      resolvedPath,
-      context,
-      payload: documentRow.mappedDocument,
+      resolvedPath: rowToWrite.resolvedPath,
+      context: rowToWrite.context,
+      payload: rowToWrite.payload,
     });
 
     writeResults.push(writtenPath);

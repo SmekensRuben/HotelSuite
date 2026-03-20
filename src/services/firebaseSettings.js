@@ -442,8 +442,8 @@ function sanitizeColumnMappings(columnMappings, parserType) {
       const normalizedMapping = normalizeColumnMapping(mapping);
 
       if (normalizedMapping.targetType === "list") {
-        if (parserType !== "xml") {
-          throw new Error("List target type is alleen beschikbaar voor XML imports");
+        if (parserType !== "xml" && parserType !== "csv") {
+          throw new Error("List target type is alleen beschikbaar voor CSV en XML imports");
         }
 
         normalizedMapping.seperator = ",";

@@ -84,15 +84,15 @@ function Field({ label, htmlFor, children, hint }) {
 
 function MappingEditor({
   mappings,
-  isXmlParser,
+  parserType,
   onMappingChange,
   onAddMapping,
   onRemoveMapping,
   path = [],
 }) {
-  const availableTargetTypeOptions = isXmlParser
-    ? [...baseTargetTypeOptions, { value: "list", label: "List" }]
-    : baseTargetTypeOptions;
+  const isXmlParser = parserType === "xml";
+  const isCsvParser = parserType === "csv";
+  const availableTargetTypeOptions = [...baseTargetTypeOptions, { value: "list", label: "List" }];
 
   return (
     <div className="space-y-3">
@@ -100,20 +100,37 @@ function MappingEditor({
         const mappingPath = [...path, index];
         const rowKey = `mapping-${mappingPath.join("-")}`;
         const canRemove = mappings.length > 1;
-        const isListMapping = isXmlParser && mapping.targetType === "list";
+        const isListMapping = mapping.targetType === "list";
         const childMappings = Array.isArray(mapping.childMappings) ? mapping.childMappings : [];
 
         return (
           <div key={rowKey} className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_180px_180px_180px_180px_auto]">
-              <Field label={isListMapping ? "Source List Node" : "Source Field"} htmlFor={`source-field-${mappingPath.join("-")}`}>
+              <Field
+                label={isListMapping ? (isXmlParser ? "Source List Node" : "Source Field") : "Source Field"}
+                htmlFor={`source-field-${mappingPath.join("-")}`}
+                hint={
+                  isListMapping && isCsvParser
+                    ? "For CSV list mappings, child mappings read values from the same row, so no source field is needed on the list itself."
+                    : undefined
+                }
+              >
                 <input
                   id={`source-field-${mappingPath.join("-")}`}
                   type="text"
                   value={mapping.sourceField ?? mapping.csvHeader ?? ""}
                   onChange={onMappingChange(mappingPath, "sourceField")}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-                  placeholder={isListMapping ? "Items.Item" : isXmlParser ? "ProductCode" : "sku"}
+                  disabled={isListMapping && isCsvParser}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
+                  placeholder={
+                    isListMapping
+                      ? isXmlParser
+                        ? "Items.Item"
+                        : "Not used for CSV lists"
+                      : isXmlParser
+                        ? "ProductCode"
+                        : "sku"
+                  }
                 />
               </Field>
 
@@ -227,7 +244,7 @@ function MappingEditor({
                 <div className="mb-3 flex items-center justify-between gap-4">
                   <div>
                     <h3 className="text-sm font-semibold text-gray-900">List item mappings</h3>
-                    <p className="text-xs text-gray-500">Map fields inside each XML node of this list to properties on the target list item.</p>
+                    <p className="text-xs text-gray-500">{isXmlParser ? "Map fields inside each XML node of this list to properties on the target list item." : "Map fields from the same CSV row to properties on one list item. Rows with the same documentId will append new list items instead of overwriting the document."}</p>
                   </div>
                   <button
                     type="button"
@@ -241,7 +258,7 @@ function MappingEditor({
                 {childMappings.length > 0 ? (
                   <MappingEditor
                     mappings={childMappings}
-                    isXmlParser={isXmlParser}
+                    parserType={parserType}
                     onMappingChange={onMappingChange}
                     onAddMapping={onAddMapping}
                     onRemoveMapping={onRemoveMapping}
@@ -586,7 +603,7 @@ export default function FileImportTypeForm({
 
         <MappingEditor
           mappings={formValues.columnMappings}
-          isXmlParser={isXmlParser}
+          parserType={formValues.parserType}
           onMappingChange={onMappingChange}
           onAddMapping={onAddMapping}
           onRemoveMapping={onRemoveMapping}

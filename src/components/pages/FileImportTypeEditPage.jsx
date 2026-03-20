@@ -151,6 +151,7 @@ export default function FileImportTypeEditPage() {
       columnMappings: updateMappingsAtPath(prev.columnMappings, path, (mapping) => ({
         ...mapping,
         [field]: value,
+        ...(field === 'targetType' && value === 'list' && prev.parserType === 'csv' ? { sourceField: '' } : {}),
         ...(field === 'targetType' && value !== 'list' ? { childMappings: [] } : {}),
       })),
     }));
