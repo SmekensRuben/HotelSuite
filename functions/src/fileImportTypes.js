@@ -518,7 +518,7 @@ function convertDateValue(value, importFormat, targetFormat) {
 function isMappedValueValid(rawValue, mapping) {
   if (mapping?.targetType !== "date") return true;
   const trimmedValue = String(rawValue ?? "").trim();
-  if (!trimmedValue) return true;
+  if (!trimmedValue) return false;
   return convertDateValue(trimmedValue, mapping?.importFormat, mapping?.targetFormat).isValid;
 }
 
