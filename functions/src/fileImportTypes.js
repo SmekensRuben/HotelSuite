@@ -50,7 +50,7 @@ function normalizeColumnMappings(fileImportType) {
   return Array.isArray(fileImportType?.columnMappings)
     ? fileImportType.columnMappings
         .map((mapping) => normalizeMapping(mapping))
-        .filter((mapping) => mapping.sourceFieldKey && mapping.databaseField)
+        .filter((mapping) => mapping.databaseField && (mapping.targetType === "list" || mapping.sourceFieldKey))
     : [];
 }
 
