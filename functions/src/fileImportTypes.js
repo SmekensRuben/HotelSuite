@@ -164,28 +164,41 @@ function hasMappedValue(value) {
 
 function mapFlatObject(record, mappings) {
   const mappedDocument = {};
+  let shouldSkip = false;
 
   mappings.forEach((mapping) => {
+    if (shouldSkip) return;
+
     if (mapping.targetType === "list") {
-      const childItem = mapFlatObject(record, mapping.childMappings || []);
-      mappedDocument[mapping.databaseField] = hasMappedValue(childItem) ? [childItem] : [];
+      const childItemResult = mapFlatObject(record, mapping.childMappings || []);
+      if (childItemResult.shouldSkip) {
+        shouldSkip = true;
+        return;
+      }
+
+      mappedDocument[mapping.databaseField] = hasMappedValue(childItemResult.mappedDocument)
+        ? [childItemResult.mappedDocument]
+        : [];
       return;
     }
 
-    mappedDocument[mapping.databaseField] = transformMappedValue(
-      record?.[mapping.sourceFieldKey],
-      mapping
-    );
+    const rawValue = record?.[mapping.sourceFieldKey];
+    if (!isMappedValueValid(rawValue, mapping)) {
+      shouldSkip = true;
+      return;
+    }
+
+    mappedDocument[mapping.databaseField] = transformMappedValue(rawValue, mapping);
   });
 
-  return mappedDocument;
+  return { mappedDocument, shouldSkip };
 }
 
 function mapDocumentsFromFlatRecords(records, normalizedMappings) {
   return records
     .map((record, index) => {
-      const mappedDocument = mapFlatObject(record, normalizedMappings);
-      if (!hasMappedValue(mappedDocument)) return null;
+      const { mappedDocument, shouldSkip } = mapFlatObject(record, normalizedMappings);
+      if (shouldSkip || !hasMappedValue(mappedDocument)) return null;
 
       return {
         rowIndex: index,
@@ -342,8 +355,11 @@ function resolveXmlSourceValue(recordNode, mapping, flattenedRecord) {
 function mapXmlObject(recordNode, mappings) {
   const flattenedRecord = flattenXmlRecord(recordNode);
   const mappedDocument = {};
+  let shouldSkip = false;
 
   mappings.forEach((mapping) => {
+    if (shouldSkip) return;
+
     const resolvedValue = resolveXmlSourceValue(recordNode, mapping, flattenedRecord);
 
     if (mapping.targetType === "list") {
@@ -353,16 +369,31 @@ function mapXmlObject(recordNode, mappings) {
           ? []
           : [resolvedValue];
 
-      mappedDocument[mapping.databaseField] = sourceItems
-        .map((item) => mapXmlObject(item, mapping.childMappings || []))
-        .filter((childItem) => hasMappedValue(childItem));
+      const childItems = [];
+      for (const item of sourceItems) {
+        const childItemResult = mapXmlObject(item, mapping.childMappings || []);
+        if (childItemResult.shouldSkip) {
+          shouldSkip = true;
+          return;
+        }
+        if (hasMappedValue(childItemResult.mappedDocument)) {
+          childItems.push(childItemResult.mappedDocument);
+        }
+      }
+
+      mappedDocument[mapping.databaseField] = childItems;
+      return;
+    }
+
+    if (!isMappedValueValid(resolvedValue, mapping)) {
+      shouldSkip = true;
       return;
     }
 
     mappedDocument[mapping.databaseField] = transformMappedValue(resolvedValue, mapping);
   });
 
-  return mappedDocument;
+  return { mappedDocument, shouldSkip };
 }
 
 function parseXmlDocuments(content, fileImportType) {
@@ -385,8 +416,8 @@ function parseXmlDocuments(content, fileImportType) {
 
   return recordNodes
     .map((recordNode, index) => {
-      const mappedDocument = mapXmlObject(recordNode, normalizedMappings);
-      if (!hasMappedValue(mappedDocument)) return null;
+      const { mappedDocument, shouldSkip } = mapXmlObject(recordNode, normalizedMappings);
+      if (shouldSkip || !hasMappedValue(mappedDocument)) return null;
 
       return {
         rowIndex: index,
@@ -457,22 +488,38 @@ function formatParsedDate(parts, format) {
 function convertDateValue(value, importFormat, targetFormat) {
   const parsedFromFormat = parseDateFromFormat(value, importFormat);
   if (parsedFromFormat) {
-    return formatParsedDate(parsedFromFormat, targetFormat || "yyyy-MM-dd");
+    return {
+      value: formatParsedDate(parsedFromFormat, targetFormat || "yyyy-MM-dd"),
+      isValid: true,
+    };
   }
 
   const direct = new Date(String(value || "").trim());
   if (!Number.isNaN(direct.getTime())) {
-    return formatParsedDate(
-      {
-        year: direct.getUTCFullYear(),
-        month: direct.getUTCMonth() + 1,
-        day: direct.getUTCDate(),
-      },
-      targetFormat || "yyyy-MM-dd"
-    );
+    return {
+      value: formatParsedDate(
+        {
+          year: direct.getUTCFullYear(),
+          month: direct.getUTCMonth() + 1,
+          day: direct.getUTCDate(),
+        },
+        targetFormat || "yyyy-MM-dd"
+      ),
+      isValid: true,
+    };
   }
 
-  return String(value || "").trim();
+  return {
+    value: String(value || "").trim(),
+    isValid: false,
+  };
+}
+
+function isMappedValueValid(rawValue, mapping) {
+  if (mapping?.targetType !== "date") return true;
+  const trimmedValue = String(rawValue ?? "").trim();
+  if (!trimmedValue) return true;
+  return convertDateValue(trimmedValue, mapping?.importFormat, mapping?.targetFormat).isValid;
 }
 
 function transformMappedValue(rawValue, mapping) {
@@ -492,7 +539,7 @@ function transformMappedValue(rawValue, mapping) {
         .filter(Boolean);
     case "date":
       if (!trimmedValue) return "";
-      return convertDateValue(trimmedValue, mapping?.importFormat, mapping?.targetFormat);
+      return convertDateValue(trimmedValue, mapping?.importFormat, mapping?.targetFormat).value;
     case "string":
     default:
       return trimmedValue;
@@ -501,7 +548,7 @@ function transformMappedValue(rawValue, mapping) {
 
 function formatDateValue(value) {
   if (!value) return "";
-  return convertDateValue(value, "yyyy-MM-dd", "yyyy-MM-dd");
+  return convertDateValue(value, "yyyy-MM-dd", "yyyy-MM-dd").value;
 }
 
 function resolveCurrentDateWithOffset(offsetDays) {
