@@ -566,6 +566,25 @@ function resolveFirestorePath(fileImportType, context) {
     .replace(/^\/+|\/+$/g, "");
 }
 
+function resolveWriteTarget(fileImportType, resolvedPath, context) {
+  const segments = String(resolvedPath || "").split("/").filter(Boolean);
+  const writeMode = String(fileImportType?.writeMode || "overwrite").trim().toLowerCase();
+
+  if (segments.length % 2 === 0) {
+    return {
+      docPath: resolvedPath,
+      isExplicitDocument: true,
+    };
+  }
+
+  const normalizedDocId = String(context?.documentId || "").trim();
+  const shouldUseExplicitDocId = normalizedDocId && (writeMode === "overwrite" || writeMode === "merge");
+  return {
+    docPath: shouldUseExplicitDocId ? `${resolvedPath}/${normalizedDocId}`.replace(/\/+/g, "/") : "",
+    isExplicitDocument: Boolean(shouldUseExplicitDocId),
+  };
+}
+
 function mergeMappedDocuments(existingDocument, incomingDocument, mappings) {
   const mergedDocument = {
     ...(existingDocument && typeof existingDocument === "object" ? existingDocument : {}),
@@ -594,12 +613,13 @@ function mergeMappedDocuments(existingDocument, incomingDocument, mappings) {
 function aggregateMappedDocuments(mappedDocuments, buildRowDetails, mappings) {
   const aggregatedDocuments = new Map();
 
-  mappedDocuments.forEach((documentRow) => {
-    const rowDetails = buildRowDetails(documentRow);
-    const existingRow = aggregatedDocuments.get(rowDetails.resolvedPath);
+  mappedDocuments.forEach((documentRow, index) => {
+    const rowDetails = buildRowDetails(documentRow, index);
+    const aggregationKey = rowDetails.aggregationKey || `${rowDetails.resolvedPath}#${index}`;
+    const existingRow = aggregatedDocuments.get(aggregationKey);
 
     if (!existingRow) {
-      aggregatedDocuments.set(rowDetails.resolvedPath, rowDetails);
+      aggregatedDocuments.set(aggregationKey, rowDetails);
       return;
     }
 
@@ -609,35 +629,31 @@ function aggregateMappedDocuments(mappedDocuments, buildRowDetails, mappings) {
   return Array.from(aggregatedDocuments.values());
 }
 
-async function writeRowToFirestore({ db, fileImportType, resolvedPath, context, payload }) {
+async function writeRowToFirestore({ db, fileImportType, resolvedPath, context, payload, mappings }) {
   if (!resolvedPath) {
     throw new Error("Resolved Firestore path is leeg");
   }
 
-  const segments = resolvedPath.split("/").filter(Boolean);
   const writeMode = String(fileImportType?.writeMode || "overwrite").trim().toLowerCase();
+  const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
 
-  if (segments.length % 2 === 0) {
-    const docRef = db.doc(resolvedPath);
+  if (writeTarget.isExplicitDocument) {
+    const docRef = db.doc(writeTarget.docPath);
+    const docSnapshot = await docRef.get();
+    const nextPayload = docSnapshot.exists
+      ? mergeMappedDocuments(docSnapshot.data() || {}, payload, mappings || normalizeColumnMappings(fileImportType))
+      : payload;
+
     if (writeMode === "merge") {
-      await docRef.set(payload, { merge: true });
+      await docRef.set(nextPayload, { merge: true });
     } else {
-      await docRef.set(payload);
+      await docRef.set(nextPayload);
     }
     return docRef.path;
   }
 
-  const collectionRef = db.collection(resolvedPath);
-  const normalizedDocId = String(context.documentId || "").trim();
-  const shouldUseExplicitDocId = normalizedDocId && (writeMode === "overwrite" || writeMode === "merge");
-  const docRef = shouldUseExplicitDocId ? collectionRef.doc(normalizedDocId) : collectionRef.doc();
-
-  if (writeMode === "merge") {
-    await docRef.set(payload, { merge: true });
-  } else {
-    await docRef.set(payload);
-  }
-
+  const docRef = db.collection(resolvedPath).doc();
+  await docRef.set(payload);
   return docRef.path;
 }
 
@@ -731,9 +747,13 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1" },
         rowIndex: documentRow.rowIndex,
       });
 
+      const resolvedPath = resolveFirestorePath(fileImportType, context);
+      const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
+
       return {
+        aggregationKey: writeTarget.isExplicitDocument ? writeTarget.docPath : `${resolvedPath}#${documentRow.rowIndex}`,
         context,
-        resolvedPath: resolveFirestorePath(fileImportType, context),
+        resolvedPath,
         payload: documentRow.mappedDocument,
       };
     },
@@ -748,6 +768,7 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1" },
       resolvedPath: rowToWrite.resolvedPath,
       context: rowToWrite.context,
       payload: rowToWrite.payload,
+      mappings: normalizedMappings,
     });
 
     writeResults.push(writtenPath);
