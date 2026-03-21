@@ -430,6 +430,7 @@ function normalizeColumnMapping(mapping = {}) {
     seperator: normalizeMappingSeparator(mapping?.seperator),
     importFormat: normalizeDateFormat(mapping?.importFormat),
     targetFormat: normalizeDateFormat(mapping?.targetFormat),
+    listItemKeyField: String(mapping?.listItemKeyField || "").trim(),
     childMappings: Array.isArray(mapping?.childMappings)
       ? mapping.childMappings.map((childMapping) => normalizeColumnMapping(childMapping))
       : [],
@@ -453,9 +454,18 @@ function sanitizeColumnMappings(columnMappings, parserType) {
           normalizedMapping.childMappings,
           parserType
         );
+        const childDatabaseFields = new Set(
+          normalizedMapping.childMappings
+            .map((childMapping) => String(childMapping?.databaseField || "").trim())
+            .filter(Boolean)
+        );
+        if (!childDatabaseFields.has(normalizedMapping.listItemKeyField)) {
+          normalizedMapping.listItemKeyField = "";
+        }
         return normalizedMapping;
       }
 
+      normalizedMapping.listItemKeyField = "";
       normalizedMapping.childMappings = [];
 
       if (normalizedMapping.targetType === "date") {

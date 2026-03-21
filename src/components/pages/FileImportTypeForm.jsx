@@ -8,6 +8,7 @@ const defaultMapping = {
   seperator: ",",
   importFormat: "",
   targetFormat: "",
+  listItemKeyField: "",
   childMappings: [],
 };
 
@@ -102,6 +103,9 @@ function MappingEditor({
         const canRemove = mappings.length > 1;
         const isListMapping = mapping.targetType === "list";
         const childMappings = Array.isArray(mapping.childMappings) ? mapping.childMappings : [];
+        const childDatabaseFieldOptions = childMappings
+          .map((childMapping) => String(childMapping?.databaseField || "").trim())
+          .filter(Boolean);
 
         return (
           <div key={rowKey} className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -256,14 +260,38 @@ function MappingEditor({
                 </div>
 
                 {childMappings.length > 0 ? (
-                  <MappingEditor
-                    mappings={childMappings}
-                    parserType={parserType}
-                    onMappingChange={onMappingChange}
-                    onAddMapping={onAddMapping}
-                    onRemoveMapping={onRemoveMapping}
-                    path={[...mappingPath, "childMappings"]}
-                  />
+                  <>
+                    <div className="mb-4 max-w-sm">
+                      <Field
+                        label="List Item Key"
+                        htmlFor={`list-item-key-${mappingPath.join("-")}`}
+                        hint="Optional. When this child database field matches an existing item in the same document list, the incoming list item will be skipped instead of appended."
+                      >
+                        <select
+                          id={`list-item-key-${mappingPath.join("-")}`}
+                          value={mapping.listItemKeyField || ""}
+                          onChange={onMappingChange(mappingPath, "listItemKeyField")}
+                          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                        >
+                          <option value="">No key field</option>
+                          {childDatabaseFieldOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    </div>
+
+                    <MappingEditor
+                      mappings={childMappings}
+                      parserType={parserType}
+                      onMappingChange={onMappingChange}
+                      onAddMapping={onAddMapping}
+                      onRemoveMapping={onRemoveMapping}
+                      path={[...mappingPath, "childMappings"]}
+                    />
+                  </>
                 ) : (
                   <p className="text-sm text-gray-500">No list item mappings configured yet.</p>
                 )}

@@ -59,6 +59,7 @@ export default function FileImportTypeCreatePage() {
     seperator: ",",
     importFormat: "",
     targetFormat: "",
+    listItemKeyField: "",
     childMappings: [],
   });
 

@@ -71,6 +71,7 @@ export default function FileImportTypeEditPage() {
                     seperator: mapping?.seperator || ",",
                     importFormat: mapping?.importFormat || "",
                     targetFormat: mapping?.targetFormat || "",
+                    listItemKeyField: mapping?.listItemKeyField || "",
                     childMappings: Array.isArray(mapping?.childMappings)
                       ? mapping.childMappings.map(normalizeMapping)
                       : [],
@@ -116,6 +117,7 @@ export default function FileImportTypeEditPage() {
     seperator: ",",
     importFormat: "",
     targetFormat: "",
+    listItemKeyField: "",
     childMappings: [],
   });
 

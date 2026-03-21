@@ -42,6 +42,7 @@ function normalizeColumnMappings(fileImportType) {
     seperator: normalizeSeparator(mapping?.seperator),
     importFormat: String(mapping?.importFormat || "").trim(),
     targetFormat: String(mapping?.targetFormat || "").trim(),
+    listItemKeyField: String(mapping?.listItemKeyField || "").trim(),
     childMappings: Array.isArray(mapping?.childMappings)
       ? mapping.childMappings.map((childMapping) => normalizeMapping(childMapping))
       : [],
@@ -632,6 +633,38 @@ function resolveWriteTarget(fileImportType, resolvedPath, context) {
   };
 }
 
+function getListItemKeyValue(listItem, keyField) {
+  if (!keyField) return "";
+  return String(listItem?.[keyField] ?? "").trim();
+}
+
+function mergeListItems(existingItems, incomingItems, keyField) {
+  const mergedItems = Array.isArray(existingItems) ? [...existingItems] : [];
+  if (!keyField) {
+    return [...mergedItems, ...(Array.isArray(incomingItems) ? incomingItems : [])];
+  }
+
+  const existingKeys = new Set(
+    mergedItems
+      .map((listItem) => getListItemKeyValue(listItem, keyField))
+      .filter(Boolean)
+  );
+
+  (Array.isArray(incomingItems) ? incomingItems : []).forEach((incomingItem) => {
+    const incomingKey = getListItemKeyValue(incomingItem, keyField);
+    if (incomingKey && existingKeys.has(incomingKey)) {
+      return;
+    }
+
+    mergedItems.push(incomingItem);
+    if (incomingKey) {
+      existingKeys.add(incomingKey);
+    }
+  });
+
+  return mergedItems;
+}
+
 function mergeMappedDocuments(existingDocument, incomingDocument, mappings) {
   const mergedDocument = {
     ...(existingDocument && typeof existingDocument === "object" ? existingDocument : {}),
@@ -644,7 +677,7 @@ function mergeMappedDocuments(existingDocument, incomingDocument, mappings) {
     if (mapping.targetType === "list") {
       const existingItems = Array.isArray(mergedDocument[fieldName]) ? mergedDocument[fieldName] : [];
       const incomingItems = Array.isArray(incomingDocument?.[fieldName]) ? incomingDocument[fieldName] : [];
-      mergedDocument[fieldName] = [...existingItems, ...incomingItems];
+      mergedDocument[fieldName] = mergeListItems(existingItems, incomingItems, mapping.listItemKeyField);
       return;
     }
 
