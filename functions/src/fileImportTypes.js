@@ -865,7 +865,7 @@ function touchDocumentCache(documentCache, cacheKey, value) {
   documentCache.set(cacheKey, value);
 }
 
-async function commitFirestoreWrite({ db, fileImportType, resolvedPath, context, payload }) {
+async function commitFirestoreWrite({ db, bulkWriter, fileImportType, resolvedPath, context, payload }) {
   if (!resolvedPath) {
     throw new Error("Resolved Firestore path is leeg");
   }
@@ -875,6 +875,15 @@ async function commitFirestoreWrite({ db, fileImportType, resolvedPath, context,
 
   if (writeTarget.isExplicitDocument) {
     const docRef = db.doc(writeTarget.docPath);
+    if (bulkWriter) {
+      if (writeMode === "merge") {
+        bulkWriter.set(docRef, payload, { merge: true });
+      } else {
+        bulkWriter.set(docRef, payload);
+      }
+      return docRef.path;
+    }
+
     if (writeMode === "merge") {
       await docRef.set(payload, { merge: true });
     } else {
@@ -884,11 +893,16 @@ async function commitFirestoreWrite({ db, fileImportType, resolvedPath, context,
   }
 
   const docRef = db.collection(resolvedPath).doc();
+  if (bulkWriter) {
+    bulkWriter.set(docRef, payload);
+    return docRef.path;
+  }
+
   await docRef.set(payload);
   return docRef.path;
 }
 
-async function flushOldestCachedDocument({ db, fileImportType, documentCache }) {
+async function flushOldestCachedDocument({ db, bulkWriter, fileImportType, documentCache }) {
   if (!documentCache.size) return null;
 
   const oldestEntry = documentCache.entries().next().value;
@@ -899,6 +913,7 @@ async function flushOldestCachedDocument({ db, fileImportType, documentCache }) 
 
   return commitFirestoreWrite({
     db,
+    bulkWriter,
     fileImportType,
     resolvedPath: cachedDocument.resolvedPath,
     context: cachedDocument.context,
@@ -908,6 +923,7 @@ async function flushOldestCachedDocument({ db, fileImportType, documentCache }) 
 
 async function enqueueMappedDocumentWrite({
   db,
+  bulkWriter,
   fileImportType,
   resolvedPath,
   context,
@@ -921,6 +937,7 @@ async function enqueueMappedDocumentWrite({
   if (!writeTarget.isExplicitDocument) {
     const writtenPath = await commitFirestoreWrite({
       db,
+      bulkWriter,
       fileImportType,
       resolvedPath,
       context,
@@ -953,7 +970,7 @@ async function enqueueMappedDocumentWrite({
   const flushedPaths = [];
   while (documentCache.size > maxCacheEntries) {
     // eslint-disable-next-line no-await-in-loop
-    const flushedPath = await flushOldestCachedDocument({ db, fileImportType, documentCache });
+    const flushedPath = await flushOldestCachedDocument({ db, bulkWriter, fileImportType, documentCache });
     if (flushedPath) {
       flushedPaths.push(flushedPath);
     }
@@ -972,6 +989,7 @@ async function processMappedDocumentStream({
 }) {
   const normalizedMappings = normalizeColumnMappings(fileImportType);
   const documentCache = new Map();
+  const bulkWriter = typeof db.bulkWriter === "function" ? db.bulkWriter() : null;
   let writtenCount = 0;
   let firstWrittenPath = null;
 
@@ -988,6 +1006,7 @@ async function processMappedDocumentStream({
     const resolvedPath = resolveFirestorePath(fileImportType, context);
     const { flushedPaths } = await enqueueMappedDocumentWrite({
       db,
+      bulkWriter,
       fileImportType,
       resolvedPath,
       context,
@@ -1006,13 +1025,17 @@ async function processMappedDocumentStream({
 
   while (documentCache.size > 0) {
     // eslint-disable-next-line no-await-in-loop
-    const flushedPath = await flushOldestCachedDocument({ db, fileImportType, documentCache });
+    const flushedPath = await flushOldestCachedDocument({ db, bulkWriter, fileImportType, documentCache });
     if (flushedPath) {
       writtenCount += 1;
       if (!firstWrittenPath) {
         firstWrittenPath = flushedPath;
       }
     }
+  }
+
+  if (bulkWriter) {
+    await bulkWriter.close();
   }
 
   return { writtenCount, firstWrittenPath };
