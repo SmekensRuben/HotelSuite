@@ -979,6 +979,24 @@ async function enqueueMappedDocumentWrite({
   return { flushedPaths };
 }
 
+async function processWithConcurrency(items, concurrency, handler) {
+  if (!Array.isArray(items) || items.length === 0) return;
+
+  let currentIndex = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (currentIndex < items.length) {
+      const item = items[currentIndex];
+      currentIndex += 1;
+      // eslint-disable-next-line no-await-in-loop
+      await handler(item);
+    }
+  });
+
+  await Promise.all(workers);
+}
+
 async function processMappedDocumentStream({
   db,
   fileImportType,
@@ -988,51 +1006,77 @@ async function processMappedDocumentStream({
   onEachMappedDocument,
 }) {
   const normalizedMappings = normalizeColumnMappings(fileImportType);
-  const documentCache = new Map();
   const bulkWriter = typeof db.bulkWriter === "function" ? db.bulkWriter() : null;
+  const pendingDocuments = [];
+  const batchSize = 500;
+  const writeConcurrency = 20;
   let writtenCount = 0;
   let firstWrittenPath = null;
 
-  await onEachMappedDocument(async (documentRow) => {
-    const context = buildTemplateContext({
-      hotelUid,
-      fileType,
-      fileImportType,
-      mappedRow: documentRow.mappedDocument,
-      object,
-      rowIndex: documentRow.rowIndex,
-    });
+  const flushPendingDocuments = async () => {
+    if (pendingDocuments.length === 0) return;
 
-    const resolvedPath = resolveFirestorePath(fileImportType, context);
-    const { flushedPaths } = await enqueueMappedDocumentWrite({
-      db,
-      bulkWriter,
-      fileImportType,
-      resolvedPath,
-      context,
-      payload: documentRow.mappedDocument,
-      mappings: normalizedMappings,
-      documentCache,
-    });
+    const currentBatch = pendingDocuments.splice(0, pendingDocuments.length);
+    const rowsToWrite = aggregateMappedDocuments(
+      currentBatch,
+      (documentRow) => {
+        const context = buildTemplateContext({
+          hotelUid,
+          fileType,
+          fileImportType,
+          mappedRow: documentRow.mappedDocument,
+          object,
+          rowIndex: documentRow.rowIndex,
+        });
 
-    flushedPaths.forEach((writtenPath) => {
+        const resolvedPath = resolveFirestorePath(fileImportType, context);
+        const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
+
+        return {
+          aggregationKey: writeTarget.isExplicitDocument ? writeTarget.docPath : `${resolvedPath}#${documentRow.rowIndex}`,
+          context,
+          resolvedPath,
+          payload: documentRow.mappedDocument,
+        };
+      },
+      normalizedMappings
+    );
+
+    await processWithConcurrency(rowsToWrite, writeConcurrency, async (rowToWrite) => {
+      const writeTarget = resolveWriteTarget(fileImportType, rowToWrite.resolvedPath, rowToWrite.context);
+      let payloadToWrite = rowToWrite.payload;
+
+      if (writeTarget.isExplicitDocument) {
+        const docSnapshot = await db.doc(writeTarget.docPath).get();
+        payloadToWrite = docSnapshot.exists
+          ? mergeMappedDocuments(docSnapshot.data() || {}, rowToWrite.payload, normalizedMappings)
+          : rowToWrite.payload;
+      }
+
+      const writtenPath = await commitFirestoreWrite({
+        db,
+        bulkWriter,
+        fileImportType,
+        resolvedPath: rowToWrite.resolvedPath,
+        context: rowToWrite.context,
+        payload: payloadToWrite,
+      });
+
       writtenCount += 1;
       if (!firstWrittenPath) {
         firstWrittenPath = writtenPath;
       }
     });
+  };
+
+  await onEachMappedDocument(async (documentRow) => {
+    pendingDocuments.push(documentRow);
+    if (pendingDocuments.length >= batchSize) {
+      await flushPendingDocuments();
+    }
   });
 
-  while (documentCache.size > 0) {
-    // eslint-disable-next-line no-await-in-loop
-    const flushedPath = await flushOldestCachedDocument({ db, bulkWriter, fileImportType, documentCache });
-    if (flushedPath) {
-      writtenCount += 1;
-      if (!firstWrittenPath) {
-        firstWrittenPath = flushedPath;
-      }
-    }
-  }
+  await flushPendingDocuments();
 
   if (bulkWriter) {
     await bulkWriter.close();
