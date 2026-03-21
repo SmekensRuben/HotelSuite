@@ -857,20 +857,15 @@ function aggregateMappedDocuments(mappedDocuments, buildRowDetails, mappings) {
   return Array.from(aggregatedDocuments.values());
 }
 
-function touchDocumentCache(documentCache, cacheKey, value, maxEntries = 100) {
+function touchDocumentCache(documentCache, cacheKey, value) {
   if (!documentCache) return;
   if (documentCache.has(cacheKey)) {
     documentCache.delete(cacheKey);
   }
   documentCache.set(cacheKey, value);
-
-  while (documentCache.size > maxEntries) {
-    const oldestKey = documentCache.keys().next().value;
-    documentCache.delete(oldestKey);
-  }
 }
 
-async function writeRowToFirestore({ db, fileImportType, resolvedPath, context, payload, mappings, documentCache }) {
+async function commitFirestoreWrite({ db, fileImportType, resolvedPath, context, payload }) {
   if (!resolvedPath) {
     throw new Error("Resolved Firestore path is leeg");
   }
@@ -880,31 +875,91 @@ async function writeRowToFirestore({ db, fileImportType, resolvedPath, context, 
 
   if (writeTarget.isExplicitDocument) {
     const docRef = db.doc(writeTarget.docPath);
-    const cachedPayload = documentCache?.get(writeTarget.docPath);
-    let nextPayload = payload;
-
-    if (cachedPayload) {
-      nextPayload = mergeMappedDocuments(cachedPayload, payload, mappings || normalizeColumnMappings(fileImportType));
-    } else {
-      const docSnapshot = await docRef.get();
-      nextPayload = docSnapshot.exists
-        ? mergeMappedDocuments(docSnapshot.data() || {}, payload, mappings || normalizeColumnMappings(fileImportType))
-        : payload;
-    }
-
     if (writeMode === "merge") {
-      await docRef.set(nextPayload, { merge: true });
+      await docRef.set(payload, { merge: true });
     } else {
-      await docRef.set(nextPayload);
+      await docRef.set(payload);
     }
-
-    touchDocumentCache(documentCache, writeTarget.docPath, nextPayload);
     return docRef.path;
   }
 
   const docRef = db.collection(resolvedPath).doc();
   await docRef.set(payload);
   return docRef.path;
+}
+
+async function flushOldestCachedDocument({ db, fileImportType, documentCache }) {
+  if (!documentCache.size) return null;
+
+  const oldestEntry = documentCache.entries().next().value;
+  if (!oldestEntry) return null;
+
+  const [cacheKey, cachedDocument] = oldestEntry;
+  documentCache.delete(cacheKey);
+
+  return commitFirestoreWrite({
+    db,
+    fileImportType,
+    resolvedPath: cachedDocument.resolvedPath,
+    context: cachedDocument.context,
+    payload: cachedDocument.payload,
+  });
+}
+
+async function enqueueMappedDocumentWrite({
+  db,
+  fileImportType,
+  resolvedPath,
+  context,
+  payload,
+  mappings,
+  documentCache,
+  maxCacheEntries = 100,
+}) {
+  const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
+
+  if (!writeTarget.isExplicitDocument) {
+    const writtenPath = await commitFirestoreWrite({
+      db,
+      fileImportType,
+      resolvedPath,
+      context,
+      payload,
+    });
+
+    return { flushedPaths: [writtenPath] };
+  }
+
+  const cacheKey = writeTarget.docPath;
+  const existingEntry = documentCache.get(cacheKey);
+
+  if (existingEntry) {
+    existingEntry.payload = mergeMappedDocuments(existingEntry.payload, payload, mappings);
+    touchDocumentCache(documentCache, cacheKey, existingEntry);
+    return { flushedPaths: [] };
+  }
+
+  const docSnapshot = await db.doc(cacheKey).get();
+  const mergedPayload = docSnapshot.exists
+    ? mergeMappedDocuments(docSnapshot.data() || {}, payload, mappings)
+    : payload;
+
+  touchDocumentCache(documentCache, cacheKey, {
+    resolvedPath,
+    context,
+    payload: mergedPayload,
+  });
+
+  const flushedPaths = [];
+  while (documentCache.size > maxCacheEntries) {
+    // eslint-disable-next-line no-await-in-loop
+    const flushedPath = await flushOldestCachedDocument({ db, fileImportType, documentCache });
+    if (flushedPath) {
+      flushedPaths.push(flushedPath);
+    }
+  }
+
+  return { flushedPaths };
 }
 
 async function processMappedDocumentStream({
@@ -931,7 +986,7 @@ async function processMappedDocumentStream({
     });
 
     const resolvedPath = resolveFirestorePath(fileImportType, context);
-    const writtenPath = await writeRowToFirestore({
+    const { flushedPaths } = await enqueueMappedDocumentWrite({
       db,
       fileImportType,
       resolvedPath,
@@ -941,11 +996,24 @@ async function processMappedDocumentStream({
       documentCache,
     });
 
-    writtenCount += 1;
-    if (!firstWrittenPath) {
-      firstWrittenPath = writtenPath;
-    }
+    flushedPaths.forEach((writtenPath) => {
+      writtenCount += 1;
+      if (!firstWrittenPath) {
+        firstWrittenPath = writtenPath;
+      }
+    });
   });
+
+  while (documentCache.size > 0) {
+    // eslint-disable-next-line no-await-in-loop
+    const flushedPath = await flushOldestCachedDocument({ db, fileImportType, documentCache });
+    if (flushedPath) {
+      writtenCount += 1;
+      if (!firstWrittenPath) {
+        firstWrittenPath = flushedPath;
+      }
+    }
+  }
 
   return { writtenCount, firstWrittenPath };
 }
