@@ -1,5 +1,7 @@
 const { parse } = require("csv-parse/sync");
+const { parse: parseStream } = require("csv-parse");
 const { XMLParser } = require("fast-xml-parser");
+const sax = require("sax");
 const { onObjectFinalized, logger, admin } = require("./config");
 
 function normalizeDelimiter(value) {
@@ -436,6 +438,152 @@ function parseImportedDocuments(content, fileImportType) {
   return parseCsvDocuments(content, fileImportType);
 }
 
+async function processCsvDocumentsStream(fileStream, fileImportType, onMappedDocument) {
+  const delimiter = normalizeDelimiter(fileImportType?.delimiter);
+  const normalizedMappings = normalizeColumnMappings(fileImportType);
+  if (normalizedMappings.length === 0) return 0;
+
+  const hasHeaderRow = fileImportType?.hasHeaderRow !== false;
+  const parser = parseStream({
+    bom: true,
+    columns: false,
+    delimiter,
+    escape: '"',
+    quote: '"',
+    record_delimiter: ["\r\n", "\n", "\r"],
+    relax_column_count: true,
+    relax_quotes: true,
+    skip_empty_lines: true,
+    trim: false,
+  });
+
+  const csvStream = fileStream.pipe(parser);
+  let headerRow = null;
+  let rowIndex = 0;
+
+  for await (const values of csvStream) {
+    if (!headerRow) {
+      headerRow = hasHeaderRow
+        ? values.map((value, index) => normalizeHeader(value, index))
+        : values.map((_, index) => `column${index + 1}`);
+
+      if (hasHeaderRow) {
+        continue;
+      }
+    }
+
+    const flatRecord = {};
+    headerRow.forEach((header, valueIndex) => {
+      flatRecord[normalizeLookupKey(header)] = String(values?.[valueIndex] ?? "").trim();
+    });
+
+    const { mappedDocument, shouldSkip } = mapFlatObject(flatRecord, normalizedMappings);
+    if (!shouldSkip && hasMappedValue(mappedDocument)) {
+      // eslint-disable-next-line no-await-in-loop
+      await onMappedDocument({ rowIndex, mappedDocument }, normalizedMappings);
+    }
+
+    rowIndex += 1;
+  }
+
+  return rowIndex;
+}
+
+function addXmlChild(parentObject, key, value) {
+  if (!parentObject || typeof parentObject !== "object") return;
+
+  if (parentObject[key] === undefined) {
+    parentObject[key] = value;
+    return;
+  }
+
+  if (Array.isArray(parentObject[key])) {
+    parentObject[key].push(value);
+    return;
+  }
+
+  parentObject[key] = [parentObject[key], value];
+}
+
+async function processXmlDocumentsStream(fileStream, fileImportType, onMappedDocument) {
+  const normalizedMappings = normalizeColumnMappings(fileImportType);
+  if (normalizedMappings.length === 0) return 0;
+
+  const recordNodeName = String(fileImportType?.recordNodeName || "").trim();
+  if (!recordNodeName) return 0;
+
+  const normalizedRecordNodeName = normalizeLookupKey(recordNodeName);
+  const parser = sax.parser(true, {
+    trim: false,
+    normalize: false,
+  });
+
+  const stack = [];
+  let rowIndex = 0;
+  let processedCount = 0;
+  let pendingWrite = Promise.resolve();
+
+  parser.onopentag = (node) => {
+    const objectValue = {};
+    Object.entries(node.attributes || {}).forEach(([key, value]) => {
+      objectValue[`@_${key}`] = value;
+    });
+
+    stack.push({
+      name: node.name,
+      value: objectValue,
+      text: "",
+    });
+  };
+
+  parser.ontext = (text) => {
+    if (!stack.length) return;
+    stack[stack.length - 1].text += text;
+  };
+
+  parser.oncdata = (text) => {
+    if (!stack.length) return;
+    stack[stack.length - 1].text += text;
+  };
+
+  parser.onclosetag = (tagName) => {
+    const currentNode = stack.pop();
+    if (!currentNode) return;
+
+    const trimmedText = currentNode.text.trim();
+    const hasObjectChildren = Object.keys(currentNode.value).length > 0;
+    const nodeValue = hasObjectChildren
+      ? currentNode.value
+      : trimmedText;
+
+    if (normalizeLookupKey(tagName) === normalizedRecordNodeName) {
+      const currentRowIndex = rowIndex;
+      rowIndex += 1;
+
+      pendingWrite = pendingWrite.then(async () => {
+        const { mappedDocument, shouldSkip } = mapXmlObject(nodeValue, normalizedMappings);
+        if (!shouldSkip && hasMappedValue(mappedDocument)) {
+          processedCount += 1;
+          await onMappedDocument({ rowIndex: currentRowIndex, mappedDocument }, normalizedMappings);
+        }
+      });
+      return;
+    }
+
+    if (stack.length > 0) {
+      addXmlChild(stack[stack.length - 1].value, currentNode.name, nodeValue);
+    }
+  };
+
+  for await (const chunk of fileStream) {
+    parser.write(chunk.toString("utf8"));
+  }
+
+  parser.close();
+  await pendingWrite;
+  return processedCount;
+}
+
 function parseDateFromFormat(value, format) {
   const raw = String(value || "").trim();
   const normalizedFormat = String(format || "").trim();
@@ -709,7 +857,20 @@ function aggregateMappedDocuments(mappedDocuments, buildRowDetails, mappings) {
   return Array.from(aggregatedDocuments.values());
 }
 
-async function writeRowToFirestore({ db, fileImportType, resolvedPath, context, payload, mappings }) {
+function touchDocumentCache(documentCache, cacheKey, value, maxEntries = 100) {
+  if (!documentCache) return;
+  if (documentCache.has(cacheKey)) {
+    documentCache.delete(cacheKey);
+  }
+  documentCache.set(cacheKey, value);
+
+  while (documentCache.size > maxEntries) {
+    const oldestKey = documentCache.keys().next().value;
+    documentCache.delete(oldestKey);
+  }
+}
+
+async function writeRowToFirestore({ db, fileImportType, resolvedPath, context, payload, mappings, documentCache }) {
   if (!resolvedPath) {
     throw new Error("Resolved Firestore path is leeg");
   }
@@ -719,22 +880,74 @@ async function writeRowToFirestore({ db, fileImportType, resolvedPath, context, 
 
   if (writeTarget.isExplicitDocument) {
     const docRef = db.doc(writeTarget.docPath);
-    const docSnapshot = await docRef.get();
-    const nextPayload = docSnapshot.exists
-      ? mergeMappedDocuments(docSnapshot.data() || {}, payload, mappings || normalizeColumnMappings(fileImportType))
-      : payload;
+    const cachedPayload = documentCache?.get(writeTarget.docPath);
+    let nextPayload = payload;
+
+    if (cachedPayload) {
+      nextPayload = mergeMappedDocuments(cachedPayload, payload, mappings || normalizeColumnMappings(fileImportType));
+    } else {
+      const docSnapshot = await docRef.get();
+      nextPayload = docSnapshot.exists
+        ? mergeMappedDocuments(docSnapshot.data() || {}, payload, mappings || normalizeColumnMappings(fileImportType))
+        : payload;
+    }
 
     if (writeMode === "merge") {
       await docRef.set(nextPayload, { merge: true });
     } else {
       await docRef.set(nextPayload);
     }
+
+    touchDocumentCache(documentCache, writeTarget.docPath, nextPayload);
     return docRef.path;
   }
 
   const docRef = db.collection(resolvedPath).doc();
   await docRef.set(payload);
   return docRef.path;
+}
+
+async function processMappedDocumentStream({
+  db,
+  fileImportType,
+  hotelUid,
+  fileType,
+  object,
+  onEachMappedDocument,
+}) {
+  const normalizedMappings = normalizeColumnMappings(fileImportType);
+  const documentCache = new Map();
+  let writtenCount = 0;
+  let firstWrittenPath = null;
+
+  await onEachMappedDocument(async (documentRow) => {
+    const context = buildTemplateContext({
+      hotelUid,
+      fileType,
+      fileImportType,
+      mappedRow: documentRow.mappedDocument,
+      object,
+      rowIndex: documentRow.rowIndex,
+    });
+
+    const resolvedPath = resolveFirestorePath(fileImportType, context);
+    const writtenPath = await writeRowToFirestore({
+      db,
+      fileImportType,
+      resolvedPath,
+      context,
+      payload: documentRow.mappedDocument,
+      mappings: normalizedMappings,
+      documentCache,
+    });
+
+    writtenCount += 1;
+    if (!firstWrittenPath) {
+      firstWrittenPath = writtenPath;
+    }
+  });
+
+  return { writtenCount, firstWrittenPath };
 }
 
 const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", memory: "1GiB" }, async (event) => {
@@ -800,10 +1013,25 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
   }
 
   const bucket = admin.storage().bucket(object.bucket);
-  const [buffer] = await bucket.file(objectName).download();
-  const mappedDocuments = parseImportedDocuments(buffer.toString("utf8"), fileImportType);
+  const sourceFile = bucket.file(objectName);
 
-  if (mappedDocuments.length === 0) {
+  const writeSummary = await processMappedDocumentStream({
+    db,
+    fileImportType,
+    hotelUid,
+    fileType,
+    object,
+    onEachMappedDocument: async (onMappedDocument) => {
+      if (parserType === "xml") {
+        await processXmlDocumentsStream(sourceFile.createReadStream(), fileImportType, onMappedDocument);
+        return;
+      }
+
+      await processCsvDocumentsStream(sourceFile.createReadStream(), fileImportType, onMappedDocument);
+    },
+  });
+
+  if (writeSummary.writtenCount === 0) {
     logger.warn("Import skipped: no mapped rows found", {
       objectName,
       hotelUid,
@@ -814,54 +1042,14 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
     return;
   }
 
-  const normalizedMappings = normalizeColumnMappings(fileImportType);
-  const rowsToWrite = aggregateMappedDocuments(
-    mappedDocuments,
-    (documentRow) => {
-      const context = buildTemplateContext({
-        hotelUid,
-        fileType,
-        fileImportType,
-        mappedRow: documentRow.mappedDocument,
-        object,
-        rowIndex: documentRow.rowIndex,
-      });
-
-      const resolvedPath = resolveFirestorePath(fileImportType, context);
-      const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
-
-      return {
-        aggregationKey: writeTarget.isExplicitDocument ? writeTarget.docPath : `${resolvedPath}#${documentRow.rowIndex}`,
-        context,
-        resolvedPath,
-        payload: documentRow.mappedDocument,
-      };
-    },
-    normalizedMappings
-  );
-
-  const writeResults = [];
-  for (const rowToWrite of rowsToWrite) {
-    const writtenPath = await writeRowToFirestore({
-      db,
-      fileImportType,
-      resolvedPath: rowToWrite.resolvedPath,
-      context: rowToWrite.context,
-      payload: rowToWrite.payload,
-      mappings: normalizedMappings,
-    });
-
-    writeResults.push(writtenPath);
-  }
-
   logger.info("Import processed to Firestore", {
     objectName,
     hotelUid,
     fileType,
     fileImportTypeId: fileImportType.id,
     parserType,
-    writtenCount: writeResults.length,
-    firstWrittenPath: writeResults[0] || null,
+    writtenCount: writeSummary.writtenCount,
+    firstWrittenPath: writeSummary.firstWrittenPath,
   });
 });
 
