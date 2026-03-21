@@ -8,6 +8,8 @@ const defaultMapping = {
   seperator: ",",
   importFormat: "",
   targetFormat: "",
+  listItemKeyField: "",
+  childMappings: [],
 };
 
 const delimiterOptions = [
@@ -23,7 +25,7 @@ const recordParsingModeOptions = [
   { value: "buffered", label: "Buffered recovery" },
 ];
 
-const targetTypeOptions = [
+const baseTargetTypeOptions = [
   { value: "string", label: "String" },
   { value: "number", label: "Number" },
   { value: "array", label: "Array" },
@@ -77,6 +79,227 @@ function Field({ label, htmlFor, children, hint }) {
       </label>
       {children}
       {hint ? <p className="mt-1 text-xs text-gray-500">{hint}</p> : null}
+    </div>
+  );
+}
+
+function MappingEditor({
+  mappings,
+  parserType,
+  onMappingChange,
+  onAddMapping,
+  onRemoveMapping,
+  path = [],
+}) {
+  const isXmlParser = parserType === "xml";
+  const isCsvParser = parserType === "csv";
+  const availableTargetTypeOptions = [...baseTargetTypeOptions, { value: "list", label: "List" }];
+
+  return (
+    <div className="space-y-3">
+      {mappings.map((mapping, index) => {
+        const mappingPath = [...path, index];
+        const rowKey = `mapping-${mappingPath.join("-")}`;
+        const canRemove = mappings.length > 1;
+        const isListMapping = mapping.targetType === "list";
+        const childMappings = Array.isArray(mapping.childMappings) ? mapping.childMappings : [];
+        const childDatabaseFieldOptions = childMappings
+          .map((childMapping) => String(childMapping?.databaseField || "").trim())
+          .filter(Boolean);
+
+        return (
+          <div key={rowKey} className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_180px_180px_180px_180px_auto]">
+              <Field
+                label={isListMapping ? (isXmlParser ? "Source List Node" : "Source Field") : "Source Field"}
+                htmlFor={`source-field-${mappingPath.join("-")}`}
+                hint={
+                  isListMapping && isCsvParser
+                    ? "For CSV list mappings, child mappings read values from the same row, so no source field is needed on the list itself."
+                    : undefined
+                }
+              >
+                <input
+                  id={`source-field-${mappingPath.join("-")}`}
+                  type="text"
+                  value={mapping.sourceField ?? mapping.csvHeader ?? ""}
+                  onChange={onMappingChange(mappingPath, "sourceField")}
+                  disabled={isListMapping && isCsvParser}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
+                  placeholder={
+                    isListMapping
+                      ? isXmlParser
+                        ? "Items.Item"
+                        : "Not used for CSV lists"
+                      : isXmlParser
+                        ? "ProductCode"
+                        : "sku"
+                  }
+                />
+              </Field>
+
+              <Field label={isListMapping ? "Database List Field" : "Database Field"} htmlFor={`database-field-${mappingPath.join("-")}`}>
+                <input
+                  id={`database-field-${mappingPath.join("-")}`}
+                  type="text"
+                  value={mapping.databaseField}
+                  onChange={onMappingChange(mappingPath, "databaseField")}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                  placeholder={isListMapping ? "items" : "productSku"}
+                />
+              </Field>
+
+              <Field label="Target Type" htmlFor={`target-type-${mappingPath.join("-")}`}>
+                <select
+                  id={`target-type-${mappingPath.join("-")}`}
+                  value={mapping.targetType || "string"}
+                  onChange={onMappingChange(mappingPath, "targetType")}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                >
+                  {availableTargetTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field
+                label="Seperator"
+                htmlFor={`separator-${mappingPath.join("-")}`}
+                hint={mapping.targetType === "array" ? "Used to split the incoming value into array items." : "Only used when Target Type is Array."}
+              >
+                <select
+                  id={`separator-${mappingPath.join("-")}`}
+                  value={mapping.seperator || ","}
+                  onChange={onMappingChange(mappingPath, "seperator")}
+                  disabled={mapping.targetType !== "array"}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
+                >
+                  {separatorOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field
+                label="Import Format"
+                htmlFor={`import-format-${mappingPath.join("-")}`}
+                hint={mapping.targetType === "date" ? "Format of the incoming source value." : "Only used when Target Type is Date."}
+              >
+                <select
+                  id={`import-format-${mappingPath.join("-")}`}
+                  value={mapping.importFormat || ""}
+                  onChange={onMappingChange(mappingPath, "importFormat")}
+                  disabled={mapping.targetType !== "date"}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
+                >
+                  <option value="">Select import format</option>
+                  {dateFormatOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field
+                label="Target Format"
+                htmlFor={`target-format-${mappingPath.join("-")}`}
+                hint={mapping.targetType === "date" ? "Format used when writing the parsed date value." : "Only used when Target Type is Date."}
+              >
+                <select
+                  id={`target-format-${mappingPath.join("-")}`}
+                  value={mapping.targetFormat || ""}
+                  onChange={onMappingChange(mappingPath, "targetFormat")}
+                  disabled={mapping.targetType !== "date"}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
+                >
+                  <option value="">Select target format</option>
+                  {dateFormatOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  onClick={() => onRemoveMapping(mappingPath)}
+                  disabled={!canRemove}
+                  className={`inline-flex items-center justify-center rounded-lg border p-2 ${
+                    !canRemove
+                      ? "cursor-not-allowed border-gray-200 text-gray-400"
+                      : "border-red-200 text-red-700 hover:bg-red-50"
+                  }`}
+                  title="Remove mapping"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {isListMapping ? (
+              <div className="rounded-xl border border-dashed border-gray-300 bg-white p-4">
+                <div className="mb-3 flex items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-900">List item mappings</h3>
+                    <p className="text-xs text-gray-500">{isXmlParser ? "Map fields inside each XML node of this list to properties on the target list item." : "Map fields from the same CSV row to properties on one list item. Rows with the same documentId will append new list items instead of overwriting the document."}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onAddMapping([...mappingPath, "childMappings"])}
+                    className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                  >
+                    <Plus className="h-4 w-4" /> Add list mapping
+                  </button>
+                </div>
+
+                {childMappings.length > 0 ? (
+                  <>
+                    <div className="mb-4 max-w-sm">
+                      <Field
+                        label="List Item Key"
+                        htmlFor={`list-item-key-${mappingPath.join("-")}`}
+                        hint="Optional. When this child database field matches an existing item in the same document list, the incoming list item will be skipped instead of appended."
+                      >
+                        <select
+                          id={`list-item-key-${mappingPath.join("-")}`}
+                          value={mapping.listItemKeyField || ""}
+                          onChange={onMappingChange(mappingPath, "listItemKeyField")}
+                          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                        >
+                          <option value="">No key field</option>
+                          {childDatabaseFieldOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    </div>
+
+                    <MappingEditor
+                      mappings={childMappings}
+                      parserType={parserType}
+                      onMappingChange={onMappingChange}
+                      onAddMapping={onAddMapping}
+                      onRemoveMapping={onRemoveMapping}
+                      path={[...mappingPath, "childMappings"]}
+                    />
+                  </>
+                ) : (
+                  <p className="text-sm text-gray-500">No list item mappings configured yet.</p>
+                )}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -394,141 +617,25 @@ export default function FileImportTypeForm({
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Column Mappings</h2>
             <p className="text-sm text-gray-500">
-              Map source fields to database fields. For XML imports, source fields are child nodes inside the configured record node.
+              Map source fields to database fields. For XML imports, source fields are child nodes inside the configured record node, and list mappings can contain nested mappings for each XML list item.
             </p>
           </div>
           <button
             type="button"
-            onClick={onAddMapping}
+            onClick={() => onAddMapping()}
             className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
           >
             <Plus className="h-4 w-4" /> Add mapping
           </button>
         </div>
 
-        <div className="space-y-3">
-          {formValues.columnMappings.map((mapping, index) => (
-            <div
-              key={`mapping-${index}`}
-              className="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_180px_180px_180px_180px_auto]"
-            >
-              <Field label="Source Field" htmlFor={`source-field-${index}`}>
-                <input
-                  id={`source-field-${index}`}
-                  type="text"
-                  value={mapping.sourceField ?? mapping.csvHeader ?? ""}
-                  onChange={onMappingChange(index, "sourceField")}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-                  placeholder={isXmlParser ? "ProductCode" : "sku"}
-                />
-              </Field>
-
-              <Field label="Database Field" htmlFor={`database-field-${index}`}>
-                <input
-                  id={`database-field-${index}`}
-                  type="text"
-                  value={mapping.databaseField}
-                  onChange={onMappingChange(index, "databaseField")}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-                  placeholder="productSku"
-                />
-              </Field>
-
-              <Field label="Target Type" htmlFor={`target-type-${index}`}>
-                <select
-                  id={`target-type-${index}`}
-                  value={mapping.targetType || "string"}
-                  onChange={onMappingChange(index, "targetType")}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-                >
-                  {targetTypeOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field
-                label="Seperator"
-                htmlFor={`separator-${index}`}
-                hint={mapping.targetType === "array" ? "Used to split the incoming value into array items." : "Only used when Target Type is Array."}
-              >
-                <select
-                  id={`separator-${index}`}
-                  value={mapping.seperator || ","}
-                  onChange={onMappingChange(index, "seperator")}
-                  disabled={mapping.targetType !== "array"}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
-                >
-                  {separatorOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field
-                label="Import Format"
-                htmlFor={`import-format-${index}`}
-                hint={mapping.targetType === "date" ? "Format of the incoming source value." : "Only used when Target Type is Date."}
-              >
-                <select
-                  id={`import-format-${index}`}
-                  value={mapping.importFormat || ""}
-                  onChange={onMappingChange(index, "importFormat")}
-                  disabled={mapping.targetType !== "date"}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
-                >
-                  <option value="">Select import format</option>
-                  {dateFormatOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field
-                label="Target Format"
-                htmlFor={`target-format-${index}`}
-                hint={mapping.targetType === "date" ? "Format used when writing the parsed date value." : "Only used when Target Type is Date."}
-              >
-                <select
-                  id={`target-format-${index}`}
-                  value={mapping.targetFormat || ""}
-                  onChange={onMappingChange(index, "targetFormat")}
-                  disabled={mapping.targetType !== "date"}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
-                >
-                  <option value="">Select target format</option>
-                  {dateFormatOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <div className="flex items-end">
-                <button
-                  type="button"
-                  onClick={() => onRemoveMapping(index)}
-                  disabled={formValues.columnMappings.length === 1}
-                  className={`inline-flex items-center justify-center rounded-lg border p-2 ${
-                    formValues.columnMappings.length === 1
-                      ? "cursor-not-allowed border-gray-200 text-gray-400"
-                      : "border-red-200 text-red-700 hover:bg-red-50"
-                  }`}
-                  title="Remove mapping"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+        <MappingEditor
+          mappings={formValues.columnMappings}
+          parserType={formValues.parserType}
+          onMappingChange={onMappingChange}
+          onAddMapping={onAddMapping}
+          onRemoveMapping={onRemoveMapping}
+        />
       </div>
 
       <div className="flex justify-end gap-2">

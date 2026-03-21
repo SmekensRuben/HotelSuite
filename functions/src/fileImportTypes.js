@@ -1,5 +1,7 @@
 const { parse } = require("csv-parse/sync");
+const { parse: parseStream } = require("csv-parse");
 const { XMLParser } = require("fast-xml-parser");
+const sax = require("sax");
 const { onObjectFinalized, logger, admin } = require("./config");
 
 function normalizeDelimiter(value) {
@@ -22,7 +24,7 @@ function normalizeLookupKey(value) {
 
 function normalizeTargetType(value) {
   const normalized = String(value || "string").trim().toLowerCase();
-  return ["string", "number", "array", "date"].includes(normalized) ? normalized : "string";
+  return ["string", "number", "array", "date", "list"].includes(normalized) ? normalized : "string";
 }
 
 function normalizeSeparator(value) {
@@ -34,18 +36,24 @@ function normalizeSeparator(value) {
 }
 
 function normalizeColumnMappings(fileImportType) {
+  const normalizeMapping = (mapping) => ({
+    sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
+    sourceFieldKey: normalizeLookupKey(mapping?.sourceField || mapping?.csvHeader || ""),
+    databaseField: String(mapping?.databaseField || "").trim(),
+    targetType: normalizeTargetType(mapping?.targetType),
+    seperator: normalizeSeparator(mapping?.seperator),
+    importFormat: String(mapping?.importFormat || "").trim(),
+    targetFormat: String(mapping?.targetFormat || "").trim(),
+    listItemKeyField: String(mapping?.listItemKeyField || "").trim(),
+    childMappings: Array.isArray(mapping?.childMappings)
+      ? mapping.childMappings.map((childMapping) => normalizeMapping(childMapping))
+      : [],
+  });
+
   return Array.isArray(fileImportType?.columnMappings)
     ? fileImportType.columnMappings
-        .map((mapping) => ({
-          sourceField: String(mapping?.sourceField || mapping?.csvHeader || "").trim(),
-          sourceFieldKey: normalizeLookupKey(mapping?.sourceField || mapping?.csvHeader || ""),
-          databaseField: String(mapping?.databaseField || "").trim(),
-          targetType: normalizeTargetType(mapping?.targetType),
-          seperator: normalizeSeparator(mapping?.seperator),
-          importFormat: String(mapping?.importFormat || "").trim(),
-          targetFormat: String(mapping?.targetFormat || "").trim(),
-        }))
-        .filter((mapping) => mapping.sourceFieldKey && mapping.databaseField)
+        .map((mapping) => normalizeMapping(mapping))
+        .filter((mapping) => mapping.databaseField && (mapping.targetType === "list" || mapping.sourceFieldKey))
     : [];
 }
 
@@ -149,22 +157,51 @@ function scoreParsedRows(rows, expectedColumnCount) {
   return (exactMatches * 1000) + usableRows;
 }
 
+function hasMappedValue(value) {
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === "object") {
+    return Object.values(value).some((childValue) => hasMappedValue(childValue));
+  }
+  return value !== "";
+}
+
+function mapFlatObject(record, mappings) {
+  const mappedDocument = {};
+  let shouldSkip = false;
+
+  mappings.forEach((mapping) => {
+    if (shouldSkip) return;
+
+    if (mapping.targetType === "list") {
+      const childItemResult = mapFlatObject(record, mapping.childMappings || []);
+      if (childItemResult.shouldSkip) {
+        shouldSkip = true;
+        return;
+      }
+
+      mappedDocument[mapping.databaseField] = hasMappedValue(childItemResult.mappedDocument)
+        ? [childItemResult.mappedDocument]
+        : [];
+      return;
+    }
+
+    const rawValue = record?.[mapping.sourceFieldKey];
+    if (!isMappedValueValid(rawValue, mapping)) {
+      shouldSkip = true;
+      return;
+    }
+
+    mappedDocument[mapping.databaseField] = transformMappedValue(rawValue, mapping);
+  });
+
+  return { mappedDocument, shouldSkip };
+}
+
 function mapDocumentsFromFlatRecords(records, normalizedMappings) {
   return records
     .map((record, index) => {
-      const mappedDocument = {};
-      normalizedMappings.forEach((mapping) => {
-        mappedDocument[mapping.databaseField] = transformMappedValue(
-          record?.[mapping.sourceFieldKey],
-          mapping
-        );
-      });
-
-      const hasMappedValue = Object.values(mappedDocument).some((value) => {
-        if (Array.isArray(value)) return value.length > 0;
-        return value !== "";
-      });
-      if (!hasMappedValue) return null;
+      const { mappedDocument, shouldSkip } = mapFlatObject(record, normalizedMappings);
+      if (shouldSkip || !hasMappedValue(mappedDocument)) return null;
 
       return {
         rowIndex: index,
@@ -263,6 +300,105 @@ function flattenXmlRecord(value, prefix = "", target = {}) {
   return target;
 }
 
+function getXmlNodeByPath(value, pathSegments) {
+  if (!pathSegments.length) return value;
+
+  const [currentSegment, ...rest] = pathSegments;
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => {
+      const resolved = getXmlNodeByPath(item, pathSegments);
+      return Array.isArray(resolved) ? resolved : [resolved];
+    });
+  }
+
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const matchingEntry = Object.entries(value).find(
+    ([key]) => normalizeLookupKey(key) === normalizeLookupKey(currentSegment)
+  );
+
+  if (!matchingEntry) return undefined;
+  const [, child] = matchingEntry;
+  return rest.length === 0 ? child : getXmlNodeByPath(child, rest);
+}
+
+function resolveXmlSourceValue(recordNode, mapping, flattenedRecord) {
+  const pathSegments = String(mapping?.sourceField || "")
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (pathSegments.length > 0) {
+    const directValue = getXmlNodeByPath(recordNode, pathSegments);
+    if (directValue !== undefined) {
+      return directValue;
+    }
+
+    const nestedNodeMatches = collectValuesByNodeName(recordNode, normalizeLookupKey(pathSegments[pathSegments.length - 1]));
+    if (nestedNodeMatches.length > 0) {
+      if (mapping?.targetType === "list") {
+        return nestedNodeMatches;
+      }
+
+      const primitiveMatches = nestedNodeMatches
+        .filter((value) => value === null || value === undefined || typeof value !== "object")
+        .map((value) => String(value ?? "").trim());
+
+      if (primitiveMatches.length > 0) {
+        return primitiveMatches[0];
+      }
+    }
+  }
+
+  return flattenedRecord?.[mapping?.sourceFieldKey];
+}
+
+function mapXmlObject(recordNode, mappings) {
+  const flattenedRecord = flattenXmlRecord(recordNode);
+  const mappedDocument = {};
+  let shouldSkip = false;
+
+  mappings.forEach((mapping) => {
+    if (shouldSkip) return;
+
+    const resolvedValue = resolveXmlSourceValue(recordNode, mapping, flattenedRecord);
+
+    if (mapping.targetType === "list") {
+      const sourceItems = Array.isArray(resolvedValue)
+        ? resolvedValue
+        : resolvedValue === undefined || resolvedValue === null
+          ? []
+          : [resolvedValue];
+
+      const childItems = [];
+      for (const item of sourceItems) {
+        const childItemResult = mapXmlObject(item, mapping.childMappings || []);
+        if (childItemResult.shouldSkip) {
+          shouldSkip = true;
+          return;
+        }
+        if (hasMappedValue(childItemResult.mappedDocument)) {
+          childItems.push(childItemResult.mappedDocument);
+        }
+      }
+
+      mappedDocument[mapping.databaseField] = childItems;
+      return;
+    }
+
+    if (!isMappedValueValid(resolvedValue, mapping)) {
+      shouldSkip = true;
+      return;
+    }
+
+    mappedDocument[mapping.databaseField] = transformMappedValue(resolvedValue, mapping);
+  });
+
+  return { mappedDocument, shouldSkip };
+}
+
 function parseXmlDocuments(content, fileImportType) {
   const normalizedMappings = normalizeColumnMappings(fileImportType);
   if (normalizedMappings.length === 0) return [];
@@ -281,11 +417,17 @@ function parseXmlDocuments(content, fileImportType) {
   const recordNodes = collectValuesByNodeName(parsedXml, normalizeLookupKey(recordNodeName));
   if (recordNodes.length === 0) return [];
 
-  const flatRecords = recordNodes
-    .map((recordNode) => flattenXmlRecord(recordNode))
-    .filter((recordNode) => Object.keys(recordNode).length > 0);
+  return recordNodes
+    .map((recordNode, index) => {
+      const { mappedDocument, shouldSkip } = mapXmlObject(recordNode, normalizedMappings);
+      if (shouldSkip || !hasMappedValue(mappedDocument)) return null;
 
-  return mapDocumentsFromFlatRecords(flatRecords, normalizedMappings);
+      return {
+        rowIndex: index,
+        mappedDocument,
+      };
+    })
+    .filter(Boolean);
 }
 
 function parseImportedDocuments(content, fileImportType) {
@@ -294,6 +436,152 @@ function parseImportedDocuments(content, fileImportType) {
     return parseXmlDocuments(content, fileImportType);
   }
   return parseCsvDocuments(content, fileImportType);
+}
+
+async function processCsvDocumentsStream(fileStream, fileImportType, onMappedDocument) {
+  const delimiter = normalizeDelimiter(fileImportType?.delimiter);
+  const normalizedMappings = normalizeColumnMappings(fileImportType);
+  if (normalizedMappings.length === 0) return 0;
+
+  const hasHeaderRow = fileImportType?.hasHeaderRow !== false;
+  const parser = parseStream({
+    bom: true,
+    columns: false,
+    delimiter,
+    escape: '"',
+    quote: '"',
+    record_delimiter: ["\r\n", "\n", "\r"],
+    relax_column_count: true,
+    relax_quotes: true,
+    skip_empty_lines: true,
+    trim: false,
+  });
+
+  const csvStream = fileStream.pipe(parser);
+  let headerRow = null;
+  let rowIndex = 0;
+
+  for await (const values of csvStream) {
+    if (!headerRow) {
+      headerRow = hasHeaderRow
+        ? values.map((value, index) => normalizeHeader(value, index))
+        : values.map((_, index) => `column${index + 1}`);
+
+      if (hasHeaderRow) {
+        continue;
+      }
+    }
+
+    const flatRecord = {};
+    headerRow.forEach((header, valueIndex) => {
+      flatRecord[normalizeLookupKey(header)] = String(values?.[valueIndex] ?? "").trim();
+    });
+
+    const { mappedDocument, shouldSkip } = mapFlatObject(flatRecord, normalizedMappings);
+    if (!shouldSkip && hasMappedValue(mappedDocument)) {
+      // eslint-disable-next-line no-await-in-loop
+      await onMappedDocument({ rowIndex, mappedDocument }, normalizedMappings);
+    }
+
+    rowIndex += 1;
+  }
+
+  return rowIndex;
+}
+
+function addXmlChild(parentObject, key, value) {
+  if (!parentObject || typeof parentObject !== "object") return;
+
+  if (parentObject[key] === undefined) {
+    parentObject[key] = value;
+    return;
+  }
+
+  if (Array.isArray(parentObject[key])) {
+    parentObject[key].push(value);
+    return;
+  }
+
+  parentObject[key] = [parentObject[key], value];
+}
+
+async function processXmlDocumentsStream(fileStream, fileImportType, onMappedDocument) {
+  const normalizedMappings = normalizeColumnMappings(fileImportType);
+  if (normalizedMappings.length === 0) return 0;
+
+  const recordNodeName = String(fileImportType?.recordNodeName || "").trim();
+  if (!recordNodeName) return 0;
+
+  const normalizedRecordNodeName = normalizeLookupKey(recordNodeName);
+  const parser = sax.parser(true, {
+    trim: false,
+    normalize: false,
+  });
+
+  const stack = [];
+  let rowIndex = 0;
+  let processedCount = 0;
+  let pendingWrite = Promise.resolve();
+
+  parser.onopentag = (node) => {
+    const objectValue = {};
+    Object.entries(node.attributes || {}).forEach(([key, value]) => {
+      objectValue[`@_${key}`] = value;
+    });
+
+    stack.push({
+      name: node.name,
+      value: objectValue,
+      text: "",
+    });
+  };
+
+  parser.ontext = (text) => {
+    if (!stack.length) return;
+    stack[stack.length - 1].text += text;
+  };
+
+  parser.oncdata = (text) => {
+    if (!stack.length) return;
+    stack[stack.length - 1].text += text;
+  };
+
+  parser.onclosetag = (tagName) => {
+    const currentNode = stack.pop();
+    if (!currentNode) return;
+
+    const trimmedText = currentNode.text.trim();
+    const hasObjectChildren = Object.keys(currentNode.value).length > 0;
+    const nodeValue = hasObjectChildren
+      ? currentNode.value
+      : trimmedText;
+
+    if (normalizeLookupKey(tagName) === normalizedRecordNodeName) {
+      const currentRowIndex = rowIndex;
+      rowIndex += 1;
+
+      pendingWrite = pendingWrite.then(async () => {
+        const { mappedDocument, shouldSkip } = mapXmlObject(nodeValue, normalizedMappings);
+        if (!shouldSkip && hasMappedValue(mappedDocument)) {
+          processedCount += 1;
+          await onMappedDocument({ rowIndex: currentRowIndex, mappedDocument }, normalizedMappings);
+        }
+      });
+      return;
+    }
+
+    if (stack.length > 0) {
+      addXmlChild(stack[stack.length - 1].value, currentNode.name, nodeValue);
+    }
+  };
+
+  for await (const chunk of fileStream) {
+    parser.write(chunk.toString("utf8"));
+  }
+
+  parser.close();
+  await pendingWrite;
+  return processedCount;
 }
 
 function parseDateFromFormat(value, format) {
@@ -349,22 +637,38 @@ function formatParsedDate(parts, format) {
 function convertDateValue(value, importFormat, targetFormat) {
   const parsedFromFormat = parseDateFromFormat(value, importFormat);
   if (parsedFromFormat) {
-    return formatParsedDate(parsedFromFormat, targetFormat || "yyyy-MM-dd");
+    return {
+      value: formatParsedDate(parsedFromFormat, targetFormat || "yyyy-MM-dd"),
+      isValid: true,
+    };
   }
 
   const direct = new Date(String(value || "").trim());
   if (!Number.isNaN(direct.getTime())) {
-    return formatParsedDate(
-      {
-        year: direct.getUTCFullYear(),
-        month: direct.getUTCMonth() + 1,
-        day: direct.getUTCDate(),
-      },
-      targetFormat || "yyyy-MM-dd"
-    );
+    return {
+      value: formatParsedDate(
+        {
+          year: direct.getUTCFullYear(),
+          month: direct.getUTCMonth() + 1,
+          day: direct.getUTCDate(),
+        },
+        targetFormat || "yyyy-MM-dd"
+      ),
+      isValid: true,
+    };
   }
 
-  return String(value || "").trim();
+  return {
+    value: String(value || "").trim(),
+    isValid: false,
+  };
+}
+
+function isMappedValueValid(rawValue, mapping) {
+  if (mapping?.targetType !== "date") return true;
+  const trimmedValue = String(rawValue ?? "").trim();
+  if (!trimmedValue) return false;
+  return convertDateValue(trimmedValue, mapping?.importFormat, mapping?.targetFormat).isValid;
 }
 
 function transformMappedValue(rawValue, mapping) {
@@ -384,7 +688,7 @@ function transformMappedValue(rawValue, mapping) {
         .filter(Boolean);
     case "date":
       if (!trimmedValue) return "";
-      return convertDateValue(trimmedValue, mapping?.importFormat, mapping?.targetFormat);
+      return convertDateValue(trimmedValue, mapping?.importFormat, mapping?.targetFormat).value;
     case "string":
     default:
       return trimmedValue;
@@ -393,7 +697,7 @@ function transformMappedValue(rawValue, mapping) {
 
 function formatDateValue(value) {
   if (!value) return "";
-  return convertDateValue(value, "yyyy-MM-dd", "yyyy-MM-dd");
+  return convertDateValue(value, "yyyy-MM-dd", "yyyy-MM-dd").value;
 }
 
 function resolveCurrentDateWithOffset(offsetDays) {
@@ -458,16 +762,128 @@ function resolveFirestorePath(fileImportType, context) {
     .replace(/^\/+|\/+$/g, "");
 }
 
-async function writeRowToFirestore({ db, fileImportType, resolvedPath, context, payload }) {
+function resolveWriteTarget(fileImportType, resolvedPath, context) {
+  const segments = String(resolvedPath || "").split("/").filter(Boolean);
+  const writeMode = String(fileImportType?.writeMode || "overwrite").trim().toLowerCase();
+
+  if (segments.length % 2 === 0) {
+    return {
+      docPath: resolvedPath,
+      isExplicitDocument: true,
+    };
+  }
+
+  const normalizedDocId = String(context?.documentId || "").trim();
+  const shouldUseExplicitDocId = normalizedDocId && (writeMode === "overwrite" || writeMode === "merge");
+  return {
+    docPath: shouldUseExplicitDocId ? `${resolvedPath}/${normalizedDocId}`.replace(/\/+/g, "/") : "",
+    isExplicitDocument: Boolean(shouldUseExplicitDocId),
+  };
+}
+
+function getListItemKeyValue(listItem, keyField) {
+  if (!keyField) return "";
+  return String(listItem?.[keyField] ?? "").trim();
+}
+
+function mergeListItems(existingItems, incomingItems, keyField) {
+  const mergedItems = Array.isArray(existingItems) ? [...existingItems] : [];
+  if (!keyField) {
+    return [...mergedItems, ...(Array.isArray(incomingItems) ? incomingItems : [])];
+  }
+
+  const existingKeys = new Set(
+    mergedItems
+      .map((listItem) => getListItemKeyValue(listItem, keyField))
+      .filter(Boolean)
+  );
+
+  (Array.isArray(incomingItems) ? incomingItems : []).forEach((incomingItem) => {
+    const incomingKey = getListItemKeyValue(incomingItem, keyField);
+    if (incomingKey && existingKeys.has(incomingKey)) {
+      return;
+    }
+
+    mergedItems.push(incomingItem);
+    if (incomingKey) {
+      existingKeys.add(incomingKey);
+    }
+  });
+
+  return mergedItems;
+}
+
+function mergeMappedDocuments(existingDocument, incomingDocument, mappings) {
+  const mergedDocument = {
+    ...(existingDocument && typeof existingDocument === "object" ? existingDocument : {}),
+  };
+
+  mappings.forEach((mapping) => {
+    const fieldName = mapping?.databaseField;
+    if (!fieldName) return;
+
+    if (mapping.targetType === "list") {
+      const existingItems = Array.isArray(mergedDocument[fieldName]) ? mergedDocument[fieldName] : [];
+      const incomingItems = Array.isArray(incomingDocument?.[fieldName]) ? incomingDocument[fieldName] : [];
+      mergedDocument[fieldName] = mergeListItems(existingItems, incomingItems, mapping.listItemKeyField);
+      return;
+    }
+
+    const incomingValue = incomingDocument?.[fieldName];
+    if (incomingValue !== undefined && hasMappedValue(incomingValue)) {
+      mergedDocument[fieldName] = incomingValue;
+    }
+  });
+
+  return mergedDocument;
+}
+
+function aggregateMappedDocuments(mappedDocuments, buildRowDetails, mappings) {
+  const aggregatedDocuments = new Map();
+
+  mappedDocuments.forEach((documentRow, index) => {
+    const rowDetails = buildRowDetails(documentRow, index);
+    const aggregationKey = rowDetails.aggregationKey || `${rowDetails.resolvedPath}#${index}`;
+    const existingRow = aggregatedDocuments.get(aggregationKey);
+
+    if (!existingRow) {
+      aggregatedDocuments.set(aggregationKey, rowDetails);
+      return;
+    }
+
+    existingRow.payload = mergeMappedDocuments(existingRow.payload, rowDetails.payload, mappings);
+  });
+
+  return Array.from(aggregatedDocuments.values());
+}
+
+function touchDocumentCache(documentCache, cacheKey, value) {
+  if (!documentCache) return;
+  if (documentCache.has(cacheKey)) {
+    documentCache.delete(cacheKey);
+  }
+  documentCache.set(cacheKey, value);
+}
+
+async function commitFirestoreWrite({ db, bulkWriter, fileImportType, resolvedPath, context, payload }) {
   if (!resolvedPath) {
     throw new Error("Resolved Firestore path is leeg");
   }
 
-  const segments = resolvedPath.split("/").filter(Boolean);
   const writeMode = String(fileImportType?.writeMode || "overwrite").trim().toLowerCase();
+  const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
 
-  if (segments.length % 2 === 0) {
-    const docRef = db.doc(resolvedPath);
+  if (writeTarget.isExplicitDocument) {
+    const docRef = db.doc(writeTarget.docPath);
+    if (bulkWriter) {
+      if (writeMode === "merge") {
+        bulkWriter.set(docRef, payload, { merge: true });
+      } else {
+        bulkWriter.set(docRef, payload);
+      }
+      return docRef.path;
+    }
+
     if (writeMode === "merge") {
       await docRef.set(payload, { merge: true });
     } else {
@@ -476,21 +892,200 @@ async function writeRowToFirestore({ db, fileImportType, resolvedPath, context, 
     return docRef.path;
   }
 
-  const collectionRef = db.collection(resolvedPath);
-  const normalizedDocId = String(context.documentId || "").trim();
-  const shouldUseExplicitDocId = normalizedDocId && (writeMode === "overwrite" || writeMode === "merge");
-  const docRef = shouldUseExplicitDocId ? collectionRef.doc(normalizedDocId) : collectionRef.doc();
-
-  if (writeMode === "merge") {
-    await docRef.set(payload, { merge: true });
-  } else {
-    await docRef.set(payload);
+  const docRef = db.collection(resolvedPath).doc();
+  if (bulkWriter) {
+    bulkWriter.set(docRef, payload);
+    return docRef.path;
   }
 
+  await docRef.set(payload);
   return docRef.path;
 }
 
-const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1" }, async (event) => {
+async function flushOldestCachedDocument({ db, bulkWriter, fileImportType, documentCache }) {
+  if (!documentCache.size) return null;
+
+  const oldestEntry = documentCache.entries().next().value;
+  if (!oldestEntry) return null;
+
+  const [cacheKey, cachedDocument] = oldestEntry;
+  documentCache.delete(cacheKey);
+
+  return commitFirestoreWrite({
+    db,
+    bulkWriter,
+    fileImportType,
+    resolvedPath: cachedDocument.resolvedPath,
+    context: cachedDocument.context,
+    payload: cachedDocument.payload,
+  });
+}
+
+async function enqueueMappedDocumentWrite({
+  db,
+  bulkWriter,
+  fileImportType,
+  resolvedPath,
+  context,
+  payload,
+  mappings,
+  documentCache,
+  maxCacheEntries = 100,
+}) {
+  const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
+
+  if (!writeTarget.isExplicitDocument) {
+    const writtenPath = await commitFirestoreWrite({
+      db,
+      bulkWriter,
+      fileImportType,
+      resolvedPath,
+      context,
+      payload,
+    });
+
+    return { flushedPaths: [writtenPath] };
+  }
+
+  const cacheKey = writeTarget.docPath;
+  const existingEntry = documentCache.get(cacheKey);
+
+  if (existingEntry) {
+    existingEntry.payload = mergeMappedDocuments(existingEntry.payload, payload, mappings);
+    touchDocumentCache(documentCache, cacheKey, existingEntry);
+    return { flushedPaths: [] };
+  }
+
+  const docSnapshot = await db.doc(cacheKey).get();
+  const mergedPayload = docSnapshot.exists
+    ? mergeMappedDocuments(docSnapshot.data() || {}, payload, mappings)
+    : payload;
+
+  touchDocumentCache(documentCache, cacheKey, {
+    resolvedPath,
+    context,
+    payload: mergedPayload,
+  });
+
+  const flushedPaths = [];
+  while (documentCache.size > maxCacheEntries) {
+    // eslint-disable-next-line no-await-in-loop
+    const flushedPath = await flushOldestCachedDocument({ db, bulkWriter, fileImportType, documentCache });
+    if (flushedPath) {
+      flushedPaths.push(flushedPath);
+    }
+  }
+
+  return { flushedPaths };
+}
+
+async function processWithConcurrency(items, concurrency, handler) {
+  if (!Array.isArray(items) || items.length === 0) return;
+
+  let currentIndex = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (currentIndex < items.length) {
+      const item = items[currentIndex];
+      currentIndex += 1;
+      // eslint-disable-next-line no-await-in-loop
+      await handler(item);
+    }
+  });
+
+  await Promise.all(workers);
+}
+
+async function processMappedDocumentStream({
+  db,
+  fileImportType,
+  hotelUid,
+  fileType,
+  object,
+  onEachMappedDocument,
+}) {
+  const normalizedMappings = normalizeColumnMappings(fileImportType);
+  const bulkWriter = typeof db.bulkWriter === "function" ? db.bulkWriter() : null;
+  const pendingDocuments = [];
+  const batchSize = 500;
+  const writeConcurrency = 20;
+  let writtenCount = 0;
+  let firstWrittenPath = null;
+
+  const flushPendingDocuments = async () => {
+    if (pendingDocuments.length === 0) return;
+
+    const currentBatch = pendingDocuments.splice(0, pendingDocuments.length);
+    const rowsToWrite = aggregateMappedDocuments(
+      currentBatch,
+      (documentRow) => {
+        const context = buildTemplateContext({
+          hotelUid,
+          fileType,
+          fileImportType,
+          mappedRow: documentRow.mappedDocument,
+          object,
+          rowIndex: documentRow.rowIndex,
+        });
+
+        const resolvedPath = resolveFirestorePath(fileImportType, context);
+        const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
+
+        return {
+          aggregationKey: writeTarget.isExplicitDocument ? writeTarget.docPath : `${resolvedPath}#${documentRow.rowIndex}`,
+          context,
+          resolvedPath,
+          payload: documentRow.mappedDocument,
+        };
+      },
+      normalizedMappings
+    );
+
+    await processWithConcurrency(rowsToWrite, writeConcurrency, async (rowToWrite) => {
+      const writeTarget = resolveWriteTarget(fileImportType, rowToWrite.resolvedPath, rowToWrite.context);
+      let payloadToWrite = rowToWrite.payload;
+
+      if (writeTarget.isExplicitDocument) {
+        const docSnapshot = await db.doc(writeTarget.docPath).get();
+        payloadToWrite = docSnapshot.exists
+          ? mergeMappedDocuments(docSnapshot.data() || {}, rowToWrite.payload, normalizedMappings)
+          : rowToWrite.payload;
+      }
+
+      const writtenPath = await commitFirestoreWrite({
+        db,
+        bulkWriter,
+        fileImportType,
+        resolvedPath: rowToWrite.resolvedPath,
+        context: rowToWrite.context,
+        payload: payloadToWrite,
+      });
+
+      writtenCount += 1;
+      if (!firstWrittenPath) {
+        firstWrittenPath = writtenPath;
+      }
+    });
+  };
+
+  await onEachMappedDocument(async (documentRow) => {
+    pendingDocuments.push(documentRow);
+    if (pendingDocuments.length >= batchSize) {
+      await flushPendingDocuments();
+    }
+  });
+
+  await flushPendingDocuments();
+
+  if (bulkWriter) {
+    await bulkWriter.close();
+  }
+
+  return { writtenCount, firstWrittenPath };
+}
+
+const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", memory: "1GiB" }, async (event) => {
   const object = event.data || {};
   const objectName = String(object.name || "").trim();
   if (!objectName.startsWith("imports/")) {
@@ -553,10 +1148,25 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1" },
   }
 
   const bucket = admin.storage().bucket(object.bucket);
-  const [buffer] = await bucket.file(objectName).download();
-  const mappedDocuments = parseImportedDocuments(buffer.toString("utf8"), fileImportType);
+  const sourceFile = bucket.file(objectName);
 
-  if (mappedDocuments.length === 0) {
+  const writeSummary = await processMappedDocumentStream({
+    db,
+    fileImportType,
+    hotelUid,
+    fileType,
+    object,
+    onEachMappedDocument: async (onMappedDocument) => {
+      if (parserType === "xml") {
+        await processXmlDocumentsStream(sourceFile.createReadStream(), fileImportType, onMappedDocument);
+        return;
+      }
+
+      await processCsvDocumentsStream(sourceFile.createReadStream(), fileImportType, onMappedDocument);
+    },
+  });
+
+  if (writeSummary.writtenCount === 0) {
     logger.warn("Import skipped: no mapped rows found", {
       objectName,
       hotelUid,
@@ -567,37 +1177,14 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1" },
     return;
   }
 
-  const writeResults = [];
-  for (const documentRow of mappedDocuments) {
-    const context = buildTemplateContext({
-      hotelUid,
-      fileType,
-      fileImportType,
-      mappedRow: documentRow.mappedDocument,
-      object,
-      rowIndex: documentRow.rowIndex,
-    });
-
-    const resolvedPath = resolveFirestorePath(fileImportType, context);
-    const writtenPath = await writeRowToFirestore({
-      db,
-      fileImportType,
-      resolvedPath,
-      context,
-      payload: documentRow.mappedDocument,
-    });
-
-    writeResults.push(writtenPath);
-  }
-
   logger.info("Import processed to Firestore", {
     objectName,
     hotelUid,
     fileType,
     fileImportTypeId: fileImportType.id,
     parserType,
-    writtenCount: writeResults.length,
-    firstWrittenPath: writeResults[0] || null,
+    writtenCount: writeSummary.writtenCount,
+    firstWrittenPath: writeSummary.firstWrittenPath,
   });
 });
 
