@@ -1,4 +1,4 @@
-import { auth, collection, db, getDocs } from "../firebaseConfig";
+import { collection, db, getDocs } from "../firebaseConfig";
 
 function normalizeDateValue(value) {
   if (!value) return null;
@@ -50,58 +50,23 @@ function extractRowsFromSnapshotPayload(payload, fallbackStayDate = null) {
   });
 }
 
-async function listSnapshotCollectionIds(hotelUid) {
-  const projectId = db.app.options.projectId || import.meta.env.VITE_FIREBASE_PROJECT_ID;
-  const user = auth.currentUser;
+async function getLatestReportDate(hotelUid) {
+  const reportsRef = collection(db, "hotels", hotelUid, "reports");
+  const reportsSnap = await getDocs(reportsRef);
 
-  if (!projectId || !user) {
-    return [];
-  }
-
-  const token = await user.getIdToken();
-  const parent = `projects/${projectId}/databases/(default)/documents/hotels/${hotelUid}/reports/reservationforecast`;
-  const endpoint = `https://firestore.googleapis.com/v1/${parent}:listCollectionIds`;
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ pageSize: 200 }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Unable to list reservationforecast snapshots: ${response.status} ${errorText}`);
-  }
-
-  const data = await response.json();
-  return Array.isArray(data.collectionIds) ? data.collectionIds : [];
-}
-
-async function getLatestSnapshotDate(hotelUid) {
-  const collectionIds = await listSnapshotCollectionIds(hotelUid);
-  const snapshotDates = collectionIds
-    .map((value) => normalizeDateValue(value))
+  const reportDates = reportsSnap.docs
+    .map((docSnap) => normalizeDateValue(docSnap.id) || normalizeDateValue(docSnap.data()?.snapshotDate))
     .filter(Boolean)
     .sort((a, b) => b.localeCompare(a));
 
-  return snapshotDates[0] || null;
+  return reportDates[0] || null;
 }
 
-async function getSnapshotRows(hotelUid, snapshotDate) {
-  const snapshotRef = collection(
-    db,
-    "hotels",
-    hotelUid,
-    "reports",
-    "reservationforecast",
-    snapshotDate
-  );
+async function getReportRows(hotelUid, reportDate) {
+  const recordsRef = collection(db, "hotels", hotelUid, "reports", reportDate, "records");
+  const recordsSnap = await getDocs(recordsRef);
 
-  const snapshotSnap = await getDocs(snapshotRef);
-  const mergedRows = snapshotSnap.docs.reduce((acc, docSnap) => {
+  const mergedRows = recordsSnap.docs.reduce((acc, docSnap) => {
     const stayDate = normalizeDateValue(docSnap.id) || normalizeDateValue(docSnap.data()?.stayDate);
     const extractedRows = extractRowsFromSnapshotPayload(docSnap.data(), stayDate);
 
@@ -122,11 +87,11 @@ export async function getLatestPickUpRows(hotelUid) {
     return { snapshotDate: null, rows: [] };
   }
 
-  const snapshotDate = await getLatestSnapshotDate(hotelUid);
+  const snapshotDate = await getLatestReportDate(hotelUid);
   if (!snapshotDate) {
     return { snapshotDate: null, rows: [] };
   }
 
-  const rows = await getSnapshotRows(hotelUid, snapshotDate);
+  const rows = await getReportRows(hotelUid, snapshotDate);
   return { snapshotDate, rows };
 }
