@@ -865,7 +865,43 @@ function touchDocumentCache(documentCache, cacheKey, value) {
   documentCache.set(cacheKey, value);
 }
 
-async function commitFirestoreWrite({ db, bulkWriter, fileImportType, resolvedPath, context, payload }) {
+
+function getAncestorDocumentPaths(finalDocPath) {
+  const segments = String(finalDocPath || "").split("/").filter(Boolean);
+  const ancestorPaths = [];
+
+  for (let index = 0; index < segments.length - 2; index += 2) {
+    ancestorPaths.push(segments.slice(0, index + 2).join("/"));
+  }
+
+  return ancestorPaths;
+}
+
+async function ensureQueryableAncestorDocuments({ db, bulkWriter, finalDocPath, touchedAncestorPaths }) {
+  const ancestorPaths = getAncestorDocumentPaths(finalDocPath);
+
+  for (const ancestorPath of ancestorPaths) {
+    if (touchedAncestorPaths?.has(ancestorPath)) {
+      continue;
+    }
+
+    const docRef = db.doc(ancestorPath);
+    const payload = {
+      queryable: true,
+    };
+
+    if (bulkWriter) {
+      bulkWriter.set(docRef, payload, { merge: true });
+    } else {
+      // eslint-disable-next-line no-await-in-loop
+      await docRef.set(payload, { merge: true });
+    }
+
+    touchedAncestorPaths?.add(ancestorPath);
+  }
+}
+
+async function commitFirestoreWrite({ db, bulkWriter, fileImportType, resolvedPath, context, payload, touchedAncestorPaths }) {
   if (!resolvedPath) {
     throw new Error("Resolved Firestore path is leeg");
   }
@@ -874,6 +910,13 @@ async function commitFirestoreWrite({ db, bulkWriter, fileImportType, resolvedPa
   const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
 
   if (writeTarget.isExplicitDocument) {
+    await ensureQueryableAncestorDocuments({
+      db,
+      bulkWriter,
+      finalDocPath: writeTarget.docPath,
+      touchedAncestorPaths,
+    });
+
     const docRef = db.doc(writeTarget.docPath);
     if (bulkWriter) {
       if (writeMode === "merge") {
@@ -893,6 +936,12 @@ async function commitFirestoreWrite({ db, bulkWriter, fileImportType, resolvedPa
   }
 
   const docRef = db.collection(resolvedPath).doc();
+  await ensureQueryableAncestorDocuments({
+    db,
+    bulkWriter,
+    finalDocPath: docRef.path,
+    touchedAncestorPaths,
+  });
   if (bulkWriter) {
     bulkWriter.set(docRef, payload);
     return docRef.path;
@@ -1007,6 +1056,7 @@ async function processMappedDocumentStream({
 }) {
   const normalizedMappings = normalizeColumnMappings(fileImportType);
   const bulkWriter = typeof db.bulkWriter === "function" ? db.bulkWriter() : null;
+  const touchedAncestorPaths = new Set();
   const pendingDocuments = [];
   const batchSize = 500;
   const writeConcurrency = 20;
@@ -1060,6 +1110,7 @@ async function processMappedDocumentStream({
         resolvedPath: rowToWrite.resolvedPath,
         context: rowToWrite.context,
         payload: payloadToWrite,
+        touchedAncestorPaths,
       });
 
       writtenCount += 1;
