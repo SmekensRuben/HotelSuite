@@ -63,11 +63,17 @@ export default function PickupPage() {
 
       try {
         const result = await getPickupForMonth(hotelUid, selectedMonth);
+        console.info("[Pick-Up] Page result", {
+          hotelUid,
+          selectedMonth: selectedMonth.toISOString(),
+          rowCount: result.length,
+          sampleRows: result.slice(0, 3),
+        });
         if (active) {
           setRows(result);
         }
       } catch (fetchError) {
-        console.error("Fout bij ophalen van pick-up:", fetchError);
+        console.error("[Pick-Up] Fout bij ophalen van pick-up:", fetchError);
         if (active) {
           setRows([]);
           setError("De pick-up kon niet geladen worden. Controleer de Firestore-data en probeer opnieuw.");

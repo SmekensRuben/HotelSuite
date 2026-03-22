@@ -9,14 +9,21 @@ import {
   where,
 } from "../firebaseConfig";
 
+function formatLocalDateParts(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function toIsoDate(value) {
   if (!value) return null;
   if (typeof value === "string") return value;
   if (typeof value?.toDate === "function") {
-    return value.toDate().toISOString().slice(0, 10);
+    return formatLocalDateParts(value.toDate());
   }
   if (value instanceof Date) {
-    return value.toISOString().slice(0, 10);
+    return formatLocalDateParts(value);
   }
   return null;
 }
@@ -38,7 +45,7 @@ export function listSnapshotDateCandidates(baseDate = new Date(), lookbackDays =
   return Array.from({ length: lookbackDays + 1 }, (_, offset) => {
     const candidate = new Date(normalizedBaseDate);
     candidate.setDate(candidate.getDate() - offset);
-    return candidate.toISOString().slice(0, 10);
+    return formatLocalDateParts(candidate);
   });
 }
 
@@ -58,6 +65,13 @@ async function findLatestSnapshotDate(hotelUid, reportName, baseDate = new Date(
       const snapshotEntries = await getDocs(
         query(snapshotCollection, orderBy(documentId(), "asc"), limit(1))
       );
+
+      console.info("[Pick-Up] Snapshot check", {
+        hotelUid,
+        reportName,
+        snapshotDate,
+        foundEntries: snapshotEntries.size,
+      });
 
       if (!snapshotEntries.empty) {
         return snapshotDate;
@@ -92,6 +106,16 @@ async function getReportEntries(hotelUid, reportName, snapshotDate, rangeStart) 
       orderBy(documentId(), "asc")
     )
   );
+
+  console.info("[Pick-Up] Loaded report entries", {
+    hotelUid,
+    reportName,
+    snapshotDate,
+    rangeStart,
+    entryCount: reportSnapshot.size,
+    firstEntry: reportSnapshot.docs[0]?.id || null,
+    lastEntry: reportSnapshot.docs[reportSnapshot.docs.length - 1]?.id || null,
+  });
 
   return reportSnapshot.docs.map((docSnap) => ({
     id: docSnap.id,
@@ -132,7 +156,7 @@ export function aggregatePickupRows({
     cursor <= new Date(`${monthEnd}T00:00:00`);
     cursor.setDate(cursor.getDate() + 1)
   ) {
-    const dateKey = cursor.toISOString().slice(0, 10);
+    const dateKey = formatLocalDateParts(cursor);
     rows.push(
       totalsByDate.get(dateKey) || {
         date: dateKey,
@@ -178,6 +202,17 @@ export async function getPickupForMonth(hotelUid, monthDate = new Date()) {
     statisticsPromise,
     forecastPromise,
   ]);
+
+  console.info("[Pick-Up] Month load summary", {
+    hotelUid,
+    monthStart,
+    monthEnd,
+    todayIso,
+    statisticsSnapshotDate,
+    forecastSnapshotDate,
+    statisticsEntries: statisticsEntries.length,
+    forecastEntries: forecastEntries.length,
+  });
 
   return aggregatePickupRows({
     statisticsEntries,
