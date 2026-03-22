@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useHotelContext } from "contexts/HotelContext";
 import { db, doc, getDoc } from "../../firebaseConfig";
-import { FileText, Package, Settings2, ShoppingBasket, Truck, Users } from "lucide-react";
+import { BarChart3, FileText, Package, Settings2, ShoppingBasket, Truck, Users } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
 
 export default function HeaderBar({ today, onLogout }) {
@@ -20,8 +20,10 @@ export default function HeaderBar({ today, onLogout }) {
   const [hotels, setHotels] = useState([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
+  const [isRevenueManagementOpen, setIsRevenueManagementOpen] = useState(false);
   const settingsMenuRef = useRef(null);
   const catalogMenuRef = useRef(null);
+  const revenueManagementMenuRef = useRef(null);
 
   const settingsMenuItems = [
     {
@@ -61,6 +63,14 @@ export default function HeaderBar({ today, onLogout }) {
       visible: canViewUsers,
     },
   ].filter((item) => item.visible !== false);
+
+  const revenueManagementMenuItems = [
+    {
+      label: "Pick-Up",
+      action: () => navigate("/revenue-management/pickup"),
+      icon: BarChart3,
+    },
+  ];
 
   const catalogMenuItems = [
     {
@@ -122,6 +132,9 @@ export default function HeaderBar({ today, onLogout }) {
       }
       if (catalogMenuRef.current && !catalogMenuRef.current.contains(event.target)) {
         setIsCatalogOpen(false);
+      }
+      if (revenueManagementMenuRef.current && !revenueManagementMenuRef.current.contains(event.target)) {
+        setIsRevenueManagementOpen(false);
       }
     };
 
@@ -189,6 +202,7 @@ export default function HeaderBar({ today, onLogout }) {
                   onClick={() => {
                     setIsCatalogOpen((prev) => !prev);
                     setIsSettingsOpen(false);
+                    setIsRevenueManagementOpen(false);
                   }}
                   className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
                   style={{ minHeight: 44 }}
@@ -224,6 +238,49 @@ export default function HeaderBar({ today, onLogout }) {
             </div>
           )}
 
+          {revenueManagementMenuItems.length > 0 && (
+            <div ref={revenueManagementMenuRef} className="flex justify-end w-full sm:w-auto">
+              <div className="relative w-full sm:w-auto">
+                <button
+                  onClick={() => {
+                    setIsRevenueManagementOpen((prev) => !prev);
+                    setIsCatalogOpen(false);
+                    setIsSettingsOpen(false);
+                  }}
+                  className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
+                  style={{ minHeight: 44 }}
+                >
+                  <span className="uppercase tracking-wide">Revenue Management</span>
+                  <span className="ml-3 text-base">▾</span>
+                </button>
+                {isRevenueManagementOpen && (
+                  <div className="absolute left-0 mt-2 w-64 rounded-lg shadow-xl ring-1 ring-black/5 z-30 overflow-hidden bg-white text-gray-900">
+                    <div className="py-2">
+                      {revenueManagementMenuItems.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <button
+                            key={item.label}
+                            onClick={() => {
+                              item.action();
+                              setIsRevenueManagementOpen(false);
+                            }}
+                            className="w-full px-4 py-2 flex items-center gap-3 hover:bg-gray-100 transition-colors text-left"
+                          >
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100">
+                              {Icon && <Icon className="h-4 w-4" />}
+                            </span>
+                            <span className="text-sm font-semibold">{item.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {settingsMenuItems.length > 0 && (
             <div ref={settingsMenuRef} className="flex justify-end w-full sm:w-auto">
               <div className="relative w-full sm:w-auto">
@@ -231,6 +288,7 @@ export default function HeaderBar({ today, onLogout }) {
                   onClick={() => {
                     setIsSettingsOpen((prev) => !prev);
                     setIsCatalogOpen(false);
+                    setIsRevenueManagementOpen(false);
                   }}
                   className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
                   style={{ minHeight: 44 }}
