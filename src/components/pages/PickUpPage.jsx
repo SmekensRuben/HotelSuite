@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, Info } from "lucide-react";
 import { signOut, auth } from "../../firebaseConfig";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
@@ -14,9 +15,24 @@ function formatCurrency(value) {
   });
 }
 
+function getDeltaTextClass(value) {
+  if (value > 0) return "text-green-600";
+  if (value < 0) return "text-red-600";
+  return "text-gray-600";
+}
+
+function renderSignedValue(value, formatter = (nextValue) => nextValue.toLocaleString()) {
+  const prefix = value > 0 ? "+" : "";
+  return `${prefix}${formatter(value)}`;
+}
+
 export default function PickUpPage() {
   const { hotelUid } = useHotelContext();
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [selectedMarketCodes, setSelectedMarketCodes] = useState([]);
+  const [availableMarketCodes, setAvailableMarketCodes] = useState([]);
+  const [marketCodeDropdownOpen, setMarketCodeDropdownOpen] = useState(false);
+  const [snapshotInfoOpen, setSnapshotInfoOpen] = useState(false);
   const [forecastSnapshotDate, setForecastSnapshotDate] = useState(null);
   const [previousForecastSnapshotDate, setPreviousForecastSnapshotDate] = useState(null);
   const [statisticsSnapshotDate, setStatisticsSnapshotDate] = useState(null);
@@ -30,6 +46,7 @@ export default function PickUpPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const marketCodesRef = useRef(null);
 
   const today = new Date().toLocaleDateString(undefined, {
     weekday: "long",
@@ -38,11 +55,24 @@ export default function PickUpPage() {
   });
 
   useEffect(() => {
+    function handleClickOutside(event) {
+      if (marketCodesRef.current && !marketCodesRef.current.contains(event.target)) {
+        setMarketCodeDropdownOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
     let active = true;
 
     async function loadPickUp() {
       if (!hotelUid) {
         setRows([]);
+        setAvailableMarketCodes([]);
+        setSelectedMarketCodes([]);
         setForecastSnapshotDate(null);
         setPreviousForecastSnapshotDate(null);
         setStatisticsSnapshotDate(null);
@@ -61,19 +91,30 @@ export default function PickUpPage() {
       setError("");
 
       try {
-        const result = await getLatestPickUpRows(hotelUid, selectedMonth);
+        const result = await getLatestPickUpRows(hotelUid, selectedMonth, selectedMarketCodes);
         if (!active) return;
         setRows(result.rows);
+        setAvailableMarketCodes(result.availableMarketCodes);
         setForecastSnapshotDate(result.forecastSnapshotDate);
         setPreviousForecastSnapshotDate(result.previousForecastSnapshotDate);
         setStatisticsSnapshotDate(result.statisticsSnapshotDate);
         setPreviousStatisticsSnapshotDate(result.previousStatisticsSnapshotDate);
         setTotals(result.totals);
+        setSelectedMarketCodes((currentSelection) => {
+          const nextSelection = currentSelection.filter((marketCode) =>
+            result.availableMarketCodes.includes(marketCode)
+          );
+          return nextSelection.length === currentSelection.length &&
+            nextSelection.every((marketCode, index) => marketCode === currentSelection[index])
+            ? currentSelection
+            : nextSelection;
+        });
       } catch (err) {
         console.error("Fout bij laden van pick-up data:", err);
         if (!active) return;
         setError("De pick-up data kon niet geladen worden.");
         setRows([]);
+        setAvailableMarketCodes([]);
         setForecastSnapshotDate(null);
         setPreviousForecastSnapshotDate(null);
         setStatisticsSnapshotDate(null);
@@ -96,7 +137,7 @@ export default function PickUpPage() {
     return () => {
       active = false;
     };
-  }, [hotelUid, selectedMonth]);
+  }, [hotelUid, selectedMonth, selectedMarketCodes]);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -104,9 +145,24 @@ export default function PickUpPage() {
     window.location.href = "/login";
   };
 
+  const toggleMarketCode = (marketCode) => {
+    setSelectedMarketCodes((currentSelection) =>
+      currentSelection.includes(marketCode)
+        ? currentSelection.filter((currentMarketCode) => currentMarketCode !== marketCode)
+        : [...currentSelection, marketCode]
+    );
+  };
+
+  const clearMarketCodeFilter = () => {
+    setSelectedMarketCodes([]);
+  };
+
   const totalRoomsSoldPickup = totals.totalRoomsSold - totals.previousTotalRoomsSold;
   const totalCalculatedRevenuePickup =
     totals.totalCalculatedRevenue - totals.previousTotalCalculatedRevenue;
+  const marketCodeButtonLabel = selectedMarketCodes.length
+    ? `Market Codes (${selectedMarketCodes.length})`
+    : "Market Codes";
 
   const columns = useMemo(
     () => [
@@ -122,14 +178,22 @@ export default function PickUpPage() {
         render: (row) => formatCurrency(row.avgAdr),
       },
       {
-        key: "previousRoomsSold",
+        key: "roomsSoldDelta",
         label: "Rooms Sold -1",
-        render: (row) => row.previousRoomsSold.toLocaleString(),
+        render: (row) => (
+          <span className={getDeltaTextClass(row.roomsSoldDelta)}>
+            {renderSignedValue(row.roomsSoldDelta)}
+          </span>
+        ),
       },
       {
-        key: "previousAvgAdr",
+        key: "avgAdrDelta",
         label: "Avg ADR -1",
-        render: (row) => formatCurrency(row.previousAvgAdr),
+        render: (row) => (
+          <span className={getDeltaTextClass(row.avgAdrDelta)}>
+            {renderSignedValue(row.avgAdrDelta, formatCurrency)}
+          </span>
+        ),
       },
     ],
     []
@@ -150,34 +214,97 @@ export default function PickUpPage() {
                 vergelijking de reservation forecast van day -1.
               </p>
             </div>
-            <div className="rounded-lg bg-gray-100 px-4 py-3 text-sm text-gray-700 space-y-1">
-              <div>
-                <span className="font-semibold">Forecast Snapshot:</span>{" "}
-                {forecastSnapshotDate || "Geen snapshot beschikbaar"}
-                {previousForecastSnapshotDate ? ` (vorige: ${previousForecastSnapshotDate})` : ""}
-              </div>
-              <div>
-                <span className="font-semibold">Statistics Snapshot:</span>{" "}
-                {statisticsSnapshotDate || "Geen snapshot beschikbaar"}
-                {previousStatisticsSnapshotDate
-                  ? ` (vorige: ${previousStatisticsSnapshotDate})`
-                  : ""}
-              </div>
+            <div
+              className="relative flex justify-end"
+              onMouseEnter={() => setSnapshotInfoOpen(true)}
+              onMouseLeave={() => setSnapshotInfoOpen(false)}
+            >
+              <button
+                type="button"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-600 transition hover:bg-gray-200 hover:text-gray-900"
+                aria-label="Toon snapshotinformatie"
+                onFocus={() => setSnapshotInfoOpen(true)}
+                onBlur={() => setSnapshotInfoOpen(false)}
+              >
+                <Info size={18} />
+              </button>
+              {snapshotInfoOpen ? (
+                <div className="absolute right-0 top-12 z-10 w-80 rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-700 shadow-lg">
+                  <div>
+                    <span className="font-semibold">Forecast Snapshot:</span>{" "}
+                    {forecastSnapshotDate || "Geen snapshot beschikbaar"}
+                    {previousForecastSnapshotDate ? ` (vorige: ${previousForecastSnapshotDate})` : ""}
+                  </div>
+                  <div className="mt-2">
+                    <span className="font-semibold">Statistics Snapshot:</span>{" "}
+                    {statisticsSnapshotDate || "Geen snapshot beschikbaar"}
+                    {previousStatisticsSnapshotDate
+                      ? ` (vorige: ${previousStatisticsSnapshotDate})`
+                      : ""}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
 
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <label htmlFor="pickup-month" className="block text-sm font-semibold text-gray-700">
-                Month
-              </label>
-              <input
-                id="pickup-month"
-                type="month"
-                value={selectedMonth}
-                onChange={(event) => setSelectedMonth(event.target.value)}
-                className="mt-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-              />
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+              <div>
+                <label htmlFor="pickup-month" className="block text-sm font-semibold text-gray-700">
+                  Month
+                </label>
+                <input
+                  id="pickup-month"
+                  type="month"
+                  value={selectedMonth}
+                  onChange={(event) => setSelectedMonth(event.target.value)}
+                  className="mt-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div className="relative" ref={marketCodesRef}>
+                <label className="block text-sm font-semibold text-gray-700">Market Codes</label>
+                <button
+                  type="button"
+                  onClick={() => setMarketCodeDropdownOpen((currentValue) => !currentValue)}
+                  className="mt-1 inline-flex min-w-[220px] items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm"
+                >
+                  <span className="truncate">{marketCodeButtonLabel}</span>
+                  <ChevronDown size={16} className="text-gray-500" />
+                </button>
+
+                {marketCodeDropdownOpen ? (
+                  <div className="absolute left-0 top-full z-10 mt-2 w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-sm font-semibold text-gray-700">Selecteer market codes</span>
+                      <button
+                        type="button"
+                        onClick={clearMarketCodeFilter}
+                        className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                    <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                      {availableMarketCodes.length === 0 ? (
+                        <div className="text-sm text-gray-500">Geen market codes beschikbaar.</div>
+                      ) : (
+                        availableMarketCodes.map((marketCode) => (
+                          <label key={marketCode} className="flex items-center gap-2 text-sm text-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={selectedMarketCodes.includes(marketCode)}
+                              onChange={() => toggleMarketCode(marketCode)}
+                              className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                            />
+                            <span>{marketCode}</span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2 w-full lg:w-auto">
@@ -188,9 +315,8 @@ export default function PickUpPage() {
                 <div className="mt-1 text-lg font-semibold text-gray-900">
                   {totals.totalRoomsSold.toLocaleString()}
                 </div>
-                <div className="mt-1 text-sm text-gray-600">
-                  Pick-up vs day -1: {totalRoomsSoldPickup > 0 ? "+" : ""}
-                  {totalRoomsSoldPickup.toLocaleString()}
+                <div className={`mt-1 text-sm font-medium ${getDeltaTextClass(totalRoomsSoldPickup)}`}>
+                  Pick-up vs day -1: {renderSignedValue(totalRoomsSoldPickup)}
                 </div>
               </div>
               <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
@@ -200,9 +326,10 @@ export default function PickUpPage() {
                 <div className="mt-1 text-lg font-semibold text-gray-900">
                   {formatCurrency(totals.totalCalculatedRevenue)}
                 </div>
-                <div className="mt-1 text-sm text-gray-600">
-                  Pick-up vs day -1: {totalCalculatedRevenuePickup > 0 ? "+" : ""}
-                  {formatCurrency(totalCalculatedRevenuePickup)}
+                <div
+                  className={`mt-1 text-sm font-medium ${getDeltaTextClass(totalCalculatedRevenuePickup)}`}
+                >
+                  Pick-up vs day -1: {renderSignedValue(totalCalculatedRevenuePickup, formatCurrency)}
                 </div>
               </div>
             </div>

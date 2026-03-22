@@ -49,18 +49,53 @@ function sumCalculatedRevenue(marketCodes) {
   );
 }
 
+function getMarketCodeLabel(item) {
+  const label =
+    item?.marketCode ||
+    item?.code ||
+    item?.marketSegment ||
+    item?.segmentCode ||
+    item?.name ||
+    item?.id ||
+    item?.label;
+
+  if (label == null) return null;
+  return String(label).trim() || null;
+}
+
+function normalizeMarketCodeEntries(marketCodes) {
+  if (!Array.isArray(marketCodes)) return [];
+
+  return marketCodes.reduce((entries, item) => {
+    const marketCode = getMarketCodeLabel(item);
+    if (!marketCode) return entries;
+
+    entries.push({
+      marketCode,
+      roomsSold: Number(item?.roomsSold || 0),
+      totalRevenue: Number(item?.totalRevenue || 0),
+      totalCalculatedRevenue: Number(item?.roomsSold || 0) * Number(item?.avgRoomRevenue || 0),
+    });
+
+    return entries;
+  }, []);
+}
+
 function extractMetrics(payload) {
+  const marketCodeEntries = normalizeMarketCodeEntries(payload?.marketCodes);
   const roomsSold = Number.isFinite(Number(payload?.roomsSold))
     ? Number(payload.roomsSold)
-    : sumNumericField(payload?.marketCodes, "roomsSold");
+    : sumNumericField(marketCodeEntries, "roomsSold");
 
   const totalRevenue = Number.isFinite(Number(payload?.totalRevenue))
     ? Number(payload.totalRevenue)
-    : sumNumericField(payload?.marketCodes, "totalRevenue");
+    : sumNumericField(marketCodeEntries, "totalRevenue");
 
-  const totalCalculatedRevenue = sumCalculatedRevenue(payload?.marketCodes);
+  const totalCalculatedRevenue = marketCodeEntries.length
+    ? sumNumericField(marketCodeEntries, "totalCalculatedRevenue")
+    : sumCalculatedRevenue(payload?.marketCodes);
 
-  return { roomsSold, totalRevenue, totalCalculatedRevenue };
+  return { roomsSold, totalRevenue, totalCalculatedRevenue, marketCodeEntries };
 }
 
 function extractRowsFromSnapshotPayload(payload, fallbackStayDate = null) {
@@ -104,6 +139,29 @@ async function getSnapshotDates(hotelUid, reportType) {
     .sort((a, b) => b.localeCompare(a));
 }
 
+function mergeMarketCodeEntries(currentEntries = [], nextEntries = []) {
+  const mergedEntries = [...currentEntries].reduce((acc, entry) => {
+    acc.set(entry.marketCode, { ...entry });
+    return acc;
+  }, new Map());
+
+  nextEntries.forEach((entry) => {
+    const currentEntry = mergedEntries.get(entry.marketCode) || {
+      marketCode: entry.marketCode,
+      roomsSold: 0,
+      totalRevenue: 0,
+      totalCalculatedRevenue: 0,
+    };
+
+    currentEntry.roomsSold += Number(entry.roomsSold || 0);
+    currentEntry.totalRevenue += Number(entry.totalRevenue || 0);
+    currentEntry.totalCalculatedRevenue += Number(entry.totalCalculatedRevenue || 0);
+    mergedEntries.set(entry.marketCode, currentEntry);
+  });
+
+  return Array.from(mergedEntries.values()).sort((a, b) => a.marketCode.localeCompare(b.marketCode));
+}
+
 async function getStayDateRows(hotelUid, reportType, snapshotDate) {
   if (!snapshotDate) return [];
 
@@ -129,10 +187,12 @@ async function getStayDateRows(hotelUid, reportType, snapshotDate) {
         roomsSold: 0,
         totalRevenue: 0,
         totalCalculatedRevenue: 0,
+        marketCodeEntries: [],
       };
       current.roomsSold += row.roomsSold;
       current.totalRevenue += row.totalRevenue;
       current.totalCalculatedRevenue += row.totalCalculatedRevenue;
+      current.marketCodeEntries = mergeMarketCodeEntries(current.marketCodeEntries, row.marketCodeEntries);
       acc.set(row.stayDate, current);
     });
 
@@ -151,21 +211,48 @@ function getAvgAdr(totalCalculatedRevenue, roomsSold) {
   return totalCalculatedRevenue / roomsSold;
 }
 
-function buildRowsWithPrevious(currentRows, previousRows, fallbackPreviousRows = []) {
+function filterRowByMarketCodes(row, selectedMarketCodesSet) {
+  if (!row) return null;
+  if (!selectedMarketCodesSet || selectedMarketCodesSet.size === 0) return row;
+
+  const marketCodeEntries = (row.marketCodeEntries || []).filter((entry) =>
+    selectedMarketCodesSet.has(entry.marketCode)
+  );
+
+  return {
+    ...row,
+    roomsSold: sumNumericField(marketCodeEntries, "roomsSold"),
+    totalRevenue: sumNumericField(marketCodeEntries, "totalRevenue"),
+    totalCalculatedRevenue: sumNumericField(marketCodeEntries, "totalCalculatedRevenue"),
+    marketCodeEntries,
+  };
+}
+
+function buildRowsWithPrevious(currentRows, previousRows, fallbackPreviousRows = [], selectedMarketCodes = []) {
+  const selectedMarketCodesSet = new Set(selectedMarketCodes);
   const previousRowsByDate = new Map(previousRows.map((row) => [row.stayDate, row]));
   const fallbackRowsByDate = new Map(fallbackPreviousRows.map((row) => [row.stayDate, row]));
 
-  return currentRows.map((row) => {
-    const previousRow = previousRowsByDate.get(row.stayDate) || fallbackRowsByDate.get(row.stayDate);
+  return currentRows.map((sourceRow) => {
+    const row = filterRowByMarketCodes(sourceRow, selectedMarketCodesSet);
+    const previousRow = filterRowByMarketCodes(
+      previousRowsByDate.get(sourceRow.stayDate) || fallbackRowsByDate.get(sourceRow.stayDate),
+      selectedMarketCodesSet
+    );
+
     const previousRoomsSold = Number(previousRow?.roomsSold || 0);
     const previousTotalCalculatedRevenue = Number(previousRow?.totalCalculatedRevenue || 0);
+    const avgAdr = getAvgAdr(row.totalCalculatedRevenue, row.roomsSold);
+    const previousAvgAdr = getAvgAdr(previousTotalCalculatedRevenue, previousRoomsSold);
 
     return {
       ...row,
-      avgAdr: getAvgAdr(row.totalCalculatedRevenue, row.roomsSold),
+      avgAdr,
       previousRoomsSold,
       previousTotalCalculatedRevenue,
-      previousAvgAdr: getAvgAdr(previousTotalCalculatedRevenue, previousRoomsSold),
+      previousAvgAdr,
+      roomsSoldDelta: row.roomsSold - previousRoomsSold,
+      avgAdrDelta: avgAdr - previousAvgAdr,
     };
   });
 }
@@ -189,7 +276,24 @@ function buildTotals(rows) {
   );
 }
 
-export async function getLatestPickUpRows(hotelUid, monthKey = getCurrentMonthKey()) {
+function collectMarketCodes(...rowGroups) {
+  return Array.from(
+    rowGroups.reduce((codes, rows) => {
+      rows.forEach((row) => {
+        (row.marketCodeEntries || []).forEach((entry) => {
+          if (entry.marketCode) codes.add(entry.marketCode);
+        });
+      });
+      return codes;
+    }, new Set())
+  ).sort((a, b) => a.localeCompare(b));
+}
+
+export async function getLatestPickUpRows(
+  hotelUid,
+  monthKey = getCurrentMonthKey(),
+  selectedMarketCodes = []
+) {
   if (!hotelUid) {
     return {
       monthKey,
@@ -197,6 +301,7 @@ export async function getLatestPickUpRows(hotelUid, monthKey = getCurrentMonthKe
       previousForecastSnapshotDate: null,
       statisticsSnapshotDate: null,
       previousStatisticsSnapshotDate: null,
+      availableMarketCodes: [],
       totals: buildTotals([]),
       rows: [],
     };
@@ -218,14 +323,22 @@ export async function getLatestPickUpRows(hotelUid, monthKey = getCurrentMonthKe
     getStayDateRows(hotelUid, "reservationstatistics", previousStatisticsSnapshotDate),
   ]);
 
+  const monthForecastRows = filterRowsForMonth(forecastRows, monthKey);
+  const monthPreviousForecastRows = filterRowsForMonth(previousForecastRows, monthKey);
+  const monthStatisticsRows = filterRowsForMonth(statisticsRows, monthKey);
+  const monthPreviousStatisticsRows = filterRowsForMonth(previousStatisticsRows, monthKey);
+
   const currentMonthForecastRows = buildRowsWithPrevious(
-    filterRowsForMonth(forecastRows, monthKey).filter((row) => row.stayDate >= today),
-    filterRowsForMonth(previousForecastRows, monthKey)
+    monthForecastRows.filter((row) => row.stayDate >= today),
+    monthPreviousForecastRows,
+    [],
+    selectedMarketCodes
   );
   const currentMonthStatisticsRows = buildRowsWithPrevious(
-    filterRowsForMonth(statisticsRows, monthKey).filter((row) => row.stayDate < today),
-    filterRowsForMonth(previousStatisticsRows, monthKey),
-    filterRowsForMonth(previousForecastRows, monthKey)
+    monthStatisticsRows.filter((row) => row.stayDate < today),
+    monthPreviousStatisticsRows,
+    monthPreviousForecastRows,
+    selectedMarketCodes
   );
 
   const rows = [...currentMonthStatisticsRows, ...currentMonthForecastRows].sort((a, b) =>
@@ -238,6 +351,12 @@ export async function getLatestPickUpRows(hotelUid, monthKey = getCurrentMonthKe
     previousForecastSnapshotDate,
     statisticsSnapshotDate,
     previousStatisticsSnapshotDate,
+    availableMarketCodes: collectMarketCodes(
+      monthForecastRows,
+      monthPreviousForecastRows,
+      monthStatisticsRows,
+      monthPreviousStatisticsRows
+    ),
     totals: buildTotals(rows),
     rows,
   };
