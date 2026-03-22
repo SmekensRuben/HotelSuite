@@ -1,7 +1,9 @@
 import {
   collection,
   db,
+  doc,
   documentId,
+  getDoc,
   getDocs,
   limit,
   orderBy,
@@ -49,8 +51,51 @@ export function listSnapshotDateCandidates(baseDate = new Date(), lookbackDays =
   });
 }
 
+
+async function logPickupSchemaDebug(hotelUid, reportName, dateCandidates = []) {
+  try {
+    const reportsCollection = await getDocs(collection(db, "hotels", hotelUid, "reports"));
+    console.info("[Pick-Up] Reports collection docs", {
+      hotelUid,
+      reportName,
+      docs: reportsCollection.docs.map((docSnap) => docSnap.id),
+    });
+  } catch (error) {
+    console.info("[Pick-Up] Reports collection probe failed", {
+      hotelUid,
+      reportName,
+      message: error?.message || String(error),
+    });
+  }
+
+  try {
+    const reportDoc = await getDoc(doc(db, "hotels", hotelUid, "reports", reportName));
+    console.info("[Pick-Up] Report document probe", {
+      hotelUid,
+      reportName,
+      exists: reportDoc.exists(),
+      keys: reportDoc.exists() ? Object.keys(reportDoc.data() || {}) : [],
+    });
+  } catch (error) {
+    console.info("[Pick-Up] Report document probe failed", {
+      hotelUid,
+      reportName,
+      message: error?.message || String(error),
+    });
+  }
+
+  if (dateCandidates.length > 0) {
+    console.info("[Pick-Up] Snapshot candidates", {
+      hotelUid,
+      reportName,
+      candidates: dateCandidates.slice(0, 7),
+    });
+  }
+}
+
 async function findLatestSnapshotDate(hotelUid, reportName, baseDate = new Date(), lookbackDays = 31) {
   const dateCandidates = listSnapshotDateCandidates(baseDate, lookbackDays);
+  await logPickupSchemaDebug(hotelUid, reportName, dateCandidates);
 
   for (const snapshotDate of dateCandidates) {
     try {
