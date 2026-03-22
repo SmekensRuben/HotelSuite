@@ -5,6 +5,7 @@ const { sendContractCancellationReminders, runContractCancellationRemindersNow }
 const { sendOrderApprovalEmailToApprovers } = require("./src/approvals");
 const { sendOrderedSupplierOrder } = require("./src/sftpDispatch");
 const { processImportedFileToFirestore } = require("./src/fileImportTypes");
+const { sendScheduledOccupancyMail, runScheduledOccupancyMailNow } = require("./src/occupancyMail");
 
 exports.syncCatalogProductsToMeili = syncCatalogProductsToMeili;
 exports.syncSupplierProductsToMeili = syncSupplierProductsToMeili;
@@ -18,3 +19,6 @@ exports.sendOrderApprovalEmailToApprovers = sendOrderApprovalEmailToApprovers;
 exports.sendOrderedSupplierOrder = sendOrderedSupplierOrder;
 
 exports.processImportedFileToFirestore = processImportedFileToFirestore;
+
+exports.sendScheduledOccupancyMail = sendScheduledOccupancyMail;
+exports.runScheduledOccupancyMailNow = runScheduledOccupancyMailNow;
