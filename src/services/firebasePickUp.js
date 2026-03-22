@@ -32,21 +32,21 @@ function formatLocalDate(date) {
   return `${year}-${month}-${day}`;
 }
 
-function getCurrentMonthBounds() {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-
-  return {
-    today: formatLocalDate(now),
-    monthStart: formatLocalDate(start),
-    monthEnd: formatLocalDate(end),
-  };
+function getCurrentMonthKey() {
+  return formatLocalDate(new Date()).slice(0, 7);
 }
 
 function sumNumericField(items, fieldName) {
   if (!Array.isArray(items)) return 0;
   return items.reduce((total, item) => total + Number(item?.[fieldName] || 0), 0);
+}
+
+function sumCalculatedRevenue(marketCodes) {
+  if (!Array.isArray(marketCodes)) return 0;
+  return marketCodes.reduce(
+    (total, item) => total + Number(item?.roomsSold || 0) * Number(item?.avgRoomRevenue || 0),
+    0
+  );
 }
 
 function extractMetrics(payload) {
@@ -58,7 +58,9 @@ function extractMetrics(payload) {
     ? Number(payload.totalRevenue)
     : sumNumericField(payload?.marketCodes, "totalRevenue");
 
-  return { roomsSold, totalRevenue };
+  const totalCalculatedRevenue = sumCalculatedRevenue(payload?.marketCodes);
+
+  return { roomsSold, totalRevenue, totalCalculatedRevenue };
 }
 
 function extractRowsFromSnapshotPayload(payload, fallbackStayDate = null) {
@@ -71,7 +73,10 @@ function extractRowsFromSnapshotPayload(payload, fallbackStayDate = null) {
   if (typeof payload !== "object") return [];
 
   const stayDate = normalizeDateValue(payload.stayDate || payload.recordId || fallbackStayDate);
-  if (stayDate && (Array.isArray(payload.marketCodes) || payload.roomsSold != null || payload.totalRevenue != null)) {
+  if (
+    stayDate &&
+    (Array.isArray(payload.marketCodes) || payload.roomsSold != null || payload.totalRevenue != null)
+  ) {
     const metrics = extractMetrics(payload);
     return [{ id: stayDate, stayDate, ...metrics }];
   }
@@ -82,7 +87,7 @@ function extractRowsFromSnapshotPayload(payload, fallbackStayDate = null) {
   });
 }
 
-async function getLatestSnapshotDate(hotelUid, reportType) {
+async function getSnapshotDates(hotelUid, reportType) {
   const snapshotDatesRef = collection(
     db,
     "hotels",
@@ -93,15 +98,15 @@ async function getLatestSnapshotDate(hotelUid, reportType) {
   );
   const snapshotDatesSnap = await getDocs(snapshotDatesRef);
 
-  const snapshotDates = snapshotDatesSnap.docs
+  return snapshotDatesSnap.docs
     .map((docSnap) => normalizeDateValue(docSnap.id) || normalizeDateValue(docSnap.data()?.snapshotDate))
     .filter(Boolean)
     .sort((a, b) => b.localeCompare(a));
-
-  return snapshotDates[0] || null;
 }
 
 async function getStayDateRows(hotelUid, reportType, snapshotDate) {
+  if (!snapshotDate) return [];
+
   const stayDatesRef = collection(
     db,
     "hotels",
@@ -119,9 +124,15 @@ async function getStayDateRows(hotelUid, reportType, snapshotDate) {
     const extractedRows = extractRowsFromSnapshotPayload(docSnap.data(), stayDate);
 
     extractedRows.forEach((row) => {
-      const current = acc.get(row.stayDate) || { ...row, roomsSold: 0, totalRevenue: 0 };
+      const current = acc.get(row.stayDate) || {
+        ...row,
+        roomsSold: 0,
+        totalRevenue: 0,
+        totalCalculatedRevenue: 0,
+      };
       current.roomsSold += row.roomsSold;
       current.totalRevenue += row.totalRevenue;
+      current.totalCalculatedRevenue += row.totalCalculatedRevenue;
       acc.set(row.stayDate, current);
     });
 
@@ -131,42 +142,87 @@ async function getStayDateRows(hotelUid, reportType, snapshotDate) {
   return Array.from(mergedRows.values()).sort((a, b) => a.stayDate.localeCompare(b.stayDate));
 }
 
-function filterRowsForCurrentMonth(rows, monthStart, monthEnd) {
-  return rows.filter((row) => row.stayDate >= monthStart && row.stayDate <= monthEnd);
+function filterRowsForMonth(rows, monthKey) {
+  return rows.filter((row) => row.stayDate.startsWith(monthKey));
 }
 
-export async function getLatestPickUpRows(hotelUid) {
+function buildDeltaRows(currentRows, previousRows) {
+  const previousRowsByDate = new Map(previousRows.map((row) => [row.stayDate, row]));
+
+  return currentRows.map((row) => {
+    const previousRow = previousRowsByDate.get(row.stayDate);
+    return {
+      ...row,
+      roomsSoldDelta: row.roomsSold - Number(previousRow?.roomsSold || 0),
+    };
+  });
+}
+
+function buildTotals(rows) {
+  return rows.reduce(
+    (totals, row) => ({
+      totalRoomsSold: totals.totalRoomsSold + Number(row.roomsSold || 0),
+      totalRevenue: totals.totalRevenue + Number(row.totalRevenue || 0),
+      totalCalculatedRevenue:
+        totals.totalCalculatedRevenue + Number(row.totalCalculatedRevenue || 0),
+    }),
+    {
+      totalRoomsSold: 0,
+      totalRevenue: 0,
+      totalCalculatedRevenue: 0,
+    }
+  );
+}
+
+export async function getLatestPickUpRows(hotelUid, monthKey = getCurrentMonthKey()) {
   if (!hotelUid) {
     return {
+      monthKey,
       forecastSnapshotDate: null,
+      previousForecastSnapshotDate: null,
       statisticsSnapshotDate: null,
+      previousStatisticsSnapshotDate: null,
+      totals: buildTotals([]),
       rows: [],
     };
   }
 
-  const { today, monthStart, monthEnd } = getCurrentMonthBounds();
-  const [forecastSnapshotDate, statisticsSnapshotDate] = await Promise.all([
-    getLatestSnapshotDate(hotelUid, "reservationforecast"),
-    getLatestSnapshotDate(hotelUid, "reservationstatistics"),
+  const today = formatLocalDate(new Date());
+  const [forecastSnapshotDates, statisticsSnapshotDates] = await Promise.all([
+    getSnapshotDates(hotelUid, "reservationforecast"),
+    getSnapshotDates(hotelUid, "reservationstatistics"),
   ]);
 
-  const [forecastRows, statisticsRows] = await Promise.all([
-    forecastSnapshotDate ? getStayDateRows(hotelUid, "reservationforecast", forecastSnapshotDate) : [],
-    statisticsSnapshotDate ? getStayDateRows(hotelUid, "reservationstatistics", statisticsSnapshotDate) : [],
+  const [forecastSnapshotDate, previousForecastSnapshotDate] = forecastSnapshotDates;
+  const [statisticsSnapshotDate, previousStatisticsSnapshotDate] = statisticsSnapshotDates;
+
+  const [forecastRows, previousForecastRows, statisticsRows, previousStatisticsRows] = await Promise.all([
+    getStayDateRows(hotelUid, "reservationforecast", forecastSnapshotDate),
+    getStayDateRows(hotelUid, "reservationforecast", previousForecastSnapshotDate),
+    getStayDateRows(hotelUid, "reservationstatistics", statisticsSnapshotDate),
+    getStayDateRows(hotelUid, "reservationstatistics", previousStatisticsSnapshotDate),
   ]);
 
-  const currentMonthForecastRows = filterRowsForCurrentMonth(forecastRows, monthStart, monthEnd)
-    .filter((row) => row.stayDate >= today);
-  const currentMonthStatisticsRows = filterRowsForCurrentMonth(statisticsRows, monthStart, monthEnd)
-    .filter((row) => row.stayDate < today);
+  const currentMonthForecastRows = buildDeltaRows(
+    filterRowsForMonth(forecastRows, monthKey).filter((row) => row.stayDate >= today),
+    filterRowsForMonth(previousForecastRows, monthKey)
+  );
+  const currentMonthStatisticsRows = buildDeltaRows(
+    filterRowsForMonth(statisticsRows, monthKey).filter((row) => row.stayDate < today),
+    filterRowsForMonth(previousStatisticsRows, monthKey)
+  );
 
   const rows = [...currentMonthStatisticsRows, ...currentMonthForecastRows].sort((a, b) =>
     a.stayDate.localeCompare(b.stayDate)
   );
 
   return {
+    monthKey,
     forecastSnapshotDate,
+    previousForecastSnapshotDate,
     statisticsSnapshotDate,
+    previousStatisticsSnapshotDate,
+    totals: buildTotals(rows),
     rows,
   };
 }
