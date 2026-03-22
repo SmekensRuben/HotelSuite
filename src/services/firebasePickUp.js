@@ -25,9 +25,40 @@ function normalizeDateValue(value) {
   return null;
 }
 
-function sumRoomsSold(marketCodes) {
-  if (!Array.isArray(marketCodes)) return 0;
-  return marketCodes.reduce((total, item) => total + Number(item?.roomsSold || 0), 0);
+function formatLocalDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getCurrentMonthBounds() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+  return {
+    today: formatLocalDate(now),
+    monthStart: formatLocalDate(start),
+    monthEnd: formatLocalDate(end),
+  };
+}
+
+function sumNumericField(items, fieldName) {
+  if (!Array.isArray(items)) return 0;
+  return items.reduce((total, item) => total + Number(item?.[fieldName] || 0), 0);
+}
+
+function extractMetrics(payload) {
+  const roomsSold = Number.isFinite(Number(payload?.roomsSold))
+    ? Number(payload.roomsSold)
+    : sumNumericField(payload?.marketCodes, "roomsSold");
+
+  const totalRevenue = Number.isFinite(Number(payload?.totalRevenue))
+    ? Number(payload.totalRevenue)
+    : sumNumericField(payload?.marketCodes, "totalRevenue");
+
+  return { roomsSold, totalRevenue };
 }
 
 function extractRowsFromSnapshotPayload(payload, fallbackStayDate = null) {
@@ -40,8 +71,9 @@ function extractRowsFromSnapshotPayload(payload, fallbackStayDate = null) {
   if (typeof payload !== "object") return [];
 
   const stayDate = normalizeDateValue(payload.stayDate || payload.recordId || fallbackStayDate);
-  if (stayDate && Array.isArray(payload.marketCodes)) {
-    return [{ id: stayDate, stayDate, roomsSold: sumRoomsSold(payload.marketCodes) }];
+  if (stayDate && (Array.isArray(payload.marketCodes) || payload.roomsSold != null || payload.totalRevenue != null)) {
+    const metrics = extractMetrics(payload);
+    return [{ id: stayDate, stayDate, ...metrics }];
   }
 
   return Object.entries(payload).flatMap(([key, value]) => {
@@ -50,13 +82,13 @@ function extractRowsFromSnapshotPayload(payload, fallbackStayDate = null) {
   });
 }
 
-async function getLatestSnapshotDate(hotelUid) {
+async function getLatestSnapshotDate(hotelUid, reportType) {
   const snapshotDatesRef = collection(
     db,
     "hotels",
     hotelUid,
     "reports",
-    "reservationforecast",
+    reportType,
     "snapshotDates"
   );
   const snapshotDatesSnap = await getDocs(snapshotDatesRef);
@@ -69,13 +101,13 @@ async function getLatestSnapshotDate(hotelUid) {
   return snapshotDates[0] || null;
 }
 
-async function getStayDateRows(hotelUid, snapshotDate) {
+async function getStayDateRows(hotelUid, reportType, snapshotDate) {
   const stayDatesRef = collection(
     db,
     "hotels",
     hotelUid,
     "reports",
-    "reservationforecast",
+    reportType,
     "snapshotDates",
     snapshotDate,
     "stayDates"
@@ -87,8 +119,9 @@ async function getStayDateRows(hotelUid, snapshotDate) {
     const extractedRows = extractRowsFromSnapshotPayload(docSnap.data(), stayDate);
 
     extractedRows.forEach((row) => {
-      const current = acc.get(row.stayDate) || { ...row, roomsSold: 0 };
+      const current = acc.get(row.stayDate) || { ...row, roomsSold: 0, totalRevenue: 0 };
       current.roomsSold += row.roomsSold;
+      current.totalRevenue += row.totalRevenue;
       acc.set(row.stayDate, current);
     });
 
@@ -98,16 +131,42 @@ async function getStayDateRows(hotelUid, snapshotDate) {
   return Array.from(mergedRows.values()).sort((a, b) => a.stayDate.localeCompare(b.stayDate));
 }
 
+function filterRowsForCurrentMonth(rows, monthStart, monthEnd) {
+  return rows.filter((row) => row.stayDate >= monthStart && row.stayDate <= monthEnd);
+}
+
 export async function getLatestPickUpRows(hotelUid) {
   if (!hotelUid) {
-    return { snapshotDate: null, rows: [] };
+    return {
+      forecastSnapshotDate: null,
+      statisticsSnapshotDate: null,
+      rows: [],
+    };
   }
 
-  const snapshotDate = await getLatestSnapshotDate(hotelUid);
-  if (!snapshotDate) {
-    return { snapshotDate: null, rows: [] };
-  }
+  const { today, monthStart, monthEnd } = getCurrentMonthBounds();
+  const [forecastSnapshotDate, statisticsSnapshotDate] = await Promise.all([
+    getLatestSnapshotDate(hotelUid, "reservationforecast"),
+    getLatestSnapshotDate(hotelUid, "reservationstatistics"),
+  ]);
 
-  const rows = await getStayDateRows(hotelUid, snapshotDate);
-  return { snapshotDate, rows };
+  const [forecastRows, statisticsRows] = await Promise.all([
+    forecastSnapshotDate ? getStayDateRows(hotelUid, "reservationforecast", forecastSnapshotDate) : [],
+    statisticsSnapshotDate ? getStayDateRows(hotelUid, "reservationstatistics", statisticsSnapshotDate) : [],
+  ]);
+
+  const currentMonthForecastRows = filterRowsForCurrentMonth(forecastRows, monthStart, monthEnd)
+    .filter((row) => row.stayDate >= today);
+  const currentMonthStatisticsRows = filterRowsForCurrentMonth(statisticsRows, monthStart, monthEnd)
+    .filter((row) => row.stayDate < today);
+
+  const rows = [...currentMonthStatisticsRows, ...currentMonthForecastRows].sort((a, b) =>
+    a.stayDate.localeCompare(b.stayDate)
+  );
+
+  return {
+    forecastSnapshotDate,
+    statisticsSnapshotDate,
+    rows,
+  };
 }

@@ -9,7 +9,8 @@ import { getLatestPickUpRows } from "../../services/firebasePickUp";
 
 export default function PickUpPage() {
   const { hotelUid } = useHotelContext();
-  const [snapshotDate, setSnapshotDate] = useState(null);
+  const [forecastSnapshotDate, setForecastSnapshotDate] = useState(null);
+  const [statisticsSnapshotDate, setStatisticsSnapshotDate] = useState(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -26,7 +27,8 @@ export default function PickUpPage() {
     async function loadPickUp() {
       if (!hotelUid) {
         setRows([]);
-        setSnapshotDate(null);
+        setForecastSnapshotDate(null);
+        setStatisticsSnapshotDate(null);
         setLoading(false);
         return;
       }
@@ -38,13 +40,15 @@ export default function PickUpPage() {
         const result = await getLatestPickUpRows(hotelUid);
         if (!active) return;
         setRows(result.rows);
-        setSnapshotDate(result.snapshotDate);
+        setForecastSnapshotDate(result.forecastSnapshotDate);
+        setStatisticsSnapshotDate(result.statisticsSnapshotDate);
       } catch (err) {
         console.error("Fout bij laden van pick-up data:", err);
         if (!active) return;
         setError("De pick-up data kon niet geladen worden.");
         setRows([]);
-        setSnapshotDate(null);
+        setForecastSnapshotDate(null);
+        setStatisticsSnapshotDate(null);
       } finally {
         if (active) {
           setLoading(false);
@@ -73,6 +77,14 @@ export default function PickUpPage() {
         label: "Rooms Sold",
         render: (row) => row.roomsSold.toLocaleString(),
       },
+      {
+        key: "totalRevenue",
+        label: "Total Revenue",
+        render: (row) => row.totalRevenue.toLocaleString(undefined, {
+          style: "currency",
+          currency: "EUR",
+        }),
+      },
     ],
     []
   );
@@ -86,12 +98,20 @@ export default function PickUpPage() {
             <div>
               <h1 className="text-2xl font-semibold text-gray-900">Pick-Up</h1>
               <p className="mt-2 text-sm text-gray-600">
-                Business on the books op basis van de meest recente reservation forecast snapshot.
+                Business on the books voor de stay dates van deze maand. Verleden dagen
+                gebruiken reservation statistics, vandaag en toekomst gebruiken reservation
+                forecast.
               </p>
             </div>
-            <div className="rounded-lg bg-gray-100 px-4 py-3 text-sm text-gray-700">
-              <span className="font-semibold">Snapshot Date:</span>{" "}
-              {snapshotDate || "Geen snapshot beschikbaar"}
+            <div className="rounded-lg bg-gray-100 px-4 py-3 text-sm text-gray-700 space-y-1">
+              <div>
+                <span className="font-semibold">Forecast Snapshot:</span>{" "}
+                {forecastSnapshotDate || "Geen snapshot beschikbaar"}
+              </div>
+              <div>
+                <span className="font-semibold">Statistics Snapshot:</span>{" "}
+                {statisticsSnapshotDate || "Geen snapshot beschikbaar"}
+              </div>
             </div>
           </div>
 
