@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Info } from "lucide-react";
+import { ChevronDown, Info, Send } from "lucide-react";
 import { signOut, auth } from "../../firebaseConfig";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
@@ -7,6 +7,7 @@ import { Card } from "../layout/Card";
 import DataListTable from "../shared/DataListTable";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getLatestPickUpRows } from "../../services/firebasePickUp";
+import { triggerScheduledOccupancyMail } from "../../services/firebaseScheduledOccupancy";
 import { getSettings } from "../../services/firebaseSettings";
 
 function formatCurrency(value) {
@@ -58,6 +59,8 @@ export default function PickUpPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [manualTriggerLoading, setManualTriggerLoading] = useState(false);
+  const [manualTriggerMessage, setManualTriggerMessage] = useState("");
   const marketCodesRef = useRef(null);
 
   const today = new Date().toLocaleDateString(undefined, {
@@ -199,6 +202,27 @@ export default function PickUpPage() {
     ? `Market Codes (${selectedMarketCodes.length})`
     : "Market Codes";
 
+
+  const handleManualOccupancyMailTrigger = async () => {
+    if (manualTriggerLoading) return;
+
+    setManualTriggerLoading(true);
+    setManualTriggerMessage("");
+
+    try {
+      const triggerId = await triggerScheduledOccupancyMail({
+        hotelUid,
+        requestedBy: auth.currentUser?.email || auth.currentUser?.uid || null,
+      });
+      setManualTriggerMessage(`Occupancy mail staat in de wachtrij. Trigger ID: ${triggerId}`);
+    } catch (err) {
+      console.error("Fout bij manueel triggeren van occupancy mail:", err);
+      setManualTriggerMessage("De occupancy mail kon niet manueel gestart worden.");
+    } finally {
+      setManualTriggerLoading(false);
+    }
+  };
+
   const columns = useMemo(
     () => [
       { key: "stayDate", label: "Stay Date" },
@@ -258,7 +282,17 @@ export default function PickUpPage() {
                 vergelijking de reservation forecast van dezelfde vergelijkingsdag.
               </p>
             </div>
-            <div
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={handleManualOccupancyMailTrigger}
+                disabled={manualTriggerLoading}
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+              >
+                <Send size={16} />
+                {manualTriggerLoading ? "Occupancy mail starten..." : "Verstuur occupancy PDF"}
+              </button>
+              <div
               className="relative flex justify-end"
               onMouseEnter={() => setSnapshotInfoOpen(true)}
               onMouseLeave={() => setSnapshotInfoOpen(false)}
@@ -288,8 +322,15 @@ export default function PickUpPage() {
                   </div>
                 </div>
               ) : null}
+              </div>
             </div>
           </div>
+
+          {manualTriggerMessage ? (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+              {manualTriggerMessage}
+            </div>
+          ) : null}
 
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:flex-wrap">
