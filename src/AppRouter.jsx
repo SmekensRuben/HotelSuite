@@ -44,6 +44,7 @@ import FileImportTypesPage from "./components/pages/FileImportTypesPage.jsx";
 import FileImportTypeCreatePage from "./components/pages/FileImportTypeCreatePage.jsx";
 import FileImportTypeDetailPage from "./components/pages/FileImportTypeDetailPage.jsx";
 import FileImportTypeEditPage from "./components/pages/FileImportTypeEditPage.jsx";
+import PickUpPage from "./components/pages/PickUpPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -215,6 +216,14 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="settings" action="update">
             <OutletEditPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/revenue-management/pick-up"
+        element={
+          <ProtectedRoute>
+            <PickUpPage />
           </ProtectedRoute>
         }
       />
