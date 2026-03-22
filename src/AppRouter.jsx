@@ -44,12 +44,21 @@ import FileImportTypesPage from "./components/pages/FileImportTypesPage.jsx";
 import FileImportTypeCreatePage from "./components/pages/FileImportTypeCreatePage.jsx";
 import FileImportTypeDetailPage from "./components/pages/FileImportTypeDetailPage.jsx";
 import FileImportTypeEditPage from "./components/pages/FileImportTypeEditPage.jsx";
+import PickupPage from "./components/pages/PickupPage.jsx";
 
 export default function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/revenue-management/pickup"
+        element={
+          <ProtectedRoute>
+            <PickupPage />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/dashboard"
         element={
