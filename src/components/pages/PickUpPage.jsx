@@ -7,6 +7,7 @@ import { Card } from "../layout/Card";
 import DataListTable from "../shared/DataListTable";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getLatestPickUpRows } from "../../services/firebasePickUp";
+import { getSettings } from "../../services/firebaseSettings";
 
 function formatCurrency(value) {
   return value.toLocaleString(undefined, {
@@ -26,11 +27,20 @@ function renderSignedValue(value, formatter = (nextValue) => nextValue.toLocaleS
   return `${prefix}${formatter(value)}`;
 }
 
+function formatPercentage(value) {
+  return `${value.toLocaleString(undefined, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  })}%`;
+}
+
 export default function PickUpPage() {
   const { hotelUid } = useHotelContext();
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [selectedMarketCodes, setSelectedMarketCodes] = useState([]);
   const [availableMarketCodes, setAvailableMarketCodes] = useState([]);
+  const [pickupComparisonDays, setPickupComparisonDays] = useState(1);
+  const [hotelRooms, setHotelRooms] = useState(0);
   const [marketCodeDropdownOpen, setMarketCodeDropdownOpen] = useState(false);
   const [snapshotInfoOpen, setSnapshotInfoOpen] = useState(false);
   const [forecastSnapshotDate, setForecastSnapshotDate] = useState(null);
@@ -73,6 +83,7 @@ export default function PickUpPage() {
         setRows([]);
         setAvailableMarketCodes([]);
         setSelectedMarketCodes([]);
+        setHotelRooms(0);
         setForecastSnapshotDate(null);
         setPreviousForecastSnapshotDate(null);
         setStatisticsSnapshotDate(null);
@@ -91,15 +102,20 @@ export default function PickUpPage() {
       setError("");
 
       try {
-        const result = await getLatestPickUpRows(hotelUid, selectedMonth, selectedMarketCodes);
+        const [result, settings] = await Promise.all([
+          getLatestPickUpRows(hotelUid, selectedMonth, selectedMarketCodes, pickupComparisonDays),
+          getSettings(hotelUid),
+        ]);
         if (!active) return;
         setRows(result.rows);
         setAvailableMarketCodes(result.availableMarketCodes);
+        setHotelRooms(Number(settings?.hotelRooms) || 0);
         setForecastSnapshotDate(result.forecastSnapshotDate);
         setPreviousForecastSnapshotDate(result.previousForecastSnapshotDate);
         setStatisticsSnapshotDate(result.statisticsSnapshotDate);
         setPreviousStatisticsSnapshotDate(result.previousStatisticsSnapshotDate);
         setTotals(result.totals);
+        setPickupComparisonDays(result.pickupComparisonDays);
         setSelectedMarketCodes((currentSelection) => {
           const nextSelection = currentSelection.filter((marketCode) =>
             result.availableMarketCodes.includes(marketCode)
@@ -114,6 +130,7 @@ export default function PickUpPage() {
         if (!active) return;
         setError("De pick-up data kon niet geladen worden.");
         setRows([]);
+        setHotelRooms(0);
         setAvailableMarketCodes([]);
         setForecastSnapshotDate(null);
         setPreviousForecastSnapshotDate(null);
@@ -137,7 +154,7 @@ export default function PickUpPage() {
     return () => {
       active = false;
     };
-  }, [hotelUid, selectedMonth, selectedMarketCodes]);
+  }, [hotelUid, selectedMonth, selectedMarketCodes, pickupComparisonDays]);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -168,6 +185,15 @@ export default function PickUpPage() {
     () => [
       { key: "stayDate", label: "Stay Date" },
       {
+        key: "occupancy",
+        label: "Occupancy",
+        render: (row) => {
+          const occupancy = hotelRooms > 0 ? (row.roomsSold / hotelRooms) * 100 : 0;
+          return formatPercentage(occupancy);
+        },
+        sortValue: (row) => (hotelRooms > 0 ? (row.roomsSold / hotelRooms) * 100 : 0),
+      },
+      {
         key: "roomsSold",
         label: "Rooms Sold",
         render: (row) => row.roomsSold.toLocaleString(),
@@ -179,7 +205,7 @@ export default function PickUpPage() {
       },
       {
         key: "roomsSoldDelta",
-        label: "Rooms Sold -1",
+        label: `Rooms Sold -${pickupComparisonDays}`,
         render: (row) => (
           <span className={getDeltaTextClass(row.roomsSoldDelta)}>
             {renderSignedValue(row.roomsSoldDelta)}
@@ -188,7 +214,7 @@ export default function PickUpPage() {
       },
       {
         key: "avgAdrDelta",
-        label: "Avg ADR -1",
+        label: `Avg ADR -${pickupComparisonDays}`,
         render: (row) => (
           <span className={getDeltaTextClass(row.avgAdrDelta)}>
             {renderSignedValue(row.avgAdrDelta, formatCurrency)}
@@ -196,7 +222,7 @@ export default function PickUpPage() {
         ),
       },
     ],
-    []
+    [hotelRooms, pickupComparisonDays]
   );
 
   return (
@@ -209,9 +235,9 @@ export default function PickUpPage() {
               <h1 className="text-2xl font-semibold text-gray-900">Pick-Up</h1>
               <p className="mt-2 text-sm text-gray-600">
                 Business on the books per stay date. Verleden dagen gebruiken reservation
-                statistics, vandaag en toekomst gebruiken reservation forecast. Als de vorige
+                statistics, vandaag en toekomst gebruiken reservation forecast. Als de eerdere
                 statistics-snapshot de recentste stay date nog niet bevat, gebruiken we voor die
-                vergelijking de reservation forecast van day -1.
+                vergelijking de reservation forecast van dezelfde vergelijkingsdag.
               </p>
             </div>
             <div
@@ -233,13 +259,13 @@ export default function PickUpPage() {
                   <div>
                     <span className="font-semibold">Forecast Snapshot:</span>{" "}
                     {forecastSnapshotDate || "Geen snapshot beschikbaar"}
-                    {previousForecastSnapshotDate ? ` (vorige: ${previousForecastSnapshotDate})` : ""}
+                    {previousForecastSnapshotDate ? ` (vergelijking: ${previousForecastSnapshotDate})` : ""}
                   </div>
                   <div className="mt-2">
                     <span className="font-semibold">Statistics Snapshot:</span>{" "}
                     {statisticsSnapshotDate || "Geen snapshot beschikbaar"}
                     {previousStatisticsSnapshotDate
-                      ? ` (vorige: ${previousStatisticsSnapshotDate})`
+                      ? ` (vergelijking: ${previousStatisticsSnapshotDate})`
                       : ""}
                   </div>
                 </div>
@@ -248,7 +274,7 @@ export default function PickUpPage() {
           </div>
 
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:flex-wrap">
               <div>
                 <label htmlFor="pickup-month" className="block text-sm font-semibold text-gray-700">
                   Month
@@ -260,6 +286,24 @@ export default function PickUpPage() {
                   onChange={(event) => setSelectedMonth(event.target.value)}
                   className="mt-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
+              </div>
+
+              <div>
+                <label htmlFor="pickup-vs" className="block text-sm font-semibold text-gray-700">
+                  Pickup vs.
+                </label>
+                <select
+                  id="pickup-vs"
+                  value={pickupComparisonDays}
+                  onChange={(event) => setPickupComparisonDays(Number(event.target.value))}
+                  className="mt-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                >
+                  {[1, 2, 3, 4, 5, 6, 7].map((dayValue) => (
+                    <option key={dayValue} value={dayValue}>
+                      Day -{dayValue}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="relative" ref={marketCodesRef}>
@@ -316,7 +360,7 @@ export default function PickUpPage() {
                   {totals.totalRoomsSold.toLocaleString()}
                 </div>
                 <div className={`mt-1 text-sm font-medium ${getDeltaTextClass(totalRoomsSoldPickup)}`}>
-                  Pick-up vs day -1: {renderSignedValue(totalRoomsSoldPickup)}
+                  Pick-up vs day -{pickupComparisonDays}: {renderSignedValue(totalRoomsSoldPickup)}
                 </div>
               </div>
               <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
@@ -329,11 +373,21 @@ export default function PickUpPage() {
                 <div
                   className={`mt-1 text-sm font-medium ${getDeltaTextClass(totalCalculatedRevenuePickup)}`}
                 >
-                  Pick-up vs day -1: {renderSignedValue(totalCalculatedRevenuePickup, formatCurrency)}
+                  Pick-up vs day -{pickupComparisonDays}: {renderSignedValue(
+                    totalCalculatedRevenuePickup,
+                    formatCurrency
+                  )}
                 </div>
               </div>
             </div>
           </div>
+
+          {hotelRooms <= 0 ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+              Occupancy wordt pas correct weergegeven zodra <strong>Hotel Rooms</strong> is ingevuld op
+              de General Settings pagina.
+            </div>
+          ) : null}
 
           {error ? (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

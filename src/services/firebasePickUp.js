@@ -292,7 +292,8 @@ function collectMarketCodes(...rowGroups) {
 export async function getLatestPickUpRows(
   hotelUid,
   monthKey = getCurrentMonthKey(),
-  selectedMarketCodes = []
+  selectedMarketCodes = [],
+  pickupComparisonDays = 1
 ) {
   if (!hotelUid) {
     return {
@@ -302,6 +303,7 @@ export async function getLatestPickUpRows(
       statisticsSnapshotDate: null,
       previousStatisticsSnapshotDate: null,
       availableMarketCodes: [],
+      pickupComparisonDays: Math.max(1, Number(pickupComparisonDays) || 1),
       totals: buildTotals([]),
       rows: [],
     };
@@ -313,8 +315,11 @@ export async function getLatestPickUpRows(
     getSnapshotDates(hotelUid, "reservationstatistics"),
   ]);
 
-  const [forecastSnapshotDate, previousForecastSnapshotDate] = forecastSnapshotDates;
-  const [statisticsSnapshotDate, previousStatisticsSnapshotDate] = statisticsSnapshotDates;
+  const normalizedPickupComparisonDays = Math.max(1, Number(pickupComparisonDays) || 1);
+  const forecastSnapshotDate = forecastSnapshotDates[0] || null;
+  const previousForecastSnapshotDate = forecastSnapshotDates[normalizedPickupComparisonDays] || null;
+  const statisticsSnapshotDate = statisticsSnapshotDates[0] || null;
+  const previousStatisticsSnapshotDate = statisticsSnapshotDates[normalizedPickupComparisonDays] || null;
 
   const [forecastRows, previousForecastRows, statisticsRows, previousStatisticsRows] = await Promise.all([
     getStayDateRows(hotelUid, "reservationforecast", forecastSnapshotDate),
@@ -357,6 +362,7 @@ export async function getLatestPickUpRows(
       monthStatisticsRows,
       monthPreviousStatisticsRows
     ),
+    pickupComparisonDays: normalizedPickupComparisonDays,
     totals: buildTotals(rows),
     rows,
   };
