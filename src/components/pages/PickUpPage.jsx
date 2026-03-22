@@ -7,6 +7,13 @@ import DataListTable from "../shared/DataListTable";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getLatestPickUpRows } from "../../services/firebasePickUp";
 
+function formatCurrency(value) {
+  return value.toLocaleString(undefined, {
+    style: "currency",
+    currency: "EUR",
+  });
+}
+
 export default function PickUpPage() {
   const { hotelUid } = useHotelContext();
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
@@ -16,8 +23,9 @@ export default function PickUpPage() {
   const [previousStatisticsSnapshotDate, setPreviousStatisticsSnapshotDate] = useState(null);
   const [totals, setTotals] = useState({
     totalRoomsSold: 0,
-    totalRevenue: 0,
     totalCalculatedRevenue: 0,
+    previousTotalRoomsSold: 0,
+    previousTotalCalculatedRevenue: 0,
   });
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -39,7 +47,12 @@ export default function PickUpPage() {
         setPreviousForecastSnapshotDate(null);
         setStatisticsSnapshotDate(null);
         setPreviousStatisticsSnapshotDate(null);
-        setTotals({ totalRoomsSold: 0, totalRevenue: 0, totalCalculatedRevenue: 0 });
+        setTotals({
+          totalRoomsSold: 0,
+          totalCalculatedRevenue: 0,
+          previousTotalRoomsSold: 0,
+          previousTotalCalculatedRevenue: 0,
+        });
         setLoading(false);
         return;
       }
@@ -65,7 +78,12 @@ export default function PickUpPage() {
         setPreviousForecastSnapshotDate(null);
         setStatisticsSnapshotDate(null);
         setPreviousStatisticsSnapshotDate(null);
-        setTotals({ totalRoomsSold: 0, totalRevenue: 0, totalCalculatedRevenue: 0 });
+        setTotals({
+          totalRoomsSold: 0,
+          totalCalculatedRevenue: 0,
+          previousTotalRoomsSold: 0,
+          previousTotalCalculatedRevenue: 0,
+        });
       } finally {
         if (active) {
           setLoading(false);
@@ -86,6 +104,10 @@ export default function PickUpPage() {
     window.location.href = "/login";
   };
 
+  const totalRoomsSoldPickup = totals.totalRoomsSold - totals.previousTotalRoomsSold;
+  const totalCalculatedRevenuePickup =
+    totals.totalCalculatedRevenue - totals.previousTotalCalculatedRevenue;
+
   const columns = useMemo(
     () => [
       { key: "stayDate", label: "Stay Date" },
@@ -95,39 +117,19 @@ export default function PickUpPage() {
         render: (row) => row.roomsSold.toLocaleString(),
       },
       {
-        key: "roomsSoldDelta",
-        label: "Δ vs day -1",
-        render: (row) => {
-          const prefix = row.roomsSoldDelta > 0 ? "+" : "";
-          const colorClass = row.roomsSoldDelta > 0
-            ? "text-green-600"
-            : row.roomsSoldDelta < 0
-              ? "text-red-600"
-              : "text-gray-600";
-
-          return (
-            <span className={colorClass}>
-              {prefix}
-              {row.roomsSoldDelta.toLocaleString()}
-            </span>
-          );
-        },
+        key: "avgAdr",
+        label: "Avg ADR",
+        render: (row) => formatCurrency(row.avgAdr),
       },
       {
-        key: "totalRevenue",
-        label: "Total Revenue",
-        render: (row) => row.totalRevenue.toLocaleString(undefined, {
-          style: "currency",
-          currency: "EUR",
-        }),
+        key: "previousRoomsSold",
+        label: "Rooms Sold -1",
+        render: (row) => row.previousRoomsSold.toLocaleString(),
       },
       {
-        key: "totalCalculatedRevenue",
-        label: "Total Calculated Revenue",
-        render: (row) => row.totalCalculatedRevenue.toLocaleString(undefined, {
-          style: "currency",
-          currency: "EUR",
-        }),
+        key: "previousAvgAdr",
+        label: "Avg ADR -1",
+        render: (row) => formatCurrency(row.previousAvgAdr),
       },
     ],
     []
@@ -143,18 +145,23 @@ export default function PickUpPage() {
               <h1 className="text-2xl font-semibold text-gray-900">Pick-Up</h1>
               <p className="mt-2 text-sm text-gray-600">
                 Business on the books per stay date. Verleden dagen gebruiken reservation
-                statistics, vandaag en toekomst gebruiken reservation forecast. De rooms sold
-                delta vergelijkt telkens met de vorige snapshotdag.
+                statistics, vandaag en toekomst gebruiken reservation forecast. Als de vorige
+                statistics-snapshot de recentste stay date nog niet bevat, gebruiken we voor die
+                vergelijking de reservation forecast van day -1.
               </p>
             </div>
             <div className="rounded-lg bg-gray-100 px-4 py-3 text-sm text-gray-700 space-y-1">
               <div>
                 <span className="font-semibold">Forecast Snapshot:</span>{" "}
-                {forecastSnapshotDate || "Geen snapshot beschikbaar"}{previousForecastSnapshotDate ? ` (vorige: ${previousForecastSnapshotDate})` : ""}
+                {forecastSnapshotDate || "Geen snapshot beschikbaar"}
+                {previousForecastSnapshotDate ? ` (vorige: ${previousForecastSnapshotDate})` : ""}
               </div>
               <div>
                 <span className="font-semibold">Statistics Snapshot:</span>{" "}
-                {statisticsSnapshotDate || "Geen snapshot beschikbaar"}{previousStatisticsSnapshotDate ? ` (vorige: ${previousStatisticsSnapshotDate})` : ""}
+                {statisticsSnapshotDate || "Geen snapshot beschikbaar"}
+                {previousStatisticsSnapshotDate
+                  ? ` (vorige: ${previousStatisticsSnapshotDate})`
+                  : ""}
               </div>
             </div>
           </div>
@@ -173,15 +180,7 @@ export default function PickUpPage() {
               />
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-3 w-full lg:w-auto">
-              <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
-                <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  Total Revenue
-                </div>
-                <div className="mt-1 text-lg font-semibold text-gray-900">
-                  {totals.totalRevenue.toLocaleString(undefined, { style: "currency", currency: "EUR" })}
-                </div>
-              </div>
+            <div className="grid gap-3 sm:grid-cols-2 w-full lg:w-auto">
               <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
                 <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">
                   Total Rooms Sold
@@ -189,13 +188,21 @@ export default function PickUpPage() {
                 <div className="mt-1 text-lg font-semibold text-gray-900">
                   {totals.totalRoomsSold.toLocaleString()}
                 </div>
+                <div className="mt-1 text-sm text-gray-600">
+                  Pick-up vs day -1: {totalRoomsSoldPickup > 0 ? "+" : ""}
+                  {totalRoomsSoldPickup.toLocaleString()}
+                </div>
               </div>
               <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
                 <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">
                   Total Calculated Revenue
                 </div>
                 <div className="mt-1 text-lg font-semibold text-gray-900">
-                  {totals.totalCalculatedRevenue.toLocaleString(undefined, { style: "currency", currency: "EUR" })}
+                  {formatCurrency(totals.totalCalculatedRevenue)}
+                </div>
+                <div className="mt-1 text-sm text-gray-600">
+                  Pick-up vs day -1: {totalCalculatedRevenuePickup > 0 ? "+" : ""}
+                  {formatCurrency(totalCalculatedRevenuePickup)}
                 </div>
               </div>
             </div>

@@ -146,14 +146,26 @@ function filterRowsForMonth(rows, monthKey) {
   return rows.filter((row) => row.stayDate.startsWith(monthKey));
 }
 
-function buildDeltaRows(currentRows, previousRows) {
+function getAvgAdr(totalCalculatedRevenue, roomsSold) {
+  if (!roomsSold) return 0;
+  return totalCalculatedRevenue / roomsSold;
+}
+
+function buildRowsWithPrevious(currentRows, previousRows, fallbackPreviousRows = []) {
   const previousRowsByDate = new Map(previousRows.map((row) => [row.stayDate, row]));
+  const fallbackRowsByDate = new Map(fallbackPreviousRows.map((row) => [row.stayDate, row]));
 
   return currentRows.map((row) => {
-    const previousRow = previousRowsByDate.get(row.stayDate);
+    const previousRow = previousRowsByDate.get(row.stayDate) || fallbackRowsByDate.get(row.stayDate);
+    const previousRoomsSold = Number(previousRow?.roomsSold || 0);
+    const previousTotalCalculatedRevenue = Number(previousRow?.totalCalculatedRevenue || 0);
+
     return {
       ...row,
-      roomsSoldDelta: row.roomsSold - Number(previousRow?.roomsSold || 0),
+      avgAdr: getAvgAdr(row.totalCalculatedRevenue, row.roomsSold),
+      previousRoomsSold,
+      previousTotalCalculatedRevenue,
+      previousAvgAdr: getAvgAdr(previousTotalCalculatedRevenue, previousRoomsSold),
     };
   });
 }
@@ -162,14 +174,17 @@ function buildTotals(rows) {
   return rows.reduce(
     (totals, row) => ({
       totalRoomsSold: totals.totalRoomsSold + Number(row.roomsSold || 0),
-      totalRevenue: totals.totalRevenue + Number(row.totalRevenue || 0),
       totalCalculatedRevenue:
         totals.totalCalculatedRevenue + Number(row.totalCalculatedRevenue || 0),
+      previousTotalRoomsSold: totals.previousTotalRoomsSold + Number(row.previousRoomsSold || 0),
+      previousTotalCalculatedRevenue:
+        totals.previousTotalCalculatedRevenue + Number(row.previousTotalCalculatedRevenue || 0),
     }),
     {
       totalRoomsSold: 0,
-      totalRevenue: 0,
       totalCalculatedRevenue: 0,
+      previousTotalRoomsSold: 0,
+      previousTotalCalculatedRevenue: 0,
     }
   );
 }
@@ -203,13 +218,14 @@ export async function getLatestPickUpRows(hotelUid, monthKey = getCurrentMonthKe
     getStayDateRows(hotelUid, "reservationstatistics", previousStatisticsSnapshotDate),
   ]);
 
-  const currentMonthForecastRows = buildDeltaRows(
+  const currentMonthForecastRows = buildRowsWithPrevious(
     filterRowsForMonth(forecastRows, monthKey).filter((row) => row.stayDate >= today),
     filterRowsForMonth(previousForecastRows, monthKey)
   );
-  const currentMonthStatisticsRows = buildDeltaRows(
+  const currentMonthStatisticsRows = buildRowsWithPrevious(
     filterRowsForMonth(statisticsRows, monthKey).filter((row) => row.stayDate < today),
-    filterRowsForMonth(previousStatisticsRows, monthKey)
+    filterRowsForMonth(previousStatisticsRows, monthKey),
+    filterRowsForMonth(previousForecastRows, monthKey)
   );
 
   const rows = [...currentMonthStatisticsRows, ...currentMonthForecastRows].sort((a, b) =>
