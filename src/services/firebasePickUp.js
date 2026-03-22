@@ -1,4 +1,4 @@
-import { collection, db, getDocs } from "../firebaseConfig";
+import { auth, collection, db, getDocs } from "../firebaseConfig";
 
 function normalizeDateValue(value) {
   if (!value) return null;
@@ -50,43 +50,83 @@ function extractRowsFromSnapshotPayload(payload, fallbackStayDate = null) {
   });
 }
 
-export async function getLatestPickUpRows(hotelUid) {
-  if (!hotelUid) {
-    return { snapshotDate: null, rows: [] };
+async function listSnapshotCollectionIds(hotelUid) {
+  const projectId = db.app.options.projectId || import.meta.env.VITE_FIREBASE_PROJECT_ID;
+  const user = auth.currentUser;
+
+  if (!projectId || !user) {
+    return [];
   }
 
-  const snapshotsRef = collection(
+  const token = await user.getIdToken();
+  const parent = `projects/${projectId}/databases/(default)/documents/hotels/${hotelUid}/reports/reservationforecast`;
+  const endpoint = `https://firestore.googleapis.com/v1/${parent}:listCollectionIds`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ pageSize: 200 }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Unable to list reservationforecast snapshots: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json();
+  return Array.isArray(data.collectionIds) ? data.collectionIds : [];
+}
+
+async function getLatestSnapshotDate(hotelUid) {
+  const collectionIds = await listSnapshotCollectionIds(hotelUid);
+  const snapshotDates = collectionIds
+    .map((value) => normalizeDateValue(value))
+    .filter(Boolean)
+    .sort((a, b) => b.localeCompare(a));
+
+  return snapshotDates[0] || null;
+}
+
+async function getSnapshotRows(hotelUid, snapshotDate) {
+  const snapshotRef = collection(
     db,
     "hotels",
     hotelUid,
     "reports",
     "reservationforecast",
-    "snapshotDate"
+    snapshotDate
   );
 
-  const snapshotsSnap = await getDocs(snapshotsRef);
-  const snapshots = snapshotsSnap.docs
-    .map((docSnap) => ({
-      id: docSnap.id,
-      snapshotDate: normalizeDateValue(docSnap.id) || normalizeDateValue(docSnap.data()?.snapshotDate),
-      data: docSnap.data(),
-    }))
-    .filter((entry) => entry.snapshotDate);
+  const snapshotSnap = await getDocs(snapshotRef);
+  const mergedRows = snapshotSnap.docs.reduce((acc, docSnap) => {
+    const stayDate = normalizeDateValue(docSnap.id) || normalizeDateValue(docSnap.data()?.stayDate);
+    const extractedRows = extractRowsFromSnapshotPayload(docSnap.data(), stayDate);
 
-  if (!snapshots.length) {
-    return { snapshotDate: null, rows: [] };
-  }
+    extractedRows.forEach((row) => {
+      const current = acc.get(row.stayDate) || { ...row, roomsSold: 0 };
+      current.roomsSold += row.roomsSold;
+      acc.set(row.stayDate, current);
+    });
 
-  const latestSnapshot = snapshots.sort((a, b) => b.snapshotDate.localeCompare(a.snapshotDate))[0];
-
-  const mergedRows = extractRowsFromSnapshotPayload(latestSnapshot.data).reduce((acc, row) => {
-    const current = acc.get(row.stayDate) || { ...row, roomsSold: 0 };
-    current.roomsSold += row.roomsSold;
-    acc.set(row.stayDate, current);
     return acc;
   }, new Map());
 
-  const rows = Array.from(mergedRows.values()).sort((a, b) => a.stayDate.localeCompare(b.stayDate));
+  return Array.from(mergedRows.values()).sort((a, b) => a.stayDate.localeCompare(b.stayDate));
+}
 
-  return { snapshotDate: latestSnapshot.snapshotDate, rows };
+export async function getLatestPickUpRows(hotelUid) {
+  if (!hotelUid) {
+    return { snapshotDate: null, rows: [] };
+  }
+
+  const snapshotDate = await getLatestSnapshotDate(hotelUid);
+  if (!snapshotDate) {
+    return { snapshotDate: null, rows: [] };
+  }
+
+  const rows = await getSnapshotRows(hotelUid, snapshotDate);
+  return { snapshotDate, rows };
 }
