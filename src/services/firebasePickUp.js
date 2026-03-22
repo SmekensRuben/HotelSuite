@@ -50,23 +50,39 @@ function extractRowsFromSnapshotPayload(payload, fallbackStayDate = null) {
   });
 }
 
-async function getLatestReportDate(hotelUid) {
-  const reportsRef = collection(db, "hotels", hotelUid, "reports");
-  const reportsSnap = await getDocs(reportsRef);
+async function getLatestSnapshotDate(hotelUid) {
+  const snapshotDatesRef = collection(
+    db,
+    "hotels",
+    hotelUid,
+    "reports",
+    "reservationforecast",
+    "snapshotDates"
+  );
+  const snapshotDatesSnap = await getDocs(snapshotDatesRef);
 
-  const reportDates = reportsSnap.docs
+  const snapshotDates = snapshotDatesSnap.docs
     .map((docSnap) => normalizeDateValue(docSnap.id) || normalizeDateValue(docSnap.data()?.snapshotDate))
     .filter(Boolean)
     .sort((a, b) => b.localeCompare(a));
 
-  return reportDates[0] || null;
+  return snapshotDates[0] || null;
 }
 
-async function getReportRows(hotelUid, reportDate) {
-  const recordsRef = collection(db, "hotels", hotelUid, "reports", reportDate, "records");
-  const recordsSnap = await getDocs(recordsRef);
+async function getStayDateRows(hotelUid, snapshotDate) {
+  const stayDatesRef = collection(
+    db,
+    "hotels",
+    hotelUid,
+    "reports",
+    "reservationforecast",
+    "snapshotDates",
+    snapshotDate,
+    "stayDates"
+  );
+  const stayDatesSnap = await getDocs(stayDatesRef);
 
-  const mergedRows = recordsSnap.docs.reduce((acc, docSnap) => {
+  const mergedRows = stayDatesSnap.docs.reduce((acc, docSnap) => {
     const stayDate = normalizeDateValue(docSnap.id) || normalizeDateValue(docSnap.data()?.stayDate);
     const extractedRows = extractRowsFromSnapshotPayload(docSnap.data(), stayDate);
 
@@ -87,11 +103,11 @@ export async function getLatestPickUpRows(hotelUid) {
     return { snapshotDate: null, rows: [] };
   }
 
-  const snapshotDate = await getLatestReportDate(hotelUid);
+  const snapshotDate = await getLatestSnapshotDate(hotelUid);
   if (!snapshotDate) {
     return { snapshotDate: null, rows: [] };
   }
 
-  const rows = await getReportRows(hotelUid, snapshotDate);
+  const rows = await getStayDateRows(hotelUid, snapshotDate);
   return { snapshotDate, rows };
 }
