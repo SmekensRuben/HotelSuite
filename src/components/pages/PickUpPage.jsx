@@ -39,7 +39,9 @@ export default function PickUpPage() {
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [selectedMarketCodes, setSelectedMarketCodes] = useState([]);
   const [availableMarketCodes, setAvailableMarketCodes] = useState([]);
-  const [pickupComparisonDays, setPickupComparisonDays] = useState(1);
+  const [availableSnapshotDates, setAvailableSnapshotDates] = useState([]);
+  const [selectedSnapshotDate, setSelectedSnapshotDate] = useState("");
+  const [pickupComparisonDaysInput, setPickupComparisonDaysInput] = useState("1");
   const [hotelRooms, setHotelRooms] = useState(0);
   const [marketCodeDropdownOpen, setMarketCodeDropdownOpen] = useState(false);
   const [snapshotInfoOpen, setSnapshotInfoOpen] = useState(false);
@@ -82,7 +84,9 @@ export default function PickUpPage() {
       if (!hotelUid) {
         setRows([]);
         setAvailableMarketCodes([]);
+        setAvailableSnapshotDates([]);
         setSelectedMarketCodes([]);
+        setSelectedSnapshotDate("");
         setHotelRooms(0);
         setForecastSnapshotDate(null);
         setPreviousForecastSnapshotDate(null);
@@ -102,20 +106,32 @@ export default function PickUpPage() {
       setError("");
 
       try {
+        const normalizedPickupComparisonDays = Math.max(
+          1,
+          Math.floor(Number(pickupComparisonDaysInput) || 1)
+        );
         const [result, settings] = await Promise.all([
-          getLatestPickUpRows(hotelUid, selectedMonth, selectedMarketCodes, pickupComparisonDays),
+          getLatestPickUpRows(
+            hotelUid,
+            selectedMonth,
+            selectedMarketCodes,
+            normalizedPickupComparisonDays,
+            selectedSnapshotDate || null
+          ),
           getSettings(hotelUid),
         ]);
         if (!active) return;
         setRows(result.rows);
         setAvailableMarketCodes(result.availableMarketCodes);
+        setAvailableSnapshotDates(result.availableSnapshotDates || []);
+        setSelectedSnapshotDate(result.selectedSnapshotDate || "");
+        setPickupComparisonDaysInput(String(result.pickupComparisonDays));
         setHotelRooms(Number(settings?.hotelRooms) || 0);
         setForecastSnapshotDate(result.forecastSnapshotDate);
         setPreviousForecastSnapshotDate(result.previousForecastSnapshotDate);
         setStatisticsSnapshotDate(result.statisticsSnapshotDate);
         setPreviousStatisticsSnapshotDate(result.previousStatisticsSnapshotDate);
         setTotals(result.totals);
-        setPickupComparisonDays(result.pickupComparisonDays);
         setSelectedMarketCodes((currentSelection) => {
           const nextSelection = currentSelection.filter((marketCode) =>
             result.availableMarketCodes.includes(marketCode)
@@ -132,6 +148,7 @@ export default function PickUpPage() {
         setRows([]);
         setHotelRooms(0);
         setAvailableMarketCodes([]);
+        setAvailableSnapshotDates([]);
         setForecastSnapshotDate(null);
         setPreviousForecastSnapshotDate(null);
         setStatisticsSnapshotDate(null);
@@ -154,7 +171,7 @@ export default function PickUpPage() {
     return () => {
       active = false;
     };
-  }, [hotelUid, selectedMonth, selectedMarketCodes, pickupComparisonDays]);
+  }, [hotelUid, selectedMonth, selectedMarketCodes, pickupComparisonDaysInput, selectedSnapshotDate]);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -174,6 +191,7 @@ export default function PickUpPage() {
     setSelectedMarketCodes([]);
   };
 
+  const pickupComparisonDays = Math.max(1, Math.floor(Number(pickupComparisonDaysInput) || 1));
   const totalRoomsSoldPickup = totals.totalRoomsSold - totals.previousTotalRoomsSold;
   const totalCalculatedRevenuePickup =
     totals.totalCalculatedRevenue - totals.previousTotalCalculatedRevenue;
@@ -289,21 +307,40 @@ export default function PickUpPage() {
               </div>
 
               <div>
+                <label htmlFor="pickup-snapshot-date" className="block text-sm font-semibold text-gray-700">
+                  Snapshot Date
+                </label>
+                <select
+                  id="pickup-snapshot-date"
+                  value={selectedSnapshotDate}
+                  onChange={(event) => setSelectedSnapshotDate(event.target.value)}
+                  className="mt-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                >
+                  {availableSnapshotDates.length === 0 ? (
+                    <option value="">Geen snapshot beschikbaar</option>
+                  ) : (
+                    availableSnapshotDates.map((snapshotDate) => (
+                      <option key={snapshotDate} value={snapshotDate}>
+                        {snapshotDate}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              <div>
                 <label htmlFor="pickup-vs" className="block text-sm font-semibold text-gray-700">
                   Pickup vs.
                 </label>
-                <select
+                <input
                   id="pickup-vs"
-                  value={pickupComparisonDays}
-                  onChange={(event) => setPickupComparisonDays(Number(event.target.value))}
-                  className="mt-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-                >
-                  {[1, 2, 3, 4, 5, 6, 7].map((dayValue) => (
-                    <option key={dayValue} value={dayValue}>
-                      Day -{dayValue}
-                    </option>
-                  ))}
-                </select>
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={pickupComparisonDaysInput}
+                  onChange={(event) => setPickupComparisonDaysInput(event.target.value)}
+                  className="mt-1 w-28 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                />
               </div>
 
               <div className="relative" ref={marketCodesRef}>

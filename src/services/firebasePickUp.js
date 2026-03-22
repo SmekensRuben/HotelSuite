@@ -289,11 +289,28 @@ function collectMarketCodes(...rowGroups) {
   ).sort((a, b) => a.localeCompare(b));
 }
 
+function collectAvailableSnapshotDates(forecastSnapshotDates, statisticsSnapshotDates) {
+  const statisticsSet = new Set(statisticsSnapshotDates);
+  const overlappingDates = forecastSnapshotDates.filter((snapshotDate) => statisticsSet.has(snapshotDate));
+
+  if (overlappingDates.length > 0) return overlappingDates;
+
+  return Array.from(new Set([...forecastSnapshotDates, ...statisticsSnapshotDates])).sort((a, b) =>
+    b.localeCompare(a)
+  );
+}
+
+function resolveSnapshotDate(snapshotDates, selectedSnapshotDate) {
+  if (!selectedSnapshotDate) return snapshotDates[0] || null;
+  return snapshotDates.find((snapshotDate) => snapshotDate === selectedSnapshotDate) || snapshotDates[0] || null;
+}
+
 export async function getLatestPickUpRows(
   hotelUid,
   monthKey = getCurrentMonthKey(),
   selectedMarketCodes = [],
-  pickupComparisonDays = 1
+  pickupComparisonDays = 1,
+  selectedSnapshotDate = null
 ) {
   if (!hotelUid) {
     return {
@@ -303,6 +320,8 @@ export async function getLatestPickUpRows(
       statisticsSnapshotDate: null,
       previousStatisticsSnapshotDate: null,
       availableMarketCodes: [],
+      availableSnapshotDates: [],
+      selectedSnapshotDate: null,
       pickupComparisonDays: Math.max(1, Number(pickupComparisonDays) || 1),
       totals: buildTotals([]),
       rows: [],
@@ -315,11 +334,24 @@ export async function getLatestPickUpRows(
     getSnapshotDates(hotelUid, "reservationstatistics"),
   ]);
 
-  const normalizedPickupComparisonDays = Math.max(1, Number(pickupComparisonDays) || 1);
-  const forecastSnapshotDate = forecastSnapshotDates[0] || null;
-  const previousForecastSnapshotDate = forecastSnapshotDates[normalizedPickupComparisonDays] || null;
-  const statisticsSnapshotDate = statisticsSnapshotDates[0] || null;
-  const previousStatisticsSnapshotDate = statisticsSnapshotDates[normalizedPickupComparisonDays] || null;
+  const normalizedPickupComparisonDays = Math.max(1, Math.floor(Number(pickupComparisonDays) || 1));
+  const availableSnapshotDates = collectAvailableSnapshotDates(
+    forecastSnapshotDates,
+    statisticsSnapshotDates
+  );
+  const resolvedSnapshotDate = resolveSnapshotDate(availableSnapshotDates, selectedSnapshotDate);
+  const forecastSnapshotDate = resolveSnapshotDate(forecastSnapshotDates, resolvedSnapshotDate);
+  const statisticsSnapshotDate = resolveSnapshotDate(statisticsSnapshotDates, resolvedSnapshotDate);
+  const forecastSnapshotIndex = forecastSnapshotDates.findIndex((snapshotDate) => snapshotDate === forecastSnapshotDate);
+  const statisticsSnapshotIndex = statisticsSnapshotDates.findIndex((snapshotDate) => snapshotDate === statisticsSnapshotDate);
+  const previousForecastSnapshotDate =
+    forecastSnapshotIndex >= 0
+      ? forecastSnapshotDates[forecastSnapshotIndex + normalizedPickupComparisonDays] || null
+      : null;
+  const previousStatisticsSnapshotDate =
+    statisticsSnapshotIndex >= 0
+      ? statisticsSnapshotDates[statisticsSnapshotIndex + normalizedPickupComparisonDays] || null
+      : null;
 
   const [forecastRows, previousForecastRows, statisticsRows, previousStatisticsRows] = await Promise.all([
     getStayDateRows(hotelUid, "reservationforecast", forecastSnapshotDate),
@@ -362,6 +394,8 @@ export async function getLatestPickUpRows(
       monthStatisticsRows,
       monthPreviousStatisticsRows
     ),
+    availableSnapshotDates,
+    selectedSnapshotDate: resolvedSnapshotDate,
     pickupComparisonDays: normalizedPickupComparisonDays,
     totals: buildTotals(rows),
     rows,
