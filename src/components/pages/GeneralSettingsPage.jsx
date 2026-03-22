@@ -9,6 +9,7 @@ import { getSettings, setSettings } from "../../services/firebaseSettings";
 export default function GeneralSettingsPage() {
   const { hotelUid } = useHotelContext();
   const [hotelRooms, setHotelRooms] = useState("");
+  const [lastSavedHotelRooms, setLastSavedHotelRooms] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -29,6 +30,7 @@ export default function GeneralSettingsPage() {
     async function loadSettings() {
       if (!hotelUid) {
         setHotelRooms("");
+        setLastSavedHotelRooms("");
         setLoading(false);
         return;
       }
@@ -40,7 +42,9 @@ export default function GeneralSettingsPage() {
       try {
         const settings = await getSettings(hotelUid);
         if (!active) return;
-        setHotelRooms(settings?.hotelRooms != null ? String(settings.hotelRooms) : "");
+        const nextHotelRooms = settings?.hotelRooms != null ? String(settings.hotelRooms) : "";
+        setHotelRooms(nextHotelRooms);
+        setLastSavedHotelRooms(nextHotelRooms);
       } catch (err) {
         console.error("Fout bij laden van general settings:", err);
         if (!active) return;
@@ -65,28 +69,56 @@ export default function GeneralSettingsPage() {
     window.location.href = "/login";
   };
 
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    setSaving(true);
+  const persistHotelRooms = async () => {
     setError("");
     setMessage("");
 
-    const parsedHotelRooms = Number(hotelRooms);
+    const normalizedHotelRooms = String(hotelRooms).trim();
+    const parsedHotelRooms = Number(normalizedHotelRooms);
+
     if (!Number.isFinite(parsedHotelRooms) || parsedHotelRooms < 0) {
       setError("Hotel Rooms moet een geldig positief getal zijn.");
-      setSaving(false);
-      return;
+      return false;
     }
+
+    if (!hotelUid) {
+      setError("Geen hotel geselecteerd om Hotel Rooms op te slaan.");
+      return false;
+    }
+
+    if (normalizedHotelRooms === lastSavedHotelRooms) {
+      setMessage("General settings zijn al opgeslagen in Firebase.");
+      return true;
+    }
+
+    setSaving(true);
 
     try {
       await setSettings(hotelUid, { hotelRooms: parsedHotelRooms });
-      setMessage("General settings opgeslagen.");
+      const refreshedSettings = await getSettings(hotelUid);
+      const persistedHotelRooms =
+        refreshedSettings?.hotelRooms != null ? String(refreshedSettings.hotelRooms) : "";
+      setHotelRooms(persistedHotelRooms);
+      setLastSavedHotelRooms(persistedHotelRooms);
+      setMessage("Hotel Rooms opgeslagen in Firebase.");
+      return true;
     } catch (err) {
       console.error("Fout bij opslaan van general settings:", err);
-      setError("De general settings konden niet opgeslagen worden.");
+      setError("De general settings konden niet opgeslagen worden in Firebase.");
+      return false;
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    await persistHotelRooms();
+  };
+
+  const handleHotelRoomsBlur = async () => {
+    if (String(hotelRooms).trim() === lastSavedHotelRooms) return;
+    await persistHotelRooms();
   };
 
   return (
@@ -133,11 +165,13 @@ export default function GeneralSettingsPage() {
                   step="1"
                   value={hotelRooms}
                   onChange={(event) => setHotelRooms(event.target.value)}
+                  onBlur={handleHotelRoomsBlur}
                   className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                   placeholder="Bijvoorbeeld 120"
                 />
                 <p className="mt-1 text-xs text-gray-500">
-                  Wordt gebruikt om occupancy op de Pick-Up pagina te berekenen.
+                  Wordt gebruikt om occupancy op de Pick-Up pagina te berekenen en wordt meteen in
+                  Firebase bewaard zodra je het veld verlaat of op opslaan klikt.
                 </p>
               </div>
 
