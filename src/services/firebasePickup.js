@@ -51,6 +51,38 @@ export function listSnapshotDateCandidates(baseDate = new Date(), lookbackDays =
   });
 }
 
+function buildReportCollectionCandidates(hotelUid, reportName) {
+  return [
+    ["hotels", hotelUid, "reports", "operaReports", reportName],
+    ["hotels", hotelUid, "reports", reportName],
+  ];
+}
+
+function parseSnapshotDocument(snapshotDate, data = {}) {
+  const nestedStayDateEntries = Object.entries(data).filter(([key, value]) => {
+    return /^\d{4}-\d{2}-\d{2}$/.test(key) && value && typeof value === "object";
+  });
+
+  if (nestedStayDateEntries.length > 0) {
+    return nestedStayDateEntries.map(([stayDate, value]) => ({
+      id: stayDate,
+      daterange: stayDate,
+      ...value,
+    }));
+  }
+
+  if (Array.isArray(data?.marketCodes)) {
+    return [
+      {
+        id: snapshotDate,
+        daterange: snapshotDate,
+        ...data,
+      },
+    ];
+  }
+
+  return [];
+}
 
 async function logPickupSchemaDebug(hotelUid, reportName, dateCandidates = []) {
   try {
@@ -68,20 +100,25 @@ async function logPickupSchemaDebug(hotelUid, reportName, dateCandidates = []) {
     });
   }
 
-  try {
-    const reportDoc = await getDoc(doc(db, "hotels", hotelUid, "reports", reportName));
-    console.info("[Pick-Up] Report document probe", {
-      hotelUid,
-      reportName,
-      exists: reportDoc.exists(),
-      keys: reportDoc.exists() ? Object.keys(reportDoc.data() || {}) : [],
-    });
-  } catch (error) {
-    console.info("[Pick-Up] Report document probe failed", {
-      hotelUid,
-      reportName,
-      message: error?.message || String(error),
-    });
+  for (const path of buildReportCollectionCandidates(hotelUid, reportName)) {
+    try {
+      const snapshotDocs = await getDocs(
+        query(collection(db, ...path), orderBy(documentId(), "desc"), limit(3))
+      );
+      console.info("[Pick-Up] Report collection probe", {
+        hotelUid,
+        reportName,
+        path: path.join("/"),
+        docs: snapshotDocs.docs.map((docSnap) => docSnap.id),
+      });
+    } catch (error) {
+      console.info("[Pick-Up] Report collection probe failed", {
+        hotelUid,
+        reportName,
+        path: path.join("/"),
+        message: error?.message || String(error),
+      });
+    }
   }
 
   if (dateCandidates.length > 0) {
@@ -95,77 +132,78 @@ async function logPickupSchemaDebug(hotelUid, reportName, dateCandidates = []) {
 
 async function findLatestSnapshotDate(hotelUid, reportName, baseDate = new Date(), lookbackDays = 31) {
   const dateCandidates = listSnapshotDateCandidates(baseDate, lookbackDays);
+  const collectionPaths = buildReportCollectionCandidates(hotelUid, reportName);
+
   await logPickupSchemaDebug(hotelUid, reportName, dateCandidates);
 
-  for (const snapshotDate of dateCandidates) {
+  for (const path of collectionPaths) {
     try {
-      const snapshotCollection = collection(
-        db,
-        "hotels",
-        hotelUid,
-        "reports",
-        reportName,
-        snapshotDate
+      const snapshotDocs = await getDocs(
+        query(collection(db, ...path), orderBy(documentId(), "desc"), limit(31))
       );
-      const snapshotEntries = await getDocs(
-        query(snapshotCollection, orderBy(documentId(), "asc"), limit(1))
-      );
+      const docIds = snapshotDocs.docs.map((docSnap) => docSnap.id);
+      const match = dateCandidates.find((candidate) => docIds.includes(candidate));
 
-      console.info("[Pick-Up] Snapshot check", {
+      console.info("[Pick-Up] Snapshot doc scan", {
         hotelUid,
         reportName,
-        snapshotDate,
-        foundEntries: snapshotEntries.size,
+        path: path.join("/"),
+        scannedDocs: docIds.slice(0, 10),
+        matchedSnapshot: match || null,
       });
 
-      if (!snapshotEntries.empty) {
-        return snapshotDate;
+      if (match) {
+        return { snapshotDate: match, path };
       }
     } catch (error) {
-      console.debug(
-        `Pick-up: kon snapshot ${snapshotDate} niet openen voor ${reportName}`,
-        error
-      );
+      console.info("[Pick-Up] Snapshot doc scan failed", {
+        hotelUid,
+        reportName,
+        path: path.join("/"),
+        message: error?.message || String(error),
+      });
     }
   }
 
-  return null;
+  return { snapshotDate: null, path: null };
 }
 
-async function getReportEntries(hotelUid, reportName, snapshotDate, rangeStart) {
-  if (!snapshotDate) return [];
+async function getReportEntries(hotelUid, reportName, snapshotDate, rangeStart, path) {
+  if (!snapshotDate || !path?.length) return [];
 
-  const reportCollection = collection(
-    db,
-    "hotels",
+  const snapshotDocRef = doc(db, ...path, snapshotDate);
+  const snapshotDoc = await getDoc(snapshotDocRef);
+
+  console.info("[Pick-Up] Snapshot document read", {
     hotelUid,
-    "reports",
     reportName,
-    snapshotDate
+    path: [...path, snapshotDate].join("/"),
+    exists: snapshotDoc.exists(),
+    topLevelKeys: snapshotDoc.exists() ? Object.keys(snapshotDoc.data() || {}).slice(0, 10) : [],
+  });
+
+  if (!snapshotDoc.exists()) {
+    return [];
+  }
+
+  const parsedEntries = parseSnapshotDocument(snapshotDate, snapshotDoc.data()).filter(
+    (entry) => (entry?.daterange || entry?.id) >= rangeStart
   );
 
-  const reportSnapshot = await getDocs(
-    query(
-      reportCollection,
-      where(documentId(), ">=", rangeStart),
-      orderBy(documentId(), "asc")
-    )
-  );
-
-  console.info("[Pick-Up] Loaded report entries", {
+  console.info("[Pick-Up] Parsed snapshot entries", {
     hotelUid,
     reportName,
     snapshotDate,
     rangeStart,
-    entryCount: reportSnapshot.size,
-    firstEntry: reportSnapshot.docs[0]?.id || null,
-    lastEntry: reportSnapshot.docs[reportSnapshot.docs.length - 1]?.id || null,
+    entryCount: parsedEntries.length,
+    firstEntry: parsedEntries[0]?.daterange || parsedEntries[0]?.id || null,
+    lastEntry:
+      parsedEntries[parsedEntries.length - 1]?.daterange ||
+      parsedEntries[parsedEntries.length - 1]?.id ||
+      null,
   });
 
-  return reportSnapshot.docs.map((docSnap) => ({
-    id: docSnap.id,
-    ...docSnap.data(),
-  }));
+  return parsedEntries;
 }
 
 export function aggregatePickupRows({
@@ -230,17 +268,29 @@ export async function getPickupForMonth(hotelUid, monthDate = new Date()) {
   const monthEnd = toIsoDate(monthEndDate);
   const todayIso = toIsoDate(today);
 
-  const [statisticsSnapshotDate, forecastSnapshotDate] = await Promise.all([
+  const [statisticsSnapshotInfo, forecastSnapshotInfo] = await Promise.all([
     findLatestSnapshotDate(hotelUid, "reservationstatistics", today),
     findLatestSnapshotDate(hotelUid, "reservationforecast", today),
   ]);
 
-  const statisticsPromise = statisticsSnapshotDate
-    ? getReportEntries(hotelUid, "reservationstatistics", statisticsSnapshotDate, monthStart)
+  const statisticsPromise = statisticsSnapshotInfo.snapshotDate
+    ? getReportEntries(
+        hotelUid,
+        "reservationstatistics",
+        statisticsSnapshotInfo.snapshotDate,
+        monthStart,
+        statisticsSnapshotInfo.path
+      )
     : Promise.resolve([]);
   const forecastRangeStart = monthStart > todayIso ? monthStart : todayIso;
-  const forecastPromise = forecastSnapshotDate
-    ? getReportEntries(hotelUid, "reservationforecast", forecastSnapshotDate, forecastRangeStart)
+  const forecastPromise = forecastSnapshotInfo.snapshotDate
+    ? getReportEntries(
+        hotelUid,
+        "reservationforecast",
+        forecastSnapshotInfo.snapshotDate,
+        forecastRangeStart,
+        forecastSnapshotInfo.path
+      )
     : Promise.resolve([]);
 
   const [statisticsEntries, forecastEntries] = await Promise.all([
@@ -253,8 +303,10 @@ export async function getPickupForMonth(hotelUid, monthDate = new Date()) {
     monthStart,
     monthEnd,
     todayIso,
-    statisticsSnapshotDate,
-    forecastSnapshotDate,
+    statisticsSnapshotDate: statisticsSnapshotInfo.snapshotDate,
+    statisticsPath: statisticsSnapshotInfo.path?.join("/") || null,
+    forecastSnapshotDate: forecastSnapshotInfo.snapshotDate,
+    forecastPath: forecastSnapshotInfo.path?.join("/") || null,
     statisticsEntries: statisticsEntries.length,
     forecastEntries: forecastEntries.length,
   });
