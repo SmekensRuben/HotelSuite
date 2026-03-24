@@ -174,18 +174,25 @@ async function getSnapshotDates(hotelUid, reportType) {
     .sort((a, b) => b.localeCompare(a));
 }
 
-async function getStayDateRows(hotelUid, reportType, snapshotDate) {
+async function getStayDateRows(hotelUid, reportType, snapshotDate, { startDate = null, endDate = null } = {}) {
   if (!snapshotDate) return [];
 
-  const stayDatesSnap = await db
+  let stayDatesQuery = db
     .collection('hotels')
     .doc(hotelUid)
     .collection('reports')
     .doc(reportType)
     .collection('snapshotDates')
     .doc(snapshotDate)
-    .collection('stayDates')
-    .get();
+    .collection('stayDates');
+
+  if (startDate && endDate) {
+    stayDatesQuery = stayDatesQuery
+      .where(admin.firestore.FieldPath.documentId(), '>=', startDate)
+      .where(admin.firestore.FieldPath.documentId(), '<=', endDate);
+  }
+
+  const stayDatesSnap = await stayDatesQuery.get();
 
   const mergedRows = stayDatesSnap.docs.reduce((acc, docSnap) => {
     const stayDate = normalizeDateValue(docSnap.id) || normalizeDateValue(docSnap.data()?.stayDate);
@@ -256,10 +263,13 @@ async function getOccupancyRowsForRange(hotelUid, startDate, endDate) {
   );
 
   const [forecastRows, statisticsRows, ...previousForecastRowsList] = await Promise.all([
-    getStayDateRows(hotelUid, 'reservationforecast', forecastSnapshotDate),
-    getStayDateRows(hotelUid, 'reservationstatistics', statisticsSnapshotDate),
+    getStayDateRows(hotelUid, 'reservationforecast', forecastSnapshotDate, { startDate, endDate }),
+    getStayDateRows(hotelUid, 'reservationstatistics', statisticsSnapshotDate, { startDate, endDate }),
     ...PICKUP_COMPARISON_DAYS.map((comparisonDays) =>
-      getStayDateRows(hotelUid, 'reservationforecast', previousForecastSnapshotDatesByPickup[comparisonDays])
+      getStayDateRows(hotelUid, 'reservationforecast', previousForecastSnapshotDatesByPickup[comparisonDays], {
+        startDate,
+        endDate,
+      })
     ),
   ]);
 
