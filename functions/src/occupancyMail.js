@@ -292,8 +292,18 @@ async function getOccupancyRowsForRange(hotelUid, startDate, endDate) {
       return [comparisonDays, previousSnapshotDate];
     })
   );
+  const previousStatisticsSnapshotDatesByPickup = Object.fromEntries(
+    PICKUP_COMPARISON_DAYS.map((comparisonDays) => {
+      const statisticsSnapshotIndex = statisticsSnapshotDates.findIndex(
+        (snapshotDate) => snapshotDate === statisticsSnapshotDate
+      );
+      const previousSnapshotDate =
+        statisticsSnapshotIndex >= 0 ? statisticsSnapshotDates[statisticsSnapshotIndex + comparisonDays] || null : null;
+      return [comparisonDays, previousSnapshotDate];
+    })
+  );
 
-  const [forecastRows, statisticsRows, ...previousForecastRowsList] = await Promise.all([
+  const [forecastRows, statisticsRows, ...previousRowsList] = await Promise.all([
     getStayDateRows(hotelUid, 'reservationforecast', forecastSnapshotDate, { startDate, endDate }),
     getStayDateRows(hotelUid, 'reservationstatistics', statisticsSnapshotDate, { startDate, endDate }),
     ...PICKUP_COMPARISON_DAYS.map((comparisonDays) =>
@@ -302,24 +312,40 @@ async function getOccupancyRowsForRange(hotelUid, startDate, endDate) {
         endDate,
       })
     ),
+    ...PICKUP_COMPARISON_DAYS.map((comparisonDays) =>
+      getStayDateRows(hotelUid, 'reservationstatistics', previousStatisticsSnapshotDatesByPickup[comparisonDays], {
+        startDate,
+        endDate,
+      })
+    )
   ]);
 
   const forecastRowsByDate = toRowMap(forecastRows);
   const statisticsRowsByDate = toRowMap(statisticsRows);
+  const previousForecastRowsList = previousRowsList.slice(0, PICKUP_COMPARISON_DAYS.length);
+  const previousStatisticsRowsList = previousRowsList.slice(PICKUP_COMPARISON_DAYS.length);
   const previousForecastRowsByPickup = Object.fromEntries(
     PICKUP_COMPARISON_DAYS.map((comparisonDays, index) => [comparisonDays, toRowMap(previousForecastRowsList[index])])
+  );
+  const previousStatisticsRowsByPickup = Object.fromEntries(
+    PICKUP_COMPARISON_DAYS.map((comparisonDays, index) => [comparisonDays, toRowMap(previousStatisticsRowsList[index])])
   );
 
   const rows = [];
   for (let cursor = startDate; cursor <= endDate; cursor = addDays(cursor, 1)) {
-    const activeRow = cursor < today ? statisticsRowsByDate.get(cursor) : forecastRowsByDate.get(cursor);
+    const isPastDate = cursor < today;
+    const activeRow = isPastDate ? statisticsRowsByDate.get(cursor) : forecastRowsByDate.get(cursor);
     const roomsSold = Number(activeRow?.roomsSold || 0);
     const totalCalculatedRevenue = Number(activeRow?.totalCalculatedRevenue || 0);
     const occupancy = hotelRooms > 0 ? (roomsSold / hotelRooms) * 100 : 0;
     const pickup = Object.fromEntries(
       PICKUP_COMPARISON_DAYS.map((comparisonDays) => {
-        const previousRowsByDate = previousForecastRowsByPickup[comparisonDays];
-        const previousSnapshotDate = previousForecastSnapshotDatesByPickup[comparisonDays];
+        const previousRowsByDate = isPastDate
+          ? previousStatisticsRowsByPickup[comparisonDays]
+          : previousForecastRowsByPickup[comparisonDays];
+        const previousSnapshotDate = isPastDate
+          ? previousStatisticsSnapshotDatesByPickup[comparisonDays]
+          : previousForecastSnapshotDatesByPickup[comparisonDays];
         if (!previousSnapshotDate) {
           return [comparisonDays, { available: false, delta: null }];
         }
@@ -331,8 +357,12 @@ async function getOccupancyRowsForRange(hotelUid, startDate, endDate) {
 
     const pickupCalculatedRevenue = Object.fromEntries(
       PICKUP_COMPARISON_DAYS.map((comparisonDays) => {
-        const previousRowsByDate = previousForecastRowsByPickup[comparisonDays];
-        const previousSnapshotDate = previousForecastSnapshotDatesByPickup[comparisonDays];
+        const previousRowsByDate = isPastDate
+          ? previousStatisticsRowsByPickup[comparisonDays]
+          : previousForecastRowsByPickup[comparisonDays];
+        const previousSnapshotDate = isPastDate
+          ? previousStatisticsSnapshotDatesByPickup[comparisonDays]
+          : previousForecastSnapshotDatesByPickup[comparisonDays];
         if (!previousSnapshotDate) {
           return [comparisonDays, { available: false, delta: null }];
         }
@@ -355,6 +385,7 @@ async function getOccupancyRowsForRange(hotelUid, startDate, endDate) {
     forecastSnapshotDate,
     statisticsSnapshotDate,
     previousForecastSnapshotDatesByPickup,
+    previousStatisticsSnapshotDatesByPickup,
     monthlyRevenueOverview,
   };
 }
