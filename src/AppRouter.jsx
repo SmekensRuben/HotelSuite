@@ -45,6 +45,7 @@ import FileImportTypeCreatePage from "./components/pages/FileImportTypeCreatePag
 import FileImportTypeDetailPage from "./components/pages/FileImportTypeDetailPage.jsx";
 import FileImportTypeEditPage from "./components/pages/FileImportTypeEditPage.jsx";
 import PickUpPage from "./components/pages/PickUpPage.jsx";
+import PickUpDayDetailPage from "./components/pages/PickUpDayDetailPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -224,6 +225,14 @@ export default function AppRouter() {
         element={
           <ProtectedRoute>
             <PickUpPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/revenue-management/pick-up/:stayDate"
+        element={
+          <ProtectedRoute>
+            <PickUpDayDetailPage />
           </ProtectedRoute>
         }
       />

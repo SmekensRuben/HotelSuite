@@ -228,6 +228,61 @@ function filterRowByMarketCodes(row, selectedMarketCodesSet) {
   };
 }
 
+function mapMarketCodeEntries(entries = []) {
+  return entries.reduce((map, entry) => {
+    if (!entry?.marketCode) return map;
+    map.set(entry.marketCode, {
+      marketCode: entry.marketCode,
+      roomsSold: Number(entry.roomsSold || 0),
+      totalRevenue: Number(entry.totalRevenue || 0),
+      totalCalculatedRevenue: Number(entry.totalCalculatedRevenue || 0),
+    });
+    return map;
+  }, new Map());
+}
+
+function buildMarketCodeComparisonEntries(currentEntries = [], previousEntries = []) {
+  const currentMap = mapMarketCodeEntries(currentEntries);
+  const previousMap = mapMarketCodeEntries(previousEntries);
+  const marketCodes = Array.from(new Set([...currentMap.keys(), ...previousMap.keys()])).sort((a, b) =>
+    a.localeCompare(b)
+  );
+
+  return marketCodes.map((marketCode) => {
+    const current = currentMap.get(marketCode) || {
+      marketCode,
+      roomsSold: 0,
+      totalRevenue: 0,
+      totalCalculatedRevenue: 0,
+    };
+    const previous = previousMap.get(marketCode) || {
+      marketCode,
+      roomsSold: 0,
+      totalRevenue: 0,
+      totalCalculatedRevenue: 0,
+    };
+
+    const avgAdr = getAvgAdr(current.totalCalculatedRevenue, current.roomsSold);
+    const previousAvgAdr = getAvgAdr(previous.totalCalculatedRevenue, previous.roomsSold);
+
+    return {
+      marketCode,
+      roomsSold: current.roomsSold,
+      totalRevenue: current.totalRevenue,
+      totalCalculatedRevenue: current.totalCalculatedRevenue,
+      previousRoomsSold: previous.roomsSold,
+      previousTotalRevenue: previous.totalRevenue,
+      previousTotalCalculatedRevenue: previous.totalCalculatedRevenue,
+      roomsSoldDelta: current.roomsSold - previous.roomsSold,
+      totalCalculatedRevenueDelta:
+        current.totalCalculatedRevenue - previous.totalCalculatedRevenue,
+      avgAdr,
+      previousAvgAdr,
+      avgAdrDelta: avgAdr - previousAvgAdr,
+    };
+  });
+}
+
 function buildRowsWithPrevious(currentRows, previousRows, fallbackPreviousRows = [], selectedMarketCodes = []) {
   const selectedMarketCodesSet = new Set(selectedMarketCodes);
   const previousRowsByDate = new Map(previousRows.map((row) => [row.stayDate, row]));
@@ -244,6 +299,10 @@ function buildRowsWithPrevious(currentRows, previousRows, fallbackPreviousRows =
     const previousTotalCalculatedRevenue = Number(previousRow?.totalCalculatedRevenue || 0);
     const avgAdr = getAvgAdr(row.totalCalculatedRevenue, row.roomsSold);
     const previousAvgAdr = getAvgAdr(previousTotalCalculatedRevenue, previousRoomsSold);
+    const marketCodeComparisonEntries = buildMarketCodeComparisonEntries(
+      row.marketCodeEntries,
+      previousRow?.marketCodeEntries || []
+    );
 
     return {
       ...row,
@@ -253,6 +312,7 @@ function buildRowsWithPrevious(currentRows, previousRows, fallbackPreviousRows =
       previousAvgAdr,
       roomsSoldDelta: row.roomsSold - previousRoomsSold,
       avgAdrDelta: avgAdr - previousAvgAdr,
+      marketCodeComparisonEntries,
     };
   });
 }

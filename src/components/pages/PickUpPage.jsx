@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Info, Send } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { signOut, auth } from "../../firebaseConfig";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
@@ -36,6 +37,7 @@ function formatPercentage(value) {
 }
 
 export default function PickUpPage() {
+  const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [selectedMarketCodes, setSelectedMarketCodes] = useState([]);
@@ -267,6 +269,17 @@ export default function PickUpPage() {
     [hotelRooms, pickupComparisonDays]
   );
 
+  const handleRowClick = (row) => {
+    if (!row?.stayDate) return;
+
+    navigate(`/revenue-management/pick-up/${row.stayDate}`, {
+      state: {
+        row,
+        pickupComparisonDays,
+      },
+    });
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
@@ -479,6 +492,7 @@ export default function PickUpPage() {
             <DataListTable
               columns={columns}
               rows={rows}
+              onRowClick={handleRowClick}
               emptyMessage="Geen pick-up records gevonden voor de meest recente snapshot."
             />
           )}
