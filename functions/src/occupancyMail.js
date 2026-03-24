@@ -340,12 +340,14 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
+    const hotelCount = Math.max(hotels.length, 1);
     const dateColumnWidth = 82;
-    const subColumnWidth = 48;
-    const hotelGroupWidth = subColumnWidth * 4;
     const rowHeight = 18;
     const headerRowHeight = 20;
     const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const hotelAreaWidth = Math.max(pageWidth - dateColumnWidth, 0);
+    const hotelGroupWidth = hotelAreaWidth / hotelCount;
+    const subColumnWidth = hotelGroupWidth / 4;
     const tableTop = 118;
 
     const renderPageHeader = () => {
@@ -388,6 +390,16 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
       doc.restore();
       doc.strokeColor('#cbd5e1').lineWidth(0.5);
       doc.rect(doc.page.margins.left, y, pageWidth, headerRowHeight * 2).stroke();
+
+      doc.strokeColor('#94a3b8').lineWidth(0.8);
+      doc
+        .moveTo(doc.page.margins.left + dateColumnWidth, y)
+        .lineTo(doc.page.margins.left + dateColumnWidth, y + headerRowHeight * 2)
+        .stroke();
+      hotels.forEach((_, hotelIndex) => {
+        const groupBoundaryX = doc.page.margins.left + dateColumnWidth + (hotelIndex + 1) * hotelGroupWidth;
+        doc.moveTo(groupBoundaryX, y).lineTo(groupBoundaryX, y + headerRowHeight * 2).stroke();
+      });
     };
 
     const renderRow = (dateString, rowIndex, y) => {
@@ -414,6 +426,12 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
           const x = groupX + valueIndex * subColumnWidth;
           drawCellText(doc, value, x, y + 1, subColumnWidth, { align: 'right' });
         });
+      });
+
+      doc.strokeColor('#cbd5e1').lineWidth(0.6);
+      hotels.forEach((_, hotelIndex) => {
+        const groupBoundaryX = doc.page.margins.left + dateColumnWidth + (hotelIndex + 1) * hotelGroupWidth;
+        doc.moveTo(groupBoundaryX, y).lineTo(groupBoundaryX, y + rowHeight).stroke();
       });
 
       doc.strokeColor('#e5e7eb').lineWidth(0.5);
@@ -452,6 +470,11 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
         doc.restore();
         doc.fillColor('#1e3a8a').font('Helvetica-Bold').fontSize(8);
         drawCellText(doc, monthLabel(dateString), doc.page.margins.left, y + 1, pageWidth);
+        doc.strokeColor('#cbd5e1').lineWidth(0.6);
+        hotels.forEach((_, hotelIndex) => {
+          const groupBoundaryX = doc.page.margins.left + dateColumnWidth + (hotelIndex + 1) * hotelGroupWidth;
+          doc.moveTo(groupBoundaryX, y).lineTo(groupBoundaryX, y + rowHeight).stroke();
+        });
         y += rowHeight;
       }
 

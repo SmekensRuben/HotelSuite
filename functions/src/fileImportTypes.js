@@ -627,11 +627,12 @@ function formatParsedDate(parts, format) {
 
   const tokens = {
     yyyy: String(parts.year).padStart(4, "0"),
+    yy: String(parts.year % 100).padStart(2, "0"),
     MM: String(parts.month).padStart(2, "0"),
     dd: String(parts.day).padStart(2, "0"),
   };
 
-  return String(format || "yyyy-MM-dd").replace(/yyyy|MM|dd/g, (token) => tokens[token] || token);
+  return String(format || "yyyy-MM-dd").replace(/yyyy|yy|MM|dd/g, (token) => tokens[token] || token);
 }
 
 function convertDateValue(value, importFormat, targetFormat) {
