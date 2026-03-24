@@ -40,6 +40,11 @@ function startOfTodayUtc() {
   return formatLocalDate(new Date());
 }
 
+function startOfCurrentMonthUtc() {
+  const now = new Date();
+  return formatLocalDate(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)));
+}
+
 function monthLabel(dateString, locale = 'nl-NL', timeZone = DEFAULT_TIMEZONE) {
   return new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric', timeZone }).format(
     new Date(`${dateString}T12:00:00.000Z`)
@@ -403,7 +408,7 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
 
     const renderPageHeader = () => {
       doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827');
-      doc.text('Occupancy overzicht komende 90 dagen', doc.page.margins.left, doc.page.margins.top);
+      doc.text('Occupancy overzicht vanaf eerste dag huidige maand', doc.page.margins.left, doc.page.margins.top);
       doc.moveDown(0.15);
       doc.font('Helvetica').fontSize(10).fillColor('#4b5563');
       doc.text(`Periode: ${displayDateLabel(startDate)} t/m ${displayDateLabel(endDate)}`);
@@ -669,8 +674,9 @@ async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', trigger
   if (!resendApiKey) throw new Error('Missing RESEND_API_KEY secret');
   if (!resendFrom) throw new Error('Missing RESEND_FROM secret');
 
-  const startDate = startOfTodayUtc();
-  const endDate = addDays(startDate, REPORT_WINDOW_DAYS - 1);
+  const today = startOfTodayUtc();
+  const startDate = startOfCurrentMonthUtc();
+  const endDate = addDays(today, REPORT_WINDOW_DAYS - 1);
   const hotels = await Promise.all(
     hotelUids.map((hotelUid) => getOccupancyRowsForRange(hotelUid, startDate, endDate))
   );
@@ -685,7 +691,7 @@ async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', trigger
     to,
     subject,
     text:
-      `In de bijlage vind je het occupancy overzicht voor de komende ${REPORT_WINDOW_DAYS} dagen ` +
+      `In de bijlage vind je het occupancy overzicht vanaf de eerste dag van de huidige maand ` +
       `voor: ${hotelNames}. Per hotel zijn occupancy en pickup rooms sold vs. -1, -3 en -7 ` +
       `toegevoegd indien beschikbaar. Daarnaast bevat de bijlage per maand calculated total revenue ` +
       `en pickup op calculated total revenue voor -1, -3 en -7 dagen.\n\n` +
