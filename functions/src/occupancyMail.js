@@ -500,41 +500,109 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
 
     const renderHighlights = (startY) => {
       let y = startY;
-      const sectionHeight = 56;
+      const rowHeightHighlight = 14;
+      const headerHeight = 16;
+      const titleHeight = 14;
+      const minRows = 10;
+
       hotels.forEach((hotel) => {
         const highlight = hotel.highlights || { topNeed: [], topCompression: [] };
-        const needText = highlight.topNeed.length
-          ? highlight.topNeed.map((row) => `${displayDateLabel(row.stayDate)} (${formatPercentageValue(row.occupancy)})`).join(', ')
-          : 'Geen need dates';
-        const compressionText = highlight.topCompression.length
-          ? highlight.topCompression
-              .map((row) => `${displayDateLabel(row.stayDate)} (${formatPercentageValue(row.occupancy)})`)
-              .join(', ')
-          : 'Geen compression dates';
+        const blockHeight = titleHeight + headerHeight + minRows * rowHeightHighlight + 8;
+        if (y + blockHeight > doc.page.height - doc.page.margins.bottom) {
+          doc.addPage({ size: 'A3', layout: 'landscape', margin: 28 });
+          renderPageHeader();
+          y = 84;
+        }
 
-        doc.save();
-        doc.roundedRect(doc.page.margins.left, y, pageWidth, sectionHeight, 4).fill('#f8fafc');
-        doc.restore();
+        const halfWidth = pageWidth / 2;
+        const needDateWidth = halfWidth * 0.65;
+        const needOccWidth = halfWidth * 0.35;
+        const compDateWidth = halfWidth * 0.65;
+        const compOccWidth = halfWidth * 0.35;
 
         doc.font('Helvetica-Bold').fontSize(8).fillColor('#111827');
-        doc.text(`${hotel.hotelName} — Top 10 Need & Compression`, doc.page.margins.left + 6, y + 5, {
-          width: pageWidth - 12,
+        doc.text(`${hotel.hotelName} — Top 10 Need & Compression`, doc.page.margins.left, y, {
+          width: pageWidth,
         });
+        y += titleHeight;
 
-        doc.font('Helvetica').fontSize(7).fillColor('#1d4ed8');
-        doc.text(`Need: ${needText}`, doc.page.margins.left + 6, y + 18, {
-          width: pageWidth - 12,
-          ellipsis: true,
+        doc.save();
+        doc.rect(doc.page.margins.left, y, halfWidth, headerHeight).fill('#dbeafe');
+        doc.rect(doc.page.margins.left + halfWidth, y, halfWidth, headerHeight).fill('#ffedd5');
+        doc.restore();
+
+        doc.font('Helvetica-Bold').fontSize(7).fillColor('#1e3a8a');
+        drawCellText(doc, 'Need (datum + dag)', doc.page.margins.left, y, needDateWidth);
+        drawCellText(doc, 'Occ %', doc.page.margins.left + needDateWidth, y, needOccWidth, { align: 'right' });
+
+        doc.fillColor('#c2410c');
+        drawCellText(doc, 'Compression (datum + dag)', doc.page.margins.left + halfWidth, y, compDateWidth);
+        drawCellText(doc, 'Occ %', doc.page.margins.left + halfWidth + compDateWidth, y, compOccWidth, {
+          align: 'right',
         });
+        y += headerHeight;
 
-        doc.font('Helvetica').fontSize(7).fillColor('#c2410c');
-        doc.text(`Compression: ${compressionText}`, doc.page.margins.left + 6, y + 33, {
-          width: pageWidth - 12,
-          ellipsis: true,
-        });
+        for (let index = 0; index < minRows; index += 1) {
+          const needRow = highlight.topNeed[index] || null;
+          const compressionRow = highlight.topCompression[index] || null;
+          const needDow = needRow ? shortDayLabel(needRow.stayDate) : '';
+          const compDow = compressionRow ? shortDayLabel(compressionRow.stayDate) : '';
+          const isWeekendRow =
+            needDow.toLowerCase().startsWith('za') ||
+            needDow.toLowerCase().startsWith('zo') ||
+            compDow.toLowerCase().startsWith('za') ||
+            compDow.toLowerCase().startsWith('zo');
 
-        y += sectionHeight + 4;
+          doc.save();
+          if (isWeekendRow) {
+            doc.rect(doc.page.margins.left, y, pageWidth, rowHeightHighlight).fill('#9ca3af');
+          } else if (index % 2 === 0) {
+            doc.rect(doc.page.margins.left, y, pageWidth, rowHeightHighlight).fill('#f8fafc');
+          }
+          doc.restore();
+
+          doc.font('Helvetica').fontSize(7).fillColor('#111827');
+          drawCellText(
+            doc,
+            needRow ? `${needDow} ${displayDateLabel(needRow.stayDate)}` : '-',
+            doc.page.margins.left,
+            y,
+            needDateWidth
+          );
+          drawCellText(
+            doc,
+            needRow ? formatPercentageValue(needRow.occupancy) : '-',
+            doc.page.margins.left + needDateWidth,
+            y,
+            needOccWidth,
+            { align: 'right' }
+          );
+          drawCellText(
+            doc,
+            compressionRow ? `${compDow} ${displayDateLabel(compressionRow.stayDate)}` : '-',
+            doc.page.margins.left + halfWidth,
+            y,
+            compDateWidth
+          );
+          drawCellText(
+            doc,
+            compressionRow ? formatPercentageValue(compressionRow.occupancy) : '-',
+            doc.page.margins.left + halfWidth + compDateWidth,
+            y,
+            compOccWidth,
+            { align: 'right' }
+          );
+
+          doc.strokeColor('#d1d5db').lineWidth(0.5);
+          doc.moveTo(doc.page.margins.left, y + rowHeightHighlight).lineTo(doc.page.margins.left + pageWidth, y + rowHeightHighlight).stroke();
+          y += rowHeightHighlight;
+        }
+
+        doc.strokeColor('#9ca3af').lineWidth(0.7);
+        doc.rect(doc.page.margins.left, y - (minRows * rowHeightHighlight + headerHeight), pageWidth, minRows * rowHeightHighlight + headerHeight).stroke();
+        y += 8;
       });
+
       return y;
     };
 
