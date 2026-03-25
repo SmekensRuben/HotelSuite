@@ -60,6 +60,13 @@ function displayDateLabel(dateString, locale = 'nl-NL', timeZone = DEFAULT_TIMEZ
   }).format(new Date(`${dateString}T12:00:00.000Z`));
 }
 
+function shortDayLabel(dateString, locale = 'nl-NL', timeZone = DEFAULT_TIMEZONE) {
+  return new Intl.DateTimeFormat(locale, {
+    weekday: 'short',
+    timeZone,
+  }).format(new Date(`${dateString}T12:00:00.000Z`));
+}
+
 function sanitizeEmails(value) {
   if (!Array.isArray(value)) return [];
   return Array.from(new Set(value.map((item) => String(item || '').trim()).filter(Boolean)));
@@ -292,28 +299,11 @@ async function getOccupancyRowsForRange(hotelUid, startDate, endDate) {
       return [comparisonDays, previousSnapshotDate];
     })
   );
-  const previousStatisticsSnapshotDatesByPickup = Object.fromEntries(
-    PICKUP_COMPARISON_DAYS.map((comparisonDays) => {
-      const statisticsSnapshotIndex = statisticsSnapshotDates.findIndex(
-        (snapshotDate) => snapshotDate === statisticsSnapshotDate
-      );
-      const previousSnapshotDate =
-        statisticsSnapshotIndex >= 0 ? statisticsSnapshotDates[statisticsSnapshotIndex + comparisonDays] || null : null;
-      return [comparisonDays, previousSnapshotDate];
-    })
-  );
-
-  const [forecastRows, statisticsRows, ...previousRowsList] = await Promise.all([
+  const [forecastRows, statisticsRows, ...previousForecastRowsList] = await Promise.all([
     getStayDateRows(hotelUid, 'reservationforecast', forecastSnapshotDate, { startDate, endDate }),
     getStayDateRows(hotelUid, 'reservationstatistics', statisticsSnapshotDate, { startDate, endDate }),
     ...PICKUP_COMPARISON_DAYS.map((comparisonDays) =>
       getStayDateRows(hotelUid, 'reservationforecast', previousForecastSnapshotDatesByPickup[comparisonDays], {
-        startDate,
-        endDate,
-      })
-    ),
-    ...PICKUP_COMPARISON_DAYS.map((comparisonDays) =>
-      getStayDateRows(hotelUid, 'reservationstatistics', previousStatisticsSnapshotDatesByPickup[comparisonDays], {
         startDate,
         endDate,
       })
@@ -338,6 +328,22 @@ async function getOccupancyRowsForRange(hotelUid, startDate, endDate) {
     const roomsSold = Number(activeRow?.roomsSold || 0);
     const totalCalculatedRevenue = Number(activeRow?.totalCalculatedRevenue || 0);
     const occupancy = hotelRooms > 0 ? (roomsSold / hotelRooms) * 100 : 0;
+    if (isPastDate) {
+      rows.push({
+        stayDate: cursor,
+        roomsSold,
+        occupancy,
+        totalCalculatedRevenue,
+        pickup: Object.fromEntries(
+          PICKUP_COMPARISON_DAYS.map((comparisonDays) => [comparisonDays, { available: false, delta: null }])
+        ),
+        pickupCalculatedRevenue: Object.fromEntries(
+          PICKUP_COMPARISON_DAYS.map((comparisonDays) => [comparisonDays, { available: false, delta: null }])
+        ),
+      });
+      continue;
+    }
+
     const pickup = Object.fromEntries(
       PICKUP_COMPARISON_DAYS.map((comparisonDays) => {
         const previousRowsByDate = isPastDate
@@ -357,12 +363,8 @@ async function getOccupancyRowsForRange(hotelUid, startDate, endDate) {
 
     const pickupCalculatedRevenue = Object.fromEntries(
       PICKUP_COMPARISON_DAYS.map((comparisonDays) => {
-        const previousRowsByDate = isPastDate
-          ? previousStatisticsRowsByPickup[comparisonDays]
-          : previousForecastRowsByPickup[comparisonDays];
-        const previousSnapshotDate = isPastDate
-          ? previousStatisticsSnapshotDatesByPickup[comparisonDays]
-          : previousForecastSnapshotDatesByPickup[comparisonDays];
+        const previousRowsByDate = previousForecastRowsByPickup[comparisonDays];
+        const previousSnapshotDate = previousForecastSnapshotDatesByPickup[comparisonDays];
         if (!previousSnapshotDate) {
           return [comparisonDays, { available: false, delta: null }];
         }
@@ -385,7 +387,6 @@ async function getOccupancyRowsForRange(hotelUid, startDate, endDate) {
     forecastSnapshotDate,
     statisticsSnapshotDate,
     previousForecastSnapshotDatesByPickup,
-    previousStatisticsSnapshotDatesByPickup,
     monthlyRevenueOverview,
   };
 }
@@ -408,6 +409,59 @@ function formatCurrencyValue(value) {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   })}`;
+}
+
+function daysBetweenDateStrings(fromDateString, toDateString) {
+  const fromDate = new Date(`${fromDateString}T00:00:00.000Z`);
+  const toDate = new Date(`${toDateString}T00:00:00.000Z`);
+  return Math.floor((toDate.getTime() - fromDate.getTime()) / 86400000);
+}
+
+function getOccupancyThresholdConfig(daysInFuture) {
+  if (daysInFuture < 0) return null;
+  if (daysInFuture < 14) return { needThreshold: 70, compressionThreshold: 85 };
+  if (daysInFuture < 30) return { needThreshold: 50, compressionThreshold: 75 };
+  if (daysInFuture < 60) return { needThreshold: 40, compressionThreshold: 65 };
+  if (daysInFuture <= 90) return { needThreshold: 20, compressionThreshold: 55 };
+  return null;
+}
+
+function getDateOccupancyStatus(stayDate, occupancy, todayDate) {
+  const daysInFuture = daysBetweenDateStrings(todayDate, stayDate);
+  const thresholds = getOccupancyThresholdConfig(daysInFuture);
+  if (!thresholds) return { type: 'none', delta: 0, threshold: null };
+
+  if (occupancy < thresholds.needThreshold) {
+    return { type: 'need', delta: thresholds.needThreshold - occupancy, threshold: thresholds.needThreshold };
+  }
+  if (occupancy > thresholds.compressionThreshold) {
+    return {
+      type: 'compression',
+      delta: occupancy - thresholds.compressionThreshold,
+      threshold: thresholds.compressionThreshold,
+    };
+  }
+
+  return { type: 'none', delta: 0, threshold: null };
+}
+
+function buildHotelHighlights(hotelRows, todayDate) {
+  const needs = [];
+  const compressions = [];
+
+  hotelRows.forEach((row) => {
+    const status = getDateOccupancyStatus(row.stayDate, row.occupancy, todayDate);
+    if (status.type === 'need') needs.push({ ...row, ...status });
+    if (status.type === 'compression') compressions.push({ ...row, ...status });
+  });
+
+  needs.sort((a, b) => b.delta - a.delta || a.stayDate.localeCompare(b.stayDate));
+  compressions.sort((a, b) => b.delta - a.delta || b.stayDate.localeCompare(a.stayDate));
+
+  return {
+    topNeed: needs.slice(0, 10),
+    topCompression: compressions.slice(0, 10),
+  };
 }
 
 function drawCellText(doc, text, x, y, width, options = {}) {
@@ -434,7 +488,7 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
     const hotelAreaWidth = Math.max(pageWidth - dateColumnWidth, 0);
     const hotelGroupWidth = hotelAreaWidth / hotelCount;
     const subColumnWidth = hotelGroupWidth / 4;
-    const tableTop = 118;
+    const tableTop = 190;
     const monthlyTableTop = 110;
 
     const renderPageHeader = () => {
@@ -451,6 +505,114 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
         }).format(new Date())}`
       );
       doc.fillColor('#111827');
+    };
+
+    const renderHighlights = (startY) => {
+      let y = startY;
+      const rowHeightHighlight = 14;
+      const headerHeight = 16;
+      const titleHeight = 14;
+      const minRows = 10;
+
+      hotels.forEach((hotel) => {
+        const highlight = hotel.highlights || { topNeed: [], topCompression: [] };
+        const blockHeight = titleHeight + headerHeight + minRows * rowHeightHighlight + 8;
+        if (y + blockHeight > doc.page.height - doc.page.margins.bottom) {
+          doc.addPage({ size: 'A3', layout: 'landscape', margin: 28 });
+          renderPageHeader();
+          y = 84;
+        }
+
+        const halfWidth = pageWidth / 2;
+        const needDateWidth = halfWidth * 0.65;
+        const needOccWidth = halfWidth * 0.35;
+        const compDateWidth = halfWidth * 0.65;
+        const compOccWidth = halfWidth * 0.35;
+
+        doc.font('Helvetica-Bold').fontSize(8).fillColor('#111827');
+        doc.text(`${hotel.hotelName} — Top 10 Need & Compression`, doc.page.margins.left, y, {
+          width: pageWidth,
+        });
+        y += titleHeight;
+
+        doc.save();
+        doc.rect(doc.page.margins.left, y, halfWidth, headerHeight).fill('#dbeafe');
+        doc.rect(doc.page.margins.left + halfWidth, y, halfWidth, headerHeight).fill('#ffedd5');
+        doc.restore();
+
+        doc.font('Helvetica-Bold').fontSize(7).fillColor('#1e3a8a');
+        drawCellText(doc, 'Need (datum + dag)', doc.page.margins.left, y, needDateWidth);
+        drawCellText(doc, 'Occ %', doc.page.margins.left + needDateWidth, y, needOccWidth, { align: 'right' });
+
+        doc.fillColor('#c2410c');
+        drawCellText(doc, 'Compression (datum + dag)', doc.page.margins.left + halfWidth, y, compDateWidth);
+        drawCellText(doc, 'Occ %', doc.page.margins.left + halfWidth + compDateWidth, y, compOccWidth, {
+          align: 'right',
+        });
+        y += headerHeight;
+
+        for (let index = 0; index < minRows; index += 1) {
+          const needRow = highlight.topNeed[index] || null;
+          const compressionRow = highlight.topCompression[index] || null;
+          const needDow = needRow ? shortDayLabel(needRow.stayDate) : '';
+          const compDow = compressionRow ? shortDayLabel(compressionRow.stayDate) : '';
+          const isWeekendRow =
+            needDow.toLowerCase().startsWith('za') ||
+            needDow.toLowerCase().startsWith('zo') ||
+            compDow.toLowerCase().startsWith('za') ||
+            compDow.toLowerCase().startsWith('zo');
+
+          doc.save();
+          if (isWeekendRow) {
+            doc.rect(doc.page.margins.left, y, pageWidth, rowHeightHighlight).fill('#9ca3af');
+          } else if (index % 2 === 0) {
+            doc.rect(doc.page.margins.left, y, pageWidth, rowHeightHighlight).fill('#f8fafc');
+          }
+          doc.restore();
+
+          doc.font('Helvetica').fontSize(7).fillColor('#111827');
+          drawCellText(
+            doc,
+            needRow ? `${needDow} ${displayDateLabel(needRow.stayDate)}` : '-',
+            doc.page.margins.left,
+            y,
+            needDateWidth
+          );
+          drawCellText(
+            doc,
+            needRow ? formatPercentageValue(needRow.occupancy) : '-',
+            doc.page.margins.left + needDateWidth,
+            y,
+            needOccWidth,
+            { align: 'right' }
+          );
+          drawCellText(
+            doc,
+            compressionRow ? `${compDow} ${displayDateLabel(compressionRow.stayDate)}` : '-',
+            doc.page.margins.left + halfWidth,
+            y,
+            compDateWidth
+          );
+          drawCellText(
+            doc,
+            compressionRow ? formatPercentageValue(compressionRow.occupancy) : '-',
+            doc.page.margins.left + halfWidth + compDateWidth,
+            y,
+            compOccWidth,
+            { align: 'right' }
+          );
+
+          doc.strokeColor('#d1d5db').lineWidth(0.5);
+          doc.moveTo(doc.page.margins.left, y + rowHeightHighlight).lineTo(doc.page.margins.left + pageWidth, y + rowHeightHighlight).stroke();
+          y += rowHeightHighlight;
+        }
+
+        doc.strokeColor('#9ca3af').lineWidth(0.7);
+        doc.rect(doc.page.margins.left, y - (minRows * rowHeightHighlight + headerHeight), pageWidth, minRows * rowHeightHighlight + headerHeight).stroke();
+        y += 8;
+      });
+
+      return y;
     };
 
     const renderTableHeader = (y) => {
@@ -490,18 +652,41 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
     };
 
     const renderRow = (dateString, rowIndex, y) => {
-      if (rowIndex % 2 === 0) {
+      const dayOfWeek = shortDayLabel(dateString);
+      const isWeekend = dayOfWeek.toLowerCase().startsWith('za') || dayOfWeek.toLowerCase().startsWith('zo');
+      if (isWeekend) {
+        doc.save();
+        doc.rect(doc.page.margins.left, y, pageWidth, rowHeight).fill('#f3f4f6');
+        doc.restore();
+      } else if (rowIndex % 2 === 0) {
         doc.save();
         doc.rect(doc.page.margins.left, y, pageWidth, rowHeight).fill('#f8fafc');
         doc.restore();
       }
 
       doc.fillColor('#111827').font('Helvetica').fontSize(8);
-      drawCellText(doc, displayDateLabel(dateString), doc.page.margins.left, y + 1, dateColumnWidth);
+      drawCellText(
+        doc,
+        `${dayOfWeek} ${displayDateLabel(dateString)}`,
+        doc.page.margins.left,
+        y + 1,
+        dateColumnWidth
+      );
 
       hotels.forEach((hotel, hotelIndex) => {
         const hotelRow = hotel.rowsByDate.get(dateString) || null;
+        const status = getDateOccupancyStatus(dateString, Number(hotelRow?.occupancy || 0), hotel.todayDate);
         const groupX = doc.page.margins.left + dateColumnWidth + hotelIndex * hotelGroupWidth;
+        if (status.type === 'need') {
+          doc.save();
+          doc.rect(groupX, y, subColumnWidth, rowHeight).fill('#dbeafe');
+          doc.restore();
+        } else if (status.type === 'compression') {
+          doc.save();
+          doc.rect(groupX, y, subColumnWidth, rowHeight).fill('#ffedd5');
+          doc.restore();
+        }
+
         const values = [
           formatPercentageValue(hotelRow?.occupancy || 0),
           formatPickupDelta(hotelRow?.pickup?.[1]?.delta),
@@ -620,10 +805,13 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
     hotels.forEach((hotel) => {
       hotel.rowsByDate = toRowMap(hotel.rows);
       hotel.monthlyRevenueOverview = hotel.monthlyRevenueOverview || new Map();
+      hotel.todayDate = startOfTodayUtc();
+      hotel.highlights = buildHotelHighlights(hotel.rows, hotel.todayDate);
     });
 
     renderPageHeader();
     let y = tableTop;
+    y = renderHighlights(84);
     let currentMonth = null;
     renderTableHeader(y);
     y += headerRowHeight * 2;
