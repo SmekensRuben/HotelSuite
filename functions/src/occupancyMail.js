@@ -482,15 +482,18 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
     const hotelAreaWidth = Math.max(pageWidth - dateColumnWidth, 0);
     const hotelGroupWidth = hotelAreaWidth / hotelCount;
     const subColumnWidth = hotelGroupWidth / 4;
-    const tableTop = 190;
+    const tableTop = 118;
     const monthlyTableTop = 110;
 
-    const renderPageHeader = () => {
+    const renderPageHeader = (monthTitle = null) => {
       doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827');
       doc.text('Occupancy overzicht vanaf eerste dag huidige maand', doc.page.margins.left, doc.page.margins.top);
       doc.moveDown(0.15);
       doc.font('Helvetica').fontSize(10).fillColor('#4b5563');
       doc.text(`Periode: ${displayDateLabel(startDate)} t/m ${displayDateLabel(endDate)}`);
+      if (monthTitle) {
+        doc.text(`Maand: ${monthTitle}`);
+      }
       doc.text(
         `Aangemaakt op: ${new Intl.DateTimeFormat('nl-NL', {
           dateStyle: 'medium',
@@ -499,114 +502,6 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
         }).format(new Date())}`
       );
       doc.fillColor('#111827');
-    };
-
-    const renderHighlights = (startY) => {
-      let y = startY;
-      const rowHeightHighlight = 14;
-      const headerHeight = 16;
-      const titleHeight = 14;
-      const minRows = 10;
-
-      hotels.forEach((hotel) => {
-        const highlight = hotel.highlights || { topNeed: [], topCompression: [] };
-        const blockHeight = titleHeight + headerHeight + minRows * rowHeightHighlight + 8;
-        if (y + blockHeight > doc.page.height - doc.page.margins.bottom) {
-          doc.addPage({ size: 'A3', layout: 'landscape', margin: 28 });
-          renderPageHeader();
-          y = 84;
-        }
-
-        const halfWidth = pageWidth / 2;
-        const needDateWidth = halfWidth * 0.65;
-        const needOccWidth = halfWidth * 0.35;
-        const compDateWidth = halfWidth * 0.65;
-        const compOccWidth = halfWidth * 0.35;
-
-        doc.font('Helvetica-Bold').fontSize(8).fillColor('#111827');
-        doc.text(`${hotel.hotelName} — Top 10 Need & Compression`, doc.page.margins.left, y, {
-          width: pageWidth,
-        });
-        y += titleHeight;
-
-        doc.save();
-        doc.rect(doc.page.margins.left, y, halfWidth, headerHeight).fill('#dbeafe');
-        doc.rect(doc.page.margins.left + halfWidth, y, halfWidth, headerHeight).fill('#ffedd5');
-        doc.restore();
-
-        doc.font('Helvetica-Bold').fontSize(7).fillColor('#1e3a8a');
-        drawCellText(doc, 'Need (datum + dag)', doc.page.margins.left, y, needDateWidth);
-        drawCellText(doc, 'Occ %', doc.page.margins.left + needDateWidth, y, needOccWidth, { align: 'right' });
-
-        doc.fillColor('#c2410c');
-        drawCellText(doc, 'Compression (datum + dag)', doc.page.margins.left + halfWidth, y, compDateWidth);
-        drawCellText(doc, 'Occ %', doc.page.margins.left + halfWidth + compDateWidth, y, compOccWidth, {
-          align: 'right',
-        });
-        y += headerHeight;
-
-        for (let index = 0; index < minRows; index += 1) {
-          const needRow = highlight.topNeed[index] || null;
-          const compressionRow = highlight.topCompression[index] || null;
-          const needDow = needRow ? shortDayLabel(needRow.stayDate) : '';
-          const compDow = compressionRow ? shortDayLabel(compressionRow.stayDate) : '';
-          const isWeekendRow =
-            needDow.toLowerCase().startsWith('za') ||
-            needDow.toLowerCase().startsWith('zo') ||
-            compDow.toLowerCase().startsWith('za') ||
-            compDow.toLowerCase().startsWith('zo');
-
-          doc.save();
-          if (isWeekendRow) {
-            doc.rect(doc.page.margins.left, y, pageWidth, rowHeightHighlight).fill('#9ca3af');
-          } else if (index % 2 === 0) {
-            doc.rect(doc.page.margins.left, y, pageWidth, rowHeightHighlight).fill('#f8fafc');
-          }
-          doc.restore();
-
-          doc.font('Helvetica').fontSize(7).fillColor('#111827');
-          drawCellText(
-            doc,
-            needRow ? `${needDow} ${displayDateLabel(needRow.stayDate)}` : '-',
-            doc.page.margins.left,
-            y,
-            needDateWidth
-          );
-          drawCellText(
-            doc,
-            needRow ? formatPercentageValue(needRow.occupancy) : '-',
-            doc.page.margins.left + needDateWidth,
-            y,
-            needOccWidth,
-            { align: 'right' }
-          );
-          drawCellText(
-            doc,
-            compressionRow ? `${compDow} ${displayDateLabel(compressionRow.stayDate)}` : '-',
-            doc.page.margins.left + halfWidth,
-            y,
-            compDateWidth
-          );
-          drawCellText(
-            doc,
-            compressionRow ? formatPercentageValue(compressionRow.occupancy) : '-',
-            doc.page.margins.left + halfWidth + compDateWidth,
-            y,
-            compOccWidth,
-            { align: 'right' }
-          );
-
-          doc.strokeColor('#d1d5db').lineWidth(0.5);
-          doc.moveTo(doc.page.margins.left, y + rowHeightHighlight).lineTo(doc.page.margins.left + pageWidth, y + rowHeightHighlight).stroke();
-          y += rowHeightHighlight;
-        }
-
-        doc.strokeColor('#9ca3af').lineWidth(0.7);
-        doc.rect(doc.page.margins.left, y - (minRows * rowHeightHighlight + headerHeight), pageWidth, minRows * rowHeightHighlight + headerHeight).stroke();
-        y += 8;
-      });
-
-      return y;
     };
 
     const renderTableHeader = (y) => {
@@ -650,7 +545,7 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
       const isWeekend = dayOfWeek.toLowerCase().startsWith('za') || dayOfWeek.toLowerCase().startsWith('zo');
       if (isWeekend) {
         doc.save();
-        doc.rect(doc.page.margins.left, y, pageWidth, rowHeight).fill('#f3f4f6');
+        doc.rect(doc.page.margins.left, y, pageWidth, rowHeight).fill('#9ca3af');
         doc.restore();
       } else if (rowIndex % 2 === 0) {
         doc.save();
@@ -670,6 +565,8 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
       hotels.forEach((hotel, hotelIndex) => {
         const hotelRow = hotel.rowsByDate.get(dateString) || null;
         const status = getDateOccupancyStatus(dateString, Number(hotelRow?.occupancy || 0), hotel.todayDate);
+        const isTopNeed = hotel.topNeedDates.has(dateString);
+        const isTopCompression = hotel.topCompressionDates.has(dateString);
         const groupX = doc.page.margins.left + dateColumnWidth + hotelIndex * hotelGroupWidth;
         if (status.type === 'need') {
           doc.save();
@@ -681,15 +578,23 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
           doc.restore();
         }
 
-        const values = [
-          formatPercentageValue(hotelRow?.occupancy || 0),
+        const occupancyX = groupX;
+        if (isTopNeed || isTopCompression) {
+          doc.fillColor('#dc2626').font('Helvetica-Bold').fontSize(9);
+          doc.text('!', occupancyX + 4, y + 3, { width: 10, align: 'left' });
+        }
+        doc.fillColor('#111827').font('Helvetica').fontSize(8);
+        drawCellText(doc, formatPercentageValue(hotelRow?.occupancy || 0), occupancyX + 10, y + 1, subColumnWidth - 10, {
+          align: 'right',
+        });
+
+        const pickupValues = [
           formatPickupDelta(hotelRow?.pickup?.[1]?.delta),
           formatPickupDelta(hotelRow?.pickup?.[3]?.delta),
           formatPickupDelta(hotelRow?.pickup?.[7]?.delta),
         ];
-
-        values.forEach((value, valueIndex) => {
-          const x = groupX + valueIndex * subColumnWidth;
+        pickupValues.forEach((value, valueIndex) => {
+          const x = groupX + (valueIndex + 1) * subColumnWidth;
           drawCellText(doc, value, x, y + 1, subColumnWidth, { align: 'right' });
         });
       });
@@ -801,50 +706,31 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
       hotel.monthlyRevenueOverview = hotel.monthlyRevenueOverview || new Map();
       hotel.todayDate = startOfTodayUtc();
       hotel.highlights = buildHotelHighlights(hotel.rows, hotel.todayDate);
+      hotel.topNeedDates = new Set((hotel.highlights?.topNeed || []).map((row) => row.stayDate));
+      hotel.topCompressionDates = new Set((hotel.highlights?.topCompression || []).map((row) => row.stayDate));
     });
 
-    renderPageHeader();
-    let y = tableTop;
-    y = renderHighlights(84);
-    let currentMonth = null;
-    renderTableHeader(y);
-    y += headerRowHeight * 2;
-
-    allDates.forEach((dateString, rowIndex) => {
+    const datesPerMonth = allDates.reduce((acc, dateString) => {
       const monthKey = dateString.slice(0, 7);
-      if (monthKey !== currentMonth) {
-        currentMonth = monthKey;
-        if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
-          doc.addPage({ size: 'A3', layout: 'landscape', margin: 28 });
-          renderPageHeader();
-          y = tableTop;
-          renderTableHeader(y);
-          y += headerRowHeight * 2;
-        }
+      if (!acc.has(monthKey)) acc.set(monthKey, []);
+      acc.get(monthKey).push(dateString);
+      return acc;
+    }, new Map());
 
-        doc.save();
-        doc.rect(doc.page.margins.left, y, pageWidth, rowHeight).fill('#dbeafe');
-        doc.restore();
-        doc.fillColor('#1e3a8a').font('Helvetica-Bold').fontSize(8);
-        drawCellText(doc, monthLabel(dateString), doc.page.margins.left, y + 1, pageWidth);
-        doc.strokeColor('#cbd5e1').lineWidth(0.6);
-        hotels.forEach((_, hotelIndex) => {
-          const groupBoundaryX = doc.page.margins.left + dateColumnWidth + (hotelIndex + 1) * hotelGroupWidth;
-          doc.moveTo(groupBoundaryX, y).lineTo(groupBoundaryX, y + rowHeight).stroke();
-        });
-        y += rowHeight;
-      }
-
-      if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
+    Array.from(datesPerMonth.entries()).forEach(([monthKey, monthDates], monthIndex) => {
+      if (monthIndex > 0) {
         doc.addPage({ size: 'A3', layout: 'landscape', margin: 28 });
-        renderPageHeader();
-        y = tableTop;
-        renderTableHeader(y);
-        y += headerRowHeight * 2;
       }
 
-      renderRow(dateString, rowIndex, y);
-      y += rowHeight;
+      renderPageHeader(monthLabel(`${monthKey}-01`));
+      let y = tableTop;
+      renderTableHeader(y);
+      y += headerRowHeight * 2;
+
+      monthDates.forEach((dateString, rowIndex) => {
+        renderRow(dateString, rowIndex, y);
+        y += rowHeight;
+      });
     });
 
     const monthKeys = [];
@@ -855,7 +741,7 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
 
     doc.addPage({ size: 'A3', layout: 'landscape', margin: 28 });
     renderMonthlyRevenueHeader();
-    y = monthlyTableTop;
+    let y = monthlyTableTop;
     renderMonthlyTableHeader(y);
     y += headerRowHeight * 2;
 
