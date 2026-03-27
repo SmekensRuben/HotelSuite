@@ -416,12 +416,12 @@ function getPickupCellColor(delta, comparisonDays) {
   const [lowThreshold, mediumThreshold] = dayThresholds[comparisonDays] || dayThresholds[1];
 
   if (numericDelta > 0) {
-    if (absDelta <= lowThreshold) return '#86efac';
+    if (absDelta <= lowThreshold) return '#f0fdf4';
     if (absDelta <= mediumThreshold) return '#4ade80';
     return '#22c55e';
   }
   if (numericDelta < 0) {
-    if (absDelta <= lowThreshold) return '#fca5a5';
+    if (absDelta <= lowThreshold) return '#fef2f2';
     if (absDelta <= mediumThreshold) return '#f87171';
     return '#ef4444';
   }
