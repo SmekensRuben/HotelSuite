@@ -405,6 +405,49 @@ function formatCurrencyValue(value) {
   })}`;
 }
 
+function getPickupBadgeColor(delta) {
+  const numericDelta = Number(delta || 0);
+  if (numericDelta > 0) {
+    if (numericDelta <= 2) return '#86efac';
+    if (numericDelta <= 5) return '#4ade80';
+    if (numericDelta <= 10) return '#22c55e';
+    return '#15803d';
+  }
+  if (numericDelta < 0) {
+    if (numericDelta >= -2) return '#fca5a5';
+    if (numericDelta >= -5) return '#f87171';
+    if (numericDelta >= -10) return '#ef4444';
+    return '#b91c1c';
+  }
+  return null;
+}
+
+function drawPickupDeltaBadge(doc, delta, x, y, width, height) {
+  if (delta == null) {
+    drawCellText(doc, '-', x, y + 1, width, { align: 'right' });
+    return;
+  }
+
+  const formatted = formatPickupDelta(delta);
+  const badgeColor = getPickupBadgeColor(delta);
+  if (!badgeColor) {
+    drawCellText(doc, formatted, x, y + 1, width, { align: 'right' });
+    return;
+  }
+
+  const centerX = x + width / 2;
+  const centerY = y + height / 2 + 0.5;
+  const radius = Math.max(8, Math.min(width, height) / 2 - 2);
+
+  doc.save();
+  doc.circle(centerX, centerY, radius).fill(badgeColor);
+  doc.restore();
+
+  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(7);
+  doc.text(formatted, x, y + 4, { width, align: 'center' });
+  doc.fillColor('#111827').font('Helvetica').fontSize(8);
+}
+
 function daysBetweenDateStrings(fromDateString, toDateString) {
   const fromDate = new Date(`${fromDateString}T00:00:00.000Z`);
   const toDate = new Date(`${toDateString}T00:00:00.000Z`);
@@ -589,13 +632,13 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
         });
 
         const pickupValues = [
-          formatPickupDelta(hotelRow?.pickup?.[1]?.delta),
-          formatPickupDelta(hotelRow?.pickup?.[3]?.delta),
-          formatPickupDelta(hotelRow?.pickup?.[7]?.delta),
+          hotelRow?.pickup?.[1]?.delta,
+          hotelRow?.pickup?.[3]?.delta,
+          hotelRow?.pickup?.[7]?.delta,
         ];
-        pickupValues.forEach((value, valueIndex) => {
+        pickupValues.forEach((delta, valueIndex) => {
           const x = groupX + (valueIndex + 1) * subColumnWidth;
-          drawCellText(doc, value, x, y + 1, subColumnWidth, { align: 'right' });
+          drawPickupDeltaBadge(doc, delta, x, y, subColumnWidth, rowHeight);
         });
       });
 
