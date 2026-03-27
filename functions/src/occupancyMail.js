@@ -312,16 +312,11 @@ async function getOccupancyRowsForRange(hotelUid, startDate, endDate) {
 
   const forecastRowsByDate = toRowMap(forecastRows);
   const statisticsRowsByDate = toRowMap(statisticsRows);
-  const previousForecastRowsList = previousRowsList.slice(0, PICKUP_COMPARISON_DAYS.length);
-  const previousStatisticsRowsList = previousRowsList.slice(PICKUP_COMPARISON_DAYS.length);
   const previousForecastRowsByPickup = Object.fromEntries(
     PICKUP_COMPARISON_DAYS.map((comparisonDays, index) => [
       comparisonDays,
       toRowMap(previousForecastRowsPayload[index]),
     ])
-  );
-  const previousStatisticsRowsByPickup = Object.fromEntries(
-    PICKUP_COMPARISON_DAYS.map((comparisonDays, index) => [comparisonDays, toRowMap(previousStatisticsRowsList[index])])
   );
 
   const rows = [];
@@ -349,12 +344,8 @@ async function getOccupancyRowsForRange(hotelUid, startDate, endDate) {
 
     const pickup = Object.fromEntries(
       PICKUP_COMPARISON_DAYS.map((comparisonDays) => {
-        const previousRowsByDate = isPastDate
-          ? previousStatisticsRowsByPickup[comparisonDays]
-          : previousForecastRowsByPickup[comparisonDays];
-        const previousSnapshotDate = isPastDate
-          ? previousStatisticsSnapshotDatesByPickup[comparisonDays]
-          : previousForecastSnapshotDatesByPickup[comparisonDays];
+        const previousRowsByDate = previousForecastRowsByPickup[comparisonDays];
+        const previousSnapshotDate = previousForecastSnapshotDatesByPickup[comparisonDays];
         if (!previousSnapshotDate) {
           return [comparisonDays, { available: false, delta: null }];
         }
@@ -414,46 +405,48 @@ function formatCurrencyValue(value) {
   })}`;
 }
 
-function getPickupBadgeColor(delta) {
+function getPickupCellColor(delta, comparisonDays) {
   const numericDelta = Number(delta || 0);
+  const absDelta = Math.abs(numericDelta);
+  const dayThresholds = {
+    1: [2, 5],
+    3: [4, 9],
+    7: [7, 15],
+  };
+  const [lowThreshold, mediumThreshold] = dayThresholds[comparisonDays] || dayThresholds[1];
+
   if (numericDelta > 0) {
-    if (numericDelta <= 2) return '#86efac';
-    if (numericDelta <= 5) return '#4ade80';
-    if (numericDelta <= 10) return '#22c55e';
-    return '#15803d';
+    if (absDelta <= lowThreshold) return '#f0fdf4';
+    if (absDelta <= mediumThreshold) return '#4ade80';
+    return '#22c55e';
   }
   if (numericDelta < 0) {
-    if (numericDelta >= -2) return '#fca5a5';
-    if (numericDelta >= -5) return '#f87171';
-    if (numericDelta >= -10) return '#ef4444';
-    return '#b91c1c';
+    if (absDelta <= lowThreshold) return '#fef2f2';
+    if (absDelta <= mediumThreshold) return '#f87171';
+    return '#ef4444';
   }
   return null;
 }
 
-function drawPickupDeltaBadge(doc, delta, x, y, width, height) {
+function drawPickupDeltaBadge(doc, delta, comparisonDays, x, y, width, height) {
   if (delta == null) {
     drawCellText(doc, '-', x, y + 1, width, { align: 'right' });
     return;
   }
 
   const formatted = formatPickupDelta(delta);
-  const badgeColor = getPickupBadgeColor(delta);
-  if (!badgeColor) {
+  const cellColor = getPickupCellColor(delta, comparisonDays);
+  if (!cellColor) {
     drawCellText(doc, formatted, x, y + 1, width, { align: 'right' });
     return;
   }
 
-  const centerX = x + width / 2;
-  const centerY = y + height / 2 + 0.5;
-  const radius = Math.max(8, Math.min(width, height) / 2 - 2);
-
   doc.save();
-  doc.circle(centerX, centerY, radius).fill(badgeColor);
+  doc.rect(x, y, width, height).fill(cellColor);
   doc.restore();
 
-  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(7);
-  doc.text(formatted, x, y + 4, { width, align: 'center' });
+  doc.fillColor('#111827').font('Helvetica-Bold').fontSize(8);
+  drawCellText(doc, formatted, x, y + 1, width, { align: 'right' });
   doc.fillColor('#111827').font('Helvetica').fontSize(8);
 }
 
@@ -535,7 +528,6 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
     const hotelGroupWidth = hotelAreaWidth / hotelCount;
     const subColumnWidth = hotelGroupWidth / 4;
     const tableTop = 118;
-    const monthlyTableTop = 110;
 
     const renderPageHeader = (monthTitle = null) => {
       doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827');
@@ -556,7 +548,7 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
       doc.fillColor('#111827');
     };
 
-    const renderTableHeader = (y) => {
+    const renderTableHeader = (y, monthKey) => {
       doc.save();
       doc.rect(doc.page.margins.left, y, dateColumnWidth, headerRowHeight * 2).fill('#e5e7eb');
       doc.fillColor('#111827').font('Helvetica-Bold').fontSize(8);
@@ -566,7 +558,11 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
         const groupX = doc.page.margins.left + dateColumnWidth + hotelIndex * hotelGroupWidth;
         doc.rect(groupX, y, hotelGroupWidth, headerRowHeight).fill('#dbeafe');
         doc.fillColor('#1e3a8a').font('Helvetica-Bold').fontSize(8);
-        drawCellText(doc, hotel.hotelName, groupX, y + 2, hotelGroupWidth, { ellipsis: true });
+        const monthlyMetrics = hotel.monthlyRevenueOverview.get(monthKey) || null;
+        const monthlyRevenueLabel = formatCurrencyValue(monthlyMetrics?.totalCalculatedRevenue || 0);
+        drawCellText(doc, `${hotel.hotelName} ${monthlyRevenueLabel}`, groupX, y + 2, hotelGroupWidth, {
+          ellipsis: true,
+        });
 
         const subHeaders = ['Occ %', 'PU -1', 'PU -3', 'PU -7'];
         subHeaders.forEach((subHeader, subIndex) => {
@@ -645,183 +641,18 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
           hotelRow?.pickup?.[3]?.delta,
           hotelRow?.pickup?.[7]?.delta,
         ];
+        const pickupComparisonDays = [1, 3, 7];
         pickupValues.forEach((delta, valueIndex) => {
           const x = groupX + (valueIndex + 1) * subColumnWidth;
-          drawPickupDeltaBadge(doc, delta, x, y, subColumnWidth, rowHeight);
-        });
-      });
-
-      doc.strokeColor('#cbd5e1').lineWidth(0.6);
-      hotels.forEach((_, hotelIndex) => {
-        const groupBoundaryX = doc.page.margins.left + dateColumnWidth + (hotelIndex + 1) * hotelGroupWidth;
-        doc.moveTo(groupBoundaryX, y).lineTo(groupBoundaryX, y + rowHeight).stroke();
-      });
-
-      doc.strokeColor('#e5e7eb').lineWidth(0.5);
-      doc.moveTo(doc.page.margins.left, y + rowHeight).lineTo(doc.page.margins.left + pageWidth, y + rowHeight).stroke();
-    };
-
-    const renderMonthlyRevenueSummaryHeader = () => {
-      doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827');
-      doc.text('Maandoverzicht calculated total revenue', doc.page.margins.left, doc.page.margins.top);
-      doc.moveDown(0.15);
-      doc.font('Helvetica').fontSize(10).fillColor('#4b5563');
-      doc.text(`Periode: ${displayDateLabel(startDate)} t/m ${displayDateLabel(endDate)}`);
-      doc.fillColor('#111827');
-    };
-
-    const renderMonthlyRevenueTableHeader = (y) => {
-      doc.save();
-      doc.rect(doc.page.margins.left, y, dateColumnWidth, headerRowHeight * 2).fill('#e5e7eb');
-      doc.fillColor('#111827').font('Helvetica-Bold').fontSize(8);
-      drawCellText(doc, 'Maand', doc.page.margins.left, y + 8, dateColumnWidth);
-
-      hotels.forEach((hotel, hotelIndex) => {
-        const groupX = doc.page.margins.left + dateColumnWidth + hotelIndex * hotelGroupWidth;
-        doc.rect(groupX, y, hotelGroupWidth, headerRowHeight).fill('#d1fae5');
-        doc.fillColor('#065f46').font('Helvetica-Bold').fontSize(8);
-        drawCellText(doc, hotel.hotelName, groupX, y + 2, hotelGroupWidth, { ellipsis: true });
-
-        const subHeaders = ['Calc Rev', 'PU Rev -1', 'PU Rev -3', 'PU Rev -7'];
-        subHeaders.forEach((subHeader, subIndex) => {
-          const subX = groupX + subIndex * subColumnWidth;
-          doc.rect(subX, y + headerRowHeight, subColumnWidth, headerRowHeight).fill('#ecfdf5');
-          doc.fillColor('#1f2937').font('Helvetica-Bold').fontSize(7);
-          drawCellText(doc, subHeader, subX, y + headerRowHeight + 2, subColumnWidth, { align: 'center' });
-        });
-      });
-
-      doc.restore();
-      doc.strokeColor('#cbd5e1').lineWidth(0.5);
-      doc.rect(doc.page.margins.left, y, pageWidth, headerRowHeight * 2).stroke();
-
-      doc.strokeColor('#94a3b8').lineWidth(0.8);
-      doc
-        .moveTo(doc.page.margins.left + dateColumnWidth, y)
-        .lineTo(doc.page.margins.left + dateColumnWidth, y + headerRowHeight * 2)
-        .stroke();
-      hotels.forEach((_, hotelIndex) => {
-        const groupBoundaryX = doc.page.margins.left + dateColumnWidth + (hotelIndex + 1) * hotelGroupWidth;
-        doc.moveTo(groupBoundaryX, y).lineTo(groupBoundaryX, y + headerRowHeight * 2).stroke();
-      });
-    };
-
-    const renderMonthlyRevenueSummaryRow = (monthKey, rowIndex, y) => {
-      if (rowIndex % 2 === 0) {
-        doc.save();
-        doc.rect(doc.page.margins.left, y, pageWidth, rowHeight).fill('#f8fafc');
-        doc.restore();
-      }
-
-      doc.fillColor('#111827').font('Helvetica').fontSize(8);
-      drawCellText(doc, monthLabel(`${monthKey}-01`), doc.page.margins.left, y + 1, dateColumnWidth);
-
-      hotels.forEach((hotel, hotelIndex) => {
-        const monthlyMetrics = hotel.monthlyRevenueOverview.get(monthKey) || null;
-        const groupX = doc.page.margins.left + dateColumnWidth + hotelIndex * hotelGroupWidth;
-        const values = [
-          formatCurrencyValue(monthlyMetrics?.totalCalculatedRevenue || 0),
-          monthlyMetrics?.pickupAvailability?.[1]
-            ? formatCurrencyValue(monthlyMetrics.pickup?.[1] || 0)
-            : '-',
-          monthlyMetrics?.pickupAvailability?.[3]
-            ? formatCurrencyValue(monthlyMetrics.pickup?.[3] || 0)
-            : '-',
-          monthlyMetrics?.pickupAvailability?.[7]
-            ? formatCurrencyValue(monthlyMetrics.pickup?.[7] || 0)
-            : '-',
-        ];
-
-        values.forEach((value, valueIndex) => {
-          const x = groupX + valueIndex * subColumnWidth;
-          drawCellText(doc, value, x, y + 1, subColumnWidth, { align: 'right' });
-        });
-      });
-
-      doc.strokeColor('#cbd5e1').lineWidth(0.6);
-      hotels.forEach((_, hotelIndex) => {
-        const groupBoundaryX = doc.page.margins.left + dateColumnWidth + (hotelIndex + 1) * hotelGroupWidth;
-        doc.moveTo(groupBoundaryX, y).lineTo(groupBoundaryX, y + rowHeight).stroke();
-      });
-
-      doc.strokeColor('#e5e7eb').lineWidth(0.5);
-      doc.moveTo(doc.page.margins.left, y + rowHeight).lineTo(doc.page.margins.left + pageWidth, y + rowHeight).stroke();
-    };
-
-    const renderMonthlyRevenueHeader = () => {
-      doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827');
-      doc.text('Maandoverzicht calculated total revenue', doc.page.margins.left, doc.page.margins.top);
-      doc.moveDown(0.15);
-      doc.font('Helvetica').fontSize(10).fillColor('#4b5563');
-      doc.text(`Periode: ${displayDateLabel(startDate)} t/m ${displayDateLabel(endDate)}`);
-      doc.fillColor('#111827');
-    };
-
-    const renderMonthlyTableHeader = (y) => {
-      doc.save();
-      doc.rect(doc.page.margins.left, y, dateColumnWidth, headerRowHeight * 2).fill('#e5e7eb');
-      doc.fillColor('#111827').font('Helvetica-Bold').fontSize(8);
-      drawCellText(doc, 'Maand', doc.page.margins.left, y + 8, dateColumnWidth);
-
-      hotels.forEach((hotel, hotelIndex) => {
-        const groupX = doc.page.margins.left + dateColumnWidth + hotelIndex * hotelGroupWidth;
-        doc.rect(groupX, y, hotelGroupWidth, headerRowHeight).fill('#d1fae5');
-        doc.fillColor('#065f46').font('Helvetica-Bold').fontSize(8);
-        drawCellText(doc, hotel.hotelName, groupX, y + 2, hotelGroupWidth, { ellipsis: true });
-
-        const subHeaders = ['Calc Rev', 'PU Rev -1', 'PU Rev -3', 'PU Rev -7'];
-        subHeaders.forEach((subHeader, subIndex) => {
-          const subX = groupX + subIndex * subColumnWidth;
-          doc.rect(subX, y + headerRowHeight, subColumnWidth, headerRowHeight).fill('#ecfdf5');
-          doc.fillColor('#1f2937').font('Helvetica-Bold').fontSize(7);
-          drawCellText(doc, subHeader, subX, y + headerRowHeight + 2, subColumnWidth, { align: 'center' });
-        });
-      });
-
-      doc.restore();
-      doc.strokeColor('#cbd5e1').lineWidth(0.5);
-      doc.rect(doc.page.margins.left, y, pageWidth, headerRowHeight * 2).stroke();
-
-      doc.strokeColor('#94a3b8').lineWidth(0.8);
-      doc
-        .moveTo(doc.page.margins.left + dateColumnWidth, y)
-        .lineTo(doc.page.margins.left + dateColumnWidth, y + headerRowHeight * 2)
-        .stroke();
-      hotels.forEach((_, hotelIndex) => {
-        const groupBoundaryX = doc.page.margins.left + dateColumnWidth + (hotelIndex + 1) * hotelGroupWidth;
-        doc.moveTo(groupBoundaryX, y).lineTo(groupBoundaryX, y + headerRowHeight * 2).stroke();
-      });
-    };
-
-    const renderMonthlyRevenueRow = (monthKey, rowIndex, y) => {
-      if (rowIndex % 2 === 0) {
-        doc.save();
-        doc.rect(doc.page.margins.left, y, pageWidth, rowHeight).fill('#f8fafc');
-        doc.restore();
-      }
-
-      doc.fillColor('#111827').font('Helvetica').fontSize(8);
-      drawCellText(doc, monthLabel(`${monthKey}-01`), doc.page.margins.left, y + 1, dateColumnWidth);
-
-      hotels.forEach((hotel, hotelIndex) => {
-        const monthlyMetrics = hotel.monthlyRevenueOverview.get(monthKey) || null;
-        const groupX = doc.page.margins.left + dateColumnWidth + hotelIndex * hotelGroupWidth;
-        const values = [
-          formatCurrencyValue(monthlyMetrics?.totalCalculatedRevenue || 0),
-          monthlyMetrics?.pickupAvailability?.[1]
-            ? formatCurrencyValue(monthlyMetrics.pickup?.[1] || 0)
-            : '-',
-          monthlyMetrics?.pickupAvailability?.[3]
-            ? formatCurrencyValue(monthlyMetrics.pickup?.[3] || 0)
-            : '-',
-          monthlyMetrics?.pickupAvailability?.[7]
-            ? formatCurrencyValue(monthlyMetrics.pickup?.[7] || 0)
-            : '-',
-        ];
-
-        values.forEach((value, valueIndex) => {
-          const x = groupX + valueIndex * subColumnWidth;
-          drawCellText(doc, value, x, y + 1, subColumnWidth, { align: 'right' });
+          drawPickupDeltaBadge(
+            doc,
+            delta,
+            pickupComparisonDays[valueIndex],
+            x,
+            y,
+            subColumnWidth,
+            rowHeight
+          );
         });
       });
 
@@ -863,63 +694,13 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
 
       renderPageHeader(monthLabel(`${monthKey}-01`));
       let y = tableTop;
-      renderTableHeader(y);
+      renderTableHeader(y, monthKey);
       y += headerRowHeight * 2;
 
       monthDates.forEach((dateString, rowIndex) => {
         renderRow(dateString, rowIndex, y);
         y += rowHeight;
       });
-    });
-
-    const monthKeys = [];
-    for (let cursor = startDate; cursor <= endDate; cursor = addDays(cursor, 1)) {
-      const monthKey = cursor.slice(0, 7);
-      if (!monthKeys.includes(monthKey)) monthKeys.push(monthKey);
-    }
-
-    doc.addPage({ size: 'A3', layout: 'landscape', margin: 28 });
-    renderMonthlyRevenueSummaryHeader();
-    let y = monthlyTableTop;
-    renderMonthlyRevenueTableHeader(y);
-    y += headerRowHeight * 2;
-
-    monthKeys.forEach((monthKey, rowIndex) => {
-      if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
-        doc.addPage({ size: 'A3', layout: 'landscape', margin: 28 });
-        renderMonthlyRevenueSummaryHeader();
-        y = monthlyTableTop;
-        renderMonthlyRevenueTableHeader(y);
-        y += headerRowHeight * 2;
-      }
-
-      renderMonthlyRevenueSummaryRow(monthKey, rowIndex, y);
-      y += rowHeight;
-    });
-
-    const monthKeys = [];
-    for (let cursor = startDate; cursor <= endDate; cursor = addDays(cursor, 1)) {
-      const monthKey = cursor.slice(0, 7);
-      if (!monthKeys.includes(monthKey)) monthKeys.push(monthKey);
-    }
-
-    doc.addPage({ size: 'A3', layout: 'landscape', margin: 28 });
-    renderMonthlyRevenueHeader();
-    y = monthlyTableTop;
-    renderMonthlyTableHeader(y);
-    y += headerRowHeight * 2;
-
-    monthKeys.forEach((monthKey, rowIndex) => {
-      if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
-        doc.addPage({ size: 'A3', layout: 'landscape', margin: 28 });
-        renderMonthlyRevenueHeader();
-        y = monthlyTableTop;
-        renderMonthlyTableHeader(y);
-        y += headerRowHeight * 2;
-      }
-
-      renderMonthlyRevenueRow(monthKey, rowIndex, y);
-      y += rowHeight;
     });
 
     doc.end();
@@ -956,8 +737,8 @@ async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', trigger
     text:
       `In de bijlage vind je het occupancy overzicht vanaf de eerste dag van de huidige maand ` +
       `voor: ${hotelNames}. Per hotel zijn occupancy en pickup rooms sold vs. -1, -3 en -7 ` +
-      `toegevoegd indien beschikbaar. Daarnaast bevat de bijlage per maand calculated total revenue ` +
-      `en pickup op calculated total revenue voor -1, -3 en -7 dagen.\n\n` +
+      `toegevoegd indien beschikbaar. Per maand staat de calculated total revenue per hotel ` +
+      `naast de hotelnaam in de tabelkop.\n\n` +
       `Verstuurd via ${reason}${triggerId ? ` (trigger: ${triggerId})` : ''}.`,
     attachments: [
       {
