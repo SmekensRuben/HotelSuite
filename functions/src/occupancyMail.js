@@ -908,12 +908,6 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
       y += rowHeight;
     });
 
-    const monthKeys = [];
-    for (let cursor = startDate; cursor <= endDate; cursor = addDays(cursor, 1)) {
-      const monthKey = cursor.slice(0, 7);
-      if (!monthKeys.includes(monthKey)) monthKeys.push(monthKey);
-    }
-
     doc.addPage({ size: 'A3', layout: 'landscape', margin: 28 });
     renderMonthlyRevenueHeader();
     y = monthlyTableTop;
