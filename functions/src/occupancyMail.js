@@ -414,46 +414,48 @@ function formatCurrencyValue(value) {
   })}`;
 }
 
-function getPickupBadgeColor(delta) {
+function getPickupCellColor(delta, comparisonDays) {
   const numericDelta = Number(delta || 0);
+  const absDelta = Math.abs(numericDelta);
+  const dayThresholds = {
+    1: [2, 5],
+    3: [4, 9],
+    7: [7, 15],
+  };
+  const [lowThreshold, mediumThreshold] = dayThresholds[comparisonDays] || dayThresholds[1];
+
   if (numericDelta > 0) {
-    if (numericDelta <= 2) return '#86efac';
-    if (numericDelta <= 5) return '#4ade80';
-    if (numericDelta <= 10) return '#22c55e';
-    return '#15803d';
+    if (absDelta <= lowThreshold) return '#86efac';
+    if (absDelta <= mediumThreshold) return '#4ade80';
+    return '#22c55e';
   }
   if (numericDelta < 0) {
-    if (numericDelta >= -2) return '#fca5a5';
-    if (numericDelta >= -5) return '#f87171';
-    if (numericDelta >= -10) return '#ef4444';
-    return '#b91c1c';
+    if (absDelta <= lowThreshold) return '#fca5a5';
+    if (absDelta <= mediumThreshold) return '#f87171';
+    return '#ef4444';
   }
   return null;
 }
 
-function drawPickupDeltaBadge(doc, delta, x, y, width, height) {
+function drawPickupDeltaBadge(doc, delta, comparisonDays, x, y, width, height) {
   if (delta == null) {
     drawCellText(doc, '-', x, y + 1, width, { align: 'right' });
     return;
   }
 
   const formatted = formatPickupDelta(delta);
-  const badgeColor = getPickupBadgeColor(delta);
-  if (!badgeColor) {
+  const cellColor = getPickupCellColor(delta, comparisonDays);
+  if (!cellColor) {
     drawCellText(doc, formatted, x, y + 1, width, { align: 'right' });
     return;
   }
 
-  const centerX = x + width / 2;
-  const centerY = y + height / 2 + 0.5;
-  const radius = Math.max(8, Math.min(width, height) / 2 - 2);
-
   doc.save();
-  doc.circle(centerX, centerY, radius).fill(badgeColor);
+  doc.rect(x, y, width, height).fill(cellColor);
   doc.restore();
 
-  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(7);
-  doc.text(formatted, x, y + 4, { width, align: 'center' });
+  doc.fillColor('#111827').font('Helvetica-Bold').fontSize(8);
+  drawCellText(doc, formatted, x, y + 1, width, { align: 'right' });
   doc.fillColor('#111827').font('Helvetica').fontSize(8);
 }
 
@@ -645,9 +647,18 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
           hotelRow?.pickup?.[3]?.delta,
           hotelRow?.pickup?.[7]?.delta,
         ];
+        const pickupComparisonDays = [1, 3, 7];
         pickupValues.forEach((delta, valueIndex) => {
           const x = groupX + (valueIndex + 1) * subColumnWidth;
-          drawPickupDeltaBadge(doc, delta, x, y, subColumnWidth, rowHeight);
+          drawPickupDeltaBadge(
+            doc,
+            delta,
+            pickupComparisonDays[valueIndex],
+            x,
+            y,
+            subColumnWidth,
+            rowHeight
+          );
         });
       });
 
