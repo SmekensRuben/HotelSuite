@@ -3,7 +3,8 @@ const { onDocumentCreated, onSchedule, logger, admin, Resend, PDFDocument, RESEN
 const db = admin.firestore();
 const SCHEDULED_MAIL_DOC_PATH = 'scheduledMails/scheduledOccupancyMail';
 const MANUAL_TRIGGER_COLLECTION = 'manualTriggers';
-const REPORT_WINDOW_DAYS = 90;
+const REPORT_WINDOW_MONTHS = 6;
+const TOP_NEED_LOOKAHEAD_DAYS = 90;
 const DEFAULT_TIMEZONE = 'Europe/Amsterdam';
 const PICKUP_COMPARISON_DAYS = [1, 3, 7];
 
@@ -45,13 +46,22 @@ function startOfCurrentMonthUtc() {
   return formatLocalDate(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)));
 }
 
-function monthLabel(dateString, locale = 'nl-NL', timeZone = DEFAULT_TIMEZONE) {
+function addMonths(dateString, months) {
+  const baseDate = new Date(`${dateString}T00:00:00.000Z`);
+  const year = baseDate.getUTCFullYear();
+  const month = baseDate.getUTCMonth();
+  const day = baseDate.getUTCDate();
+  const target = new Date(Date.UTC(year, month + months, day));
+  return formatLocalDate(target);
+}
+
+function monthLabel(dateString, locale = 'en-GB', timeZone = DEFAULT_TIMEZONE) {
   return new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric', timeZone }).format(
     new Date(`${dateString}T12:00:00.000Z`)
   );
 }
 
-function displayDateLabel(dateString, locale = 'nl-NL', timeZone = DEFAULT_TIMEZONE) {
+function displayDateLabel(dateString, locale = 'en-GB', timeZone = DEFAULT_TIMEZONE) {
   return new Intl.DateTimeFormat(locale, {
     day: '2-digit',
     month: '2-digit',
@@ -60,7 +70,7 @@ function displayDateLabel(dateString, locale = 'nl-NL', timeZone = DEFAULT_TIMEZ
   }).format(new Date(`${dateString}T12:00:00.000Z`));
 }
 
-function shortDayLabel(dateString, locale = 'nl-NL', timeZone = DEFAULT_TIMEZONE) {
+function shortDayLabel(dateString, locale = 'en-GB', timeZone = DEFAULT_TIMEZONE) {
   return new Intl.DateTimeFormat(locale, {
     weekday: 'short',
     timeZone,
@@ -489,8 +499,9 @@ function buildHotelHighlights(hotelRows, todayDate) {
   const compressions = [];
 
   hotelRows.forEach((row) => {
+    const daysInFuture = daysBetweenDateStrings(todayDate, row.stayDate);
     const status = getDateOccupancyStatus(row.stayDate, row.occupancy, todayDate);
-    if (status.type === 'need') needs.push({ ...row, ...status });
+    if (status.type === 'need' && daysInFuture <= TOP_NEED_LOOKAHEAD_DAYS) needs.push({ ...row, ...status });
     if (status.type === 'compression') compressions.push({ ...row, ...status });
   });
 
@@ -531,15 +542,15 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
 
     const renderPageHeader = (monthTitle = null) => {
       doc.font('Helvetica-Bold').fontSize(16).fillColor('#111827');
-      doc.text('Occupancy overzicht vanaf eerste dag huidige maand', doc.page.margins.left, doc.page.margins.top);
+      doc.text('Occupancy overview from the first day of the current month', doc.page.margins.left, doc.page.margins.top);
       doc.moveDown(0.15);
       doc.font('Helvetica').fontSize(10).fillColor('#4b5563');
-      doc.text(`Periode: ${displayDateLabel(startDate)} t/m ${displayDateLabel(endDate)}`);
+      doc.text(`Period: ${displayDateLabel(startDate)} to ${displayDateLabel(endDate)}`);
       if (monthTitle) {
-        doc.text(`Maand: ${monthTitle}`);
+        doc.text(`Month: ${monthTitle}`);
       }
       doc.text(
-        `Aangemaakt op: ${new Intl.DateTimeFormat('nl-NL', {
+        `Generated on: ${new Intl.DateTimeFormat('en-GB', {
           dateStyle: 'medium',
           timeStyle: 'short',
           timeZone: DEFAULT_TIMEZONE,
@@ -552,7 +563,7 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
       doc.save();
       doc.rect(doc.page.margins.left, y, dateColumnWidth, headerRowHeight * 2).fill('#e5e7eb');
       doc.fillColor('#111827').font('Helvetica-Bold').fontSize(8);
-      drawCellText(doc, 'Datum', doc.page.margins.left, y + 8, dateColumnWidth);
+      drawCellText(doc, 'Date', doc.page.margins.left, y + 8, dateColumnWidth);
 
       hotels.forEach((hotel, hotelIndex) => {
         const groupX = doc.page.margins.left + dateColumnWidth + hotelIndex * hotelGroupWidth;
@@ -590,7 +601,8 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
 
     const renderRow = (dateString, rowIndex, y) => {
       const dayOfWeek = shortDayLabel(dateString);
-      const isWeekend = dayOfWeek.toLowerCase().startsWith('za') || dayOfWeek.toLowerCase().startsWith('zo');
+      const weekDayIndex = new Date(`${dateString}T00:00:00.000Z`).getUTCDay();
+      const isWeekend = weekDayIndex === 0 || weekDayIndex === 6;
       if (isWeekend) {
         doc.save();
         doc.rect(doc.page.margins.left, y, pageWidth, rowHeight).fill('#9ca3af');
@@ -710,24 +722,23 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
 async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', triggerId = null }) {
   const hotelUids = sanitizeHotelUids(scheduleConfig?.hotelUid);
   const to = sanitizeEmails(scheduleConfig?.mailto);
-  if (!hotelUids.length) throw new Error('Geen hotelUid configuratie gevonden in scheduledOccupancyMail');
-  if (!to.length) throw new Error('Geen geldige mailto adressen gevonden in scheduledOccupancyMail');
+  if (!hotelUids.length) throw new Error('No hotelUid configuration found in scheduledOccupancyMail');
+  if (!to.length) throw new Error('No valid mailto addresses found in scheduledOccupancyMail');
 
   const resendApiKey = String(RESEND_API_KEY.value() || '').trim();
   const resendFrom = String(RESEND_FROM.value() || '').trim();
   if (!resendApiKey) throw new Error('Missing RESEND_API_KEY secret');
   if (!resendFrom) throw new Error('Missing RESEND_FROM secret');
 
-  const today = startOfTodayUtc();
   const startDate = startOfCurrentMonthUtc();
-  const endDate = addDays(today, REPORT_WINDOW_DAYS - 1);
+  const endDate = addDays(addMonths(startDate, REPORT_WINDOW_MONTHS), -1);
   const hotels = await Promise.all(
     hotelUids.map((hotelUid) => getOccupancyRowsForRange(hotelUid, startDate, endDate))
   );
   const pdfBuffer = await buildPdfBuffer({ startDate, endDate, hotels });
   const resend = new Resend(resendApiKey);
 
-  const subject = `Occupancy overzicht ${displayDateLabel(startDate)} - ${displayDateLabel(endDate)}`;
+  const subject = `Occupancy overview ${displayDateLabel(startDate)} - ${displayDateLabel(endDate)}`;
   const hotelNames = hotels.map((hotel) => hotel.hotelName).join(', ');
 
   const response = await resend.emails.send({
@@ -735,14 +746,14 @@ async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', trigger
     to,
     subject,
     text:
-      `In de bijlage vind je het occupancy overzicht vanaf de eerste dag van de huidige maand ` +
-      `voor: ${hotelNames}. Per hotel zijn occupancy en pickup rooms sold vs. -1, -3 en -7 ` +
-      `toegevoegd indien beschikbaar. Per maand staat de calculated total revenue per hotel ` +
-      `naast de hotelnaam in de tabelkop.\n\n` +
-      `Verstuurd via ${reason}${triggerId ? ` (trigger: ${triggerId})` : ''}.`,
+      `Please find attached the occupancy overview from the first day of the current month ` +
+      `for: ${hotelNames}. Per hotel, occupancy and pickup rooms sold vs. -1, -3 and -7 ` +
+      `are included when available. Per month, the calculated total revenue per hotel ` +
+      `is shown next to the hotel name in the table header.\n\n` +
+      `Sent via ${reason}${triggerId ? ` (trigger: ${triggerId})` : ''}.`,
     attachments: [
       {
-        filename: `occupancy-overzicht-${startDate}-tot-${endDate}.pdf`,
+        filename: `occupancy-overview-${startDate}-to-${endDate}.pdf`,
         content: pdfBuffer.toString('base64'),
       },
     ],
