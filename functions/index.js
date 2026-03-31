@@ -6,6 +6,7 @@ const { sendOrderApprovalEmailToApprovers } = require("./src/approvals");
 const { sendOrderedSupplierOrder } = require("./src/sftpDispatch");
 const { processImportedFileToFirestore } = require("./src/fileImportTypes");
 const { sendScheduledOccupancyMail, runScheduledOccupancyMailNow } = require("./src/occupancyMail");
+const { sendScheduledBlockPickupReport } = require("./src/blockPickupMail");
 
 exports.syncCatalogProductsToMeili = syncCatalogProductsToMeili;
 exports.syncSupplierProductsToMeili = syncSupplierProductsToMeili;
@@ -22,3 +23,5 @@ exports.processImportedFileToFirestore = processImportedFileToFirestore;
 
 exports.sendScheduledOccupancyMail = sendScheduledOccupancyMail;
 exports.runScheduledOccupancyMailNow = runScheduledOccupancyMailNow;
+
+exports.sendScheduledBlockPickupReport = sendScheduledBlockPickupReport;
