@@ -57,11 +57,7 @@ function formatPickupSummaries(allotmentDates) {
       allottedRooms: Number(entry?.allottedRooms ?? 0),
       pickupRooms: getPickupRoomsValue(entry),
     }))
-    .filter((entry) => entry.availableRooms > 0)
-    .map(
-      (entry) =>
-        `${entry.allotmentDate || '-'} (available: ${entry.availableRooms}, initial: ${entry.initialRooms}, allotted: ${entry.allottedRooms}, pickup: ${entry.pickupRooms})`
-    );
+    .filter((entry) => entry.availableRooms > 0);
 }
 
 async function getLatestSnapshotDate(hotelUid) {
@@ -100,7 +96,6 @@ async function getGroupsForSnapshotDate(hotelUid, snapshotDate) {
       if (bookingStatus !== 'DEF' || !pickupSummaries.length) return null;
 
       return {
-        blockId: docSnap.id,
         description: String(data.description || '').trim(),
         allotmentCode: String(data.allotmentCode || '').trim(),
         ownerCode: String(data.ownerCode || '').trim(),
@@ -115,17 +110,27 @@ function buildEmailHtml(hotelReports) {
   const sections = hotelReports
     .map((report) => {
       const rowsHtml = report.groups
-        .map(
-          (group) => `
-            <tr>
-              <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeHtml(group.blockId)}</td>
-              <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeHtml(group.description || '-')}</td>
-              <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeHtml(group.allotmentCode || '-')}</td>
-              <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeHtml(group.ownerCode || '-')}</td>
-              <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeHtml(group.bookingStatus || '-')}</td>
-              <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeHtml(group.pickupSummaries.join(', '))}</td>
-            </tr>
-          `
+        .map((group) =>
+          group.pickupSummaries
+            .map(
+              (pickup, index) => `
+                <tr>
+                  ${
+                    index === 0
+                      ? `
+                    <td style="padding: 8px; border: 1px solid #e5e7eb;" rowspan="${group.pickupSummaries.length}">${escapeHtml(group.description || '-')}</td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb;" rowspan="${group.pickupSummaries.length}">${escapeHtml(group.allotmentCode || '-')}</td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb;" rowspan="${group.pickupSummaries.length}">${escapeHtml(group.ownerCode || '-')}</td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb;" rowspan="${group.pickupSummaries.length}">${escapeHtml(group.bookingStatus || '-')}</td>
+                  `
+                      : ''
+                  }
+                  <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeHtml(pickup.allotmentDate || '-')}</td>
+                  <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeHtml(String(pickup.availableRooms))}</td>
+                </tr>
+              `
+            )
+            .join('')
         )
         .join('');
 
@@ -139,12 +144,12 @@ function buildEmailHtml(hotelReports) {
         <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 12px;">
           <thead>
             <tr style="background: #f3f4f6; text-align: left;">
-              <th style="padding: 8px; border: 1px solid #e5e7eb;">Block ID</th>
               <th style="padding: 8px; border: 1px solid #e5e7eb;">Description</th>
               <th style="padding: 8px; border: 1px solid #e5e7eb;">Allotment code</th>
               <th style="padding: 8px; border: 1px solid #e5e7eb;">Owner code</th>
               <th style="padding: 8px; border: 1px solid #e5e7eb;">Booking status</th>
-              <th style="padding: 8px; border: 1px solid #e5e7eb;">Room status per date (available, initial, allotted, pickup)</th>
+              <th style="padding: 8px; border: 1px solid #e5e7eb;">Allotment date</th>
+              <th style="padding: 8px; border: 1px solid #e5e7eb;">NOT PICKED UP</th>
             </tr>
           </thead>
           <tbody>
