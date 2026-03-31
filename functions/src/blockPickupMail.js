@@ -38,8 +38,8 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function getPickupRoomsValue(allotmentDateEntry) {
-  return Number(allotmentDateEntry?.pickupRooms ?? allotmentDateEntry?.pickuprooms ?? 0);
+function getAvailableRoomsValue(allotmentDateEntry) {
+  return Number(allotmentDateEntry?.availableRooms ?? 0);
 }
 
 function formatPickupSummaries(allotmentDates) {
@@ -48,10 +48,10 @@ function formatPickupSummaries(allotmentDates) {
   return allotmentDates
     .map((entry) => ({
       allotmentDate: String(entry?.allotmentDate || '').trim(),
-      pickupRooms: getPickupRoomsValue(entry),
+      availableRooms: getAvailableRoomsValue(entry),
     }))
-    .filter((entry) => entry.pickupRooms > 0)
-    .map((entry) => `${entry.allotmentDate || '-'} (${entry.pickupRooms})`);
+    .filter((entry) => entry.availableRooms > 0)
+    .map((entry) => `${entry.allotmentDate || '-'} (${entry.availableRooms})`);
 }
 
 async function getLatestSnapshotDate(hotelUid) {
@@ -134,7 +134,7 @@ function buildEmailHtml(hotelReports) {
               <th style="padding: 8px; border: 1px solid #e5e7eb;">Allotment code</th>
               <th style="padding: 8px; border: 1px solid #e5e7eb;">Owner code</th>
               <th style="padding: 8px; border: 1px solid #e5e7eb;">Booking status</th>
-              <th style="padding: 8px; border: 1px solid #e5e7eb;">Pickup rooms per date</th>
+              <th style="padding: 8px; border: 1px solid #e5e7eb;">Available rooms per date</th>
             </tr>
           </thead>
           <tbody>
@@ -149,7 +149,7 @@ function buildEmailHtml(hotelReports) {
     <div style="font-family: Arial, sans-serif; color: #111827;">
       <h1 style="margin: 0 0 12px; font-size: 20px;">Scheduled block pickup report</h1>
       <p style="margin: 0 0 16px; color: #374151;">
-        Overzicht van alle blocks met bookingStatus <strong>DEF</strong> waarvoor nog pickup rooms openstaan in de meest recente snapshot.
+        Overzicht van alle blocks met bookingStatus <strong>DEF</strong> waarvoor nog available rooms openstaan in de meest recente snapshot.
       </p>
       ${sections}
     </div>
