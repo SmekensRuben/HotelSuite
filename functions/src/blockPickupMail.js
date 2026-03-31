@@ -42,6 +42,10 @@ function getAvailableRoomsValue(allotmentDateEntry) {
   return Number(allotmentDateEntry?.availableRooms ?? 0);
 }
 
+function getPickupRoomsValue(allotmentDateEntry) {
+  return Number(allotmentDateEntry?.pickupRooms ?? allotmentDateEntry?.pickuprooms ?? 0);
+}
+
 function formatPickupSummaries(allotmentDates) {
   if (!Array.isArray(allotmentDates)) return [];
 
@@ -49,9 +53,15 @@ function formatPickupSummaries(allotmentDates) {
     .map((entry) => ({
       allotmentDate: String(entry?.allotmentDate || '').trim(),
       availableRooms: getAvailableRoomsValue(entry),
+      initialRooms: Number(entry?.initialRooms ?? 0),
+      allottedRooms: Number(entry?.allottedRooms ?? 0),
+      pickupRooms: getPickupRoomsValue(entry),
     }))
     .filter((entry) => entry.availableRooms > 0)
-    .map((entry) => `${entry.allotmentDate || '-'} (${entry.availableRooms})`);
+    .map(
+      (entry) =>
+        `${entry.allotmentDate || '-'} (available: ${entry.availableRooms}, initial: ${entry.initialRooms}, allotted: ${entry.allottedRooms}, pickup: ${entry.pickupRooms})`
+    );
 }
 
 async function getLatestSnapshotDate(hotelUid) {
@@ -134,7 +144,7 @@ function buildEmailHtml(hotelReports) {
               <th style="padding: 8px; border: 1px solid #e5e7eb;">Allotment code</th>
               <th style="padding: 8px; border: 1px solid #e5e7eb;">Owner code</th>
               <th style="padding: 8px; border: 1px solid #e5e7eb;">Booking status</th>
-              <th style="padding: 8px; border: 1px solid #e5e7eb;">Available rooms per date</th>
+              <th style="padding: 8px; border: 1px solid #e5e7eb;">Room status per date (available, initial, allotted, pickup)</th>
             </tr>
           </thead>
           <tbody>
@@ -149,7 +159,7 @@ function buildEmailHtml(hotelReports) {
     <div style="font-family: Arial, sans-serif; color: #111827;">
       <h1 style="margin: 0 0 12px; font-size: 20px;">Scheduled block pickup report</h1>
       <p style="margin: 0 0 16px; color: #374151;">
-        Overzicht van alle blocks met bookingStatus <strong>DEF</strong> waarvoor nog available rooms openstaan in de meest recente snapshot.
+        Please review the blocks below with open available rooms and check whether rooms can be washed and whether rooming lists can be requested from the clients.
       </p>
       ${sections}
     </div>
@@ -213,7 +223,13 @@ async function sendScheduledBlockPickupReportHandler() {
   const resend = new Resend(resendApiKey);
 
   const totalGroups = hotelReports.reduce((sum, report) => sum + report.groups.length, 0);
-  const subject = `Block pickup report (${totalGroups} open blocks)`;
+    const currentDate = new Intl.DateTimeFormat('en-CA', {
+    timeZone: DEFAULT_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const subject = `${currentDate} - Possible group washes & Rooming Lists`;
   const html = buildEmailHtml(hotelReports);
 
   const response = await resend.emails.send({
@@ -221,7 +237,9 @@ async function sendScheduledBlockPickupReportHandler() {
     to,
     subject,
     html,
-    text: `Scheduled block pickup report met ${totalGroups} open blocks over ${hotelReports.length} hotel(s).`,
+    text:
+      `Please review the open available rooms for possible group washes and request rooming lists from clients when possible. ` +
+      `Open blocks: ${totalGroups} across ${hotelReports.length} hotel(s).`,
   });
 
   await db.doc(SCHEDULED_MAIL_DOC_PATH).set(
