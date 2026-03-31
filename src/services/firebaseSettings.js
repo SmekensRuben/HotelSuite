@@ -413,6 +413,7 @@ function normalizeDateFormat(value) {
     "dd/MM/yyyy",
     "dd-MM-yyyy",
     "dd-MM-yy",
+    "dd-MMM-yy",
     "MM-dd-yyyy",
     "yyyy/MM/dd",
     "dd.MM.yyyy",
