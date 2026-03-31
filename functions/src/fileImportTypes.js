@@ -325,6 +325,12 @@ function getXmlNodeByPath(value, pathSegments) {
 }
 
 function resolveXmlSourceValue(recordNode, mapping, flattenedRecord) {
+  const resolveFirstValue = (value) => {
+    if (!Array.isArray(value)) return value;
+    if (value.length === 0) return undefined;
+    return resolveFirstValue(value[0]);
+  };
+
   const pathSegments = String(mapping?.sourceField || "")
     .split(".")
     .map((segment) => segment.trim())
@@ -333,7 +339,7 @@ function resolveXmlSourceValue(recordNode, mapping, flattenedRecord) {
   if (pathSegments.length > 0) {
     const directValue = getXmlNodeByPath(recordNode, pathSegments);
     if (directValue !== undefined) {
-      return directValue;
+      return mapping?.targetType === "list" ? directValue : resolveFirstValue(directValue);
     }
 
     const nestedNodeMatches = collectValuesByNodeName(recordNode, normalizeLookupKey(pathSegments[pathSegments.length - 1]));
@@ -352,7 +358,8 @@ function resolveXmlSourceValue(recordNode, mapping, flattenedRecord) {
     }
   }
 
-  return flattenedRecord?.[mapping?.sourceFieldKey];
+  const flattenedValue = flattenedRecord?.[mapping?.sourceFieldKey];
+  return mapping?.targetType === "list" ? flattenedValue : resolveFirstValue(flattenedValue);
 }
 
 function mapXmlObject(recordNode, mappings) {
