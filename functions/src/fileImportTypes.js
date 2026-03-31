@@ -595,24 +595,35 @@ function parseDateFromFormat(value, format) {
   const raw = String(value || "").trim();
   const normalizedFormat = String(format || "").trim();
   if (!raw) return null;
+  const monthAbbreviations = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+  const monthLookup = monthAbbreviations.reduce((lookup, month, index) => {
+    lookup[month] = index + 1;
+    return lookup;
+  }, {});
 
   const tokenPattern = normalizedFormat
     .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
     .replace(/yyyy/g, "(\\d{4})")
     .replace(/yy/g, "(\\d{2})")
+    .replace(/MMM/g, "([A-Za-z]{3})")
     .replace(/MM/g, "(\\d{1,2})")
     .replace(/dd/g, "(\\d{1,2})");
   const match = new RegExp(`^${tokenPattern}$`).exec(raw);
   if (!match) return null;
 
-  const tokenMatches = normalizedFormat.match(/yyyy|yy|MM|dd/g) || [];
+  const tokenMatches = normalizedFormat.match(/yyyy|yy|MMM|MM|dd/g) || [];
   const tokenValues = {};
   tokenMatches.forEach((token, index) => {
-    tokenValues[token] = Number(match[index + 1]);
+    const matchedValue = match[index + 1];
+    if (token === "MMM") {
+      tokenValues[token] = monthLookup[String(matchedValue || "").toUpperCase()];
+      return;
+    }
+    tokenValues[token] = Number(matchedValue);
   });
 
   const year = tokenValues.yyyy ?? (tokenValues.yy !== undefined ? 2000 + tokenValues.yy : undefined);
-  const month = tokenValues.MM;
+  const month = tokenValues.MM ?? tokenValues.MMM;
   const day = tokenValues.dd;
   if (!year || !month || !day) return null;
 
@@ -631,15 +642,17 @@ function parseDateFromFormat(value, format) {
 
 function formatParsedDate(parts, format) {
   if (!parts) return "";
+  const monthAbbreviations = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
   const tokens = {
     yyyy: String(parts.year).padStart(4, "0"),
     yy: String(parts.year % 100).padStart(2, "0"),
+    MMM: monthAbbreviations[(parts.month || 1) - 1] || "",
     MM: String(parts.month).padStart(2, "0"),
     dd: String(parts.day).padStart(2, "0"),
   };
 
-  return String(format || "yyyy-MM-dd").replace(/yyyy|yy|MM|dd/g, (token) => tokens[token] || token);
+  return String(format || "yyyy-MM-dd").replace(/yyyy|yy|MMM|MM|dd/g, (token) => tokens[token] || token);
 }
 
 function convertDateValue(value, importFormat, targetFormat) {
