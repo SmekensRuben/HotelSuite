@@ -118,35 +118,18 @@ async function getGroupsForSnapshotDate(hotelUid, snapshotDate) {
 }
 
 function calculateEmailSummary(hotelReports) {
-  const ownerNotPickedUpTotals = {};
-  let totalNotPickedUp = 0;
-
-  hotelReports.forEach((report) => {
-    report.groups.forEach((group) => {
-      const ownerCode = String(group.ownerCode || '').trim() || '-';
-      const ownerTotal = group.pickupSummaries.reduce((sum, pickup) => sum + Number(pickup.availableRooms || 0), 0);
-      totalNotPickedUp += ownerTotal;
-      ownerNotPickedUpTotals[ownerCode] = (ownerNotPickedUpTotals[ownerCode] || 0) + ownerTotal;
-    });
-  });
-
-  const ownerRowsHtml = Object.entries(ownerNotPickedUpTotals)
-    .sort(([ownerA], [ownerB]) => ownerA.localeCompare(ownerB))
-    .map(
-      ([ownerCode, total]) => `
-        <tr>
-          <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeHtml(ownerCode)}</td>
-          <td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeHtml(String(total))}</td>
-        </tr>
-      `
-    )
-    .join('');
-
-  return { totalNotPickedUp, ownerRowsHtml };
+  return hotelReports.reduce((totalNotPickedUp, report) => {
+    const reportTotal = report.groups.reduce(
+      (groupSum, group) =>
+        groupSum + group.pickupSummaries.reduce((pickupSum, pickup) => pickupSum + Number(pickup.availableRooms || 0), 0),
+      0
+    );
+    return totalNotPickedUp + reportTotal;
+  }, 0);
 }
 
 function buildEmailHtml(hotelReports) {
-  const summary = calculateEmailSummary(hotelReports);
+  const totalNotPickedUp = calculateEmailSummary(hotelReports);
 
   const sections = hotelReports
     .map((report) => {
@@ -210,19 +193,8 @@ function buildEmailHtml(hotelReports) {
 
       <h2 style="margin: 0 0 8px; font-size: 18px;">Summary</h2>
       <p style="margin: 0 0 12px; color: #374151;">Total NOT PICKED UP: <strong>${escapeHtml(
-        String(summary.totalNotPickedUp)
+        String(totalNotPickedUp)
       )}</strong></p>
-      <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 16px; max-width: 480px;">
-        <thead>
-          <tr style="background: #f3f4f6; text-align: left;">
-            <th style="padding: 8px; border: 1px solid #e5e7eb;">Owner code</th>
-            <th style="padding: 8px; border: 1px solid #e5e7eb;">Total NOT PICKED UP</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${summary.ownerRowsHtml}
-        </tbody>
-      </table>
 
       ${sections}
     </div>
