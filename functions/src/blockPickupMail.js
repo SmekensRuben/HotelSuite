@@ -95,15 +95,25 @@ async function getGroupsForSnapshotDate(hotelUid, snapshotDate) {
       const pickupSummaries = formatPickupSummaries(data.allotmentDates);
       if (bookingStatus !== 'DEF' || !pickupSummaries.length) return null;
 
+      const beginDate =
+        normalizeDateValue(data.beginDate) || pickupSummaries.map((entry) => entry.allotmentDate).sort()[0] || null;
+
       return {
         description: String(data.description || '').trim(),
         allotmentCode: String(data.allotmentCode || '').trim(),
         ownerCode: String(data.ownerCode || '').trim(),
+        beginDate,
         bookingStatus,
         pickupSummaries,
       };
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (!a.beginDate && !b.beginDate) return 0;
+      if (!a.beginDate) return 1;
+      if (!b.beginDate) return -1;
+      return a.beginDate.localeCompare(b.beginDate);
+    });
 }
 
 function buildEmailHtml(hotelReports) {
