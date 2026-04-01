@@ -216,6 +216,7 @@ async function sendScheduledBlockPickupReportHandler() {
 
   const scheduleConfig = scheduleSnap.data() || {};
   const to = sanitizeEmails(scheduleConfig.mailto);
+  const cc = sanitizeEmails(scheduleConfig.mailtoCC);
   const hotelUids = sanitizeHotelUids(scheduleConfig.hotelUids);
 
   if (!to.length) throw new Error('No valid mailto addresses found in scheduledBlockPickupMail');
@@ -270,6 +271,7 @@ async function sendScheduledBlockPickupReportHandler() {
   const response = await resend.emails.send({
     from: resendFrom,
     to,
+    cc,
     subject,
     html,
     text:
@@ -281,6 +283,7 @@ async function sendScheduledBlockPickupReportHandler() {
     {
       lastSentAt: admin.firestore.FieldValue.serverTimestamp(),
       lastSentTo: to,
+      lastSentCc: cc,
       lastHotelUids: hotelUids,
       lastGroupCount: totalGroups,
       lastHotelCount: hotelReports.length,
@@ -293,6 +296,7 @@ async function sendScheduledBlockPickupReportHandler() {
 
   logger.info('Scheduled block pickup report sent', {
     recipients: to.length,
+    ccRecipients: cc.length,
     hotelCount: hotelReports.length,
     groupCount: totalGroups,
   });
