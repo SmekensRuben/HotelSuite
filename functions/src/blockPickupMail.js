@@ -3,6 +3,7 @@ const { onSchedule, logger, admin, Resend, RESEND_API_KEY, RESEND_FROM } = requi
 const db = admin.firestore();
 const SCHEDULED_MAIL_DOC_PATH = 'scheduledMails/scheduledBlockPickupMail';
 const DEFAULT_TIMEZONE = 'Europe/Amsterdam';
+const QUALIFYING_BOOKING_STATUSES = new Set(['DEF', 'TE1', 'TE2', 'ACT']);
 
 function sanitizeEmails(value) {
   if (!Array.isArray(value)) return [];
@@ -93,7 +94,7 @@ async function getGroupsForSnapshotDate(hotelUid, snapshotDate) {
       const data = docSnap.data() || {};
       const bookingStatus = String(data.bookingStatus || '').trim();
       const pickupSummaries = formatPickupSummaries(data.allotmentDates);
-      if (bookingStatus !== 'DEF' || !pickupSummaries.length) return null;
+      if (!QUALIFYING_BOOKING_STATUSES.has(bookingStatus) || !pickupSummaries.length) return null;
 
       const beginDate =
         normalizeDateValue(data.beginDate) || pickupSummaries.map((entry) => entry.allotmentDate).sort()[0] || null;
@@ -116,7 +117,20 @@ async function getGroupsForSnapshotDate(hotelUid, snapshotDate) {
     });
 }
 
+function calculateEmailSummary(hotelReports) {
+  return hotelReports.reduce((totalNotPickedUp, report) => {
+    const reportTotal = report.groups.reduce(
+      (groupSum, group) =>
+        groupSum + group.pickupSummaries.reduce((pickupSum, pickup) => pickupSum + Number(pickup.availableRooms || 0), 0),
+      0
+    );
+    return totalNotPickedUp + reportTotal;
+  }, 0);
+}
+
 function buildEmailHtml(hotelReports) {
+  const totalNotPickedUp = calculateEmailSummary(hotelReports);
+
   const sections = hotelReports
     .map((report) => {
       const rowsHtml = report.groups
@@ -148,9 +162,9 @@ function buildEmailHtml(hotelReports) {
         <h2 style="margin: 24px 0 8px; font-size: 18px;">${escapeHtml(report.hotelName)} (${escapeHtml(
         report.hotelUid
       )})</h2>
-        <p style="margin: 0 0 12px; color: #374151;">Snapshot datum: <strong>${escapeHtml(
+        <p style="margin: 0 0 12px; color: #374151;">Snapshot date: <strong>${escapeHtml(
           report.snapshotDate
-        )}</strong> · Openstaande blocks: <strong>${report.groups.length}</strong></p>
+        )}</strong> · Open blocks: <strong>${report.groups.length}</strong></p>
         <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 12px;">
           <thead>
             <tr style="background: #f3f4f6; text-align: left;">
@@ -176,6 +190,12 @@ function buildEmailHtml(hotelReports) {
       <p style="margin: 0 0 16px; color: #374151;">
         Please review the blocks below with open available rooms and check whether rooms can be washed and whether rooming lists can be requested from the clients.
       </p>
+
+      <h2 style="margin: 0 0 8px; font-size: 18px;">Summary</h2>
+      <p style="margin: 0 0 12px; color: #374151;">Total NOT PICKED UP: <strong>${escapeHtml(
+        String(totalNotPickedUp)
+      )}</strong></p>
+
       ${sections}
     </div>
   `;
@@ -238,7 +258,7 @@ async function sendScheduledBlockPickupReportHandler() {
   const resend = new Resend(resendApiKey);
 
   const totalGroups = hotelReports.reduce((sum, report) => sum + report.groups.length, 0);
-    const currentDate = new Intl.DateTimeFormat('en-CA', {
+  const currentDate = new Intl.DateTimeFormat('en-CA', {
     timeZone: DEFAULT_TIMEZONE,
     year: 'numeric',
     month: '2-digit',
