@@ -437,12 +437,88 @@ function parseXmlDocuments(content, fileImportType) {
     .filter(Boolean);
 }
 
+function resolveJsonRecordNodes(parsedJson, recordNodePath) {
+  if (Array.isArray(parsedJson)) {
+    return parsedJson;
+  }
+
+  if (!parsedJson || typeof parsedJson !== "object") {
+    return [];
+  }
+
+  const trimmedRecordNodePath = String(recordNodePath || "").trim();
+  if (!trimmedRecordNodePath) {
+    return [parsedJson];
+  }
+
+  const pathSegments = trimmedRecordNodePath
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  const directMatch = getXmlNodeByPath(parsedJson, pathSegments);
+  if (Array.isArray(directMatch)) {
+    return directMatch;
+  }
+  if (directMatch && typeof directMatch === "object") {
+    return [directMatch];
+  }
+
+  const nestedNodeMatches = collectValuesByNodeName(
+    parsedJson,
+    normalizeLookupKey(pathSegments[pathSegments.length - 1] || "")
+  );
+  return nestedNodeMatches.filter((entry) => entry && typeof entry === "object");
+}
+
+function parseJsonDocuments(content, fileImportType) {
+  const normalizedMappings = normalizeColumnMappings(fileImportType);
+  if (normalizedMappings.length === 0) return [];
+
+  let parsedJson;
+  try {
+    parsedJson = JSON.parse(String(content || ""));
+  } catch (error) {
+    logger.warn("JSON import skipped: invalid JSON payload", {
+      fileImportTypeId: String(fileImportType?.id || ""),
+      message: error?.message || String(error),
+    });
+    return [];
+  }
+
+  const recordNodes = resolveJsonRecordNodes(parsedJson, fileImportType?.recordNodeName);
+  if (recordNodes.length === 0) return [];
+
+  return recordNodes
+    .map((recordNode, index) => {
+      const { mappedDocument, shouldSkip } = mapXmlObject(recordNode, normalizedMappings);
+      if (shouldSkip || !hasMappedValue(mappedDocument)) return null;
+
+      return {
+        rowIndex: index,
+        mappedDocument,
+      };
+    })
+    .filter(Boolean);
+}
+
 function parseImportedDocuments(content, fileImportType) {
   const parserType = String(fileImportType?.parserType || "csv").trim().toLowerCase();
   if (parserType === "xml") {
     return parseXmlDocuments(content, fileImportType);
   }
+  if (parserType === "json") {
+    return parseJsonDocuments(content, fileImportType);
+  }
   return parseCsvDocuments(content, fileImportType);
+}
+
+async function streamToUtf8(fileStream) {
+  const chunks = [];
+  for await (const chunk of fileStream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 async function processCsvDocumentsStream(fileStream, fileImportType, onMappedDocument) {
@@ -589,6 +665,18 @@ async function processXmlDocumentsStream(fileStream, fileImportType, onMappedDoc
   parser.close();
   await pendingWrite;
   return processedCount;
+}
+
+async function processJsonDocumentsStream(fileStream, fileImportType, onMappedDocument) {
+  const content = await streamToUtf8(fileStream);
+  const mappedDocuments = parseJsonDocuments(content, fileImportType);
+
+  for (const documentRow of mappedDocuments) {
+    // eslint-disable-next-line no-await-in-loop
+    await onMappedDocument(documentRow);
+  }
+
+  return mappedDocuments.length;
 }
 
 function parseDateFromFormat(value, format) {
@@ -1231,7 +1319,7 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
   }
 
   const parserType = String(fileImportType.parserType || "csv").trim().toLowerCase() || "csv";
-  if (!["csv", "xml"].includes(parserType)) {
+  if (!["csv", "xml", "json"].includes(parserType)) {
     logger.warn("Import skipped: unsupported parserType", {
       objectName,
       hotelUid,
@@ -1254,6 +1342,11 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
     onEachMappedDocument: async (onMappedDocument) => {
       if (parserType === "xml") {
         await processXmlDocumentsStream(sourceFile.createReadStream(), fileImportType, onMappedDocument);
+        return;
+      }
+
+      if (parserType === "json") {
+        await processJsonDocumentsStream(sourceFile.createReadStream(), fileImportType, onMappedDocument);
         return;
       }
 

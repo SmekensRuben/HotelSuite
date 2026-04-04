@@ -94,6 +94,7 @@ function MappingEditor({
   path = [],
 }) {
   const isXmlParser = parserType === "xml";
+  const isJsonParser = parserType === "json";
   const isCsvParser = parserType === "csv";
   const availableTargetTypeOptions = [...baseTargetTypeOptions, { value: "list", label: "List" }];
 
@@ -113,7 +114,7 @@ function MappingEditor({
           <div key={rowKey} className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_180px_180px_180px_180px_auto]">
               <Field
-                label={isListMapping ? (isXmlParser ? "Source List Node" : "Source Field") : "Source Field"}
+                label={isListMapping ? ((isXmlParser || isJsonParser) ? "Source List Node" : "Source Field") : "Source Field"}
                 htmlFor={`source-field-${mappingPath.join("-")}`}
                 hint={
                   isListMapping && isCsvParser
@@ -130,10 +131,10 @@ function MappingEditor({
                   className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
                   placeholder={
                     isListMapping
-                      ? isXmlParser
+                      ? (isXmlParser || isJsonParser)
                         ? "Items.Item"
                         : "Not used for CSV lists"
-                      : isXmlParser
+                      : (isXmlParser || isJsonParser)
                         ? "ProductCode"
                         : "sku"
                   }
@@ -250,7 +251,7 @@ function MappingEditor({
                 <div className="mb-3 flex items-center justify-between gap-4">
                   <div>
                     <h3 className="text-sm font-semibold text-gray-900">List item mappings</h3>
-                    <p className="text-xs text-gray-500">{isXmlParser ? "Map fields inside each XML node of this list to properties on the target list item." : "Map fields from the same CSV row to properties on one list item. Rows with the same documentId will append new list items instead of overwriting the document."}</p>
+                    <p className="text-xs text-gray-500">{(isXmlParser || isJsonParser) ? "Map fields inside each object of this list to properties on the target list item." : "Map fields from the same CSV row to properties on one list item. Rows with the same documentId will append new list items instead of overwriting the document."}</p>
                   </div>
                   <button
                     type="button"
@@ -320,6 +321,7 @@ export default function FileImportTypeForm({
   submitLabel,
 }) {
   const isXmlParser = formValues.parserType === "xml";
+  const isJsonParser = formValues.parserType === "json";
 
   const databaseFieldOptions = useMemo(
     () =>
@@ -356,14 +358,19 @@ export default function FileImportTypeForm({
           >
             <option value="csv">CSV</option>
             <option value="xml">XML</option>
+            <option value="json">JSON</option>
           </select>
         </Field>
 
-        {isXmlParser ? (
+        {(isXmlParser || isJsonParser) ? (
           <Field
-            label="Record Node Name"
+            label={isJsonParser ? "Record Node Path" : "Record Node Name"}
             htmlFor="record-node-name"
-            hint="Required for XML imports. This is the repeating XML node that represents one record; source fields map to child nodes within it."
+            hint={
+              isJsonParser
+                ? "Optional for JSON imports. Use dot notation (for example: items.records) when records are nested. Leave empty when the root JSON value is already one record or an array of records."
+                : "Required for XML imports. This is the repeating XML node that represents one record; source fields map to child nodes within it."
+            }
           >
             <input
               id="record-node-name"
@@ -371,7 +378,7 @@ export default function FileImportTypeForm({
               value={formValues.recordNodeName}
               onChange={onChange("recordNodeName")}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-              placeholder="record"
+              placeholder={isJsonParser ? "items.records" : "record"}
               required={isXmlParser}
             />
           </Field>
@@ -517,7 +524,7 @@ export default function FileImportTypeForm({
           htmlFor="target-date-source-field"
           hint={
             formValues.targetDateSourceType === "databaseField"
-              ? `Choose a database field from the configured column mappings. The mapped ${isXmlParser ? "XML node value" : "source value"} will later be parsed as a date.`
+              ? `Choose a database field from the configured column mappings. The mapped ${(isXmlParser || isJsonParser) ? "node/path value" : "source value"} will later be parsed as a date.`
               : "Only used when Date Source is set to Database Field."
           }
         >
@@ -537,7 +544,7 @@ export default function FileImportTypeForm({
           </select>
         </Field>
 
-        {!isXmlParser ? (
+        {formValues.parserType === "csv" ? (
           <Field
             label="Record Parsing Mode"
             htmlFor="record-parsing-mode"
@@ -558,7 +565,7 @@ export default function FileImportTypeForm({
           </Field>
         ) : null}
 
-        {!isXmlParser ? (
+        {formValues.parserType === "csv" ? (
           <Field
             label="Expected Column Count"
             htmlFor="expected-column-count"
@@ -589,7 +596,7 @@ export default function FileImportTypeForm({
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        {!isXmlParser ? (
+        {formValues.parserType === "csv" ? (
           <label className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
             <input
               type="checkbox"
@@ -619,7 +626,7 @@ export default function FileImportTypeForm({
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Column Mappings</h2>
             <p className="text-sm text-gray-500">
-              Map source fields to database fields. For XML imports, source fields are child nodes inside the configured record node, and list mappings can contain nested mappings for each XML list item.
+              Map source fields to database fields. For XML and JSON imports, source fields can point to nested node/path values, and list mappings can contain nested mappings for each list item.
             </p>
           </div>
           <button
