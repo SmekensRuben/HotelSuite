@@ -83,10 +83,11 @@ function getFirstAvailableImportAttachment(payload = {}) {
     const isCsv = lowerFilename.endsWith(".csv") || contentType.includes("text/csv") || contentType.includes("csv");
     const isTxt = lowerFilename.endsWith(".txt") || contentType.includes("text/plain") || contentType.includes("plain");
     const isXml = lowerFilename.endsWith(".xml") || contentType.includes("application/xml") || contentType.includes("text/xml") || contentType.includes("xml");
-    if (!isCsv && !isTxt && !isXml) continue;
+    const isJson = lowerFilename.endsWith(".json") || contentType.includes("application/json") || contentType.includes("text/json") || contentType.includes("json");
+    if (!isCsv && !isTxt && !isXml && !isJson) continue;
 
-    const extension = isTxt ? "txt" : (isXml ? "xml" : "csv");
-    const normalizedContentType = isTxt ? "text/plain" : (isXml ? "application/xml" : "text/csv");
+    const extension = isTxt ? "txt" : (isXml ? "xml" : (isJson ? "json" : "csv"));
+    const normalizedContentType = isTxt ? "text/plain" : (isXml ? "application/xml" : (isJson ? "application/json" : "text/csv"));
 
     return {
       id: String(attachment.id || attachment.attachmentId || "").trim(),

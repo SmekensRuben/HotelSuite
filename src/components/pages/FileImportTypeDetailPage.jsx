@@ -157,8 +157,8 @@ export default function FileImportTypeDetailPage() {
                 <DetailField label="Parser Type" value={fileImportType.parserType} />
                 <DetailField label="Delimiter" value={fileImportType.parserType === "csv" ? fileImportType.delimiter : "-"} />
                 <DetailField
-                  label="Record Node Name"
-                  value={fileImportType.parserType === "xml" ? fileImportType.recordNodeName : "-"}
+                  label={fileImportType.parserType === "json" ? "Record Node Path" : "Record Node Name"}
+                  value={fileImportType.parserType === "xml" || fileImportType.parserType === "json" ? fileImportType.recordNodeName : "-"}
                 />
                 <DetailField label="Has Header Row" value={fileImportType.hasHeaderRow ? "Yes" : "No"} />
                 <DetailField label="Target Collection" value={fileImportType.targetCollection} />

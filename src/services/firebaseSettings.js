@@ -445,8 +445,8 @@ function sanitizeColumnMappings(columnMappings, parserType) {
       const normalizedMapping = normalizeColumnMapping(mapping);
 
       if (normalizedMapping.targetType === "list") {
-        if (parserType !== "xml" && parserType !== "csv") {
-          throw new Error("List target type is alleen beschikbaar voor CSV en XML imports");
+        if (!["xml", "csv", "json"].includes(parserType)) {
+          throw new Error("List target type is alleen beschikbaar voor CSV, XML en JSON imports");
         }
 
         normalizedMapping.seperator = ",";
@@ -570,8 +570,8 @@ function buildFileImportTypePayload(input, existingId = null) {
     throw new Error("File type is verplicht");
   }
 
-  if (!["csv", "xml"].includes(payload.parserType)) {
-    throw new Error("Parser type moet CSV of XML zijn");
+  if (!["csv", "xml", "json"].includes(payload.parserType)) {
+    throw new Error("Parser type moet CSV, XML of JSON zijn");
   }
 
   if (payload.parserType === "xml" && !payload.recordNodeName) {
