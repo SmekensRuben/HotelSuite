@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ShoppingCart, Trash2 } from "lucide-react";
+import { ArrowLeft, MessageSquarePlus, ShoppingCart, Trash2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
@@ -38,6 +38,9 @@ export default function ShoppingCartPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [showDeliveryAdjustmentsModal, setShowDeliveryAdjustmentsModal] = useState(false);
   const [deliveryAdjustments, setDeliveryAdjustments] = useState([]);
+  const [showNoteModal, setShowNoteModal] = useState(false);
+  const [activeNoteRow, setActiveNoteRow] = useState(null);
+  const [noteDraft, setNoteDraft] = useState("");
 
   const getTomorrowIsoDate = () => {
     const tomorrow = new Date();
@@ -193,16 +196,19 @@ export default function ShoppingCartPage() {
       label: "Note",
       sortable: false,
       render: (row) => (
-        <input
-          type="text"
-          defaultValue={row.note}
-          onBlur={async (event) => {
-            await updateShoppingCartItemNote(hotelUid, cartId, row.supplierProductId, event.target.value);
-            await refreshCart();
+        <button
+          type="button"
+          onClick={() => {
+            setActiveNoteRow(row);
+            setNoteDraft(row.note || "");
+            setShowNoteModal(true);
           }}
-          placeholder="Add note"
-          className="w-52 border border-gray-300 rounded px-2 py-1"
-        />
+          className="inline-flex items-center justify-center rounded border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-100"
+          title={row.note ? "Edit note" : "Add note"}
+          aria-label={row.note ? "Edit note" : "Add note"}
+        >
+          <MessageSquarePlus className="h-4 w-4" />
+        </button>
       ),
     },
     {
@@ -329,6 +335,59 @@ export default function ShoppingCartPage() {
             className="px-4 py-2 rounded bg-[#b41f1f] text-white hover:bg-[#961919] disabled:opacity-50"
           >
             {creatingOrder ? "Creating..." : "Create"}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={showNoteModal}
+        onClose={() => {
+          setShowNoteModal(false);
+          setActiveNoteRow(null);
+          setNoteDraft("");
+        }}
+        title={activeNoteRow?.note ? "Edit note" : "Add note"}
+      >
+        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
+          Note
+          <textarea
+            value={noteDraft}
+            onChange={(event) => setNoteDraft(event.target.value)}
+            rows={4}
+            placeholder="Type your note..."
+            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+          />
+        </label>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setShowNoteModal(false);
+              setActiveNoteRow(null);
+              setNoteDraft("");
+            }}
+            className="px-4 py-2 rounded border border-gray-300 text-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              if (!activeNoteRow) return;
+              await updateShoppingCartItemNote(
+                hotelUid,
+                cartId,
+                activeNoteRow.supplierProductId,
+                noteDraft.trim()
+              );
+              setShowNoteModal(false);
+              setActiveNoteRow(null);
+              setNoteDraft("");
+              await refreshCart();
+            }}
+            className="px-4 py-2 rounded bg-[#b41f1f] text-white hover:bg-[#961919]"
+          >
+            Save
           </button>
         </div>
       </Modal>
