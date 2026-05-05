@@ -13,6 +13,7 @@ import { getOutlets } from "../../services/firebaseSettings";
 import {
   getShoppingCart,
   removeShoppingCartItem,
+  updateShoppingCartItemNote,
   updateShoppingCartItemOutlet,
   updateShoppingCartItemQty,
 } from "../../services/firebaseShoppingCarts";
@@ -110,6 +111,7 @@ export default function ShoppingCartPage() {
       supplierProductId: item.supplierProductId,
       qtyPurchaseUnits: qty,
       outletId: item.outletId || "",
+      note: String(item.note || ""),
     };
   });
 
@@ -185,6 +187,24 @@ export default function ShoppingCartPage() {
     },
     { key: "unitPrice", label: "Prijs / stuk" },
     { key: "subtotal", label: "Totaal" },
+
+    {
+      key: "note",
+      label: "Note",
+      sortable: false,
+      render: (row) => (
+        <input
+          type="text"
+          defaultValue={row.note}
+          onBlur={async (event) => {
+            await updateShoppingCartItemNote(hotelUid, cartId, row.supplierProductId, event.target.value);
+            await refreshCart();
+          }}
+          placeholder="Add note"
+          className="w-52 border border-gray-300 rounded px-2 py-1"
+        />
+      ),
+    },
     {
       key: "actions",
       label: "Acties",

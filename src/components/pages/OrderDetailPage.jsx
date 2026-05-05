@@ -235,6 +235,8 @@ export default function OrderDetailPage() {
       qty,
       price: `${unitPrice.toFixed(2)} ${item.currency || order.currency || "EUR"}`,
       subtotal: `${(unitPrice * qty).toFixed(2)} ${item.currency || order.currency || "EUR"}`,
+      note: String(item.note || "").trim(),
+      hasNote: String(item.note || "").trim() ? "Yes" : "-",
     };
   });
 
@@ -244,6 +246,12 @@ export default function OrderDetailPage() {
     { key: "purchaseUnit", label: "Purchase Unit" },
     { key: "content", label: "Content" },
     { key: "qty", label: "Qty" },
+    { key: "hasNote", label: "Has note" },
+    {
+      key: "note",
+      label: "Note",
+      render: (row) => (row.note ? <span title={row.note}>{row.note}</span> : <span className="text-gray-400">-</span>),
+    },
     { key: "price", label: "Prijs" },
     { key: "subtotal", label: "Subtotaal" },
   ];
