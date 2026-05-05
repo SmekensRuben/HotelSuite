@@ -12,6 +12,7 @@ import { deleteOrder, getOrderById, updateOrder } from "../../services/firebaseO
 import { getOutletApprovers } from "../../services/firebaseSettings";
 import { getUserDisplayName } from "../../services/firebaseUserManagement";
 import { getSupplier } from "../../services/firebaseSuppliers";
+import { StickyNote } from "lucide-react";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -236,22 +237,24 @@ export default function OrderDetailPage() {
       price: `${unitPrice.toFixed(2)} ${item.currency || order.currency || "EUR"}`,
       subtotal: `${(unitPrice * qty).toFixed(2)} ${item.currency || order.currency || "EUR"}`,
       note: String(item.note || "").trim(),
-      hasNote: String(item.note || "").trim() ? "Yes" : "-",
     };
   });
 
   const columns = [
-    { key: "supplierProductName", label: "Product" },
+    {
+      key: "supplierProductName",
+      label: "Product",
+      render: (row) => (
+        <div className="flex items-start gap-2">
+          {row.note ? <StickyNote className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" title={row.note} /> : null}
+          <span>{row.supplierProductName}</span>
+        </div>
+      ),
+    },
     { key: "supplierSku", label: "SKU" },
     { key: "purchaseUnit", label: "Purchase Unit" },
     { key: "content", label: "Content" },
     { key: "qty", label: "Qty" },
-    { key: "hasNote", label: "Has note" },
-    {
-      key: "note",
-      label: "Note",
-      render: (row) => (row.note ? <span title={row.note}>{row.note}</span> : <span className="text-gray-400">-</span>),
-    },
     { key: "price", label: "Prijs" },
     { key: "subtotal", label: "Subtotaal" },
   ];
