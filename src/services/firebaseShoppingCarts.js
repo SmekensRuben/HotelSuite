@@ -163,6 +163,31 @@ export async function updateShoppingCartItemQty(hotelUid, shoppingCartId, suppli
 }
 
 
+export async function updateShoppingCartItemNote(hotelUid, shoppingCartId, supplierProductId, note) {
+  if (!hotelUid || !shoppingCartId || !supplierProductId) return;
+
+  const cartRef = doc(db, `hotels/${hotelUid}/shoppingCarts`, shoppingCartId);
+  const cartSnap = await getDoc(cartRef);
+  if (!cartSnap.exists()) return;
+
+  const data = cartSnap.data() || {};
+  const currentItems = Array.isArray(data.items) ? data.items : [];
+
+  const nextItems = currentItems.map((item) => {
+    if (item.supplierProductId !== supplierProductId) return item;
+    return {
+      ...item,
+      note: String(note || "").trim(),
+      updatedAt: new Date().toISOString(),
+    };
+  });
+
+  await updateDoc(cartRef, {
+    items: nextItems,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function updateShoppingCartItemOutlet(hotelUid, shoppingCartId, supplierProductId, outletId) {
   if (!hotelUid || !shoppingCartId || !supplierProductId) return;
 
