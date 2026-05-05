@@ -12,6 +12,7 @@ import { deleteOrder, getOrderById, updateOrder } from "../../services/firebaseO
 import { getOutletApprovers } from "../../services/firebaseSettings";
 import { getUserDisplayName } from "../../services/firebaseUserManagement";
 import { getSupplier } from "../../services/firebaseSuppliers";
+import { StickyNote } from "lucide-react";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -40,6 +41,7 @@ export default function OrderDetailPage() {
   const [progressMessage, setProgressMessage] = useState("");
   const [canConfirmOrder, setCanConfirmOrder] = useState(false);
   const [approverWarning, setApproverWarning] = useState("");
+  const [openNoteRowId, setOpenNoteRowId] = useState("");
 
   const today = useMemo(
     () =>
@@ -236,22 +238,39 @@ export default function OrderDetailPage() {
       price: `${unitPrice.toFixed(2)} ${item.currency || order.currency || "EUR"}`,
       subtotal: `${(unitPrice * qty).toFixed(2)} ${item.currency || order.currency || "EUR"}`,
       note: String(item.note || "").trim(),
-      hasNote: String(item.note || "").trim() ? "Yes" : "-",
     };
   });
 
   const columns = [
-    { key: "supplierProductName", label: "Product" },
+    {
+      key: "supplierProductName",
+      label: "Product",
+      render: (row) => (
+        <div className="flex items-start gap-2">
+          {row.note ? (
+            <button
+              type="button"
+              onClick={() => setOpenNoteRowId((current) => (current === row.id ? "" : row.id))}
+              className="mt-0.5 rounded text-amber-500 hover:text-amber-600"
+              aria-label={`Show note for ${row.supplierProductName}`}
+              title="Show note"
+            >
+              <StickyNote className="h-4 w-4 shrink-0" />
+            </button>
+          ) : null}
+          <div className="min-w-0">
+            <span>{row.supplierProductName}</span>
+            {openNoteRowId === row.id && row.note ? (
+              <p className="mt-1 text-xs text-gray-600">{row.note}</p>
+            ) : null}
+          </div>
+        </div>
+      ),
+    },
     { key: "supplierSku", label: "SKU" },
     { key: "purchaseUnit", label: "Purchase Unit" },
     { key: "content", label: "Content" },
     { key: "qty", label: "Qty" },
-    { key: "hasNote", label: "Has note" },
-    {
-      key: "note",
-      label: "Note",
-      render: (row) => (row.note ? <span title={row.note}>{row.note}</span> : <span className="text-gray-400">-</span>),
-    },
     { key: "price", label: "Prijs" },
     { key: "subtotal", label: "Subtotaal" },
   ];
