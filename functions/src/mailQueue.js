@@ -368,6 +368,26 @@ function sanitizeFilenameSegment(value) {
     .slice(0, 80);
 }
 
+
+function buildOrderNotesOverview(order = {}) {
+  const rows = Array.isArray(order.products) ? order.products : [];
+  const noteRows = rows
+    .map((item) => ({
+      product: String(item?.supplierProductName || item?.productName || item?.supplierSku || "Unknown product").trim(),
+      note: String(item?.note || "").trim(),
+    }))
+    .filter((item) => item.note);
+
+  if (!noteRows.length) return "";
+
+  const lines = ["", "Product notes overview:"];
+  noteRows.forEach((item) => {
+    lines.push(`- ${item.product}: ${item.note}`);
+  });
+
+  return lines.join("\n");
+}
+
 function buildOrderExportBaseFilename(order = {}, supplier = {}, hotel = {}) {
   const hotelName = sanitizeFilenameSegment(hotel.hotelName);
   const accountNumber = sanitizeFilenameSegment(resolveOrderAccountNumber(order, supplier));
@@ -385,6 +405,8 @@ async function buildOrderEmailPayload(order, supplier, hotel) {
   const supplierName = String(supplier?.name || "").trim();
   const deliveryDate = String(order?.deliveryDate || "").trim();
 
+  const notesOverview = buildOrderNotesOverview(order);
+
   return {
     to: [to],
     subject: `${accountNumber} - ${hotelName} - Order ${supplierName} - Delivery ${deliveryDate}`,
@@ -393,7 +415,7 @@ async function buildOrderEmailPayload(order, supplier, hotel) {
 In bijlage vind je de order voor:
 - Hotel: ${hotelName || "-"}
 - Accountnummer: ${accountNumber || "-"}
-- Leverdatum: ${deliveryDate || "-"}
+- Leverdatum: ${deliveryDate || "-"}${notesOverview}
 
 Met vriendelijke groeten`,
     attachments: await buildOrderEmailAttachments(order, supplier, hotel),
