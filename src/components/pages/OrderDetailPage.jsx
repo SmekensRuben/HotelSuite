@@ -41,6 +41,7 @@ export default function OrderDetailPage() {
   const [progressMessage, setProgressMessage] = useState("");
   const [canConfirmOrder, setCanConfirmOrder] = useState(false);
   const [approverWarning, setApproverWarning] = useState("");
+  const [openNoteRowId, setOpenNoteRowId] = useState("");
 
   const today = useMemo(
     () =>
@@ -246,8 +247,23 @@ export default function OrderDetailPage() {
       label: "Product",
       render: (row) => (
         <div className="flex items-start gap-2">
-          {row.note ? <StickyNote className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" title={row.note} /> : null}
-          <span>{row.supplierProductName}</span>
+          {row.note ? (
+            <button
+              type="button"
+              onClick={() => setOpenNoteRowId((current) => (current === row.id ? "" : row.id))}
+              className="mt-0.5 rounded text-amber-500 hover:text-amber-600"
+              aria-label={`Show note for ${row.supplierProductName}`}
+              title="Show note"
+            >
+              <StickyNote className="h-4 w-4 shrink-0" />
+            </button>
+          ) : null}
+          <div className="min-w-0">
+            <span>{row.supplierProductName}</span>
+            {openNoteRowId === row.id && row.note ? (
+              <p className="mt-1 text-xs text-gray-600">{row.note}</p>
+            ) : null}
+          </div>
         </div>
       ),
     },
