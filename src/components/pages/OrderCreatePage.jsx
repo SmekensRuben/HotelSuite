@@ -8,6 +8,7 @@ import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSupplierProducts } from "../../services/firebaseProducts";
+import { getSuppliers } from "../../services/firebaseSuppliers";
 import {
   addSupplierProductToShoppingCart,
   getOrCreateShoppingCart,
@@ -27,6 +28,7 @@ export default function OrderCreatePage() {
   const { hotelUid } = useHotelContext();
   const [shoppingCart, setShoppingCart] = useState(null);
   const [products, setProducts] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
@@ -100,8 +102,12 @@ export default function OrderCreatePage() {
     const init = async () => {
       if (!hotelUid) return;
       const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-      const cart = await getOrCreateShoppingCart(hotelUid, actor);
+      const [cart, loadedSuppliers] = await Promise.all([
+        getOrCreateShoppingCart(hotelUid, actor),
+        getSuppliers(hotelUid),
+      ]);
       setShoppingCart(cart);
+      setSuppliers(Array.isArray(loadedSuppliers) ? loadedSuppliers : []);
     };
 
     init();
@@ -113,18 +119,18 @@ export default function OrderCreatePage() {
     loadProductsPage(0, null);
   }, [hotelUid, debouncedSearchTerm, selectedSupplierId, selectedStatus]);
 
-  const supplierOptions = useMemo(() => {
-    const map = new Map();
-    products.forEach((product) => {
-      const supplierId = String(product.supplierId || "").trim();
-      if (!supplierId || map.has(supplierId)) return;
-      map.set(supplierId, String(product.supplierName || supplierId).trim() || supplierId);
-    });
-
-    return Array.from(map.entries())
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [products]);
+  const supplierOptions = useMemo(
+    () =>
+      suppliers
+        .map((supplier) => {
+          const supplierId = String(supplier.id || "").trim();
+          const supplierName = String(supplier.supplierName || supplier.name || supplierId).trim();
+          return supplierId ? { id: supplierId, name: supplierName || supplierId } : null;
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [suppliers]
+  );
 
   const rows = useMemo(
     () =>
