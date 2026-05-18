@@ -279,15 +279,15 @@ export default function OrderDetailPage() {
     const signatureStartY = tableFinalY + 22;
 
     doc.setFontSize(10);
-    doc.text("Naam receiver:", 14, signatureStartY);
+    doc.text("Receiver name:", 14, signatureStartY);
     doc.line(48, signatureStartY, 100, signatureStartY);
-    doc.text("Handtekening receiver:", 112, signatureStartY);
+    doc.text("Receiver signature:", 112, signatureStartY);
     doc.line(162, signatureStartY, 196, signatureStartY);
 
     const secondLineY = signatureStartY + 16;
-    doc.text("Naam manager:", 14, secondLineY);
+    doc.text("Manager name:", 14, secondLineY);
     doc.line(46, secondLineY, 100, secondLineY);
-    doc.text("Handtekening manager:", 112, secondLineY);
+    doc.text("Manager signature:", 112, secondLineY);
     doc.line(162, secondLineY, 196, secondLineY);
 
     doc.save(`order-${orderId}.pdf`);
