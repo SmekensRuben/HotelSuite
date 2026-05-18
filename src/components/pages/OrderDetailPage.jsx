@@ -6,7 +6,7 @@ import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import DataListTable from "../shared/DataListTable";
 import { useTranslation } from "react-i18next";
-import { auth, signOut } from "../../firebaseConfig";
+import { auth, db, doc, getDoc, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { deleteOrder, getOrderById, updateOrder } from "../../services/firebaseOrders";
 import { getOutletApprovers } from "../../services/firebaseSettings";
@@ -36,6 +36,7 @@ export default function OrderDetailPage() {
   const [busy, setBusy] = useState(false);
   const [ordering, setOrdering] = useState(false);
   const [supplierName, setSupplierName] = useState("-");
+  const [pdfHotelName, setPdfHotelName] = useState("-");
   const [supplierOrderSystem, setSupplierOrderSystem] = useState("Email");
   const [actionError, setActionError] = useState("");
   const [confirmSubmitted, setConfirmSubmitted] = useState(false);
@@ -105,6 +106,19 @@ export default function OrderDetailPage() {
     } else {
       setSupplierName("-");
       setSupplierOrderSystem("Email");
+    }
+
+    if (hotelUid) {
+      try {
+        const hotelSnap = await getDoc(doc(db, `hotels/${hotelUid}`));
+        const hotelData = hotelSnap.exists() ? hotelSnap.data() : null;
+        const resolvedHotelName = String(hotelData?.hotelName || "").trim();
+        setPdfHotelName(resolvedHotelName || hotelName || "-");
+      } catch (error) {
+        setPdfHotelName(hotelName || "-");
+      }
+    } else {
+      setPdfHotelName(hotelName || "-");
     }
 
     const currentUid = String(auth.currentUser?.uid || "").trim();
@@ -250,7 +264,7 @@ export default function OrderDetailPage() {
     doc.setFontSize(16);
     doc.text(`Order ${orderId}`, 14, 18);
     doc.setFontSize(11);
-    doc.text(`Hotel: ${hotelName || "-"}`, 14, 26);
+    doc.text(`Hotel: ${pdfHotelName || "-"}`, 14, 26);
     doc.text(`Outlet: ${outletName}`, 14, 32);
     doc.text(`Status: ${order.status || "-"}`, 14, 62);
     doc.text(`Supplier: ${supplierName || order.supplierId || "-"}`, 14, 38);
