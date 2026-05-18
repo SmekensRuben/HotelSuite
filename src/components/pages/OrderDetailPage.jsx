@@ -13,6 +13,8 @@ import { getOutletApprovers } from "../../services/firebaseSettings";
 import { getUserDisplayName } from "../../services/firebaseUserManagement";
 import { getSupplier } from "../../services/firebaseSuppliers";
 import { StickyNote } from "lucide-react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -241,6 +243,37 @@ export default function OrderDetailPage() {
     };
   });
 
+  const downloadOrderPdf = () => {
+    const doc = new jsPDF();
+
+    doc.setFontSize(16);
+    doc.text(`Order ${orderId}`, 14, 18);
+    doc.setFontSize(11);
+    doc.text(`Status: ${order.status || "-"}`, 14, 26);
+    doc.text(`Supplier: ${supplierName || order.supplierId || "-"}`, 14, 32);
+    doc.text(`Delivery Date: ${order.deliveryDate || "-"}`, 14, 38);
+    doc.text(`Created By: ${createdByName || "-"}`, 14, 44);
+    doc.text(`Total: ${Number(order.totalAmount || 0).toFixed(2)} ${order.currency || "EUR"}`, 14, 50);
+
+    autoTable(doc, {
+      startY: 58,
+      head: [["Product", "SKU", "Purchase Unit", "Content", "Qty", "Price", "Subtotal"]],
+      body: rows.map((row) => [
+        row.supplierProductName,
+        row.supplierSku,
+        row.purchaseUnit,
+        row.content,
+        String(row.qty),
+        row.price,
+        row.subtotal,
+      ]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [31, 41, 55] },
+    });
+
+    doc.save(`order-${orderId}.pdf`);
+  };
+
   const columns = [
     {
       key: "supplierProductName",
@@ -282,6 +315,13 @@ export default function OrderDetailPage() {
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-3xl font-semibold">Order Detail</h1>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={downloadOrderPdf}
+              className="px-4 py-2 border border-gray-300 rounded font-semibold hover:bg-gray-100"
+            >
+              Download PDF
+            </button>
             {isCreated && (
               <>
                 <button
