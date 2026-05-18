@@ -360,6 +360,19 @@ async function buildOrderEmailAttachments(order = {}, supplier = {}, hotel = {})
   return [...baseAttachments, ...normalizedExtraAttachments];
 }
 
+
+function sanitizeEmails(value) {
+  const values = Array.isArray(value)
+    ? value
+    : String(value || "")
+      .split(/[;,\n]/)
+      .map((entry) => entry.trim());
+
+  return values
+    .map((entry) => String(entry || "").trim())
+    .filter((entry) => entry && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(entry));
+}
+
 function sanitizeFilenameSegment(value) {
   return String(value || "")
     .trim()
@@ -408,8 +421,11 @@ async function buildOrderEmailPayload(order, supplier, hotel) {
 
   const notesOverview = buildOrderNotesOverview(order);
 
+  const cc = sanitizeEmails(supplier?.orderEmailCC);
+
   return {
     to: [to],
+    cc,
     subject: `${accountNumber} - ${hotelName} - Outlet ${outletName || "-"} - Order ${supplierName} - Delivery ${deliveryDate}`,
     text: `Beste ${supplier?.name || "supplier"},
 
