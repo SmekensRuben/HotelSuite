@@ -27,7 +27,7 @@ export default function OrderDetailPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { orderId } = useParams();
-  const { hotelUid } = useHotelContext();
+  const { hotelUid, hotelName } = useHotelContext();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [createdByName, setCreatedByName] = useState("-");
@@ -245,31 +245,50 @@ export default function OrderDetailPage() {
 
   const downloadOrderPdf = () => {
     const doc = new jsPDF();
+    const outletName = String(order?.outletName || order?.outletId || "-").trim() || "-";
 
     doc.setFontSize(16);
     doc.text(`Order ${orderId}`, 14, 18);
     doc.setFontSize(11);
-    doc.text(`Status: ${order.status || "-"}`, 14, 26);
-    doc.text(`Supplier: ${supplierName || order.supplierId || "-"}`, 14, 32);
-    doc.text(`Delivery Date: ${order.deliveryDate || "-"}`, 14, 38);
-    doc.text(`Created By: ${createdByName || "-"}`, 14, 44);
-    doc.text(`Total: ${Number(order.totalAmount || 0).toFixed(2)} ${order.currency || "EUR"}`, 14, 50);
+    doc.text(`Hotel: ${hotelName || "-"}`, 14, 26);
+    doc.text(`Outlet: ${outletName}`, 14, 32);
+    doc.text(`Status: ${order.status || "-"}`, 14, 62);
+    doc.text(`Supplier: ${supplierName || order.supplierId || "-"}`, 14, 38);
+    doc.text(`Delivery Date: ${order.deliveryDate || "-"}`, 14, 44);
+    doc.text(`Created By: ${createdByName || "-"}`, 14, 50);
+    doc.text(`Total: ${Number(order.totalAmount || 0).toFixed(2)} ${order.currency || "EUR"}`, 14, 56);
 
     autoTable(doc, {
-      startY: 58,
-      head: [["Product", "SKU", "Purchase Unit", "Content", "Qty", "Price", "Subtotal"]],
+      startY: 64,
+      head: [["Product", "SKU", "Purchase Unit", "Content", "Qty", "Received", "Price", "Subtotal"]],
       body: rows.map((row) => [
         row.supplierProductName,
         row.supplierSku,
         row.purchaseUnit,
         row.content,
         String(row.qty),
+        "__________",
         row.price,
         row.subtotal,
       ]),
       styles: { fontSize: 9 },
       headStyles: { fillColor: [31, 41, 55] },
     });
+
+    const tableFinalY = doc.lastAutoTable?.finalY || 64;
+    const signatureStartY = tableFinalY + 22;
+
+    doc.setFontSize(10);
+    doc.text("Naam receiver:", 14, signatureStartY);
+    doc.line(48, signatureStartY, 100, signatureStartY);
+    doc.text("Handtekening receiver:", 112, signatureStartY);
+    doc.line(162, signatureStartY, 196, signatureStartY);
+
+    const secondLineY = signatureStartY + 16;
+    doc.text("Naam manager:", 14, secondLineY);
+    doc.line(46, secondLineY, 100, secondLineY);
+    doc.text("Handtekening manager:", 112, secondLineY);
+    doc.line(162, secondLineY, 196, secondLineY);
 
     doc.save(`order-${orderId}.pdf`);
   };
