@@ -777,7 +777,12 @@ async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', trigger
 }
 
 const sendScheduledOccupancyMail = onSchedule(
-  { schedule: '0 6 * * *', timeZone: DEFAULT_TIMEZONE, secrets: [RESEND_API_KEY, RESEND_FROM] },
+  {
+    schedule: '0 6 * * *',
+    timeZone: DEFAULT_TIMEZONE,
+    memory: '512MiB',
+    secrets: [RESEND_API_KEY, RESEND_FROM],
+  },
   async () => {
     const scheduleSnap = await db.doc(SCHEDULED_MAIL_DOC_PATH).get();
     if (!scheduleSnap.exists) {
