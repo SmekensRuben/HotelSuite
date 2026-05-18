@@ -43,6 +43,16 @@ function formatDeliveryDays(deliveryDays) {
   return sortedDays.map((day) => dayLabels[day]).join(", ");
 }
 
+function formatEmailList(value) {
+  if (Array.isArray(value)) {
+    const normalized = value.map((item) => String(item || "").trim()).filter(Boolean);
+    return normalized.length ? normalized.join(", ") : "-";
+  }
+
+  const normalized = String(value || "").trim();
+  return normalized || "-";
+}
+
 function DetailField({ label, value }) {
   return (
     <div>
@@ -185,6 +195,7 @@ export default function SupplierDetailPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <DetailField label="Order Email" value={supplier.orderEmail} />
                 <DetailField label="Phone" value={supplier.phone} />
+                <DetailField label="Order Email CC" value={formatEmailList(supplier.orderEmailCc)} />
               </div>
               <div className="mt-4">
                 <DetailField label="Notes" value={supplier.notes} />

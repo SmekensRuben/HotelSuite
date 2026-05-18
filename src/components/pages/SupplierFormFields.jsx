@@ -15,6 +15,7 @@ const EMPTY_FORM = {
   name: "",
   accountNumber: "",
   orderEmail: "",
+  orderEmailCc: "",
   phone: "",
   notes: "",
   orderSystem: "Email",
@@ -37,10 +38,17 @@ export default function SupplierFormFields({
   submitLabel = "Save",
   savingLabel = "Saving...",
 }) {
-  const baseValues = useMemo(
-    () => ({ ...EMPTY_FORM, ...(initialValues || {}) }),
-    [initialValues]
-  );
+  const baseValues = useMemo(() => {
+    const mergedValues = { ...EMPTY_FORM, ...(initialValues || {}) };
+    const normalizedOrderEmailCc = Array.isArray(mergedValues.orderEmailCc)
+      ? mergedValues.orderEmailCc.join("\n")
+      : String(mergedValues.orderEmailCc || "");
+
+    return {
+      ...mergedValues,
+      orderEmailCc: normalizedOrderEmailCc,
+    };
+  }, [initialValues]);
 
   const [formValues, setFormValues] = useState(baseValues);
   const [saving, setSaving] = useState(false);
@@ -80,6 +88,11 @@ export default function SupplierFormFields({
       return accumulator;
     }, {});
 
+    payload.orderEmailCc = String(formValues.orderEmailCc || "")
+      .split(/[\n,;]/)
+      .map((emailAddress) => emailAddress.trim())
+      .filter(Boolean);
+
     await onSubmit(payload);
     setSaving(false);
   };
@@ -105,6 +118,15 @@ export default function SupplierFormFields({
             onChange={(value) => setValue("orderEmail", value)}
           />
           <InputField label="Phone" value={formValues.phone} onChange={(value) => setValue("phone", value)} />
+        </div>
+        <TextAreaField
+          label="Order Email CC"
+          value={formValues.orderEmailCc}
+          onChange={(value) => setValue("orderEmailCc", value)}
+          placeholder="finance@example.com, purchasing@example.com"
+        />
+        <div className="text-xs text-gray-500 -mt-2">
+          Voeg meerdere adressen toe, gescheiden door komma's, puntkomma's of een nieuwe regel.
         </div>
         <TextAreaField label="Notes" value={formValues.notes} onChange={(value) => setValue("notes", value)} />
       </section>
