@@ -6,13 +6,15 @@ import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import DataListTable from "../shared/DataListTable";
 import { useTranslation } from "react-i18next";
-import { auth, signOut } from "../../firebaseConfig";
+import { auth, db, doc, getDoc, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { deleteOrder, getOrderById, updateOrder } from "../../services/firebaseOrders";
 import { getOutletApprovers } from "../../services/firebaseSettings";
 import { getUserDisplayName } from "../../services/firebaseUserManagement";
 import { getSupplier } from "../../services/firebaseSuppliers";
 import { StickyNote } from "lucide-react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -25,7 +27,7 @@ export default function OrderDetailPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { orderId } = useParams();
-  const { hotelUid } = useHotelContext();
+  const { hotelUid, hotelName } = useHotelContext();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [createdByName, setCreatedByName] = useState("-");
@@ -34,6 +36,7 @@ export default function OrderDetailPage() {
   const [busy, setBusy] = useState(false);
   const [ordering, setOrdering] = useState(false);
   const [supplierName, setSupplierName] = useState("-");
+  const [pdfHotelName, setPdfHotelName] = useState("-");
   const [supplierOrderSystem, setSupplierOrderSystem] = useState("Email");
   const [actionError, setActionError] = useState("");
   const [confirmSubmitted, setConfirmSubmitted] = useState(false);
@@ -103,6 +106,19 @@ export default function OrderDetailPage() {
     } else {
       setSupplierName("-");
       setSupplierOrderSystem("Email");
+    }
+
+    if (hotelUid) {
+      try {
+        const hotelSnap = await getDoc(doc(db, `hotels/${hotelUid}`));
+        const hotelData = hotelSnap.exists() ? hotelSnap.data() : null;
+        const resolvedHotelName = String(hotelData?.hotelName || "").trim();
+        setPdfHotelName(resolvedHotelName || hotelName || "-");
+      } catch (error) {
+        setPdfHotelName(hotelName || "-");
+      }
+    } else {
+      setPdfHotelName(hotelName || "-");
     }
 
     const currentUid = String(auth.currentUser?.uid || "").trim();
@@ -241,6 +257,56 @@ export default function OrderDetailPage() {
     };
   });
 
+  const downloadOrderPdf = () => {
+    const doc = new jsPDF();
+    const outletName = String(order?.outletName || order?.outletId || "-").trim() || "-";
+
+    doc.setFontSize(16);
+    doc.text(`Order ${orderId}`, 14, 18);
+    doc.setFontSize(11);
+    doc.text(`Hotel: ${pdfHotelName || "-"}`, 14, 26);
+    doc.text(`Outlet: ${outletName}`, 14, 32);
+    doc.text(`Status: ${order.status || "-"}`, 14, 62);
+    doc.text(`Supplier: ${supplierName || order.supplierId || "-"}`, 14, 38);
+    doc.text(`Delivery Date: ${order.deliveryDate || "-"}`, 14, 44);
+    doc.text(`Created By: ${createdByName || "-"}`, 14, 50);
+    doc.text(`Total: ${Number(order.totalAmount || 0).toFixed(2)} ${order.currency || "EUR"}`, 14, 56);
+
+    autoTable(doc, {
+      startY: 64,
+      head: [["Product", "SKU", "Purchase Unit", "Content", "Qty", "Received", "Price", "Subtotal"]],
+      body: rows.map((row) => [
+        row.supplierProductName,
+        row.supplierSku,
+        row.purchaseUnit,
+        row.content,
+        String(row.qty),
+        "__________",
+        row.price,
+        row.subtotal,
+      ]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [31, 41, 55] },
+    });
+
+    const tableFinalY = doc.lastAutoTable?.finalY || 64;
+    const signatureStartY = tableFinalY + 22;
+
+    doc.setFontSize(10);
+    doc.text("Receiver name:", 14, signatureStartY);
+    doc.line(48, signatureStartY, 100, signatureStartY);
+    doc.text("Receiver signature:", 112, signatureStartY);
+    doc.line(162, signatureStartY, 196, signatureStartY);
+
+    const secondLineY = signatureStartY + 16;
+    doc.text("Manager name:", 14, secondLineY);
+    doc.line(46, secondLineY, 100, secondLineY);
+    doc.text("Manager signature:", 112, secondLineY);
+    doc.line(162, secondLineY, 196, secondLineY);
+
+    doc.save(`order-${orderId}.pdf`);
+  };
+
   const columns = [
     {
       key: "supplierProductName",
@@ -282,6 +348,13 @@ export default function OrderDetailPage() {
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-3xl font-semibold">Order Detail</h1>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={downloadOrderPdf}
+              className="px-4 py-2 border border-gray-300 rounded font-semibold hover:bg-gray-100"
+            >
+              Download PDF
+            </button>
             {isCreated && (
               <>
                 <button
