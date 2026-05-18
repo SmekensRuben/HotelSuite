@@ -404,16 +404,18 @@ async function buildOrderEmailPayload(order, supplier, hotel) {
   const hotelName = String(hotel?.hotelName || "").trim();
   const supplierName = String(supplier?.name || "").trim();
   const deliveryDate = String(order?.deliveryDate || "").trim();
+  const outletName = String(order?.outletName || order?.outletId || "").trim();
 
   const notesOverview = buildOrderNotesOverview(order);
 
   return {
     to: [to],
-    subject: `${accountNumber} - ${hotelName} - Order ${supplierName} - Delivery ${deliveryDate}`,
+    subject: `${accountNumber} - ${hotelName} - Outlet ${outletName || "-"} - Order ${supplierName} - Delivery ${deliveryDate}`,
     text: `Beste ${supplier?.name || "supplier"},
 
 In bijlage vind je de order voor:
 - Hotel: ${hotelName || "-"}
+- Outlet: ${outletName || "-"}
 - Accountnummer: ${accountNumber || "-"}
 - Leverdatum: ${deliveryDate || "-"}${notesOverview}
 
