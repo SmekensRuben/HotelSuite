@@ -817,6 +817,14 @@ function resolveCurrentDateWithOffset(offsetDays) {
   return currentDate.toISOString().slice(0, 10);
 }
 
+function resolveCurrentDateWithOffset(offsetDays) {
+  const normalizedOffset = Number.isInteger(Number(offsetDays)) ? Number(offsetDays) : 0;
+  const currentDate = new Date();
+  currentDate.setUTCHours(0, 0, 0, 0);
+  currentDate.setUTCDate(currentDate.getUTCDate() + normalizedOffset);
+  return currentDate.toISOString().slice(0, 10);
+}
+
 function buildDocumentId(mappedRow, fileImportType, fallbackValue) {
   const configuredIdFormat = Array.isArray(fileImportType?.idFormat) ? fileImportType.idFormat : [];
   const configuredSegments = configuredIdFormat
