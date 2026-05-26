@@ -351,6 +351,7 @@ export async function addLocationStockTemplateItem(hotelUid, locationId, templat
     content: String(itemInput?.content || "").trim(),
     outletId: String(itemInput?.outletId || "").trim(),
     outletName: String(itemInput?.outletName || "").trim(),
+    pricePerPurchaseUnit: Number(itemInput?.pricePerPurchaseUnit || 0),
   };
 
   if (!nextItem.supplierProductId || !nextItem.outletId) {
@@ -359,6 +360,17 @@ export async function addLocationStockTemplateItem(hotelUid, locationId, templat
 
   const templateRef = doc(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`, templateId);
   await updateDoc(templateRef, { items: [...template.items, nextItem], updatedAt: new Date() });
+}
+
+
+export async function removeLocationStockTemplateItem(hotelUid, locationId, templateId, itemId) {
+  if (!hotelUid || !locationId || !templateId || !itemId) throw new Error("hotelUid, locationId, templateId en itemId zijn verplicht");
+  const template = await getLocationStockTemplateById(hotelUid, locationId, templateId);
+  if (!template) throw new Error("Stock template niet gevonden");
+
+  const nextItems = (template.items || []).filter((item) => item.id !== itemId);
+  const templateRef = doc(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`, templateId);
+  await updateDoc(templateRef, { items: nextItems, updatedAt: new Date() });
 }
 
 export async function transferOutletsToCollection(hotelUid) {
