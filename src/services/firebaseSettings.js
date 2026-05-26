@@ -223,6 +223,81 @@ export async function setOutletApprovers(hotelUid, outletId, approvers) {
   await batch.commit();
 }
 
+
+
+export async function getLocations(hotelUid) {
+  if (!hotelUid) return [];
+
+  const locationsCol = collection(db, `hotels/${hotelUid}/locations`);
+  const snapshot = await getDocs(locationsCol);
+
+  const locations = snapshot.docs.map((docSnap) => {
+    const data = docSnap.data() || {};
+    const normalizedId = String(data.id || docSnap.id || "").trim();
+
+    return {
+      ...data,
+      id: normalizedId || undefined,
+      name: String(data.name || normalizedId).trim(),
+    };
+  });
+
+  return locations.sort((a, b) =>
+    String(a?.name || "").localeCompare(String(b?.name || ""), undefined, {
+      sensitivity: "base",
+      numeric: true,
+    })
+  );
+}
+
+export async function createLocation(hotelUid, locationInput) {
+  if (!hotelUid) return null;
+
+  const cleanedName = String(locationInput?.name || "").trim();
+  if (!cleanedName) return null;
+
+  const locationsCol = collection(db, `hotels/${hotelUid}/locations`);
+  const locationRef = doc(locationsCol);
+
+  const payload = {
+    id: locationRef.id,
+    name: cleanedName,
+    createdBy: locationInput?.createdBy || null,
+  };
+
+  await setDoc(locationRef, payload);
+  return payload;
+}
+
+export async function getLocationById(hotelUid, locationId) {
+  if (!hotelUid || !locationId) return null;
+
+  const locationRef = doc(db, `hotels/${hotelUid}/locations`, locationId);
+  const snap = await getDoc(locationRef);
+  if (!snap.exists()) return null;
+
+  const data = snap.data() || {};
+  return {
+    ...data,
+    id: String(data.id || snap.id || "").trim() || snap.id,
+    name: String(data.name || "").trim(),
+  };
+}
+
+export async function updateLocation(hotelUid, locationId, locationInput) {
+  if (!hotelUid || !locationId) throw new Error("hotelUid en locationId zijn verplicht");
+
+  const cleanedName = String(locationInput?.name || "").trim();
+  if (!cleanedName) throw new Error("Location name is verplicht");
+
+  const locationRef = doc(db, `hotels/${hotelUid}/locations`, locationId);
+  await updateDoc(locationRef, {
+    name: cleanedName,
+    updatedAt: new Date(),
+    updatedBy: locationInput?.updatedBy || null,
+  });
+}
+
 export async function transferOutletsToCollection(hotelUid) {
   if (!hotelUid) return { transferred: 0 };
 
@@ -747,26 +822,6 @@ export async function deleteProductCategory(key) {
     await updateDoc(settingsDoc, { productCategories });
   }
 }
-
-// LOCATIONS - analoog aan outlets
-export async function getLocations(hotelUid) {
-  // Haal het settings document op voor dit hotel
-  const docRef = doc(db, `hotels/${hotelUid}/settings`, hotelUid);
-  const docSnap = await getDoc(docRef);
-  return docSnap.exists() && Array.isArray(docSnap.data().locations)
-    ? docSnap.data().locations
-    : [];
-}
-
-export async function setLocations(hotelUid, locations) {
-  // Zet locaties als veld in settings document
-  const docRef = doc(db, `hotels/${hotelUid}/settings`, hotelUid);
-  // setDoc({ merge: true }) voorkomt dat je bestaande data overschrijft
-  await setDoc(docRef, { locations }, { merge: true });
-}
-
-
-
 
 // *** UNITS ***
 export async function getUnits(hotelUid) {
