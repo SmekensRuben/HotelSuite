@@ -298,6 +298,69 @@ export async function updateLocation(hotelUid, locationId, locationInput) {
   });
 }
 
+export async function getLocationStockTemplates(hotelUid, locationId) {
+  if (!hotelUid || !locationId) return [];
+  const templatesCol = collection(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`);
+  const snapshot = await getDocs(templatesCol);
+  return snapshot.docs
+    .map((docSnap) => {
+      const data = docSnap.data() || {};
+      return {
+        id: String(data.id || docSnap.id || "").trim() || docSnap.id,
+        name: String(data.name || "").trim(),
+        items: Array.isArray(data.items) ? data.items : [],
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }));
+}
+
+export async function createLocationStockTemplate(hotelUid, locationId, templateName) {
+  if (!hotelUid || !locationId) throw new Error("hotelUid en locationId zijn verplicht");
+  const cleanedName = String(templateName || "").trim();
+  if (!cleanedName) throw new Error("Template name is verplicht");
+  const templatesCol = collection(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`);
+  const templateRef = doc(templatesCol);
+  const payload = { id: templateRef.id, name: cleanedName, items: [], createdAt: new Date() };
+  await setDoc(templateRef, payload);
+  return payload;
+}
+
+export async function getLocationStockTemplateById(hotelUid, locationId, templateId) {
+  if (!hotelUid || !locationId || !templateId) return null;
+  const templateRef = doc(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`, templateId);
+  const snap = await getDoc(templateRef);
+  if (!snap.exists()) return null;
+  const data = snap.data() || {};
+  return {
+    id: String(data.id || snap.id || "").trim() || snap.id,
+    name: String(data.name || "").trim(),
+    items: Array.isArray(data.items) ? data.items : [],
+  };
+}
+
+export async function addLocationStockTemplateItem(hotelUid, locationId, templateId, itemInput) {
+  if (!hotelUid || !locationId || !templateId) throw new Error("hotelUid, locationId en templateId zijn verplicht");
+  const template = await getLocationStockTemplateById(hotelUid, locationId, templateId);
+  if (!template) throw new Error("Stock template niet gevonden");
+
+  const nextItem = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    supplierProductId: String(itemInput?.supplierProductId || "").trim(),
+    supplierProductName: String(itemInput?.supplierProductName || "").trim(),
+    supplierName: String(itemInput?.supplierName || "").trim(),
+    content: String(itemInput?.content || "").trim(),
+    outletId: String(itemInput?.outletId || "").trim(),
+    outletName: String(itemInput?.outletName || "").trim(),
+  };
+
+  if (!nextItem.supplierProductId || !nextItem.outletId) {
+    throw new Error("Supplier product en outlet zijn verplicht");
+  }
+
+  const templateRef = doc(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`, templateId);
+  await updateDoc(templateRef, { items: [...template.items, nextItem], updatedAt: new Date() });
+}
+
 export async function transferOutletsToCollection(hotelUid) {
   if (!hotelUid) return { transferred: 0 };
 
