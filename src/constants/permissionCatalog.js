@@ -5,6 +5,7 @@ export const PERMISSION_CATALOG = {
   orders: ["create", "read", "update", "delete"],
   contracts: ["create", "read", "update", "delete"],
   settings: ["create", "read", "update", "delete"],
+  locations: ["create", "read", "update", "delete"],
   users: ["create", "read", "update", "delete"],
 };
 

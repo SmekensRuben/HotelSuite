@@ -16,6 +16,7 @@ export default function HeaderBar({ today, onLogout }) {
   const canViewOrders = usePermission("orders", "read");
   const canViewContracts = usePermission("contracts", "read");
   const canViewSettings = usePermission("settings", "read");
+  const canViewLocations = usePermission("locations", "read");
   const canViewUsers = usePermission("users", "read");
   const [hotels, setHotels] = useState([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -41,6 +42,12 @@ export default function HeaderBar({ today, onLogout }) {
       action: () => navigate("/settings/outlets"),
       icon: Settings2,
       visible: canViewSettings,
+    },
+    {
+      label: "Location Settings",
+      action: () => navigate("/settings/locations"),
+      icon: Settings2,
+      visible: canViewLocations,
     },
     {
       label: "File Import Settings",

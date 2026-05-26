@@ -24,6 +24,10 @@ import OutletSettingsPage from "./components/pages/OutletSettingsPage.jsx";
 import OutletCreatePage from "./components/pages/OutletCreatePage.jsx";
 import OutletDetailPage from "./components/pages/OutletDetailPage.jsx";
 import OutletEditPage from "./components/pages/OutletEditPage.jsx";
+import LocationSettingsPage from "./components/pages/LocationSettingsPage.jsx";
+import LocationCreatePage from "./components/pages/LocationCreatePage.jsx";
+import LocationDetailPage from "./components/pages/LocationDetailPage.jsx";
+import LocationEditPage from "./components/pages/LocationEditPage.jsx";
 import UserManagementPage from "./components/pages/UserManagementPage.jsx";
 import UserDetailPage from "./components/pages/UserDetailPage.jsx";
 import OrdersPage from "./components/pages/OrdersPage.jsx";
@@ -215,6 +219,38 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="settings" action="update">
             <OutletEditPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/locations"
+        element={
+          <ProtectedRoute feature="locations" action="read">
+            <LocationSettingsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/locations/new"
+        element={
+          <ProtectedRoute feature="locations" action="create">
+            <LocationCreatePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/locations/:locationId"
+        element={
+          <ProtectedRoute feature="locations" action="read">
+            <LocationDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/locations/:locationId/edit"
+        element={
+          <ProtectedRoute feature="locations" action="update">
+            <LocationEditPage />
           </ProtectedRoute>
         }
       />
