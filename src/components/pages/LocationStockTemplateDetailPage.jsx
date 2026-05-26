@@ -56,11 +56,25 @@ export default function LocationStockTemplateDetailPage() {
     return text.includes(search.toLowerCase());
   });
 
+  const supplierProductsById = useMemo(() => Object.fromEntries(supplierProducts.map((product) => [String(product.id || "").trim(), product])), [supplierProducts]);
+  const outletsById = useMemo(() => Object.fromEntries(outlets.map((outlet) => [String(outlet.id || "").trim(), outlet])), [outlets]);
+
   const rows = (template?.items || [])
     .filter((item) => !activeOutletFilter || item.outletId === activeOutletFilter)
-    .map((item) => ({
+    .map((item) => {
+      const supplierProduct = supplierProductsById[String(item?.supplierProductId || "").trim()] || {};
+      const outlet = outletsById[String(item?.outletId || "").trim()] || {};
+      const baseUnitsPerPurchaseUnit = supplierProduct.baseUnitsPerPurchaseUnit || "-";
+      const baseUnit = supplierProduct.baseUnit || "-";
+      const purchaseUnit = supplierProduct.purchaseUnit || "-";
+      const content = `${baseUnitsPerPurchaseUnit} ${baseUnit} / ${purchaseUnit}`;
+      return {
       ...item,
-      pricePerPurchaseUnit: Number(item.pricePerPurchaseUnit || 0).toFixed(2),
+      supplierProductName: supplierProduct.supplierProductName || supplierProduct.name || item.supplierProductName || "-",
+      supplierName: supplierProduct.supplierName || item.supplierName || "-",
+      content,
+      pricePerPurchaseUnit: Number(supplierProduct.pricePerPurchaseUnit || item.pricePerPurchaseUnit || 0).toFixed(2),
+      outletName: outlet.name || item.outletName || item.outletId || "-",
       actions: isEditMode ? (
         <button
           type="button"
@@ -74,22 +88,14 @@ export default function LocationStockTemplateDetailPage() {
           <Trash2 className="h-4 w-4" />
         </button>
       ) : null,
-    }));
+    };
+    });
 
   const handleSaveItem = async () => {
     if (!selectedProduct || !selectedOutletId) return;
-    const outlet = outlets.find((item) => item.id === selectedOutletId);
-    const baseUnitsPerPurchaseUnit = selectedProduct.baseUnitsPerPurchaseUnit || "-";
-    const baseUnit = selectedProduct.baseUnit || "-";
-    const purchaseUnit = selectedProduct.purchaseUnit || "-";
     await addLocationStockTemplateItem(hotelUid, locationId, templateId, {
       supplierProductId: selectedProduct.id,
-      supplierProductName: selectedProduct.supplierProductName || selectedProduct.name || "-",
-      supplierName: selectedProduct.supplierName || "-",
-      content: `${baseUnitsPerPurchaseUnit} ${baseUnit} / ${purchaseUnit}`,
       outletId: selectedOutletId,
-      outletName: outlet?.name || "-",
-      pricePerPurchaseUnit: Number(selectedProduct.pricePerPurchaseUnit || 0),
     });
     setShowModal(false);
     setSearch("");
@@ -100,7 +106,7 @@ export default function LocationStockTemplateDetailPage() {
 
   const handleDeleteItem = async () => {
     if (!confirmDeleteItem) return;
-    await removeLocationStockTemplateItem(hotelUid, locationId, templateId, confirmDeleteItem.id);
+    await removeLocationStockTemplateItem(hotelUid, locationId, templateId, confirmDeleteItem.supplierProductId, confirmDeleteItem.outletId);
     setConfirmDeleteItem(null);
     await load();
   };
