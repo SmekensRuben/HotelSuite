@@ -28,6 +28,7 @@ import LocationSettingsPage from "./components/pages/LocationSettingsPage.jsx";
 import LocationCreatePage from "./components/pages/LocationCreatePage.jsx";
 import LocationDetailPage from "./components/pages/LocationDetailPage.jsx";
 import LocationEditPage from "./components/pages/LocationEditPage.jsx";
+import LocationStockTemplateDetailPage from "./components/pages/LocationStockTemplateDetailPage.jsx";
 import UserManagementPage from "./components/pages/UserManagementPage.jsx";
 import UserDetailPage from "./components/pages/UserDetailPage.jsx";
 import OrdersPage from "./components/pages/OrdersPage.jsx";
@@ -243,6 +244,14 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="locations" action="read">
             <LocationDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/locations/:locationId/stock-templates/:templateId"
+        element={
+          <ProtectedRoute feature="locations" action="read">
+            <LocationStockTemplateDetailPage />
           </ProtectedRoute>
         }
       />
