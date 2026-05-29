@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useHotelContext } from "contexts/HotelContext";
 import { db, doc, getDoc } from "../../firebaseConfig";
-import { FileText, Package, Settings2, ShoppingBasket, Truck, Users } from "lucide-react";
+import { ClipboardList, FileText, Package, Settings2, ShoppingBasket, Truck, Users } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
 
 export default function HeaderBar({ today, onLogout }) {
@@ -15,6 +15,7 @@ export default function HeaderBar({ today, onLogout }) {
   const canViewSuppliers = usePermission("suppliers", "read");
   const canViewOrders = usePermission("orders", "read");
   const canViewContracts = usePermission("contracts", "read");
+  const canViewStockCounts = usePermission("stockcounts", "read");
   const canViewSettings = usePermission("settings", "read");
   const canViewLocations = usePermission("locations", "read");
   const canViewUsers = usePermission("users", "read");
@@ -99,6 +100,12 @@ export default function HeaderBar({ today, onLogout }) {
       action: () => navigate("/contracts"),
       icon: FileText,
       visible: canViewContracts,
+    },
+    {
+      label: "Stock Count",
+      action: () => navigate("/catalog/stock-counts"),
+      icon: ClipboardList,
+      visible: canViewStockCounts,
     },
   ].filter((item) => item.visible !== false);
 
