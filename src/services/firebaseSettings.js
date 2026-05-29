@@ -344,31 +344,40 @@ export async function addLocationStockTemplateItem(hotelUid, locationId, templat
   if (!template) throw new Error("Stock template niet gevonden");
 
   const nextItem = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     supplierProductId: String(itemInput?.supplierProductId || "").trim(),
-    supplierProductName: String(itemInput?.supplierProductName || "").trim(),
-    supplierName: String(itemInput?.supplierName || "").trim(),
-    content: String(itemInput?.content || "").trim(),
     outletId: String(itemInput?.outletId || "").trim(),
-    outletName: String(itemInput?.outletName || "").trim(),
-    pricePerPurchaseUnit: Number(itemInput?.pricePerPurchaseUnit || 0),
   };
 
   if (!nextItem.supplierProductId || !nextItem.outletId) {
     throw new Error("Supplier product en outlet zijn verplicht");
   }
 
+  const hasDuplicate = (template.items || []).some((item) => {
+    const supplierProductId = String(item?.supplierProductId || "").trim();
+    const outletId = String(item?.outletId || "").trim();
+    return supplierProductId === nextItem.supplierProductId && outletId === nextItem.outletId;
+  });
+  if (hasDuplicate) return;
+
   const templateRef = doc(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`, templateId);
   await updateDoc(templateRef, { items: [...template.items, nextItem], updatedAt: new Date() });
 }
 
 
-export async function removeLocationStockTemplateItem(hotelUid, locationId, templateId, itemId) {
-  if (!hotelUid || !locationId || !templateId || !itemId) throw new Error("hotelUid, locationId, templateId en itemId zijn verplicht");
+export async function removeLocationStockTemplateItem(hotelUid, locationId, templateId, supplierProductId, outletId) {
+  if (!hotelUid || !locationId || !templateId || !supplierProductId || !outletId) {
+    throw new Error("hotelUid, locationId, templateId, supplierProductId en outletId zijn verplicht");
+  }
   const template = await getLocationStockTemplateById(hotelUid, locationId, templateId);
   if (!template) throw new Error("Stock template niet gevonden");
 
-  const nextItems = (template.items || []).filter((item) => item.id !== itemId);
+  const normalizedSupplierProductId = String(supplierProductId || "").trim();
+  const normalizedOutletId = String(outletId || "").trim();
+  const nextItems = (template.items || []).filter((item) => {
+    const itemSupplierProductId = String(item?.supplierProductId || "").trim();
+    const itemOutletId = String(item?.outletId || "").trim();
+    return itemSupplierProductId !== normalizedSupplierProductId || itemOutletId !== normalizedOutletId;
+  });
   const templateRef = doc(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`, templateId);
   await updateDoc(templateRef, { items: nextItems, updatedAt: new Date() });
 }
