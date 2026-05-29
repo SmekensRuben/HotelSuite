@@ -47,18 +47,37 @@ function getPickupRoomsValue(allotmentDateEntry) {
   return Number(allotmentDateEntry?.pickupRooms ?? allotmentDateEntry?.pickuprooms ?? 0);
 }
 
-function formatPickupSummaries(allotmentDates) {
+function getCurrentDateInTimezone(timeZone = DEFAULT_TIMEZONE) {
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const dateParts = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+}
+
+function formatPickupSummaries(allotmentDates, minAllotmentDate = null) {
   if (!Array.isArray(allotmentDates)) return [];
 
   return allotmentDates
-    .map((entry) => ({
-      allotmentDate: String(entry?.allotmentDate || '').trim(),
-      availableRooms: getAvailableRoomsValue(entry),
-      initialRooms: Number(entry?.initialRooms ?? 0),
-      allottedRooms: Number(entry?.allottedRooms ?? 0),
-      pickupRooms: getPickupRoomsValue(entry),
-    }))
-    .filter((entry) => entry.availableRooms > 0);
+    .map((entry) => {
+      const allotmentDate = normalizeDateValue(entry?.allotmentDate);
+      return {
+        allotmentDate,
+        availableRooms: getAvailableRoomsValue(entry),
+        initialRooms: Number(entry?.initialRooms ?? 0),
+        allottedRooms: Number(entry?.allottedRooms ?? 0),
+        pickupRooms: getPickupRoomsValue(entry),
+      };
+    })
+    .filter(
+      (entry) =>
+        entry.availableRooms > 0 &&
+        entry.allotmentDate &&
+        (!minAllotmentDate || entry.allotmentDate >= minAllotmentDate)
+    );
 }
 
 async function getLatestSnapshotDate(hotelUid) {
@@ -76,7 +95,7 @@ async function getLatestSnapshotDate(hotelUid) {
     .sort((a, b) => b.localeCompare(a))[0] || null;
 }
 
-async function getGroupsForSnapshotDate(hotelUid, snapshotDate) {
+async function getGroupsForSnapshotDate(hotelUid, snapshotDate, minAllotmentDate = null) {
   if (!snapshotDate) return [];
 
   const groupsSnap = await db
@@ -93,7 +112,7 @@ async function getGroupsForSnapshotDate(hotelUid, snapshotDate) {
     .map((docSnap) => {
       const data = docSnap.data() || {};
       const bookingStatus = String(data.bookingStatus || '').trim();
-      const pickupSummaries = formatPickupSummaries(data.allotmentDates);
+      const pickupSummaries = formatPickupSummaries(data.allotmentDates, minAllotmentDate);
       if (!QUALIFYING_BOOKING_STATUSES.has(bookingStatus) || !pickupSummaries.length) return null;
 
       const beginDate =
@@ -222,6 +241,7 @@ async function sendScheduledBlockPickupReportHandler() {
   if (!to.length) throw new Error('No valid mailto addresses found in scheduledBlockPickupMail');
   if (!hotelUids.length) throw new Error('No hotelUids found in scheduledBlockPickupMail');
 
+  const currentDate = getCurrentDateInTimezone();
   const hotelReports = [];
 
   for (const hotelUid of hotelUids) {
@@ -231,7 +251,7 @@ async function sendScheduledBlockPickupReportHandler() {
       continue;
     }
 
-    const groups = await getGroupsForSnapshotDate(hotelUid, snapshotDate);
+    const groups = await getGroupsForSnapshotDate(hotelUid, snapshotDate, currentDate);
     if (!groups.length) {
       logger.info('No qualifying groups found for block pickup report', { hotelUid, snapshotDate });
       continue;
@@ -259,12 +279,6 @@ async function sendScheduledBlockPickupReportHandler() {
   const resend = new Resend(resendApiKey);
 
   const totalGroups = hotelReports.reduce((sum, report) => sum + report.groups.length, 0);
-  const currentDate = new Intl.DateTimeFormat('en-CA', {
-    timeZone: DEFAULT_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
   const subject = `${currentDate} - Possible group washes & Rooming Lists`;
   const html = buildEmailHtml(hotelReports);
 
