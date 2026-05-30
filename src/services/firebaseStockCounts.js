@@ -1,4 +1,4 @@
-import { collection, db, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from "../firebaseConfig";
+import { collection, db, doc, getDoc, getDocs, serverTimestamp, writeBatch } from "../firebaseConfig";
 
 export const STOCK_COUNT_TYPES = ["Ad Hoc", "Daily", "Weekly", "Month-End"];
 
@@ -10,6 +10,45 @@ function normalizeDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function normalizeStockTemplateItem(item = {}) {
+  return {
+    ...item,
+    supplierProductId: String(item?.supplierProductId || "").trim(),
+    outletId: String(item?.outletId || "").trim(),
+  };
+}
+
+function normalizeStockTemplate(template = {}) {
+  const id = String(template?.id || template?.stockTemplateId || "").trim();
+  return {
+    ...template,
+    id,
+    name: String(template?.name || template?.stockTemplateName || "").trim(),
+    items: Array.isArray(template?.items)
+      ? template.items.map(normalizeStockTemplateItem).filter((item) => item.supplierProductId)
+      : [],
+  };
+}
+
+function normalizeStockCountLocation(location = {}) {
+  const stockTemplateId = String(location?.stockTemplateId || location?.stockTemplate?.id || "").trim();
+  const stockTemplateName = String(location?.stockTemplateName || location?.stockTemplate?.name || "").trim();
+  const stockTemplate = normalizeStockTemplate({
+    ...(location?.stockTemplate || {}),
+    id: location?.stockTemplate?.id || stockTemplateId,
+    name: location?.stockTemplate?.name || stockTemplateName,
+  });
+
+  return {
+    locationId: String(location?.locationId || location?.id || "").trim(),
+    locationName: String(location?.locationName || "").trim(),
+    stockTemplateId,
+    stockTemplateName,
+    stockTemplate,
+    countedItems: normalizeCountedItems(location?.countedItems),
+  };
+}
+
 function normalizeStockCount(data = {}, fallbackId = "") {
   const locations = Array.isArray(data.locations) ? data.locations : [];
   const createdAt = normalizeDate(data.createdAt);
@@ -18,13 +57,7 @@ function normalizeStockCount(data = {}, fallbackId = "") {
     id: String(data.id || fallbackId || "").trim() || fallbackId,
     name: String(data.name || "").trim(),
     type: STOCK_COUNT_TYPES.includes(data.type) ? data.type : "Ad Hoc",
-    locations: locations.map((location) => ({
-      locationId: String(location?.locationId || "").trim(),
-      locationName: String(location?.locationName || "").trim(),
-      stockTemplateId: String(location?.stockTemplateId || "").trim(),
-      stockTemplateName: String(location?.stockTemplateName || "").trim(),
-      countedItems: normalizeCountedItems(location?.countedItems),
-    })),
+    locations: locations.map(normalizeStockCountLocation).filter((location) => location.locationId),
     createdAt,
     createdAtLabel: createdAt ? createdAt.toLocaleDateString() : "—",
     locationCount: locations.length,
@@ -70,7 +103,24 @@ export async function getStockCountById(hotelUid, stockCountId) {
   const snapshot = await getDoc(stockCountRef);
   if (!snapshot.exists()) return null;
 
-  return normalizeStockCount(snapshot.data(), snapshot.id);
+  const stockCountData = snapshot.data() || {};
+  const locationOrder = Array.isArray(stockCountData.locations)
+    ? stockCountData.locations.map((location) => String(location?.locationId || "").trim()).filter(Boolean)
+    : [];
+  const orderByLocationId = Object.fromEntries(locationOrder.map((locationId, index) => [locationId, index]));
+  const locationsSnapshot = await getDocs(collection(db, `hotels/${hotelUid}/stockCounts/${stockCountId}/locations`));
+  const locations = locationsSnapshot.docs
+    .map((locationDoc) => ({ ...(locationDoc.data() || {}), locationId: locationDoc.id }))
+    .sort((a, b) => {
+      const aIndex = orderByLocationId[String(a?.locationId || "").trim()] ?? Number.MAX_SAFE_INTEGER;
+      const bIndex = orderByLocationId[String(b?.locationId || "").trim()] ?? Number.MAX_SAFE_INTEGER;
+      return aIndex - bIndex || String(a?.locationName || "").localeCompare(String(b?.locationName || ""), undefined, {
+        sensitivity: "base",
+        numeric: true,
+      });
+    });
+
+  return normalizeStockCount({ ...stockCountData, locations }, snapshot.id);
 }
 
 export async function createStockCount(hotelUid, input) {
@@ -82,13 +132,22 @@ export async function createStockCount(hotelUid, input) {
   const type = STOCK_COUNT_TYPES.includes(input?.type) ? input.type : "Ad Hoc";
   const locations = Array.isArray(input?.locations)
     ? input.locations
-        .map((location) => ({
-          locationId: String(location?.locationId || "").trim(),
-          locationName: String(location?.locationName || "").trim(),
-          stockTemplateId: String(location?.stockTemplateId || "").trim(),
-          stockTemplateName: String(location?.stockTemplateName || "").trim(),
-          countedItems: [],
-        }))
+        .map((location) => {
+          const stockTemplate = normalizeStockTemplate({
+            ...(location?.stockTemplate || {}),
+            id: location?.stockTemplate?.id || location?.stockTemplateId,
+            name: location?.stockTemplate?.name || location?.stockTemplateName,
+          });
+
+          return {
+            locationId: String(location?.locationId || "").trim(),
+            locationName: String(location?.locationName || "").trim(),
+            stockTemplateId: String(location?.stockTemplateId || stockTemplate.id || "").trim(),
+            stockTemplateName: String(location?.stockTemplateName || stockTemplate.name || "").trim(),
+            stockTemplate,
+            countedItems: [],
+          };
+        })
         .filter((location) => location.locationId)
     : [];
 
@@ -96,16 +155,34 @@ export async function createStockCount(hotelUid, input) {
 
   const stockCountsCol = collection(db, `hotels/${hotelUid}/stockCounts`);
   const stockCountRef = doc(stockCountsCol);
+  const locationSummaries = locations.map(({ locationId, locationName, stockTemplateId, stockTemplateName }) => ({
+    locationId,
+    locationName,
+    stockTemplateId,
+    stockTemplateName,
+  }));
   const payload = {
     id: stockCountRef.id,
     name,
     type,
-    locations,
+    locations: locationSummaries,
     createdBy: input?.createdBy || null,
     createdAt: serverTimestamp(),
   };
 
-  await setDoc(stockCountRef, payload);
+  const batch = writeBatch(db);
+  batch.set(stockCountRef, payload);
+  locations.forEach((location) => {
+    const locationRef = doc(db, `hotels/${hotelUid}/stockCounts/${stockCountRef.id}/locations`, location.locationId);
+    batch.set(locationRef, {
+      ...location,
+      id: location.locationId,
+      createdAt: serverTimestamp(),
+      createdBy: input?.createdBy || null,
+    });
+  });
+
+  await batch.commit();
   return { ...payload, createdAt: new Date() };
 }
 
@@ -118,21 +195,40 @@ export async function updateStockCountLocationCounts(hotelUid, stockCountId, loc
   if (!stockCount) throw new Error("Stock count niet gevonden");
 
   const normalizedLocationId = String(locationId || "").trim();
+  const normalizedCountedItems = normalizeCountedItems(countedItems);
+  const updatedAt = new Date();
   const nextLocations = (stockCount.locations || []).map((location) => {
     if (String(location?.locationId || "").trim() !== normalizedLocationId) return location;
 
     return {
       ...location,
-      countedItems: normalizeCountedItems(countedItems),
-      updatedAt: new Date(),
+      countedItems: normalizedCountedItems,
+      updatedAt,
       updatedBy: updatedBy || null,
     };
   });
 
   const stockCountRef = doc(db, `hotels/${hotelUid}/stockCounts`, stockCountId);
-  await updateDoc(stockCountRef, {
-    locations: nextLocations,
-    updatedAt: new Date(),
+  const locationRef = doc(db, `hotels/${hotelUid}/stockCounts/${stockCountId}/locations`, normalizedLocationId);
+  const locationPayload = nextLocations.find(
+    (location) => String(location?.locationId || "").trim() === normalizedLocationId
+  );
+
+  const locationSummaries = nextLocations.map(({ locationId, locationName, stockTemplateId, stockTemplateName }) => ({
+    locationId,
+    locationName,
+    stockTemplateId,
+    stockTemplateName,
+  }));
+
+  const batch = writeBatch(db);
+  batch.update(stockCountRef, {
+    locations: locationSummaries,
+    updatedAt,
     updatedBy: updatedBy || null,
   });
+  if (locationPayload) {
+    batch.set(locationRef, locationPayload, { merge: true });
+  }
+  await batch.commit();
 }

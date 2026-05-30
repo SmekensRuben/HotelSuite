@@ -11,8 +11,7 @@ import {
   getStockCountById,
   updateStockCountLocationCounts,
 } from "../../services/firebaseStockCounts";
-import { getSupplierProducts } from "../../services/firebaseProducts";
-import { getLocationStockTemplateById, getOutlets } from "../../services/firebaseSettings";
+import { matchesSearchTokensAcross } from "../../utils/search";
 
 function buildItemKey(item) {
   return `${String(item?.supplierProductId || "").trim()}::${String(item?.outletId || "").trim()}`;
@@ -32,12 +31,11 @@ export default function StockCountLocationPage() {
   const [stockCount, setStockCount] = useState(null);
   const [stockCountLocation, setStockCountLocation] = useState(null);
   const [template, setTemplate] = useState(null);
-  const [supplierProducts, setSupplierProducts] = useState([]);
-  const [outlets, setOutlets] = useState([]);
   const [quantitiesByKey, setQuantitiesByKey] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const today = useMemo(
     () =>
@@ -66,13 +64,7 @@ export default function StockCountLocationPage() {
         (location) => location.locationId === locationId
       );
 
-      const [nextTemplate, productResult, nextOutlets] = await Promise.all([
-        nextLocation
-          ? getLocationStockTemplateById(hotelUid, nextLocation.locationId, nextLocation.stockTemplateId)
-          : Promise.resolve(null),
-        getSupplierProducts(hotelUid),
-        getOutlets(hotelUid),
-      ]);
+      const nextTemplate = nextLocation?.stockTemplate?.id ? nextLocation.stockTemplate : null;
 
       const nextQuantities = {};
       (nextLocation?.countedItems || []).forEach((item) => {
@@ -82,8 +74,6 @@ export default function StockCountLocationPage() {
       setStockCount(nextStockCount);
       setStockCountLocation(nextLocation || null);
       setTemplate(nextTemplate);
-      setSupplierProducts(Array.isArray(productResult) ? productResult : productResult.products || []);
-      setOutlets(nextOutlets);
       setQuantitiesByKey(nextQuantities);
       setLoading(false);
     };
@@ -91,37 +81,24 @@ export default function StockCountLocationPage() {
     loadLocation();
   }, [hotelUid, stockCountId, locationId]);
 
-  const supplierProductsById = useMemo(
-    () => Object.fromEntries(supplierProducts.map((product) => [String(product.id || "").trim(), product])),
-    [supplierProducts]
-  );
-
-  const outletsById = useMemo(
-    () => Object.fromEntries(outlets.map((outlet) => [String(outlet.id || "").trim(), outlet])),
-    [outlets]
-  );
-
   const rows = useMemo(
     () =>
       (template?.items || []).map((item) => {
         const key = buildItemKey(item);
-        const supplierProduct = supplierProductsById[String(item?.supplierProductId || "").trim()] || {};
-        const outlet = outletsById[String(item?.outletId || "").trim()] || {};
-        const pricePerPurchaseUnit = Number(
-          supplierProduct.pricePerPurchaseUnit || item.pricePerPurchaseUnit || 0
-        );
+        const pricePerPurchaseUnit = Number(item.pricePerPurchaseUnit || 0);
         const quantityValue = quantitiesByKey[key] ?? "";
         const numericQuantity = quantityValue === "" ? 0 : Number(quantityValue);
         const totalValue = Number.isFinite(numericQuantity) ? numericQuantity * pricePerPurchaseUnit : 0;
+        const content = item.content || `${item.baseUnitsPerPurchaseUnit || "-"} ${item.baseUnit || "-"} / ${item.purchaseUnit || "-"}`;
 
         return {
           id: key,
           ...item,
           key,
-          supplierProductName: supplierProduct.supplierProductName || supplierProduct.name || item.supplierProductName || "-",
-          supplierName: supplierProduct.supplierName || item.supplierName || "-",
-          content: `${supplierProduct.baseUnitsPerPurchaseUnit || "-"} ${supplierProduct.baseUnit || "-"} / ${supplierProduct.purchaseUnit || "-"}`,
-          outletName: outlet.name || item.outletName || item.outletId || "-",
+          supplierProductName: item.supplierProductName || item.name || "-",
+          supplierName: item.supplierName || "-",
+          content,
+          outletName: item.outletName || item.outletId || "-",
           pricePerPurchaseUnit,
           pricePerPurchaseUnitLabel: formatCurrency(pricePerPurchaseUnit),
           quantity: quantityValue,
@@ -129,7 +106,24 @@ export default function StockCountLocationPage() {
           totalValueLabel: formatCurrency(totalValue),
         };
       }),
-    [outletsById, quantitiesByKey, supplierProductsById, template]
+    [quantitiesByKey, template]
+  );
+
+  const filteredRows = useMemo(
+    () =>
+      rows.filter((row) =>
+        matchesSearchTokensAcross(
+          [
+            row.supplierProductName,
+            row.supplierName,
+            row.content,
+            row.outletName,
+            row.supplierProductId,
+          ],
+          searchQuery
+        )
+      ),
+    [rows, searchQuery]
   );
 
   const countedCount = rows.filter((row) => row.quantity !== "").length;
@@ -222,6 +216,25 @@ export default function StockCountLocationPage() {
             </Card>
 
             <Card className="space-y-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <label htmlFor="stock-count-product-search" className="block text-sm font-medium text-gray-700 mb-1">
+                    Search supplier product
+                  </label>
+                  <input
+                    id="stock-count-product-search"
+                    type="search"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search by supplier product, supplier, outlet or ID"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm sm:w-96"
+                  />
+                </div>
+                <p className="text-sm text-gray-500">
+                  Showing {filteredRows.length} of {rows.length} supplier products
+                </p>
+              </div>
+
               <DataListTable
                 columns={[
                   { key: "supplierProductName", label: "Supplier Product" },
@@ -247,8 +260,8 @@ export default function StockCountLocationPage() {
                   },
                   { key: "totalValueLabel", label: "Value", sortValue: (row) => row.totalValue },
                 ]}
-                rows={rows}
-                emptyMessage="No stock template items yet."
+                rows={filteredRows}
+                emptyMessage={searchQuery ? "No supplier products match your search." : "No stock template items yet."}
               />
 
               {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
