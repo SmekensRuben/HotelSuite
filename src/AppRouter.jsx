@@ -49,6 +49,8 @@ import FileImportTypesPage from "./components/pages/FileImportTypesPage.jsx";
 import FileImportTypeCreatePage from "./components/pages/FileImportTypeCreatePage.jsx";
 import FileImportTypeDetailPage from "./components/pages/FileImportTypeDetailPage.jsx";
 import FileImportTypeEditPage from "./components/pages/FileImportTypeEditPage.jsx";
+import StockCountsPage from "./components/pages/StockCountsPage.jsx";
+import StockCountCreatePage from "./components/pages/StockCountCreatePage.jsx";
 
 export default function AppRouter() {
   return (
@@ -180,6 +182,22 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="suppliers" action="update">
             <SupplierOutletAccountCreatePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/stock-counts"
+        element={
+          <ProtectedRoute feature="stockcounts" action="read">
+            <StockCountsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/stock-counts/new"
+        element={
+          <ProtectedRoute feature="stockcounts" action="create">
+            <StockCountCreatePage />
           </ProtectedRoute>
         }
       />

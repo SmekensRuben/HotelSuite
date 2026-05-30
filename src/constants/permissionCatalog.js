@@ -4,6 +4,7 @@ export const PERMISSION_CATALOG = {
   suppliers: ["create", "read", "update", "delete", "password"],
   orders: ["create", "read", "update", "delete"],
   contracts: ["create", "read", "update", "delete"],
+  stockcounts: ["create", "read", "update", "delete"],
   settings: ["create", "read", "update", "delete"],
   locations: ["create", "read", "update", "delete"],
   users: ["create", "read", "update", "delete"],
