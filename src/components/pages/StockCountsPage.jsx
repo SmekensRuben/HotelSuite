@@ -82,6 +82,7 @@ export default function StockCountsPage() {
             columns={columns}
             rows={stockCounts}
             emptyMessage="No stock counts found."
+            onRowClick={(row) => navigate(`/catalog/stock-counts/${row.id}`)}
           />
         )}
       </PageContainer>
