@@ -16,10 +16,10 @@ function formatCurrency(value) {
   }).format(Number(value || 0));
 }
 
-function getLocationStatus(countedCount, templateCount) {
+function getLocationStatus(location, countedCount) {
+  if (location?.status === "Finished") return "Finished";
   if (countedCount === 0) return "Not Started";
-  if (templateCount > 0 && countedCount >= templateCount) return "Finished";
-  return "In Progress";
+  return location?.status && location.status !== "Not Started" ? location.status : "In Progress";
 }
 
 export default function StockCountDetailPage() {
@@ -76,7 +76,7 @@ export default function StockCountDetailPage() {
           countedCountLabel: `${countedCount} / ${templateCount}`,
           countedValue,
           countedValueLabel: formatCurrency(countedValue),
-          status: getLocationStatus(countedCount, templateCount),
+          status: getLocationStatus(location, countedCount),
         };
       }),
     [stockCount]
