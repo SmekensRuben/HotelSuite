@@ -18,6 +18,10 @@ function normalizeStockTemplateItem(item = {}) {
   };
 }
 
+function buildStockTemplateItemKey(item = {}) {
+  return `${String(item?.supplierProductId || "").trim()}::${String(item?.outletId || "").trim()}`;
+}
+
 function normalizeStockTemplate(template = {}) {
   const id = String(template?.id || template?.stockTemplateId || "").trim();
   return {
@@ -46,6 +50,10 @@ function normalizeStockCountLocation(location = {}) {
     stockTemplateName,
     stockTemplate,
     countedItems: normalizeCountedItems(location?.countedItems),
+    status: String(location?.status || "Not Started").trim() || "Not Started",
+    updatedAt: normalizeDate(location?.updatedAt),
+    finishedAt: normalizeDate(location?.finishedAt),
+    finishedBy: location?.finishedBy || null,
   };
 }
 
@@ -76,6 +84,14 @@ function normalizeCountedItems(items) {
           totalValue: Number(item?.totalValue || 0),
           countedAt: item?.countedAt || null,
           countedBy: item?.countedBy || null,
+          isTemplateItem: item?.isTemplateItem !== false,
+          supplierProductName: String(item?.supplierProductName || item?.name || "").trim(),
+          supplierName: String(item?.supplierName || "").trim(),
+          baseUnitsPerPurchaseUnit: item?.baseUnitsPerPurchaseUnit ?? "",
+          baseUnit: String(item?.baseUnit || "").trim(),
+          purchaseUnit: String(item?.purchaseUnit || "").trim(),
+          content: String(item?.content || "").trim(),
+          outletName: String(item?.outletName || "").trim(),
         }))
         .filter((item) => item.supplierProductId)
     : [];
@@ -146,6 +162,7 @@ export async function createStockCount(hotelUid, input) {
             stockTemplateName: String(location?.stockTemplateName || stockTemplate.name || "").trim(),
             stockTemplate,
             countedItems: [],
+            status: "Not Started",
           };
         })
         .filter((location) => location.locationId)
@@ -155,11 +172,12 @@ export async function createStockCount(hotelUid, input) {
 
   const stockCountsCol = collection(db, `hotels/${hotelUid}/stockCounts`);
   const stockCountRef = doc(stockCountsCol);
-  const locationSummaries = locations.map(({ locationId, locationName, stockTemplateId, stockTemplateName }) => ({
+  const locationSummaries = locations.map(({ locationId, locationName, stockTemplateId, stockTemplateName, status }) => ({
     locationId,
     locationName,
     stockTemplateId,
     stockTemplateName,
+    status: status || "Not Started",
   }));
   const payload = {
     id: stockCountRef.id,
@@ -203,6 +221,7 @@ export async function updateStockCountLocationCounts(hotelUid, stockCountId, loc
     return {
       ...location,
       countedItems: normalizedCountedItems,
+      status: location.status === "Finished" ? "Finished" : normalizedCountedItems.length ? "In Progress" : "Not Started",
       updatedAt,
       updatedBy: updatedBy || null,
     };
@@ -214,11 +233,12 @@ export async function updateStockCountLocationCounts(hotelUid, stockCountId, loc
     (location) => String(location?.locationId || "").trim() === normalizedLocationId
   );
 
-  const locationSummaries = nextLocations.map(({ locationId, locationName, stockTemplateId, stockTemplateName }) => ({
+  const locationSummaries = nextLocations.map(({ locationId, locationName, stockTemplateId, stockTemplateName, status }) => ({
     locationId,
     locationName,
     stockTemplateId,
     stockTemplateName,
+    status: status || "Not Started",
   }));
 
   const batch = writeBatch(db);
@@ -230,5 +250,149 @@ export async function updateStockCountLocationCounts(hotelUid, stockCountId, loc
   if (locationPayload) {
     batch.set(locationRef, locationPayload, { merge: true });
   }
+  await batch.commit();
+}
+
+
+export async function finishStockCountLocation(
+  hotelUid,
+  stockCountId,
+  locationId,
+  countedItems,
+  templateItemsToAdd = [],
+  updatedBy
+) {
+  if (!hotelUid || !stockCountId || !locationId) {
+    throw new Error("hotelUid, stockCountId en locationId zijn verplicht");
+  }
+
+  const stockCount = await getStockCountById(hotelUid, stockCountId);
+  if (!stockCount) throw new Error("Stock count niet gevonden");
+
+  const normalizedLocationId = String(locationId || "").trim();
+  const currentLocation = (stockCount.locations || []).find(
+    (location) => String(location?.locationId || "").trim() === normalizedLocationId
+  );
+  if (!currentLocation) throw new Error("Stock count location niet gevonden");
+
+  const normalizedCountedItems = normalizeCountedItems(countedItems);
+  const normalizedTemplateItemsToAdd = Array.isArray(templateItemsToAdd)
+    ? templateItemsToAdd.map(normalizeStockTemplateItem).filter((item) => item.supplierProductId && item.outletId)
+    : [];
+  const existingTemplateItems = Array.isArray(currentLocation.stockTemplate?.items)
+    ? currentLocation.stockTemplate.items.map(normalizeStockTemplateItem).filter((item) => item.supplierProductId && item.outletId)
+    : [];
+  const templateItemKeys = new Set(existingTemplateItems.map(buildStockTemplateItemKey));
+  const newTemplateItems = [];
+
+  normalizedTemplateItemsToAdd.forEach((item) => {
+    const key = buildStockTemplateItemKey(item);
+    if (templateItemKeys.has(key)) return;
+    templateItemKeys.add(key);
+    newTemplateItems.push(item);
+  });
+
+  const updatedAt = new Date();
+  const nextLocations = (stockCount.locations || []).map((location) => {
+    if (String(location?.locationId || "").trim() !== normalizedLocationId) return location;
+
+    return {
+      ...location,
+      stockTemplate: {
+        ...(location.stockTemplate || {}),
+        items: [...existingTemplateItems, ...newTemplateItems],
+      },
+      countedItems: normalizedCountedItems,
+      status: "Finished",
+      updatedAt,
+      updatedBy: updatedBy || null,
+      finishedAt: updatedAt,
+      finishedBy: updatedBy || null,
+    };
+  });
+
+  const stockCountRef = doc(db, `hotels/${hotelUid}/stockCounts`, stockCountId);
+  const locationRef = doc(db, `hotels/${hotelUid}/stockCounts/${stockCountId}/locations`, normalizedLocationId);
+  const locationPayload = nextLocations.find(
+    (location) => String(location?.locationId || "").trim() === normalizedLocationId
+  );
+  const locationSummaries = nextLocations.map(({ locationId, locationName, stockTemplateId, stockTemplateName, status }) => ({
+    locationId,
+    locationName,
+    stockTemplateId,
+    stockTemplateName,
+    status: status || "Not Started",
+  }));
+
+  const batch = writeBatch(db);
+  batch.update(stockCountRef, {
+    locations: locationSummaries,
+    updatedAt,
+    updatedBy: updatedBy || null,
+  });
+  batch.set(locationRef, locationPayload, { merge: true });
+
+  if (newTemplateItems.length && currentLocation.stockTemplateId) {
+    const templateRef = doc(
+      db,
+      `hotels/${hotelUid}/locations/${normalizedLocationId}/stockTemplates`,
+      currentLocation.stockTemplateId
+    );
+    batch.update(templateRef, {
+      items: [...existingTemplateItems, ...newTemplateItems],
+      updatedAt,
+      updatedBy: updatedBy || null,
+    });
+  }
+
+  await batch.commit();
+}
+
+export async function updateStockCountLocationStatus(hotelUid, stockCountId, locationId, status, updatedBy) {
+  if (!hotelUid || !stockCountId || !locationId) {
+    throw new Error("hotelUid, stockCountId en locationId zijn verplicht");
+  }
+
+  const nextStatus = String(status || "").trim();
+  if (!nextStatus) throw new Error("Status is verplicht");
+
+  const stockCount = await getStockCountById(hotelUid, stockCountId);
+  if (!stockCount) throw new Error("Stock count niet gevonden");
+
+  const normalizedLocationId = String(locationId || "").trim();
+  const updatedAt = new Date();
+  const nextLocations = (stockCount.locations || []).map((location) => {
+    if (String(location?.locationId || "").trim() !== normalizedLocationId) return location;
+
+    return {
+      ...location,
+      status: nextStatus,
+      updatedAt,
+      updatedBy: updatedBy || null,
+      ...(nextStatus === "Finished" ? { finishedAt: updatedAt, finishedBy: updatedBy || null } : {}),
+    };
+  });
+  const locationPayload = nextLocations.find(
+    (location) => String(location?.locationId || "").trim() === normalizedLocationId
+  );
+  if (!locationPayload) throw new Error("Stock count location niet gevonden");
+
+  const stockCountRef = doc(db, `hotels/${hotelUid}/stockCounts`, stockCountId);
+  const locationRef = doc(db, `hotels/${hotelUid}/stockCounts/${stockCountId}/locations`, normalizedLocationId);
+  const locationSummaries = nextLocations.map(({ locationId, locationName, stockTemplateId, stockTemplateName, status }) => ({
+    locationId,
+    locationName,
+    stockTemplateId,
+    stockTemplateName,
+    status: status || "Not Started",
+  }));
+
+  const batch = writeBatch(db);
+  batch.update(stockCountRef, {
+    locations: locationSummaries,
+    updatedAt,
+    updatedBy: updatedBy || null,
+  });
+  batch.set(locationRef, locationPayload, { merge: true });
   await batch.commit();
 }
