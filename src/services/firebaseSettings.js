@@ -306,6 +306,7 @@ export async function getLocationStockTemplates(hotelUid, locationId) {
     .map((docSnap) => {
       const data = docSnap.data() || {};
       return {
+        ...data,
         id: String(data.id || docSnap.id || "").trim() || docSnap.id,
         name: String(data.name || "").trim(),
         items: Array.isArray(data.items) ? data.items : [],
@@ -332,6 +333,7 @@ export async function getLocationStockTemplateById(hotelUid, locationId, templat
   if (!snap.exists()) return null;
   const data = snap.data() || {};
   return {
+    ...data,
     id: String(data.id || snap.id || "").trim() || snap.id,
     name: String(data.name || "").trim(),
     items: Array.isArray(data.items) ? data.items : [],

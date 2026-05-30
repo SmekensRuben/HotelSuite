@@ -6,7 +6,8 @@ import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { createStockCount, STOCK_COUNT_TYPES } from "../../services/firebaseStockCounts";
-import { getLocationStockTemplates, getLocations } from "../../services/firebaseSettings";
+import { getLocationStockTemplates, getLocations, getOutlets } from "../../services/firebaseSettings";
+import { getSupplierProducts } from "../../services/firebaseProducts";
 
 const initialValues = {
   name: "",
@@ -18,6 +19,8 @@ export default function StockCountCreatePage() {
   const { hotelUid } = useHotelContext();
   const [formValues, setFormValues] = useState(initialValues);
   const [locationRows, setLocationRows] = useState([]);
+  const [supplierProducts, setSupplierProducts] = useState([]);
+  const [outlets, setOutlets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -41,6 +44,45 @@ export default function StockCountCreatePage() {
     (row) => row.templates.length === 0 || !row.stockTemplateId
   );
 
+  const supplierProductsById = useMemo(
+    () => Object.fromEntries(supplierProducts.map((product) => [String(product.id || "").trim(), product])),
+    [supplierProducts]
+  );
+
+  const outletsById = useMemo(
+    () => Object.fromEntries(outlets.map((outlet) => [String(outlet.id || "").trim(), outlet])),
+    [outlets]
+  );
+
+  const buildTemplateSnapshot = (template) => ({
+    ...(template || {}),
+    items: Array.isArray(template?.items)
+      ? template.items.map((item) => {
+          const supplierProductId = String(item?.supplierProductId || "").trim();
+          const outletId = String(item?.outletId || "").trim();
+          const supplierProduct = supplierProductsById[supplierProductId] || {};
+          const outlet = outletsById[outletId] || {};
+          const baseUnitsPerPurchaseUnit = supplierProduct.baseUnitsPerPurchaseUnit ?? item.baseUnitsPerPurchaseUnit ?? "";
+          const baseUnit = supplierProduct.baseUnit || item.baseUnit || "";
+          const purchaseUnit = supplierProduct.purchaseUnit || item.purchaseUnit || "";
+
+          return {
+            ...item,
+            supplierProductId,
+            outletId,
+            supplierProductName: supplierProduct.supplierProductName || supplierProduct.name || item.supplierProductName || "",
+            supplierName: supplierProduct.supplierName || item.supplierName || "",
+            baseUnitsPerPurchaseUnit,
+            baseUnit,
+            purchaseUnit,
+            content: item.content || `${baseUnitsPerPurchaseUnit || "-"} ${baseUnit || "-"} / ${purchaseUnit || "-"}`,
+            pricePerPurchaseUnit: Number(supplierProduct.pricePerPurchaseUnit ?? item.pricePerPurchaseUnit ?? 0),
+            outletName: outlet.name || item.outletName || outletId,
+          };
+        })
+      : [],
+  });
+
   const handleLogout = async () => {
     await signOut(auth);
     sessionStorage.clear();
@@ -51,7 +93,11 @@ export default function StockCountCreatePage() {
     const loadLocationsAndTemplates = async () => {
       if (!hotelUid) return;
       setLoading(true);
-      const locations = await getLocations(hotelUid);
+      const [locations, productResult, nextOutlets] = await Promise.all([
+        getLocations(hotelUid),
+        getSupplierProducts(hotelUid),
+        getOutlets(hotelUid),
+      ]);
       const rows = await Promise.all(
         locations.map(async (location) => {
           const templates = await getLocationStockTemplates(hotelUid, location.id);
@@ -65,6 +111,8 @@ export default function StockCountCreatePage() {
           };
         })
       );
+      setSupplierProducts(Array.isArray(productResult) ? productResult : productResult?.products || []);
+      setOutlets(nextOutlets);
       setLocationRows(rows);
       setLoading(false);
     };
@@ -110,11 +158,13 @@ export default function StockCountCreatePage() {
     try {
       const locations = selectedRows.map((row) => {
         const template = row.templates.find((item) => item.id === row.stockTemplateId);
+        const stockTemplate = buildTemplateSnapshot(template);
         return {
           locationId: row.locationId,
           locationName: row.locationName,
           stockTemplateId: row.stockTemplateId,
-          stockTemplateName: template?.name || "",
+          stockTemplateName: stockTemplate.name || "",
+          stockTemplate,
         };
       });
 

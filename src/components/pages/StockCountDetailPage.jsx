@@ -8,7 +8,6 @@ import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getStockCountById } from "../../services/firebaseStockCounts";
-import { getLocationStockTemplateById } from "../../services/firebaseSettings";
 
 function formatCurrency(value) {
   return new Intl.NumberFormat(undefined, {
@@ -28,7 +27,6 @@ export default function StockCountDetailPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
   const [stockCount, setStockCount] = useState(null);
-  const [templateCountsByLocation, setTemplateCountsByLocation] = useState({});
   const [loading, setLoading] = useState(true);
 
   const today = useMemo(
@@ -53,19 +51,6 @@ export default function StockCountDetailPage() {
       setLoading(true);
       const nextStockCount = await getStockCountById(hotelUid, stockCountId);
       setStockCount(nextStockCount);
-
-      const counts = {};
-      await Promise.all(
-        (nextStockCount?.locations || []).map(async (location) => {
-          const template = await getLocationStockTemplateById(
-            hotelUid,
-            location.locationId,
-            location.stockTemplateId
-          );
-          counts[location.locationId] = Array.isArray(template?.items) ? template.items.length : 0;
-        })
-      );
-      setTemplateCountsByLocation(counts);
       setLoading(false);
     };
 
@@ -81,7 +66,7 @@ export default function StockCountDetailPage() {
           (sum, item) => sum + Number(item?.totalValue || 0),
           0
         );
-        const templateCount = templateCountsByLocation[location.locationId] || 0;
+        const templateCount = Array.isArray(location.stockTemplate?.items) ? location.stockTemplate.items.length : 0;
 
         return {
           id: location.locationId,
@@ -94,7 +79,7 @@ export default function StockCountDetailPage() {
           status: getLocationStatus(countedCount, templateCount),
         };
       }),
-    [stockCount, templateCountsByLocation]
+    [stockCount]
   );
 
   return (
