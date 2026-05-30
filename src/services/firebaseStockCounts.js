@@ -313,10 +313,6 @@ export async function finishStockCountLocation(
 
     return {
       ...location,
-      stockTemplate: {
-        ...(location.stockTemplate || {}),
-        items: [...existingTemplateItems, ...newTemplateItems],
-      },
       countedItems: normalizedCountedItems,
       status: "Finished",
       updatedAt,

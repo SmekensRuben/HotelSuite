@@ -71,6 +71,7 @@ export default function StockCountLocationPage() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedOutletId, setSelectedOutletId] = useState("");
   const [showFinishModal, setShowFinishModal] = useState(false);
+  const [selectedTemplateAdditions, setSelectedTemplateAdditions] = useState({});
 
   const today = useMemo(
     () =>
@@ -111,7 +112,7 @@ export default function StockCountLocationPage() {
       (nextLocation?.countedItems || []).forEach((item) => {
         const key = buildItemKey(item);
         nextQuantities[key] = item.isCounted === false ? "" : String(item.quantity ?? "");
-        if (!templateKeys.has(key)) {
+        if (item.isTemplateItem === false || !templateKeys.has(key)) {
           nextAdditionalItems.push({ ...item, key, isTemplateItem: false });
         }
       });
@@ -145,7 +146,10 @@ export default function StockCountLocationPage() {
   );
 
   const rows = useMemo(() => {
-    const templateRows = (template?.items || []).map((item) => ({ ...item, isTemplateItem: true }));
+    const additionalItemKeys = new Set(additionalItems.map(buildItemKey));
+    const templateRows = (template?.items || [])
+      .filter((item) => !additionalItemKeys.has(buildItemKey(item)))
+      .map((item) => ({ ...item, isTemplateItem: true }));
     return [...templateRows, ...additionalItems].map((item) => {
       const key = buildItemKey(item);
       const pricePerPurchaseUnit = Number(item.pricePerPurchaseUnit || 0);
@@ -191,6 +195,11 @@ export default function StockCountLocationPage() {
     [rows, searchQuery]
   );
 
+  const addedRows = useMemo(
+    () => rows.filter((row) => row.isTemplateItem === false),
+    [rows]
+  );
+
   const countedCount = rows.filter((row) => row.quantity !== "").length;
   const countedValue = rows.reduce((sum, row) => (row.quantity === "" ? sum : sum + row.totalValue), 0);
   const filteredProducts = supplierProducts.filter((product) =>
@@ -202,7 +211,7 @@ export default function StockCountLocationPage() {
 
   const buildCountedItems = () =>
     rows
-      .filter((row) => row.quantity !== "" || !templateKeys.has(buildItemKey(row)))
+      .filter((row) => row.quantity !== "" || row.isTemplateItem === false)
       .map((row) => ({
         supplierProductId: row.supplierProductId,
         outletId: row.outletId,
@@ -212,7 +221,7 @@ export default function StockCountLocationPage() {
         countedAt: new Date(),
         countedBy: auth.currentUser?.uid || "unknown",
         isCounted: row.quantity !== "",
-        isTemplateItem: templateKeys.has(buildItemKey(row)),
+        isTemplateItem: row.isTemplateItem !== false && templateKeys.has(buildItemKey(row)),
         supplierProductName: row.supplierProductName,
         supplierName: row.supplierName,
         baseUnitsPerPurchaseUnit: row.baseUnitsPerPurchaseUnit ?? "",
@@ -273,10 +282,11 @@ export default function StockCountLocationPage() {
 
   const handleFinishClick = () => {
     if (isFinished) return;
+    setSelectedTemplateAdditions(Object.fromEntries(addedRows.map((row) => [row.key, true])));
     setShowFinishModal(true);
   };
 
-  const handleFinish = async () => {
+  const handleFinish = async (templateRowsToAdd = []) => {
     if (!hotelUid || !stockCountId || !locationId || isFinished) return;
     setSaving(true);
     setError("");
@@ -287,7 +297,7 @@ export default function StockCountLocationPage() {
         stockCountId,
         locationId,
         buildCountedItems(),
-        [],
+        templateRowsToAdd.map((row) => ({ supplierProductId: row.supplierProductId, outletId: row.outletId })),
         auth.currentUser?.uid || "unknown"
       );
       navigate(`/catalog/stock-counts/${stockCountId}`);
@@ -298,6 +308,8 @@ export default function StockCountLocationPage() {
       setShowFinishModal(false);
     }
   };
+
+  const selectedRowsToAddToTemplate = addedRows.filter((row) => selectedTemplateAdditions[row.key] !== false);
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -514,6 +526,33 @@ export default function StockCountLocationPage() {
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
             Once this Stock Count Location is marked as Finished, counts can no longer be changed and supplier products can no longer be added from this page.
           </p>
+          {addedRows.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm text-gray-700">
+                {addedRows.length} supplier product{addedRows.length === 1 ? " was" : "s were"} added to this Stock Count Location that {addedRows.length === 1 ? "is" : "are"} not in the original template.
+                Select which supplier products should also be added to the template for future counts.
+              </p>
+              <div className="max-h-64 space-y-2 overflow-y-auto rounded border border-gray-200 p-2">
+                {addedRows.map((row) => (
+                  <label key={row.key} className="flex items-start gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={selectedTemplateAdditions[row.key] !== false}
+                      onChange={(event) =>
+                        setSelectedTemplateAdditions((prev) => ({ ...prev, [row.key]: event.target.checked }))
+                      }
+                      disabled={saving}
+                    />
+                    <span>
+                      <span className="font-medium">{row.supplierProductName}</span>
+                      <span className="text-gray-500"> · {row.supplierName} · {row.outletName}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap justify-end gap-2">
             <button
               type="button"
@@ -523,13 +562,23 @@ export default function StockCountLocationPage() {
             >
               Cancel
             </button>
+            {addedRows.length > 0 && (
+              <button
+                type="button"
+                className="rounded border border-gray-300 px-3 py-2 text-sm disabled:opacity-60"
+                onClick={() => handleFinish([])}
+                disabled={saving}
+              >
+                {saving ? "Finishing..." : "Finish without adding"}
+              </button>
+            )}
             <button
               type="button"
               className="rounded bg-[#b41f1f] px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
-              onClick={handleFinish}
+              onClick={() => handleFinish(selectedRowsToAddToTemplate)}
               disabled={saving}
             >
-              {saving ? "Finishing..." : "Yes, set finished"}
+              {saving ? "Finishing..." : addedRows.length > 0 ? "Finish and add selected" : "Yes, set finished"}
             </button>
           </div>
         </div>
