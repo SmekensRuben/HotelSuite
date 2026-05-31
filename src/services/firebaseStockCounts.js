@@ -84,6 +84,7 @@ function normalizeCountedItems(items) {
           totalValue: Number(item?.totalValue || 0),
           countedAt: item?.countedAt || null,
           countedBy: item?.countedBy || null,
+          isCounted: item?.isCounted !== false,
           isTemplateItem: item?.isTemplateItem !== false,
           supplierProductName: String(item?.supplierProductName || item?.name || "").trim(),
           supplierName: String(item?.supplierName || "").trim(),
@@ -213,6 +214,14 @@ export async function updateStockCountLocationCounts(hotelUid, stockCountId, loc
   if (!stockCount) throw new Error("Stock count niet gevonden");
 
   const normalizedLocationId = String(locationId || "").trim();
+  const currentLocation = (stockCount.locations || []).find(
+    (location) => String(location?.locationId || "").trim() === normalizedLocationId
+  );
+  if (!currentLocation) throw new Error("Stock count location niet gevonden");
+  if (currentLocation.status === "Finished") {
+    throw new Error("Finished stock count locations kunnen niet meer worden aangepast");
+  }
+
   const normalizedCountedItems = normalizeCountedItems(countedItems);
   const updatedAt = new Date();
   const nextLocations = (stockCount.locations || []).map((location) => {
@@ -274,6 +283,9 @@ export async function finishStockCountLocation(
     (location) => String(location?.locationId || "").trim() === normalizedLocationId
   );
   if (!currentLocation) throw new Error("Stock count location niet gevonden");
+  if (currentLocation.status === "Finished") {
+    throw new Error("Deze Stock Count Location is al Finished");
+  }
 
   const normalizedCountedItems = normalizeCountedItems(countedItems);
   const normalizedTemplateItemsToAdd = Array.isArray(templateItemsToAdd)
@@ -282,6 +294,9 @@ export async function finishStockCountLocation(
   const existingTemplateItems = Array.isArray(currentLocation.stockTemplate?.items)
     ? currentLocation.stockTemplate.items.map(normalizeStockTemplateItem).filter((item) => item.supplierProductId && item.outletId)
     : [];
+  const countedItemsByKey = Object.fromEntries(
+    normalizedCountedItems.map((item) => [buildStockTemplateItemKey(item), item])
+  );
   const templateItemKeys = new Set(existingTemplateItems.map(buildStockTemplateItemKey));
   const newTemplateItems = [];
 
@@ -289,7 +304,7 @@ export async function finishStockCountLocation(
     const key = buildStockTemplateItemKey(item);
     if (templateItemKeys.has(key)) return;
     templateItemKeys.add(key);
-    newTemplateItems.push(item);
+    newTemplateItems.push({ ...(countedItemsByKey[key] || {}), ...item, isTemplateItem: true });
   });
 
   const updatedAt = new Date();
@@ -298,10 +313,6 @@ export async function finishStockCountLocation(
 
     return {
       ...location,
-      stockTemplate: {
-        ...(location.stockTemplate || {}),
-        items: [...existingTemplateItems, ...newTemplateItems],
-      },
       countedItems: normalizedCountedItems,
       status: "Finished",
       updatedAt,

@@ -111,8 +111,8 @@ export default function StockCountLocationPage() {
       const nextAdditionalItems = [];
       (nextLocation?.countedItems || []).forEach((item) => {
         const key = buildItemKey(item);
-        nextQuantities[key] = String(item.quantity ?? "");
-        if (!templateKeys.has(key)) {
+        nextQuantities[key] = item.isCounted === false ? "" : String(item.quantity ?? "");
+        if (item.isTemplateItem === false || !templateKeys.has(key)) {
           nextAdditionalItems.push({ ...item, key, isTemplateItem: false });
         }
       });
@@ -146,7 +146,10 @@ export default function StockCountLocationPage() {
   );
 
   const rows = useMemo(() => {
-    const templateRows = (template?.items || []).map((item) => ({ ...item, isTemplateItem: true }));
+    const additionalItemKeys = new Set(additionalItems.map(buildItemKey));
+    const templateRows = (template?.items || [])
+      .filter((item) => !additionalItemKeys.has(buildItemKey(item)))
+      .map((item) => ({ ...item, isTemplateItem: true }));
     return [...templateRows, ...additionalItems].map((item) => {
       const key = buildItemKey(item);
       const pricePerPurchaseUnit = Number(item.pricePerPurchaseUnit || 0);
@@ -193,8 +196,8 @@ export default function StockCountLocationPage() {
   );
 
   const addedRows = useMemo(
-    () => rows.filter((row) => !templateKeys.has(buildItemKey(row))),
-    [rows, templateKeys]
+    () => rows.filter((row) => row.isTemplateItem === false),
+    [rows]
   );
 
   const countedCount = rows.filter((row) => row.quantity !== "").length;
@@ -208,7 +211,7 @@ export default function StockCountLocationPage() {
 
   const buildCountedItems = () =>
     rows
-      .filter((row) => row.quantity !== "" || !templateKeys.has(buildItemKey(row)))
+      .filter((row) => row.quantity !== "" || row.isTemplateItem === false)
       .map((row) => ({
         supplierProductId: row.supplierProductId,
         outletId: row.outletId,
@@ -217,7 +220,8 @@ export default function StockCountLocationPage() {
         totalValue: row.totalValue,
         countedAt: new Date(),
         countedBy: auth.currentUser?.uid || "unknown",
-        isTemplateItem: templateKeys.has(buildItemKey(row)),
+        isCounted: row.quantity !== "",
+        isTemplateItem: row.isTemplateItem !== false && templateKeys.has(buildItemKey(row)),
         supplierProductName: row.supplierProductName,
         supplierName: row.supplierName,
         baseUnitsPerPurchaseUnit: row.baseUnitsPerPurchaseUnit ?? "",
@@ -227,11 +231,15 @@ export default function StockCountLocationPage() {
         outletName: row.outletName,
       }));
 
+  const isFinished = stockCountLocation?.status === "Finished";
+
   const handleQuantityChange = (key) => (event) => {
+    if (isFinished) return;
     setQuantitiesByKey((prev) => ({ ...prev, [key]: event.target.value }));
   };
 
   const handleAddSupplierProduct = () => {
+    if (isFinished) return;
     if (!selectedProduct || !selectedOutletId) return;
     const outlet = outletsById[selectedOutletId] || { id: selectedOutletId };
     const nextItem = { ...buildSupplierProductSnapshot(selectedProduct, outlet), isTemplateItem: false };
@@ -252,7 +260,7 @@ export default function StockCountLocationPage() {
   };
 
   const handleSave = async () => {
-    if (!hotelUid || !stockCountId || !locationId) return;
+    if (!hotelUid || !stockCountId || !locationId || isFinished) return;
     setSaving(true);
     setError("");
 
@@ -273,17 +281,13 @@ export default function StockCountLocationPage() {
   };
 
   const handleFinishClick = () => {
-    const defaultSelections = Object.fromEntries(addedRows.map((row) => [row.key, true]));
-    setSelectedTemplateAdditions(defaultSelections);
-    if (addedRows.length > 0) {
-      setShowFinishModal(true);
-      return;
-    }
-    handleFinish([]);
+    if (isFinished) return;
+    setSelectedTemplateAdditions(Object.fromEntries(addedRows.map((row) => [row.key, true])));
+    setShowFinishModal(true);
   };
 
-  const handleFinish = async (templateRowsToAdd) => {
-    if (!hotelUid || !stockCountId || !locationId) return;
+  const handleFinish = async (templateRowsToAdd = []) => {
+    if (!hotelUid || !stockCountId || !locationId || isFinished) return;
     setSaving(true);
     setError("");
 
@@ -305,7 +309,7 @@ export default function StockCountLocationPage() {
     }
   };
 
-  const selectedRowsToAddToTemplate = addedRows.filter((row) => selectedTemplateAdditions[row.key]);
+  const selectedRowsToAddToTemplate = addedRows.filter((row) => selectedTemplateAdditions[row.key] !== false);
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -382,7 +386,8 @@ export default function StockCountLocationPage() {
                   <button
                     type="button"
                     onClick={() => setShowAddModal(true)}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                    disabled={isFinished}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <Plus className="h-4 w-4" /> Add Supplier Product
                   </button>
@@ -409,7 +414,8 @@ export default function StockCountLocationPage() {
                         value={row.quantity}
                         onClick={(event) => event.stopPropagation()}
                         onChange={handleQuantityChange(row.key)}
-                        className="w-28 rounded border border-gray-300 px-2 py-1 text-sm"
+                        disabled={isFinished}
+                        className="w-28 rounded border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-600"
                       />
                     ),
                   },
@@ -432,7 +438,7 @@ export default function StockCountLocationPage() {
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={saving}
+                  disabled={saving || isFinished}
                   className="px-4 py-2 rounded-lg border border-[#b41f1f] text-[#b41f1f] text-sm font-semibold hover:bg-red-50 disabled:opacity-60"
                 >
                   {saving ? "Saving..." : "Save Counts"}
@@ -451,7 +457,7 @@ export default function StockCountLocationPage() {
         )}
       </PageContainer>
 
-      <Modal open={showAddModal} onClose={() => setShowAddModal(false)} title="Add Supplier Product">
+      <Modal open={showAddModal && !isFinished} onClose={() => setShowAddModal(false)} title="Add Supplier Product">
         <div className="space-y-3">
           <input
             type="search"
@@ -512,35 +518,67 @@ export default function StockCountLocationPage() {
         </div>
       </Modal>
 
-      <Modal open={showFinishModal} onClose={() => setShowFinishModal(false)} title="Add products to template?">
+      <Modal open={showFinishModal} onClose={() => setShowFinishModal(false)} title="Confirm finished location">
         <div className="space-y-4">
           <p className="text-sm text-gray-700">
-            {addedRows.length} supplier product{addedRows.length === 1 ? " was" : "s were"} added to this Stock Count Location that {addedRows.length === 1 ? "is" : "are"} not in the template.
-            Should these supplier products also be added to the template now?
+            Are you sure everything that had to be counted within this location has been counted?
           </p>
-          <div className="max-h-64 space-y-2 overflow-y-auto rounded border border-gray-200 p-2">
-            {addedRows.map((row) => (
-              <label key={row.key} className="flex items-start gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={selectedTemplateAdditions[row.key] !== false}
-                  onChange={(event) =>
-                    setSelectedTemplateAdditions((prev) => ({ ...prev, [row.key]: event.target.checked }))
-                  }
-                />
-                <span>
-                  <span className="font-medium">{row.supplierProductName}</span>
-                  <span className="text-gray-500"> · {row.supplierName} · {row.outletName}</span>
-                </span>
-              </label>
-            ))}
-          </div>
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            Once this Stock Count Location is marked as Finished, counts can no longer be changed and supplier products can no longer be added from this page.
+          </p>
+          {addedRows.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm text-gray-700">
+                {addedRows.length} supplier product{addedRows.length === 1 ? " was" : "s were"} added to this Stock Count Location that {addedRows.length === 1 ? "is" : "are"} not in the original template.
+                Select which supplier products should also be added to the template for future counts.
+              </p>
+              <div className="max-h-64 space-y-2 overflow-y-auto rounded border border-gray-200 p-2">
+                {addedRows.map((row) => (
+                  <label key={row.key} className="flex items-start gap-2 rounded px-2 py-1 text-sm hover:bg-gray-50">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={selectedTemplateAdditions[row.key] !== false}
+                      onChange={(event) =>
+                        setSelectedTemplateAdditions((prev) => ({ ...prev, [row.key]: event.target.checked }))
+                      }
+                      disabled={saving}
+                    />
+                    <span>
+                      <span className="font-medium">{row.supplierProductName}</span>
+                      <span className="text-gray-500"> · {row.supplierName} · {row.outletName}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap justify-end gap-2">
-            <button type="button" className="rounded border border-gray-300 px-3 py-2 text-sm" onClick={() => setShowFinishModal(false)}>Cancel</button>
-            <button type="button" className="rounded border border-gray-300 px-3 py-2 text-sm" onClick={() => handleFinish([])} disabled={saving}>Finish without adding</button>
-            <button type="button" className="rounded bg-[#b41f1f] px-3 py-2 text-sm font-semibold text-white disabled:opacity-60" onClick={() => handleFinish(selectedRowsToAddToTemplate)} disabled={saving}>
-              Finish and add selected
+            <button
+              type="button"
+              className="rounded border border-gray-300 px-3 py-2 text-sm"
+              onClick={() => setShowFinishModal(false)}
+              disabled={saving}
+            >
+              Cancel
+            </button>
+            {addedRows.length > 0 && (
+              <button
+                type="button"
+                className="rounded border border-gray-300 px-3 py-2 text-sm disabled:opacity-60"
+                onClick={() => handleFinish([])}
+                disabled={saving}
+              >
+                {saving ? "Finishing..." : "Finish without adding"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="rounded bg-[#b41f1f] px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              onClick={() => handleFinish(selectedRowsToAddToTemplate)}
+              disabled={saving}
+            >
+              {saving ? "Finishing..." : addedRows.length > 0 ? "Finish and add selected" : "Yes, set finished"}
             </button>
           </div>
         </div>

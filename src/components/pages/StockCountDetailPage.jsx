@@ -16,6 +16,18 @@ function formatCurrency(value) {
   }).format(Number(value || 0));
 }
 
+function buildItemKey(item) {
+  return `${String(item?.supplierProductId || "").trim()}::${String(item?.outletId || "").trim()}`;
+}
+
+function getUniqueItemCount(templateItems = [], countedItems = []) {
+  return new Set(
+    [...templateItems, ...countedItems]
+      .map(buildItemKey)
+      .filter((key) => key !== "::")
+  ).size;
+}
+
 function getLocationStatus(location, countedCount) {
   if (location?.status === "Finished") return "Finished";
   if (countedCount === 0) return "Not Started";
@@ -61,19 +73,25 @@ export default function StockCountDetailPage() {
     () =>
       (stockCount?.locations || []).map((location) => {
         const countedItems = Array.isArray(location.countedItems) ? location.countedItems : [];
-        const countedCount = countedItems.length;
+        const countedCount = new Set(
+          countedItems
+            .filter((item) => item?.isCounted !== false)
+            .map(buildItemKey)
+            .filter((key) => key !== "::")
+        ).size;
         const countedValue = countedItems.reduce(
           (sum, item) => sum + Number(item?.totalValue || 0),
           0
         );
-        const templateCount = Array.isArray(location.stockTemplate?.items) ? location.stockTemplate.items.length : 0;
+        const templateItems = Array.isArray(location.stockTemplate?.items) ? location.stockTemplate.items : [];
+        const totalCountableItems = getUniqueItemCount(templateItems, countedItems);
 
         return {
           id: location.locationId,
           locationId: location.locationId,
           locationName: location.locationName || "-",
           countedCount,
-          countedCountLabel: `${countedCount} / ${templateCount}`,
+          countedCountLabel: `${countedCount} / ${totalCountableItems}`,
           countedValue,
           countedValueLabel: formatCurrency(countedValue),
           status: getLocationStatus(location, countedCount),
