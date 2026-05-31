@@ -394,36 +394,99 @@ export default function StockCountLocationPage() {
                 </div>
               </div>
 
-              <DataListTable
-                columns={[
-                  { key: "supplierProductName", label: "Supplier Product", sortable: false },
-                  { key: "supplierName", label: "Supplier", sortable: false },
-                  { key: "content", label: "Content", sortable: false },
-                  { key: "outletName", label: "Outlet", sortable: false },
-                  { key: "sourceLabel", label: "Source", sortable: false },
-                  { key: "pricePerPurchaseUnitLabel", label: "Price", sortable: false },
-                  {
-                    key: "quantity",
-                    label: "Count",
-                    sortable: false,
-                    render: (row) => (
-                      <input
-                        type="number"
-                        min="0"
-                        step="any"
-                        value={row.quantity}
-                        onClick={(event) => event.stopPropagation()}
-                        onChange={handleQuantityChange(row.key)}
-                        disabled={isFinished}
-                        className="w-28 rounded border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-600"
-                      />
-                    ),
-                  },
-                  { key: "totalValueLabel", label: "Value", sortable: false },
-                ]}
-                rows={filteredRows}
-                emptyMessage={searchQuery ? "No supplier products match your search." : "No stock template items yet."}
-              />
+              <div className="md:hidden">
+                {filteredRows.length === 0 ? (
+                  <div className="rounded-xl border border-gray-200 bg-white px-4 py-6 text-sm text-gray-500 shadow-sm">
+                    {searchQuery ? "No supplier products match your search." : "No stock template items yet."}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredRows.map((row) => (
+                      <article key={row.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                        <div className="space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <h3 className="break-words text-base font-semibold text-gray-900">
+                                {row.supplierProductName}
+                              </h3>
+                              <p className="mt-1 text-sm text-gray-500">{row.supplierName}</p>
+                            </div>
+                            <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700">
+                              {row.sourceLabel}
+                            </span>
+                          </div>
+
+                          <dl className="grid grid-cols-2 gap-3 text-sm">
+                            <div>
+                              <dt className="text-xs font-medium uppercase tracking-wide text-gray-500">Content</dt>
+                              <dd className="mt-0.5 break-words text-gray-900">{row.content}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium uppercase tracking-wide text-gray-500">Outlet</dt>
+                              <dd className="mt-0.5 break-words text-gray-900">{row.outletName}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium uppercase tracking-wide text-gray-500">Price</dt>
+                              <dd className="mt-0.5 text-gray-900">{row.pricePerPurchaseUnitLabel}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium uppercase tracking-wide text-gray-500">Value</dt>
+                              <dd className="mt-0.5 font-semibold text-gray-900">{row.totalValueLabel}</dd>
+                            </div>
+                          </dl>
+
+                          <label className="block text-sm font-medium text-gray-700">
+                            Count
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              inputMode="decimal"
+                              value={row.quantity}
+                              onChange={handleQuantityChange(row.key)}
+                              disabled={isFinished}
+                              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-3 text-base disabled:bg-gray-100 disabled:text-gray-600"
+                            />
+                          </label>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="hidden md:block">
+                <DataListTable
+                  columns={[
+                    { key: "supplierProductName", label: "Supplier Product", sortable: false },
+                    { key: "supplierName", label: "Supplier", sortable: false },
+                    { key: "content", label: "Content", sortable: false },
+                    { key: "outletName", label: "Outlet", sortable: false },
+                    { key: "sourceLabel", label: "Source", sortable: false },
+                    { key: "pricePerPurchaseUnitLabel", label: "Price", sortable: false },
+                    {
+                      key: "quantity",
+                      label: "Count",
+                      sortable: false,
+                      render: (row) => (
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={row.quantity}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={handleQuantityChange(row.key)}
+                          disabled={isFinished}
+                          className="w-28 rounded border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-600"
+                        />
+                      ),
+                    },
+                    { key: "totalValueLabel", label: "Value", sortable: false },
+                  ]}
+                  rows={filteredRows}
+                  emptyMessage={searchQuery ? "No supplier products match your search." : "No stock template items yet."}
+                />
+              </div>
 
               {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 
