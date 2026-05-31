@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Pencil, Plus, Trash2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
@@ -9,18 +9,27 @@ import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSupplierProducts } from "../../services/firebaseProducts";
-import { getOutlets } from "../../services/firebaseSettings";
 import {
   addLocationStockTemplateItem,
+  getOutlets,
+  getLocationById,
   getLocationStockTemplateById,
   removeLocationStockTemplateItem,
+  updateLocationStockTemplateItems,
 } from "../../services/firebaseSettings";
+
+function getTemplateItemKey(item, fallbackIndex) {
+  const supplierProductId = String(item?.supplierProductId || "").trim();
+  const outletId = String(item?.outletId || "").trim();
+  return `${supplierProductId}-${outletId}-${fallbackIndex}`;
+}
 
 export default function LocationStockTemplateDetailPage() {
   const { locationId, templateId } = useParams();
   const { hotelUid } = useHotelContext();
   const navigate = useNavigate();
   const [template, setTemplate] = useState(null);
+  const [location, setLocation] = useState(null);
   const [supplierProducts, setSupplierProducts] = useState([]);
   const [outlets, setOutlets] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -31,50 +40,135 @@ export default function LocationStockTemplateDetailPage() {
   const [activeOutletFilter, setActiveOutletFilter] = useState("");
   const [isEditMode, setIsEditMode] = useState(false);
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null);
+  const [movingItemKey, setMovingItemKey] = useState("");
 
-  const today = useMemo(() => new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }), []);
-  const handleLogout = async () => { await signOut(auth); sessionStorage.clear(); window.location.href = "/login"; };
+  const today = useMemo(
+    () => new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }),
+    []
+  );
+
+  const handleLogout = async () => {
+    await signOut(auth);
+    sessionStorage.clear();
+    window.location.href = "/login";
+  };
 
   const load = async () => {
     if (!hotelUid || !locationId || !templateId) return;
     setLoading(true);
-    const [templateData, products, outletList] = await Promise.all([
+    const [templateData, locationData, products, outletList] = await Promise.all([
       getLocationStockTemplateById(hotelUid, locationId, templateId),
+      getLocationById(hotelUid, locationId),
       getSupplierProducts(hotelUid),
       getOutlets(hotelUid),
     ]);
     setTemplate(templateData);
+    setLocation(locationData);
     setSupplierProducts(Array.isArray(products) ? products : products.products || []);
     setOutlets(outletList);
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, [hotelUid, locationId, templateId]);
+  useEffect(() => {
+    load();
+  }, [hotelUid, locationId, templateId]);
 
   const filteredProducts = supplierProducts.filter((product) => {
     const text = `${product.supplierProductName || ""} ${product.supplierName || ""}`.toLowerCase();
     return text.includes(search.toLowerCase());
   });
 
-  const supplierProductsById = useMemo(() => Object.fromEntries(supplierProducts.map((product) => [String(product.id || "").trim(), product])), [supplierProducts]);
-  const outletsById = useMemo(() => Object.fromEntries(outlets.map((outlet) => [String(outlet.id || "").trim(), outlet])), [outlets]);
+  const supplierProductsById = useMemo(
+    () => Object.fromEntries(supplierProducts.map((product) => [String(product.id || "").trim(), product])),
+    [supplierProducts]
+  );
+  const outletsById = useMemo(
+    () => Object.fromEntries(outlets.map((outlet) => [String(outlet.id || "").trim(), outlet])),
+    [outlets]
+  );
 
-  const rows = (template?.items || [])
-    .filter((item) => !activeOutletFilter || item.outletId === activeOutletFilter)
-    .map((item) => {
-      const supplierProduct = supplierProductsById[String(item?.supplierProductId || "").trim()] || {};
-      const outlet = outletsById[String(item?.outletId || "").trim()] || {};
-      const baseUnitsPerPurchaseUnit = supplierProduct.baseUnitsPerPurchaseUnit || "-";
-      const baseUnit = supplierProduct.baseUnit || "-";
-      const purchaseUnit = supplierProduct.purchaseUnit || "-";
-      const content = `${baseUnitsPerPurchaseUnit} ${baseUnit} / ${purchaseUnit}`;
-      return {
+  const visibleItems = useMemo(
+    () =>
+      (template?.items || [])
+        .map((item, originalIndex) => ({ ...item, originalIndex }))
+        .filter((item) => !activeOutletFilter || item.outletId === activeOutletFilter),
+    [activeOutletFilter, template?.items]
+  );
+
+  const handleMoveItem = async (itemToMove, direction) => {
+    const currentItems = template?.items || [];
+    const currentVisibleIndex = visibleItems.findIndex((item) => item.originalIndex === itemToMove.originalIndex);
+    const targetVisibleItem = visibleItems[currentVisibleIndex + direction];
+
+    if (!targetVisibleItem) return;
+
+    const nextItems = [...currentItems];
+    [nextItems[itemToMove.originalIndex], nextItems[targetVisibleItem.originalIndex]] = [
+      nextItems[targetVisibleItem.originalIndex],
+      nextItems[itemToMove.originalIndex],
+    ];
+
+    const itemKey = getTemplateItemKey(itemToMove, itemToMove.originalIndex);
+    setMovingItemKey(itemKey);
+    setTemplate((current) => (current ? { ...current, items: nextItems } : current));
+
+    try {
+      await updateLocationStockTemplateItems(hotelUid, locationId, templateId, nextItems);
+    } catch (error) {
+      await load();
+      throw error;
+    } finally {
+      setMovingItemKey("");
+    }
+  };
+
+  const rows = visibleItems.map((item, visibleIndex) => {
+    const supplierProduct = supplierProductsById[String(item?.supplierProductId || "").trim()] || {};
+    const outlet = outletsById[String(item?.outletId || "").trim()] || {};
+    const baseUnitsPerPurchaseUnit = supplierProduct.baseUnitsPerPurchaseUnit || "-";
+    const baseUnit = supplierProduct.baseUnit || "-";
+    const purchaseUnit = supplierProduct.purchaseUnit || "-";
+    const content = `${baseUnitsPerPurchaseUnit} ${baseUnit} / ${purchaseUnit}`;
+    const itemKey = getTemplateItemKey(item, item.originalIndex);
+    const canMoveUp = visibleIndex > 0;
+    const canMoveDown = visibleIndex < visibleItems.length - 1;
+
+    return {
       ...item,
+      id: itemKey,
       supplierProductName: supplierProduct.supplierProductName || supplierProduct.name || item.supplierProductName || "-",
       supplierName: supplierProduct.supplierName || item.supplierName || "-",
       content,
       pricePerPurchaseUnit: Number(supplierProduct.pricePerPurchaseUnit || item.pricePerPurchaseUnit || 0).toFixed(2),
       outletName: outlet.name || item.outletName || item.outletId || "-",
+      orderControls: isEditMode ? (
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className="inline-flex items-center justify-center rounded p-1 text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Move stock template item up"
+            disabled={!canMoveUp || movingItemKey === itemKey}
+            onClick={(event) => {
+              event.stopPropagation();
+              handleMoveItem(item, -1);
+            }}
+          >
+            <ArrowUp className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center justify-center rounded p-1 text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Move stock template item down"
+            disabled={!canMoveDown || movingItemKey === itemKey}
+            onClick={(event) => {
+              event.stopPropagation();
+              handleMoveItem(item, 1);
+            }}
+          >
+            <ArrowDown className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null,
       actions: isEditMode ? (
         <button
           type="button"
@@ -89,7 +183,7 @@ export default function LocationStockTemplateDetailPage() {
         </button>
       ) : null,
     };
-    });
+  });
 
   const handleSaveItem = async () => {
     if (!selectedProduct || !selectedOutletId) return;
@@ -106,10 +200,188 @@ export default function LocationStockTemplateDetailPage() {
 
   const handleDeleteItem = async () => {
     if (!confirmDeleteItem) return;
-    await removeLocationStockTemplateItem(hotelUid, locationId, templateId, confirmDeleteItem.supplierProductId, confirmDeleteItem.outletId);
+    await removeLocationStockTemplateItem(
+      hotelUid,
+      locationId,
+      templateId,
+      confirmDeleteItem.supplierProductId,
+      confirmDeleteItem.outletId
+    );
     setConfirmDeleteItem(null);
     await load();
   };
 
-  return <div className="min-h-screen bg-gray-50 text-gray-900"><HeaderBar today={today} onLogout={handleLogout} /><PageContainer className="space-y-6"><div className="flex items-center justify-between gap-3"><h1 className="text-3xl font-semibold">Stock Template Detail</h1><button type="button" onClick={() => navigate(`/settings/locations/${locationId}`)} className="inline-flex items-center justify-center rounded border border-gray-300 p-2 text-gray-700 hover:bg-gray-100" title="Back"><ArrowLeft className="h-4 w-4" /></button></div>{loading ? <p className="text-gray-600">Loading stock template...</p> : !template ? <Card><p className="text-gray-600">Stock template not found.</p></Card> : <><Card className="flex items-center justify-between gap-4"><div><h2 className="text-2xl font-semibold">{template.name || "-"}</h2></div><div className="flex items-center gap-2"><button type="button" onClick={() => setIsEditMode((current) => !current)} className={`inline-flex items-center gap-2 rounded border px-3 py-2 text-sm ${isEditMode ? "border-blue-600 text-blue-700 bg-blue-50" : "border-gray-300 text-gray-700 hover:bg-gray-100"}`}><Pencil className="h-4 w-4" /></button><button type="button" onClick={() => setShowModal(true)} className="inline-flex items-center gap-2 rounded border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"><Plus className="h-4 w-4" /> New Location Stock Item</button></div></Card><Card><div className="mb-3 flex items-center justify-between gap-3"><h3 className="text-lg font-semibold">Stock Template Items</h3><select value={activeOutletFilter} onChange={(event) => setActiveOutletFilter(event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm"><option value="">All Outlets</option>{outlets.map((outlet) => <option key={outlet.id} value={outlet.id}>{outlet.name}</option>)}</select></div><DataListTable columns={[{ key: "supplierProductName", label: "Supplier Product" }, { key: "supplierName", label: "Supplier" }, { key: "content", label: "Content" }, { key: "pricePerPurchaseUnit", label: "Price per Purchase Unit" }, { key: "outletName", label: "Outlet" }, ...(isEditMode ? [{ key: "actions", label: "" }] : [])]} rows={rows} emptyMessage="No stock template items yet." /></Card></>}</PageContainer><Modal open={showModal} onClose={() => setShowModal(false)} title="New Location Stock Item"><div className="space-y-3"><input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search supplier product" className="w-full rounded border border-gray-300 px-3 py-2 text-sm" /><div className="max-h-56 overflow-y-auto rounded border border-gray-200"><table className="w-full text-sm"><thead><tr className="bg-gray-50 text-left"><th className="px-2 py-2">Supplier Product</th><th className="px-2 py-2">Supplier</th><th className="px-2 py-2">Content</th></tr></thead><tbody>{filteredProducts.slice(0, 20).map((product) => { const content = `${product.baseUnitsPerPurchaseUnit || "-"} ${product.baseUnit || "-"} / ${product.purchaseUnit || "-"}`; const isSelected = selectedProduct?.id === product.id; return <tr key={product.id} className={`cursor-pointer ${isSelected ? "bg-blue-50" : "hover:bg-gray-50"}`} onClick={() => setSelectedProduct(product)}><td className="px-2 py-2">{product.supplierProductName || product.name || "-"}</td><td className="px-2 py-2">{product.supplierName || "-"}</td><td className="px-2 py-2">{content}</td></tr>; })}</tbody></table></div><select value={selectedOutletId} onChange={(e) => setSelectedOutletId(e.target.value)} className="w-full rounded border border-gray-300 px-3 py-2 text-sm"><option value="">Select outlet</option>{outlets.map((outlet) => <option key={outlet.id} value={outlet.id}>{outlet.name}</option>)}</select><div className="flex justify-end gap-2"><button type="button" className="rounded border border-gray-300 px-3 py-2 text-sm" onClick={() => setShowModal(false)}>Cancel</button><button type="button" className="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-60" disabled={!selectedProduct || !selectedOutletId} onClick={handleSaveItem}>Save</button></div></div></Modal><Modal open={Boolean(confirmDeleteItem)} onClose={() => setConfirmDeleteItem(null)} title="Remove Stock Template Item"><div className="space-y-3"><p className="text-sm text-gray-700">Are you sure you want to remove <span className="font-medium">{confirmDeleteItem?.supplierProductName || "this item"}</span> from this stock template?</p><div className="flex justify-end gap-2"><button type="button" className="rounded border border-gray-300 px-3 py-2 text-sm" onClick={() => setConfirmDeleteItem(null)}>Cancel</button><button type="button" className="rounded bg-red-600 px-3 py-2 text-sm text-white" onClick={handleDeleteItem}>Remove</button></div></div></Modal></div>;
+  const itemColumns = [
+    ...(isEditMode ? [{ key: "orderControls", label: "Order", sortable: false }] : []),
+    { key: "supplierProductName", label: "Supplier Product", sortable: false },
+    { key: "supplierName", label: "Supplier", sortable: false },
+    { key: "content", label: "Content", sortable: false },
+    { key: "pricePerPurchaseUnit", label: "Price per Purchase Unit", sortable: false },
+    { key: "outletName", label: "Outlet", sortable: false },
+    ...(isEditMode ? [{ key: "actions", label: "", sortable: false }] : []),
+  ];
+
+  return (
+    <div className="min-h-screen bg-gray-50 text-gray-900">
+      <HeaderBar today={today} onLogout={handleLogout} />
+      <PageContainer className="space-y-6">
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-3xl font-semibold">Stock Template Detail</h1>
+          <button
+            type="button"
+            onClick={() => navigate(`/settings/locations/${locationId}`)}
+            className="inline-flex items-center justify-center rounded border border-gray-300 p-2 text-gray-700 hover:bg-gray-100"
+            title="Back"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+        </div>
+
+        {loading ? (
+          <p className="text-gray-600">Loading stock template...</p>
+        ) : !template ? (
+          <Card>
+            <p className="text-gray-600">Stock template not found.</p>
+          </Card>
+        ) : (
+          <>
+            <Card className="flex items-center justify-between gap-4">
+              <div className="space-y-1">
+                <p className="text-sm font-medium uppercase tracking-wide text-gray-500">Location</p>
+                <p className="text-base font-semibold text-gray-800">{location?.name || locationId || "-"}</p>
+                <h2 className="pt-2 text-2xl font-semibold">{template.name || "-"}</h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditMode((current) => !current)}
+                  className={`inline-flex items-center gap-2 rounded border px-3 py-2 text-sm ${
+                    isEditMode
+                      ? "border-blue-600 bg-blue-50 text-blue-700"
+                      : "border-gray-300 text-gray-700 hover:bg-gray-100"
+                  }`}
+                  title="Toggle edit mode"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowModal(true)}
+                  className="inline-flex items-center gap-2 rounded border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                >
+                  <Plus className="h-4 w-4" /> New Location Stock Item
+                </button>
+              </div>
+            </Card>
+
+            <Card>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="text-lg font-semibold">Stock Template Items</h3>
+                <select
+                  value={activeOutletFilter}
+                  onChange={(event) => setActiveOutletFilter(event.target.value)}
+                  className="rounded border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="">All Outlets</option>
+                  {outlets.map((outlet) => (
+                    <option key={outlet.id} value={outlet.id}>
+                      {outlet.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <DataListTable columns={itemColumns} rows={rows} emptyMessage="No stock template items yet." />
+            </Card>
+          </>
+        )}
+      </PageContainer>
+
+      <Modal open={showModal} onClose={() => setShowModal(false)} title="New Location Stock Item">
+        <div className="space-y-3">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search supplier product"
+            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+          />
+          <div className="max-h-56 overflow-y-auto rounded border border-gray-200">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 text-left">
+                  <th className="px-2 py-2">Supplier Product</th>
+                  <th className="px-2 py-2">Supplier</th>
+                  <th className="px-2 py-2">Content</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredProducts.slice(0, 20).map((product) => {
+                  const content = `${product.baseUnitsPerPurchaseUnit || "-"} ${product.baseUnit || "-"} / ${
+                    product.purchaseUnit || "-"
+                  }`;
+                  const isSelected = selectedProduct?.id === product.id;
+                  return (
+                    <tr
+                      key={product.id}
+                      className={`cursor-pointer ${isSelected ? "bg-blue-50" : "hover:bg-gray-50"}`}
+                      onClick={() => setSelectedProduct(product)}
+                    >
+                      <td className="px-2 py-2">{product.supplierProductName || product.name || "-"}</td>
+                      <td className="px-2 py-2">{product.supplierName || "-"}</td>
+                      <td className="px-2 py-2">{content}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <select
+            value={selectedOutletId}
+            onChange={(e) => setSelectedOutletId(e.target.value)}
+            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+          >
+            <option value="">Select outlet</option>
+            {outlets.map((outlet) => (
+              <option key={outlet.id} value={outlet.id}>
+                {outlet.name}
+              </option>
+            ))}
+          </select>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="rounded border border-gray-300 px-3 py-2 text-sm" onClick={() => setShowModal(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-60"
+              disabled={!selectedProduct || !selectedOutletId}
+              onClick={handleSaveItem}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={Boolean(confirmDeleteItem)} onClose={() => setConfirmDeleteItem(null)} title="Remove Stock Template Item">
+        <div className="space-y-3">
+          <p className="text-sm text-gray-700">
+            Are you sure you want to remove <span className="font-medium">{confirmDeleteItem?.supplierProductName || "this item"}</span> from this stock template?
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="rounded border border-gray-300 px-3 py-2 text-sm"
+              onClick={() => setConfirmDeleteItem(null)}
+            >
+              Cancel
+            </button>
+            <button type="button" className="rounded bg-red-600 px-3 py-2 text-sm text-white" onClick={handleDeleteItem}>
+              Remove
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
 }
