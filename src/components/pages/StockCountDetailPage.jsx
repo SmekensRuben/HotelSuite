@@ -7,7 +7,7 @@ import { Card } from "../layout/Card";
 import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getStockCountById } from "../../services/firebaseStockCounts";
+import { finishStockCount, getStockCountById } from "../../services/firebaseStockCounts";
 
 function formatCurrency(value) {
   return new Intl.NumberFormat(undefined, {
@@ -40,6 +40,8 @@ export default function StockCountDetailPage() {
   const { hotelUid } = useHotelContext();
   const [stockCount, setStockCount] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   const today = useMemo(
     () =>
@@ -61,9 +63,15 @@ export default function StockCountDetailPage() {
     const loadStockCount = async () => {
       if (!hotelUid || !stockCountId) return;
       setLoading(true);
-      const nextStockCount = await getStockCountById(hotelUid, stockCountId);
-      setStockCount(nextStockCount);
-      setLoading(false);
+      setError("");
+      try {
+        const nextStockCount = await getStockCountById(hotelUid, stockCountId);
+        setStockCount(nextStockCount);
+      } catch (loadError) {
+        setError(loadError?.message || "Unable to load stock count.");
+      } finally {
+        setLoading(false);
+      }
     };
 
     loadStockCount();
@@ -100,6 +108,27 @@ export default function StockCountDetailPage() {
     [stockCount]
   );
 
+  const totalCountedValue = rows.reduce((sum, row) => sum + Number(row.countedValue || 0), 0);
+  const allLocationsFinished = rows.length > 0 && rows.every((row) => row.status === "Finished");
+  const isStockCountFinished = stockCount?.status === "Finished";
+  const canFinishStockCount = Boolean(stockCount) && allLocationsFinished && !isStockCountFinished;
+
+  const handleFinishStockCount = async () => {
+    if (!hotelUid || !stockCountId || !canFinishStockCount) return;
+    setSaving(true);
+    setError("");
+
+    try {
+      await finishStockCount(hotelUid, stockCountId, auth.currentUser?.uid || "unknown");
+      const nextStockCount = await getStockCountById(hotelUid, stockCountId);
+      setStockCount(nextStockCount);
+    } catch (finishError) {
+      setError(finishError?.message || "Unable to finish stock count.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
@@ -129,19 +158,63 @@ export default function StockCountDetailPage() {
             <p className="text-gray-600">Stock count not found.</p>
           </Card>
         ) : (
-          <Card>
-            <DataListTable
-              columns={[
-                { key: "locationName", label: "Location" },
-                { key: "countedCountLabel", label: "Counted Supplier Products", sortValue: (row) => row.countedCount },
-                { key: "countedValueLabel", label: "Counted Value", sortValue: (row) => row.countedValue },
-                { key: "status", label: "Status" },
-              ]}
-              rows={rows}
-              emptyMessage="No stock count locations found."
-              onRowClick={(row) => navigate(`/catalog/stock-counts/${stockCountId}/locations/${row.locationId}`)}
-            />
-          </Card>
+          <>
+            <Card className="grid gap-4 md:grid-cols-4">
+              <div>
+                <p className="text-sm text-gray-500">Type</p>
+                <p className="font-semibold">{stockCount.type}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Status</p>
+                <p className="font-semibold">{stockCount.status}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Locations</p>
+                <p className="font-semibold">{stockCount.locationSummary}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Counted Value</p>
+                <p className="font-semibold">{formatCurrency(totalCountedValue)}</p>
+              </div>
+            </Card>
+
+            <Card className="space-y-4">
+              <DataListTable
+                columns={[
+                  { key: "locationName", label: "Location" },
+                  { key: "countedCountLabel", label: "Counted Supplier Products", sortValue: (row) => row.countedCount },
+                  { key: "countedValueLabel", label: "Counted Value", sortValue: (row) => row.countedValue },
+                  { key: "status", label: "Status" },
+                ]}
+                rows={rows}
+                emptyMessage="No stock count locations found."
+                onRowClick={(row) => navigate(`/catalog/stock-counts/${stockCountId}/locations/${row.locationId}`)}
+              />
+
+              {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+
+              <div className="flex flex-col items-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleFinishStockCount}
+                  disabled={saving || !canFinishStockCount}
+                  className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white hover:bg-[#961919] disabled:cursor-not-allowed disabled:opacity-60"
+                  title={
+                    isStockCountFinished
+                      ? "This Stock Count is already Finished"
+                      : allLocationsFinished
+                        ? "Finish Stock Count"
+                        : "All Stock Count Locations must be Finished first"
+                  }
+                >
+                  {saving ? "Finishing..." : "Finish Stock Count"}
+                </button>
+                {!allLocationsFinished && !isStockCountFinished && (
+                  <p className="text-sm text-gray-500">All Stock Count Locations must be Finished before this button is clickable.</p>
+                )}
+              </div>
+            </Card>
+          </>
         )}
       </PageContainer>
     </div>

@@ -9,6 +9,13 @@ import { useHotelContext } from "../../contexts/HotelContext";
 import { usePermission } from "../../hooks/usePermission";
 import { getStockCounts } from "../../services/firebaseStockCounts";
 
+function formatCurrency(value) {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "EUR",
+  }).format(Number(value || 0));
+}
+
 export default function StockCountsPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
@@ -44,10 +51,21 @@ export default function StockCountsPage() {
     loadStockCounts();
   }, [hotelUid]);
 
+  const rows = useMemo(
+    () =>
+      stockCounts.map((stockCount) => ({
+        ...stockCount,
+        countedValueLabel: formatCurrency(stockCount.countedValue),
+      })),
+    [stockCounts]
+  );
+
   const columns = [
     { key: "name", label: "Name" },
     { key: "type", label: "Type" },
+    { key: "status", label: "Status" },
     { key: "locationSummary", label: "Locations", sortValue: (row) => row.locationCount },
+    { key: "countedValueLabel", label: "Counted Value", sortValue: (row) => row.countedValue },
     { key: "createdAtLabel", label: "Created", sortValue: (row) => row.createdAt?.getTime?.() || 0 },
   ];
 
@@ -80,7 +98,7 @@ export default function StockCountsPage() {
         ) : (
           <DataListTable
             columns={columns}
-            rows={stockCounts}
+            rows={rows}
             emptyMessage="No stock counts found."
             onRowClick={(row) => navigate(`/catalog/stock-counts/${row.id}`)}
           />

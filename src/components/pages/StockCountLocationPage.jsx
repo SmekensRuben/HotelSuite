@@ -231,7 +231,7 @@ export default function StockCountLocationPage() {
         outletName: row.outletName,
       }));
 
-  const isFinished = stockCountLocation?.status === "Finished";
+  const isFinished = stockCount?.status === "Finished" || stockCountLocation?.status === "Finished";
 
   const handleQuantityChange = (key) => (event) => {
     if (isFinished) return;
@@ -446,7 +446,7 @@ export default function StockCountLocationPage() {
                 <button
                   type="button"
                   onClick={handleFinishClick}
-                  disabled={saving || stockCountLocation.status === "Finished"}
+                  disabled={saving || isFinished}
                   className="px-4 py-2 rounded-lg bg-[#b41f1f] text-white text-sm font-semibold hover:bg-[#961919] disabled:opacity-60"
                 >
                   {saving ? "Finishing..." : "Set Finished"}
