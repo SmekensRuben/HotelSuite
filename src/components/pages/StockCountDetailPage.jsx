@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Download } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import DataListTable from "../shared/DataListTable";
+import * as XLSX from "xlsx";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { finishStockCount, getStockCountById } from "../../services/firebaseStockCounts";
@@ -32,6 +33,21 @@ function getLocationStatus(location, countedCount) {
   if (location?.status === "Finished") return "Finished";
   if (countedCount === 0) return "Not Started";
   return location?.status && location.status !== "Not Started" ? location.status : "In Progress";
+}
+
+function sanitizeFileName(value) {
+  return String(value || "stock-count")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .toLowerCase() || "stock-count";
+}
+
+function formatExportDate(value) {
+  if (!value) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toLocaleString();
+  if (typeof value?.toDate === "function") return value.toDate().toLocaleString();
+  return String(value);
 }
 
 export default function StockCountDetailPage() {
@@ -108,6 +124,38 @@ export default function StockCountDetailPage() {
     [stockCount]
   );
 
+  const countedSupplierProductRows = useMemo(
+    () =>
+      (stockCount?.locations || []).flatMap((location) =>
+        (Array.isArray(location.countedItems) ? location.countedItems : [])
+          .filter((item) => item?.isCounted !== false)
+          .map((item) => ({
+            Location: location.locationName || location.locationId || "-",
+            "Location ID": location.locationId || "",
+            Outlet: item.outletName || item.outletId || "-",
+            "Supplier Product": item.supplierProductName || item.supplierProductId || "-",
+            Supplier: item.supplierName || "-",
+            Content: item.content || "-",
+            "Supplier Product ID": item.supplierProductId || "",
+            "Outlet ID": item.outletId || "",
+            Quantity: Number(item.quantity || 0),
+            "Price per Purchase Unit": Number(item.pricePerPurchaseUnit || 0),
+            "Total Value": Number(item.totalValue || 0),
+            "Counted At": formatExportDate(item.countedAt),
+            "Counted By": item.countedBy || "",
+            Source: item.isTemplateItem === false ? "Added" : "Template",
+          }))
+      ),
+    [stockCount]
+  );
+
+  const handleExportCountedSupplierProducts = () => {
+    const worksheet = XLSX.utils.json_to_sheet(countedSupplierProductRows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Counted Products");
+    XLSX.writeFile(workbook, `${sanitizeFileName(stockCount?.name || stockCountId)}-counted-products.xlsx`);
+  };
+
   const totalCountedValue = rows.reduce((sum, row) => sum + Number(row.countedValue || 0), 0);
   const allLocationsFinished = rows.length > 0 && rows.every((row) => row.status === "Finished");
   const isStockCountFinished = stockCount?.status === "Finished";
@@ -141,14 +189,25 @@ export default function StockCountDetailPage() {
               {stockCount?.name || "Review the selected stock count locations."}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => navigate("/catalog/stock-counts")}
-            className="inline-flex items-center justify-center rounded border border-gray-300 p-2 text-gray-700 hover:bg-gray-100"
-            title="Back"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportCountedSupplierProducts}
+              disabled={!countedSupplierProductRows.length}
+              className="inline-flex items-center gap-2 rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+              title={countedSupplierProductRows.length ? "Export counted supplier products" : "No counted supplier products to export"}
+            >
+              <Download className="h-4 w-4" /> Export Excel
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate("/catalog/stock-counts")}
+              className="inline-flex items-center justify-center rounded border border-gray-300 p-2 text-gray-700 hover:bg-gray-100"
+              title="Back"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {loading ? (

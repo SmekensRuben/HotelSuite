@@ -396,12 +396,12 @@ export default function StockCountLocationPage() {
 
               <DataListTable
                 columns={[
-                  { key: "supplierProductName", label: "Supplier Product" },
-                  { key: "supplierName", label: "Supplier" },
-                  { key: "content", label: "Content" },
-                  { key: "outletName", label: "Outlet" },
-                  { key: "sourceLabel", label: "Source" },
-                  { key: "pricePerPurchaseUnitLabel", label: "Price" },
+                  { key: "supplierProductName", label: "Supplier Product", sortable: false },
+                  { key: "supplierName", label: "Supplier", sortable: false },
+                  { key: "content", label: "Content", sortable: false },
+                  { key: "outletName", label: "Outlet", sortable: false },
+                  { key: "sourceLabel", label: "Source", sortable: false },
+                  { key: "pricePerPurchaseUnitLabel", label: "Price", sortable: false },
                   {
                     key: "quantity",
                     label: "Count",
@@ -419,7 +419,7 @@ export default function StockCountLocationPage() {
                       />
                     ),
                   },
-                  { key: "totalValueLabel", label: "Value", sortValue: (row) => row.totalValue },
+                  { key: "totalValueLabel", label: "Value", sortable: false },
                 ]}
                 rows={filteredRows}
                 emptyMessage={searchQuery ? "No supplier products match your search." : "No stock template items yet."}

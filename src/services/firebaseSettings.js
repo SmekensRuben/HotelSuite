@@ -366,6 +366,24 @@ export async function addLocationStockTemplateItem(hotelUid, locationId, templat
 }
 
 
+export async function updateLocationStockTemplateItems(hotelUid, locationId, templateId, items) {
+  if (!hotelUid || !locationId || !templateId) {
+    throw new Error("hotelUid, locationId en templateId zijn verplicht");
+  }
+
+  const normalizedItems = Array.isArray(items)
+    ? items
+        .map((item) => ({
+          supplierProductId: String(item?.supplierProductId || "").trim(),
+          outletId: String(item?.outletId || "").trim(),
+        }))
+        .filter((item) => item.supplierProductId && item.outletId)
+    : [];
+
+  const templateRef = doc(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`, templateId);
+  await updateDoc(templateRef, { items: normalizedItems, updatedAt: new Date() });
+}
+
 export async function removeLocationStockTemplateItem(hotelUid, locationId, templateId, supplierProductId, outletId) {
   if (!hotelUid || !locationId || !templateId || !supplierProductId || !outletId) {
     throw new Error("hotelUid, locationId, templateId, supplierProductId en outletId zijn verplicht");
