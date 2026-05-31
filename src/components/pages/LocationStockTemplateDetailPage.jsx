@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowUp, Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
@@ -40,7 +40,9 @@ export default function LocationStockTemplateDetailPage() {
   const [activeOutletFilter, setActiveOutletFilter] = useState("");
   const [isEditMode, setIsEditMode] = useState(false);
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null);
-  const [movingItemKey, setMovingItemKey] = useState("");
+  const [draggedItemKey, setDraggedItemKey] = useState("");
+  const [dragOverItemKey, setDragOverItemKey] = useState("");
+  const [isSavingOrder, setIsSavingOrder] = useState(false);
 
   const today = useMemo(
     () => new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }),
@@ -95,21 +97,26 @@ export default function LocationStockTemplateDetailPage() {
     [activeOutletFilter, template?.items]
   );
 
-  const handleMoveItem = async (itemToMove, direction) => {
-    const currentItems = template?.items || [];
-    const currentVisibleIndex = visibleItems.findIndex((item) => item.originalIndex === itemToMove.originalIndex);
-    const targetVisibleItem = visibleItems[currentVisibleIndex + direction];
+  const handleDropItem = async (targetItem) => {
+    if (!draggedItemKey || draggedItemKey === targetItem.id || isSavingOrder) return;
 
-    if (!targetVisibleItem) return;
+    const currentItems = template?.items || [];
+    const draggedVisibleIndex = visibleItems.findIndex((item) => getTemplateItemKey(item, item.originalIndex) === draggedItemKey);
+    const targetVisibleIndex = visibleItems.findIndex((item) => item.originalIndex === targetItem.originalIndex);
+
+    if (draggedVisibleIndex === -1 || targetVisibleIndex === -1) return;
+
+    const visibleOriginalIndexes = visibleItems.map((item) => item.originalIndex);
+    const reorderedVisibleItems = visibleOriginalIndexes.map((originalIndex) => currentItems[originalIndex]);
+    const [draggedItem] = reorderedVisibleItems.splice(draggedVisibleIndex, 1);
+    reorderedVisibleItems.splice(targetVisibleIndex, 0, draggedItem);
 
     const nextItems = [...currentItems];
-    [nextItems[itemToMove.originalIndex], nextItems[targetVisibleItem.originalIndex]] = [
-      nextItems[targetVisibleItem.originalIndex],
-      nextItems[itemToMove.originalIndex],
-    ];
+    visibleOriginalIndexes.forEach((originalIndex, index) => {
+      nextItems[originalIndex] = reorderedVisibleItems[index];
+    });
 
-    const itemKey = getTemplateItemKey(itemToMove, itemToMove.originalIndex);
-    setMovingItemKey(itemKey);
+    setIsSavingOrder(true);
     setTemplate((current) => (current ? { ...current, items: nextItems } : current));
 
     try {
@@ -118,11 +125,13 @@ export default function LocationStockTemplateDetailPage() {
       await load();
       throw error;
     } finally {
-      setMovingItemKey("");
+      setIsSavingOrder(false);
+      setDraggedItemKey("");
+      setDragOverItemKey("");
     }
   };
 
-  const rows = visibleItems.map((item, visibleIndex) => {
+  const rows = visibleItems.map((item) => {
     const supplierProduct = supplierProductsById[String(item?.supplierProductId || "").trim()] || {};
     const outlet = outletsById[String(item?.outletId || "").trim()] || {};
     const baseUnitsPerPurchaseUnit = supplierProduct.baseUnitsPerPurchaseUnit || "-";
@@ -130,9 +139,6 @@ export default function LocationStockTemplateDetailPage() {
     const purchaseUnit = supplierProduct.purchaseUnit || "-";
     const content = `${baseUnitsPerPurchaseUnit} ${baseUnit} / ${purchaseUnit}`;
     const itemKey = getTemplateItemKey(item, item.originalIndex);
-    const canMoveUp = visibleIndex > 0;
-    const canMoveDown = visibleIndex < visibleItems.length - 1;
-
     return {
       ...item,
       id: itemKey,
@@ -141,33 +147,14 @@ export default function LocationStockTemplateDetailPage() {
       content,
       pricePerPurchaseUnit: Number(supplierProduct.pricePerPurchaseUnit || item.pricePerPurchaseUnit || 0).toFixed(2),
       outletName: outlet.name || item.outletName || item.outletId || "-",
-      orderControls: isEditMode ? (
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            className="inline-flex items-center justify-center rounded p-1 text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
-            title="Move stock template item up"
-            disabled={!canMoveUp || movingItemKey === itemKey}
-            onClick={(event) => {
-              event.stopPropagation();
-              handleMoveItem(item, -1);
-            }}
-          >
-            <ArrowUp className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            className="inline-flex items-center justify-center rounded p-1 text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
-            title="Move stock template item down"
-            disabled={!canMoveDown || movingItemKey === itemKey}
-            onClick={(event) => {
-              event.stopPropagation();
-              handleMoveItem(item, 1);
-            }}
-          >
-            <ArrowDown className="h-4 w-4" />
-          </button>
-        </div>
+      dragHandle: isEditMode ? (
+        <span
+          className="inline-flex items-center gap-2 text-gray-500"
+          title="Drag stock template item to change the order"
+        >
+          <GripVertical className="h-4 w-4" />
+          <span className="text-xs">Drag</span>
+        </span>
       ) : null,
       actions: isEditMode ? (
         <button
@@ -212,7 +199,7 @@ export default function LocationStockTemplateDetailPage() {
   };
 
   const itemColumns = [
-    ...(isEditMode ? [{ key: "orderControls", label: "Order", sortable: false }] : []),
+    ...(isEditMode ? [{ key: "dragHandle", label: "Order", sortable: false }] : []),
     { key: "supplierProductName", label: "Supplier Product", sortable: false },
     { key: "supplierName", label: "Supplier", sortable: false },
     { key: "content", label: "Content", sortable: false },
@@ -246,11 +233,9 @@ export default function LocationStockTemplateDetailPage() {
         ) : (
           <>
             <Card className="flex items-center justify-between gap-4">
-              <div className="space-y-1">
-                <p className="text-sm font-medium uppercase tracking-wide text-gray-500">Location</p>
-                <p className="text-base font-semibold text-gray-800">{location?.name || locationId || "-"}</p>
-                <h2 className="pt-2 text-2xl font-semibold">{template.name || "-"}</h2>
-              </div>
+              <h2 className="text-2xl font-semibold">
+                {location?.name || locationId || "-"} - {template.name || "-"}
+              </h2>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -290,7 +275,45 @@ export default function LocationStockTemplateDetailPage() {
                   ))}
                 </select>
               </div>
-              <DataListTable columns={itemColumns} rows={rows} emptyMessage="No stock template items yet." />
+              <DataListTable
+                columns={itemColumns}
+                rows={rows}
+                emptyMessage="No stock template items yet."
+                getRowProps={(row) => ({
+                  draggable: isEditMode && !isSavingOrder,
+                  onDragStart: (event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", row.id);
+                    setDraggedItemKey(row.id);
+                  },
+                  onDragOver: (event) => {
+                    if (!isEditMode || isSavingOrder || draggedItemKey === row.id) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                    setDragOverItemKey(row.id);
+                  },
+                  onDragLeave: () => {
+                    setDragOverItemKey((current) => (current === row.id ? "" : current));
+                  },
+                  onDrop: async (event) => {
+                    event.preventDefault();
+                    await handleDropItem(row);
+                  },
+                  onDragEnd: () => {
+                    setDraggedItemKey("");
+                    setDragOverItemKey("");
+                  },
+                  className: isEditMode
+                    ? [
+                        "cursor-grab transition-colors active:cursor-grabbing",
+                        draggedItemKey === row.id ? "opacity-50" : "",
+                        dragOverItemKey === row.id ? "bg-blue-50" : "hover:bg-gray-50",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")
+                    : "",
+                })}
+              />
             </Card>
           </>
         )}

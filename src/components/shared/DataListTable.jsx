@@ -9,7 +9,7 @@ function getComparableValue(row, column) {
   return raw;
 }
 
-export default function DataListTable({ columns, rows, onRowClick, emptyMessage }) {
+export default function DataListTable({ columns, rows, onRowClick, emptyMessage, getRowProps }) {
   const { t } = useTranslation("common");
   const resolvedEmptyMessage = emptyMessage || t("products.table.empty");
   const defaultSortColumn = columns.find((column) => column.sortable !== false);
@@ -84,19 +84,26 @@ export default function DataListTable({ columns, rows, onRowClick, emptyMessage 
                 </td>
               </tr>
             )}
-            {sortedRows.map((row) => (
-              <tr
-                key={row.id}
-                onClick={() => onRowClick && onRowClick(row)}
-                className={onRowClick ? "cursor-pointer hover:bg-gray-50 transition-colors" : ""}
-              >
-                {columns.map((column) => (
-                  <td key={`${row.id}-${column.key}`} className="px-4 py-3 text-sm text-gray-700">
-                    {column.render ? column.render(row) : row[column.key]}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {sortedRows.map((row) => {
+              const rowProps = getRowProps ? getRowProps(row) : {};
+              const { className: rowClassName = "", ...restRowProps } = rowProps;
+              const defaultRowClassName = onRowClick ? "cursor-pointer hover:bg-gray-50 transition-colors" : "";
+
+              return (
+                <tr
+                  key={row.id}
+                  onClick={() => onRowClick && onRowClick(row)}
+                  className={[defaultRowClassName, rowClassName].filter(Boolean).join(" ")}
+                  {...restRowProps}
+                >
+                  {columns.map((column) => (
+                    <td key={`${row.id}-${column.key}`} className="px-4 py-3 text-sm text-gray-700">
+                      {column.render ? column.render(row) : row[column.key]}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
