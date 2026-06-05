@@ -1,4 +1,4 @@
-const { onDocumentCreated, onSchedule, logger, admin, Resend, PDFDocument, RESEND_API_KEY, RESEND_FROM } = require('./config');
+const { onDocumentCreated, onSchedule, logger, admin, Resend, ExcelJS, PDFDocument, RESEND_API_KEY, RESEND_FROM } = require('./config');
 
 const db = admin.firestore();
 const SCHEDULED_MAIL_DOC_PATH = 'scheduledMails/scheduledOccupancyMail';
@@ -415,6 +415,180 @@ function formatCurrencyValue(value) {
   })}`;
 }
 
+function formatExcelDateValue(dateString) {
+  return new Date(`${dateString}T12:00:00.000Z`);
+}
+
+function formatWorksheetName(name, fallback, existingNames = new Set()) {
+  const sanitized =
+    String(name || fallback || 'Hotel')
+      .replace(/[\\/*?:[\]]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 31) || 'Hotel';
+  if (!existingNames.has(sanitized)) return sanitized;
+
+  let suffix = 2;
+  let uniqueName = sanitized;
+  while (existingNames.has(uniqueName)) {
+    const suffixText = ` ${suffix}`;
+    uniqueName = `${sanitized.slice(0, 31 - suffixText.length)}${suffixText}`;
+    suffix += 1;
+  }
+  return uniqueName;
+}
+
+function setWorksheetHeaderStyle(row) {
+  row.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+  row.alignment = { vertical: 'middle', horizontal: 'center' };
+}
+
+function applyWorksheetBorders(worksheet) {
+  worksheet.eachRow((row) => {
+    row.eachCell((cell) => {
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+        left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+        bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+        right: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      };
+    });
+  });
+}
+
+function buildExcelOverviewSheet(workbook, { startDate, endDate, hotels }) {
+  const worksheet = workbook.addWorksheet('Overview');
+  worksheet.columns = [
+    { header: 'Date', key: 'stayDate', width: 14 },
+    { header: 'Day', key: 'day', width: 12 },
+    ...hotels.flatMap((hotel) => [
+      { header: `${hotel.hotelName} Occ %`, key: `${hotel.hotelUid}_occupancy`, width: 16 },
+      { header: `${hotel.hotelName} Rooms sold`, key: `${hotel.hotelUid}_roomsSold`, width: 18 },
+      { header: `${hotel.hotelName} Revenue`, key: `${hotel.hotelUid}_revenue`, width: 18 },
+      { header: `${hotel.hotelName} PU -1`, key: `${hotel.hotelUid}_pickup_1`, width: 14 },
+      { header: `${hotel.hotelName} PU -3`, key: `${hotel.hotelUid}_pickup_3`, width: 14 },
+      { header: `${hotel.hotelName} PU -7`, key: `${hotel.hotelUid}_pickup_7`, width: 14 },
+    ]),
+  ];
+
+  setWorksheetHeaderStyle(worksheet.getRow(1));
+  worksheet.views = [{ state: 'frozen', ySplit: 1, xSplit: 2 }];
+  worksheet.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: worksheet.columns.length },
+  };
+
+  hotels.forEach((hotel) => {
+    hotel.rowsByDate = hotel.rowsByDate || toRowMap(hotel.rows);
+  });
+
+  for (let cursor = startDate; cursor <= endDate; cursor = addDays(cursor, 1)) {
+    const row = {
+      stayDate: formatExcelDateValue(cursor),
+      day: shortDayLabel(cursor, 'nl-NL'),
+    };
+
+    hotels.forEach((hotel) => {
+      const hotelRow = hotel.rowsByDate.get(cursor) || null;
+      row[`${hotel.hotelUid}_occupancy`] = Number(hotelRow?.occupancy || 0) / 100;
+      row[`${hotel.hotelUid}_roomsSold`] = Number(hotelRow?.roomsSold || 0);
+      row[`${hotel.hotelUid}_revenue`] = Number(hotelRow?.totalCalculatedRevenue || 0);
+      PICKUP_COMPARISON_DAYS.forEach((comparisonDays) => {
+        const pickupEntry = hotelRow?.pickup?.[comparisonDays];
+        row[`${hotel.hotelUid}_pickup_${comparisonDays}`] = pickupEntry?.available
+          ? Number(pickupEntry.delta || 0)
+          : null;
+      });
+    });
+
+    worksheet.addRow(row);
+  }
+
+  worksheet.getColumn('stayDate').numFmt = 'dd-mm-yyyy';
+  hotels.forEach((hotel) => {
+    worksheet.getColumn(`${hotel.hotelUid}_occupancy`).numFmt = '0.0%';
+    worksheet.getColumn(`${hotel.hotelUid}_revenue`).numFmt = '€ #,##0';
+  });
+
+  applyWorksheetBorders(worksheet);
+}
+
+function buildExcelHotelDetailSheet(workbook, hotel, existingSheetNames) {
+  const worksheetName = formatWorksheetName(hotel.hotelName, hotel.hotelUid, existingSheetNames);
+  existingSheetNames.add(worksheetName);
+  const worksheet = workbook.addWorksheet(worksheetName);
+  worksheet.columns = [
+    { header: 'Date', key: 'stayDate', width: 14 },
+    { header: 'Day', key: 'day', width: 12 },
+    { header: 'Rooms sold', key: 'roomsSold', width: 14 },
+    { header: 'Occupancy', key: 'occupancy', width: 14 },
+    { header: 'Calculated revenue', key: 'totalCalculatedRevenue', width: 18 },
+    { header: 'Pickup rooms -1', key: 'pickup1', width: 16 },
+    { header: 'Pickup rooms -3', key: 'pickup3', width: 16 },
+    { header: 'Pickup rooms -7', key: 'pickup7', width: 16 },
+    { header: 'Pickup revenue -1', key: 'pickupRevenue1', width: 18 },
+    { header: 'Pickup revenue -3', key: 'pickupRevenue3', width: 18 },
+    { header: 'Pickup revenue -7', key: 'pickupRevenue7', width: 18 },
+    { header: 'Forecast snapshot', key: 'forecastSnapshotDate', width: 18 },
+    { header: 'Statistics snapshot', key: 'statisticsSnapshotDate', width: 18 },
+  ];
+
+  setWorksheetHeaderStyle(worksheet.getRow(1));
+  worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+  worksheet.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: worksheet.columns.length },
+  };
+
+  hotel.rows.forEach((hotelRow) => {
+    worksheet.addRow({
+      stayDate: formatExcelDateValue(hotelRow.stayDate),
+      day: shortDayLabel(hotelRow.stayDate, 'nl-NL'),
+      roomsSold: Number(hotelRow.roomsSold || 0),
+      occupancy: Number(hotelRow.occupancy || 0) / 100,
+      totalCalculatedRevenue: Number(hotelRow.totalCalculatedRevenue || 0),
+      pickup1: hotelRow.pickup?.[1]?.available ? Number(hotelRow.pickup[1].delta || 0) : null,
+      pickup3: hotelRow.pickup?.[3]?.available ? Number(hotelRow.pickup[3].delta || 0) : null,
+      pickup7: hotelRow.pickup?.[7]?.available ? Number(hotelRow.pickup[7].delta || 0) : null,
+      pickupRevenue1: hotelRow.pickupCalculatedRevenue?.[1]?.available
+        ? Number(hotelRow.pickupCalculatedRevenue[1].delta || 0)
+        : null,
+      pickupRevenue3: hotelRow.pickupCalculatedRevenue?.[3]?.available
+        ? Number(hotelRow.pickupCalculatedRevenue[3].delta || 0)
+        : null,
+      pickupRevenue7: hotelRow.pickupCalculatedRevenue?.[7]?.available
+        ? Number(hotelRow.pickupCalculatedRevenue[7].delta || 0)
+        : null,
+      forecastSnapshotDate: hotel.forecastSnapshotDate || null,
+      statisticsSnapshotDate: hotel.statisticsSnapshotDate || null,
+    });
+  });
+
+  worksheet.getColumn('stayDate').numFmt = 'dd-mm-yyyy';
+  worksheet.getColumn('occupancy').numFmt = '0.0%';
+  worksheet.getColumn('totalCalculatedRevenue').numFmt = '€ #,##0';
+  worksheet.getColumn('pickupRevenue1').numFmt = '€ #,##0';
+  worksheet.getColumn('pickupRevenue3').numFmt = '€ #,##0';
+  worksheet.getColumn('pickupRevenue7').numFmt = '€ #,##0';
+
+  applyWorksheetBorders(worksheet);
+}
+
+async function buildExcelBuffer({ startDate, endDate, hotels }) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'HotelSuite';
+  workbook.created = new Date();
+  workbook.modified = new Date();
+
+  buildExcelOverviewSheet(workbook, { startDate, endDate, hotels });
+  const sheetNames = new Set(['Overview']);
+  hotels.forEach((hotel) => buildExcelHotelDetailSheet(workbook, hotel, sheetNames));
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+}
+
 function getPickupCellColor(delta, comparisonDays) {
   const numericDelta = Number(delta || 0);
   const absDelta = Math.abs(numericDelta);
@@ -735,7 +909,10 @@ async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', trigger
   const hotels = await Promise.all(
     hotelUids.map((hotelUid) => getOccupancyRowsForRange(hotelUid, startDate, endDate))
   );
-  const pdfBuffer = await buildPdfBuffer({ startDate, endDate, hotels });
+  const [pdfBuffer, excelBuffer] = await Promise.all([
+    buildPdfBuffer({ startDate, endDate, hotels }),
+    buildExcelBuffer({ startDate, endDate, hotels }),
+  ]);
   const resend = new Resend(resendApiKey);
 
   const subject = `Occupancy overview ${displayDateLabel(startDate)} - ${displayDateLabel(endDate)}`;
@@ -747,14 +924,19 @@ async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', trigger
     subject,
     text:
       `Please find attached the occupancy overview from the first day of the current month ` +
-      `for: ${hotelNames}. Per hotel, occupancy and pickup rooms sold vs. -1, -3 and -7 ` +
-      `are included when available. Per month, the calculated total revenue per hotel ` +
-      `is shown next to the hotel name in the table header.\n\n` +
+      `for: ${hotelNames}. The PDF contains the visual overview and the Excel file contains ` +
+      `the same occupancy data with rooms sold, calculated revenue and pickup details per hotel. ` +
+      `Per hotel, occupancy and pickup rooms sold vs. -1, -3 and -7 are included when available. ` +
+      `Per month, the calculated total revenue per hotel is shown next to the hotel name in the table header.\n\n` +
       `Sent via ${reason}${triggerId ? ` (trigger: ${triggerId})` : ''}.`,
     attachments: [
       {
         filename: `occupancy-overview-${startDate}-to-${endDate}.pdf`,
         content: pdfBuffer.toString('base64'),
+      },
+      {
+        filename: `occupancy-overview-${startDate}-to-${endDate}.xlsx`,
+        content: excelBuffer.toString('base64'),
       },
     ],
   });
