@@ -95,16 +95,44 @@ function parseUpsellAuditRecord(auditRecord, packageCodes) {
   return parseUpsellAuditRecords(auditRecord, packageCodes)[0] || null;
 }
 
-function createAuditUpsellDocumentId(sourceDocumentId, auditUpsellRecord, recordCount) {
-  if (recordCount <= 1) return sourceDocumentId;
+function enumerateStayDateKeys(startDate, endDate) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate || ''))) return [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(endDate || ''))) return [];
 
-  const suffix = [auditUpsellRecord.packageCode, auditUpsellRecord.confirmationNumber, auditUpsellRecord.startDate]
-    .map((value) => String(value || '').trim())
-    .filter(Boolean)
-    .join('_')
-    .replace(/[^A-Za-z0-9_-]/g, '_');
+  const current = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+  if (Number.isNaN(current.getTime()) || Number.isNaN(end.getTime())) return [];
 
-  return suffix ? `${sourceDocumentId}_${suffix}` : sourceDocumentId;
+  const dateKeys = [];
+  while (current < end) {
+    dateKeys.push(current.toISOString().slice(0, 10));
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+
+  return dateKeys;
+}
+
+async function findReservationDetailsForUpsell(hotelUid, auditUpsellRecord) {
+  const confirmationNumber = String(auditUpsellRecord.confirmationNumber || '').trim();
+  if (!confirmationNumber) return null;
+
+  for (const dateKey of enumerateStayDateKeys(auditUpsellRecord.startDate, auditUpsellRecord.endDate)) {
+    const reservationDetailsSnap = await db
+      .doc(`hotels/${hotelUid}/reports/reservationdetails/${dateKey}/${confirmationNumber}`)
+      .get();
+
+    if (!reservationDetailsSnap.exists) continue;
+
+    const reservationDetails = reservationDetailsSnap.data() || {};
+    return {
+      fullName: reservationDetails.fullName || null,
+      rateCode: reservationDetails.rateCode || null,
+      roomNumber: reservationDetails.roomNumber || null,
+      reservationDetailsDate: dateKey,
+    };
+  }
+
+  return null;
 }
 
 async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
@@ -133,16 +161,14 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
 
       for (const auditUpsellRecord of auditUpsellRecords) {
         const targetDate = auditUpsellRecord.logDate || dateKey;
-        const targetDocumentId = createAuditUpsellDocumentId(
-          auditDoc.id,
-          auditUpsellRecord,
-          auditUpsellRecords.length
-        );
+        const targetDocumentId = auditUpsellRecord.confirmationNumber;
+        const reservationDetails = await findReservationDetailsForUpsell(hotelUid, auditUpsellRecord);
         const targetRef = db.doc(`hotels/${hotelUid}/upselling/auditUpsell/${targetDate}/${targetDocumentId}`);
         batch.set(
           targetRef,
           {
             ...auditUpsellRecord,
+            ...(reservationDetails || {}),
             sourceAudittrailDate: dateKey,
             sourceAudittrailDocumentId: auditDoc.id,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -182,5 +208,7 @@ module.exports = {
   processAuditUpsellsForDate,
   parseUpsellAuditRecord,
   parseUpsellAuditRecords,
+  findReservationDetailsForUpsell,
+  enumerateStayDateKeys,
   getYesterdayDateKey,
 };
