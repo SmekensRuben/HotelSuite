@@ -986,7 +986,7 @@ function getAncestorDocumentPaths(finalDocPath) {
   return ancestorPaths;
 }
 
-async function ensureQueryableAncestorDocuments({ db, bulkWriter, finalDocPath, touchedAncestorPaths }) {
+async function ensureQueryableAncestorDocuments({ db, batchWriter, finalDocPath, touchedAncestorPaths }) {
   const ancestorPaths = getAncestorDocumentPaths(finalDocPath);
 
   for (const ancestorPath of ancestorPaths) {
@@ -999,18 +999,13 @@ async function ensureQueryableAncestorDocuments({ db, bulkWriter, finalDocPath, 
       queryable: true,
     };
 
-    if (bulkWriter) {
-      bulkWriter.set(docRef, payload, { merge: true });
-    } else {
-      // eslint-disable-next-line no-await-in-loop
-      await docRef.set(payload, { merge: true });
-    }
+    batchWriter.set(docRef, payload, { merge: true });
 
     touchedAncestorPaths?.add(ancestorPath);
   }
 }
 
-async function commitFirestoreWrite({ db, bulkWriter, fileImportType, resolvedPath, context, payload, touchedAncestorPaths }) {
+async function commitFirestoreWrite({ db, batchWriter, fileImportType, resolvedPath, context, payload, touchedAncestorPaths }) {
   if (!resolvedPath) {
     throw new Error("Resolved Firestore path is leeg");
   }
@@ -1021,25 +1016,16 @@ async function commitFirestoreWrite({ db, bulkWriter, fileImportType, resolvedPa
   if (writeTarget.isExplicitDocument) {
     await ensureQueryableAncestorDocuments({
       db,
-      bulkWriter,
+      batchWriter,
       finalDocPath: writeTarget.docPath,
       touchedAncestorPaths,
     });
 
     const docRef = db.doc(writeTarget.docPath);
-    if (bulkWriter) {
-      if (writeMode === "merge") {
-        bulkWriter.set(docRef, payload, { merge: true });
-      } else {
-        bulkWriter.set(docRef, payload);
-      }
-      return docRef.path;
-    }
-
     if (writeMode === "merge") {
-      await docRef.set(payload, { merge: true });
+      batchWriter.set(docRef, payload, { merge: true });
     } else {
-      await docRef.set(payload);
+      batchWriter.set(docRef, payload);
     }
     return docRef.path;
   }
@@ -1047,20 +1033,15 @@ async function commitFirestoreWrite({ db, bulkWriter, fileImportType, resolvedPa
   const docRef = db.collection(resolvedPath).doc();
   await ensureQueryableAncestorDocuments({
     db,
-    bulkWriter,
+    batchWriter,
     finalDocPath: docRef.path,
     touchedAncestorPaths,
   });
-  if (bulkWriter) {
-    bulkWriter.set(docRef, payload);
-    return docRef.path;
-  }
-
-  await docRef.set(payload);
+  batchWriter.set(docRef, payload);
   return docRef.path;
 }
 
-async function flushOldestCachedDocument({ db, bulkWriter, fileImportType, documentCache, touchedAncestorPaths }) {
+async function flushOldestCachedDocument({ db, batchWriter, fileImportType, documentCache, touchedAncestorPaths }) {
   if (!documentCache.size) return null;
 
   const oldestEntry = documentCache.entries().next().value;
@@ -1071,7 +1052,7 @@ async function flushOldestCachedDocument({ db, bulkWriter, fileImportType, docum
 
   return commitFirestoreWrite({
     db,
-    bulkWriter,
+    batchWriter,
     fileImportType,
     resolvedPath: cachedDocument.resolvedPath,
     context: cachedDocument.context,
@@ -1082,7 +1063,7 @@ async function flushOldestCachedDocument({ db, bulkWriter, fileImportType, docum
 
 async function enqueueMappedDocumentWrite({
   db,
-  bulkWriter,
+  batchWriter,
   fileImportType,
   resolvedPath,
   context,
@@ -1097,7 +1078,7 @@ async function enqueueMappedDocumentWrite({
   if (!writeTarget.isExplicitDocument) {
     const writtenPath = await commitFirestoreWrite({
       db,
-      bulkWriter,
+      batchWriter,
       fileImportType,
       resolvedPath,
       context,
@@ -1133,7 +1114,7 @@ async function enqueueMappedDocumentWrite({
     // eslint-disable-next-line no-await-in-loop
     const flushedPath = await flushOldestCachedDocument({
       db,
-      bulkWriter,
+      batchWriter,
       fileImportType,
       documentCache,
       touchedAncestorPaths,
@@ -1164,6 +1145,44 @@ async function processWithConcurrency(items, concurrency, handler) {
   await Promise.all(workers);
 }
 
+function createFirestoreBatchWriter(db, maxOperations = 500) {
+  let currentBatch = db.batch();
+  let operationCount = 0;
+  const pendingCommits = [];
+
+  const commitCurrentBatch = () => {
+    if (operationCount === 0) return;
+    pendingCommits.push(currentBatch.commit());
+    currentBatch = db.batch();
+    operationCount = 0;
+  };
+
+  const queueOperation = (operation) => {
+    if (operationCount >= maxOperations) {
+      commitCurrentBatch();
+    }
+
+    operation(currentBatch);
+    operationCount += 1;
+  };
+
+  return {
+    set(docRef, payload, options) {
+      queueOperation((batch) => {
+        if (options) {
+          batch.set(docRef, payload, options);
+        } else {
+          batch.set(docRef, payload);
+        }
+      });
+    },
+    async close() {
+      commitCurrentBatch();
+      await Promise.all(pendingCommits);
+    },
+  };
+}
+
 async function processMappedDocumentStream({
   db,
   fileImportType,
@@ -1173,12 +1192,13 @@ async function processMappedDocumentStream({
   onEachMappedDocument,
 }) {
   const normalizedMappings = normalizeColumnMappings(fileImportType);
-  const bulkWriter = typeof db.bulkWriter === "function" ? db.bulkWriter() : null;
+  const batchWriter = createFirestoreBatchWriter(db);
   const touchedAncestorPaths = new Set();
   const documentCache = new Map();
   const pendingDocuments = [];
   const batchSize = 500;
   const maxCacheEntries = 100;
+  const readConcurrency = 25;
   let writtenCount = 0;
   let firstWrittenPath = null;
 
@@ -1221,11 +1241,10 @@ async function processMappedDocumentStream({
       normalizedMappings
     );
 
-    for (const rowToWrite of rowsToWrite) {
-      // eslint-disable-next-line no-await-in-loop
+    await processWithConcurrency(rowsToWrite, readConcurrency, async (rowToWrite) => {
       const { flushedPaths } = await enqueueMappedDocumentWrite({
         db,
-        bulkWriter,
+        batchWriter,
         fileImportType,
         resolvedPath: rowToWrite.resolvedPath,
         context: rowToWrite.context,
@@ -1237,7 +1256,7 @@ async function processMappedDocumentStream({
       });
 
       registerWrittenPaths(flushedPaths);
-    }
+    });
   };
 
   await onEachMappedDocument(async (documentRow) => {
@@ -1253,7 +1272,7 @@ async function processMappedDocumentStream({
     // eslint-disable-next-line no-await-in-loop
     const flushedPath = await flushOldestCachedDocument({
       db,
-      bulkWriter,
+      batchWriter,
       fileImportType,
       documentCache,
       touchedAncestorPaths,
@@ -1261,9 +1280,7 @@ async function processMappedDocumentStream({
     registerWrittenPaths(flushedPath ? [flushedPath] : []);
   }
 
-  if (bulkWriter) {
-    await bulkWriter.close();
-  }
+  await batchWriter.close();
 
   return { writtenCount, firstWrittenPath };
 }
