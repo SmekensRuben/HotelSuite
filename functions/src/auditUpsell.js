@@ -67,7 +67,7 @@ function parseUpsellAuditRecord(auditRecord, packageCodes) {
   const escapedPackageCode = packageCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const productAddedRegex = new RegExp(`^PRODUCT\\s+(${escapedPackageCode})\\s+ADDED$`, 'i');
   const productPriceRegex = new RegExp(
-    `^PRODUCT\\s+(${escapedPackageCode})\\s+BETWEEN\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s+AND\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s*:\\s*PRICE\\s*->\\s*(.+)$`,
+    `^PRODUCT\\s+(${escapedPackageCode})\\s+BETWEEN\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s+AND\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s*:\\s*PRICE\\s*->\\s*(.*?)(?:\\s+Confirmation No\\.\\s*(.+))?$`,
     'i'
   );
 
@@ -80,7 +80,8 @@ function parseUpsellAuditRecord(auditRecord, packageCodes) {
 
   const confirmationItem = actionDescription.find((item) => /^Confirmation No\.\s*(.+)$/i.test(item));
   const confirmationMatch = confirmationItem?.match(/^Confirmation No\.\s*(.+)$/i);
-  if (!confirmationMatch) return null;
+  const confirmationNumber = productPriceMatch[5]?.trim() || confirmationMatch?.[1]?.trim();
+  if (!confirmationNumber) return null;
 
   return {
     logDate: auditRecord.logDate || null,
@@ -90,7 +91,7 @@ function parseUpsellAuditRecord(auditRecord, packageCodes) {
     startDate: parseOperaDate(productPriceMatch[2]),
     endDate: parseOperaDate(productPriceMatch[3]),
     price: productPriceMatch[4].trim(),
-    confirmationNumber: confirmationMatch[1].trim(),
+    confirmationNumber,
   };
 }
 
