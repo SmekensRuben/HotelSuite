@@ -53,6 +53,8 @@ import StockCountsPage from "./components/pages/StockCountsPage.jsx";
 import StockCountCreatePage from "./components/pages/StockCountCreatePage.jsx";
 import StockCountDetailPage from "./components/pages/StockCountDetailPage.jsx";
 import StockCountLocationPage from "./components/pages/StockCountLocationPage.jsx";
+import UpsellsPage from "./components/pages/UpsellsPage.jsx";
+import UpsellSettingsPage from "./components/pages/UpsellSettingsPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -360,6 +362,22 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="settings" action="update">
             <FileImportTypeEditPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/front-office/upselling"
+        element={
+          <ProtectedRoute>
+            <UpsellsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/front-office/upselling/settings"
+        element={
+          <ProtectedRoute feature="settings" action="read">
+            <UpsellSettingsPage />
           </ProtectedRoute>
         }
       />
