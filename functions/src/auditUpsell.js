@@ -104,7 +104,7 @@ function enumerateStayDateKeys(startDate, endDate) {
   if (Number.isNaN(current.getTime()) || Number.isNaN(end.getTime())) return [];
 
   const dateKeys = [];
-  while (current < end) {
+  while (current <= end) {
     dateKeys.push(current.toISOString().slice(0, 10));
     current.setUTCDate(current.getUTCDate() + 1);
   }
