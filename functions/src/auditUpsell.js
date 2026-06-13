@@ -40,13 +40,6 @@ function normalizeActionDescription(value) {
   return value.map((item) => String(item || '').trim()).filter(Boolean);
 }
 
-function findMatchingPackageCode(actionDescription, packageCodes) {
-  const upperActions = actionDescription.map((item) => item.toUpperCase());
-  return packageCodes.find((packageCode) => {
-    const upperPackageCode = packageCode.toUpperCase();
-    return upperActions.some((item) => item.includes(upperPackageCode));
-  }) || null;
-}
 
 function parseOperaDate(value) {
   const match = String(value || '').trim().match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
@@ -59,40 +52,59 @@ function parseOperaDate(value) {
   return `${year}-${monthNumber}-${String(day).padStart(2, '0')}`;
 }
 
-function parseUpsellAuditRecord(auditRecord, packageCodes) {
+function parseUpsellAuditRecords(auditRecord, packageCodes) {
   const actionDescription = normalizeActionDescription(auditRecord.actionDescription);
-  const packageCode = findMatchingPackageCode(actionDescription, packageCodes);
-  if (!packageCode) return null;
-
-  const escapedPackageCode = packageCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const productAddedRegex = new RegExp(`^PRODUCT\\s+(${escapedPackageCode})\\s+ADDED$`, 'i');
-  const productPriceRegex = new RegExp(
-    `^PRODUCT\\s+(${escapedPackageCode})\\s+BETWEEN\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s+AND\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s*:\\s*PRICE\\s*->\\s*(.*?)(?:\\s+Confirmation No\\.\\s*(.+))?$`,
-    'i'
-  );
-
-  const productAddedItem = actionDescription.find((item) => productAddedRegex.test(item));
-  if (!productAddedItem) return null;
-
-  const productPriceItem = actionDescription.find((item) => productPriceRegex.test(item));
-  const productPriceMatch = productPriceItem?.match(productPriceRegex);
-  if (!productPriceMatch) return null;
-
   const confirmationItem = actionDescription.find((item) => /^Confirmation No\.\s*(.+)$/i.test(item));
   const confirmationMatch = confirmationItem?.match(/^Confirmation No\.\s*(.+)$/i);
-  const confirmationNumber = productPriceMatch[5]?.trim() || confirmationMatch?.[1]?.trim();
-  if (!confirmationNumber) return null;
 
-  return {
-    logDate: auditRecord.logDate || null,
-    logTime: auditRecord.logTime || null,
-    operaUser: auditRecord.operaUser || null,
-    packageCode: productPriceMatch[1],
-    startDate: parseOperaDate(productPriceMatch[2]),
-    endDate: parseOperaDate(productPriceMatch[3]),
-    price: productPriceMatch[4].trim(),
-    confirmationNumber,
-  };
+  return packageCodes.flatMap((packageCode) => {
+    const escapedPackageCode = packageCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const productAddedRegex = new RegExp(`^PRODUCT\\s+(${escapedPackageCode})\\s+ADDED$`, 'i');
+    const productPriceRegex = new RegExp(
+      `^PRODUCT\\s+(${escapedPackageCode})\\s+BETWEEN\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s+AND\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s*:\\s*PRICE\\s*->\\s*(.*?)(?:\\s+Confirmation No\\.\\s*(.+))?$`,
+      'i'
+    );
+
+    const productAddedItem = actionDescription.find((item) => productAddedRegex.test(item));
+    if (!productAddedItem) return [];
+
+    return actionDescription.flatMap((item) => {
+      const productPriceMatch = item.match(productPriceRegex);
+      if (!productPriceMatch) return [];
+
+      const confirmationNumber = productPriceMatch[5]?.trim() || confirmationMatch?.[1]?.trim();
+      if (!confirmationNumber) return [];
+
+      return [
+        {
+          logDate: auditRecord.logDate || null,
+          logTime: auditRecord.logTime || null,
+          operaUser: auditRecord.operaUser || null,
+          packageCode: productPriceMatch[1],
+          startDate: parseOperaDate(productPriceMatch[2]),
+          endDate: parseOperaDate(productPriceMatch[3]),
+          price: productPriceMatch[4].trim(),
+          confirmationNumber,
+        },
+      ];
+    });
+  });
+}
+
+function parseUpsellAuditRecord(auditRecord, packageCodes) {
+  return parseUpsellAuditRecords(auditRecord, packageCodes)[0] || null;
+}
+
+function createAuditUpsellDocumentId(sourceDocumentId, auditUpsellRecord, recordCount) {
+  if (recordCount <= 1) return sourceDocumentId;
+
+  const suffix = [auditUpsellRecord.packageCode, auditUpsellRecord.confirmationNumber, auditUpsellRecord.startDate]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join('_')
+    .replace(/[^A-Za-z0-9_-]/g, '_');
+
+  return suffix ? `${sourceDocumentId}_${suffix}` : sourceDocumentId;
 }
 
 async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
@@ -116,28 +128,35 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
     let writesInBatch = 0;
 
     for (const auditDoc of audittrailSnap.docs) {
-      const auditUpsellRecord = parseUpsellAuditRecord(auditDoc.data() || {}, packageCodes);
-      if (!auditUpsellRecord) continue;
+      const auditUpsellRecords = parseUpsellAuditRecords(auditDoc.data() || {}, packageCodes);
+      if (!auditUpsellRecords.length) continue;
 
-      const targetDate = auditUpsellRecord.logDate || dateKey;
-      const targetRef = db.doc(`hotels/${hotelUid}/upselling/auditUpsell/${targetDate}/${auditDoc.id}`);
-      batch.set(
-        targetRef,
-        {
-          ...auditUpsellRecord,
-          sourceAudittrailDate: dateKey,
-          sourceAudittrailDocumentId: auditDoc.id,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-      writesInBatch += 1;
-      createdRecords += 1;
+      for (const auditUpsellRecord of auditUpsellRecords) {
+        const targetDate = auditUpsellRecord.logDate || dateKey;
+        const targetDocumentId = createAuditUpsellDocumentId(
+          auditDoc.id,
+          auditUpsellRecord,
+          auditUpsellRecords.length
+        );
+        const targetRef = db.doc(`hotels/${hotelUid}/upselling/auditUpsell/${targetDate}/${targetDocumentId}`);
+        batch.set(
+          targetRef,
+          {
+            ...auditUpsellRecord,
+            sourceAudittrailDate: dateKey,
+            sourceAudittrailDocumentId: auditDoc.id,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        writesInBatch += 1;
+        createdRecords += 1;
 
-      if (writesInBatch >= 450) {
-        await batch.commit();
-        batch = db.batch();
-        writesInBatch = 0;
+        if (writesInBatch >= 450) {
+          await batch.commit();
+          batch = db.batch();
+          writesInBatch = 0;
+        }
       }
     }
 
@@ -162,5 +181,6 @@ module.exports = {
   processScheduledAuditUpsells,
   processAuditUpsellsForDate,
   parseUpsellAuditRecord,
+  parseUpsellAuditRecords,
   getYesterdayDateKey,
 };
