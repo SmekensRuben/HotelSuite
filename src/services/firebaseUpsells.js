@@ -1,4 +1,4 @@
-import { db, doc, getDoc, setDoc } from "../firebaseConfig";
+import { db, collection, doc, getDoc, getDocs, setDoc } from "../firebaseConfig";
 
 const UPSELL_SETTINGS_DOC_ID = "upsells";
 
@@ -14,6 +14,55 @@ function normalizePackageCodes(packageCodes) {
   ).sort((a, b) => a.localeCompare(b));
 }
 
+function normalizeDateKey(dateKey) {
+  return String(dateKey || "").trim();
+}
+
+function parseDateKey(dateKey) {
+  const normalized = normalizeDateKey(dateKey);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return null;
+
+  const [year, month, day] = normalized.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
+function toDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function enumerateDateKeys(startDate, endDate) {
+  const start = parseDateKey(startDate);
+  const end = parseDateKey(endDate);
+  if (!start || !end || start > end) return [];
+
+  const dateKeys = [];
+  const cursor = new Date(start);
+
+  while (cursor <= end) {
+    dateKeys.push(toDateKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return dateKeys;
+}
+
+function formatFirestoreValue(value) {
+  if (value?.toDate) return toDateKey(value.toDate());
+  return value ?? "";
+}
+
 export async function getUpsellSettings(hotelUid) {
   if (!hotelUid) return { packageCodes: [] };
 
@@ -25,6 +74,41 @@ export async function getUpsellSettings(hotelUid) {
     ...data,
     packageCodes: normalizePackageCodes(data.packageCodes),
   };
+}
+
+export async function getAuditUpsells(hotelUid, startDate, endDate) {
+  if (!hotelUid) return [];
+
+  const dateKeys = enumerateDateKeys(startDate, endDate);
+  if (!dateKeys.length) return [];
+
+  const snapshots = await Promise.all(
+    dateKeys.map(async (dateKey) => {
+      const auditUpsellsRef = collection(
+        db,
+        `hotels/${hotelUid}/upselling/auditUpsell/${dateKey}`
+      );
+      const snapshot = await getDocs(auditUpsellsRef);
+      return { dateKey, docs: snapshot.docs };
+    })
+  );
+
+  return snapshots.flatMap(({ dateKey, docs }) =>
+    docs.map((auditUpsellDoc) => {
+      const data = auditUpsellDoc.data() || {};
+      return {
+        id: `${dateKey}-${auditUpsellDoc.id}`,
+        documentId: auditUpsellDoc.id,
+        dateKey,
+        logDate: formatFirestoreValue(data.logDate || dateKey),
+        operaUser: data.operaUser || "",
+        packageCode: data.packageCode || "",
+        price: data.price ?? "",
+        roomNumber: data.roomNumber || "",
+        confirmationNumber: data.confirmationNumber || auditUpsellDoc.id,
+      };
+    })
+  );
 }
 
 export async function saveUpsellPackageCodes(hotelUid, packageCodes) {

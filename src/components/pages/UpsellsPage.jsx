@@ -6,12 +6,43 @@ import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getUpsellSettings } from "../../services/firebaseUpsells";
+import { getAuditUpsells } from "../../services/firebaseUpsells";
+
+function toDateInputValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getDefaultDateRange() {
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setDate(endDate.getDate() - 6);
+
+  return {
+    startDate: toDateInputValue(startDate),
+    endDate: toDateInputValue(endDate),
+  };
+}
+
+function formatPrice(value) {
+  if (value === "" || value === null || value === undefined) return "";
+  const numericValue = Number(value);
+  if (Number.isNaN(numericValue)) return value;
+
+  return new Intl.NumberFormat("nl-BE", {
+    style: "currency",
+    currency: "EUR",
+  }).format(numericValue);
+}
 
 export default function UpsellsPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
-  const [packageCodes, setPackageCodes] = useState([]);
+  const defaultDateRange = useMemo(() => getDefaultDateRange(), []);
+  const [dateRange, setDateRange] = useState(defaultDateRange);
+  const [auditUpsells, setAuditUpsells] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -28,10 +59,17 @@ export default function UpsellsPage() {
   useEffect(() => {
     let active = true;
 
-    async function loadUpsellSettings() {
+    async function loadAuditUpsells() {
       if (!hotelUid) {
-        setPackageCodes([]);
+        setAuditUpsells([]);
         setLoading(false);
+        return;
+      }
+
+      if (!dateRange.startDate || !dateRange.endDate || dateRange.startDate > dateRange.endDate) {
+        setAuditUpsells([]);
+        setLoading(false);
+        setError("Kies een geldige datumrange.");
         return;
       }
 
@@ -39,24 +77,24 @@ export default function UpsellsPage() {
       setError("");
 
       try {
-        const settings = await getUpsellSettings(hotelUid);
+        const records = await getAuditUpsells(hotelUid, dateRange.startDate, dateRange.endDate);
         if (!active) return;
-        setPackageCodes(settings.packageCodes || []);
+        setAuditUpsells(records);
       } catch (err) {
-        console.error("Failed to load upsell settings", err);
+        console.error("Failed to load audit upsells", err);
         if (!active) return;
-        setError("Upsell instellingen konden niet geladen worden.");
+        setError("Audit upsells konden niet geladen worden.");
       } finally {
         if (active) setLoading(false);
       }
     }
 
-    loadUpsellSettings();
+    loadAuditUpsells();
 
     return () => {
       active = false;
     };
-  }, [hotelUid]);
+  }, [dateRange.endDate, dateRange.startDate, hotelUid]);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -64,27 +102,17 @@ export default function UpsellsPage() {
     window.location.href = "/login";
   };
 
-  const rows = useMemo(
-    () =>
-      packageCodes.map((packageCode) => ({
-        id: packageCode,
-        packageCode,
-        status: "Geconfigureerd",
-      })),
-    [packageCodes]
-  );
+  const handleDateRangeChange = (field) => (event) => {
+    setDateRange((prev) => ({ ...prev, [field]: event.target.value }));
+  };
 
   const columns = [
+    { key: "logDate", label: "Log Date", sortValue: (row) => row.logDate || row.dateKey },
+    { key: "operaUser", label: "Opera User" },
     { key: "packageCode", label: "Package Code" },
-    {
-      key: "status",
-      label: "Status",
-      render: (row) => (
-        <span className="inline-flex rounded-full bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-700">
-          {row.status}
-        </span>
-      ),
-    },
+    { key: "price", label: "Price", render: (row) => formatPrice(row.price) },
+    { key: "roomNumber", label: "Room Number" },
+    { key: "confirmationNumber", label: "Confirmation Number" },
   ];
 
   return (
@@ -96,7 +124,7 @@ export default function UpsellsPage() {
             <p className="text-sm uppercase tracking-wide text-gray-500">Front Office</p>
             <h1 className="text-3xl font-semibold">Upselling</h1>
             <p className="mt-1 text-gray-600">
-              Overzicht van upsells op basis van de geconfigureerde package codes.
+              Overzicht van audit upsells binnen de geselecteerde datumrange.
             </p>
           </div>
           <button
@@ -109,16 +137,39 @@ export default function UpsellsPage() {
           </button>
         </div>
 
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="grid gap-4 sm:grid-cols-2 lg:max-w-xl">
+            <label className="text-sm font-medium text-gray-700">
+              Startdatum
+              <input
+                type="date"
+                value={dateRange.startDate}
+                onChange={handleDateRangeChange("startDate")}
+                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </label>
+            <label className="text-sm font-medium text-gray-700">
+              Einddatum
+              <input
+                type="date"
+                value={dateRange.endDate}
+                onChange={handleDateRangeChange("endDate")}
+                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </label>
+          </div>
+        </div>
+
         {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
         {loading ? (
           <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">
-            Upsells worden geladen...
+            Audit upsells worden geladen...
           </div>
         ) : (
           <DataListTable
             columns={columns}
-            rows={rows}
-            emptyMessage="Nog geen upsells gevonden. Voeg eerst package codes toe via de settings."
+            rows={auditUpsells}
+            emptyMessage="Geen audit upsells gevonden voor de geselecteerde datumrange."
           />
         )}
       </PageContainer>
