@@ -250,6 +250,7 @@ export default function UpsellsPage() {
           <DataListTable
             columns={columns}
             rows={auditUpsells}
+            onRowClick={(row) => navigate(`/front-office/upselling/${row.dateKey}/${row.documentId}`)}
             emptyMessage="Geen audit upsells gevonden voor de geselecteerde datumrange."
           />
         )}
