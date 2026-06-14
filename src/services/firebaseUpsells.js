@@ -63,6 +63,13 @@ function formatFirestoreValue(value) {
   return value ?? "";
 }
 
+function getUpsellStatus(data) {
+  if (data.status) return data.status;
+  return data.reservationDetailsDate || data.roomNumber || data.fullName || data.rateCode
+    ? "Arrived"
+    : "Created";
+}
+
 export async function getUpsellSettings(hotelUid) {
   if (!hotelUid) return { packageCodes: [] };
 
@@ -103,8 +110,10 @@ export async function getAuditUpsells(hotelUid, startDate, endDate) {
         logDate: formatFirestoreValue(data.logDate || dateKey),
         operaUser: data.operaUser || "",
         packageCode: data.packageCode || "",
+        startDate: formatFirestoreValue(data.startDate),
+        endDate: formatFirestoreValue(data.endDate),
         price: data.price ?? "",
-        roomNumber: data.roomNumber || "",
+        status: getUpsellStatus(data),
         confirmationNumber: data.confirmationNumber || auditUpsellDoc.id,
       };
     })

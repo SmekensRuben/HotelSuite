@@ -169,6 +169,7 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
           {
             ...auditUpsellRecord,
             ...(reservationDetails || {}),
+            status: reservationDetails ? 'Arrived' : 'Created',
             sourceAudittrailDate: dateKey,
             sourceAudittrailDocumentId: auditDoc.id,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),

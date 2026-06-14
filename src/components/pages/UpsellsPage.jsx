@@ -27,15 +27,59 @@ function getDefaultDateRange() {
   };
 }
 
+function toNumericPrice(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  if (typeof value === "number") return value;
+
+  const normalizedValue = String(value)
+    .trim()
+    .replace(/[^\d,.-]/g, "")
+    .replace(",", ".");
+  const numericValue = Number(normalizedValue);
+  return Number.isNaN(numericValue) ? null : numericValue;
+}
+
 function formatPrice(value) {
-  if (value === "" || value === null || value === undefined) return "";
-  const numericValue = Number(value);
-  if (Number.isNaN(numericValue)) return value;
+  const numericValue = toNumericPrice(value);
+  if (numericValue === null) return value ?? "";
 
   return new Intl.NumberFormat("nl-BE", {
     style: "currency",
     currency: "EUR",
   }).format(numericValue);
+}
+
+function parseDateKey(dateKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ""))) return null;
+
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
+function getNights(row) {
+  const startDate = parseDateKey(row.startDate);
+  const endDate = parseDateKey(row.endDate);
+  if (!startDate || !endDate || startDate > endDate) return "";
+
+  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+  return Math.round((endDate - startDate) / millisecondsPerDay) + 1;
+}
+
+function getExpectedRevenue(row) {
+  const nights = getNights(row);
+  const price = toNumericPrice(row.price);
+  if (nights === "" || price === null) return "";
+
+  return price * nights;
 }
 
 function normalizeOperaUserMappings(rawMappings) {
@@ -141,7 +185,14 @@ export default function UpsellsPage() {
     },
     { key: "packageCode", label: "Package Code" },
     { key: "price", label: "Price", render: (row) => formatPrice(row.price) },
-    { key: "roomNumber", label: "Room Number" },
+    { key: "nights", label: "Nights", render: getNights, sortValue: getNights },
+    {
+      key: "expectedRevenue",
+      label: "Expected Revenue",
+      render: (row) => formatPrice(getExpectedRevenue(row)),
+      sortValue: getExpectedRevenue,
+    },
+    { key: "status", label: "Status" },
     { key: "confirmationNumber", label: "Confirmation Number" },
   ];
 
