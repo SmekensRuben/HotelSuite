@@ -174,7 +174,7 @@ export default function UpsellDetailPage() {
     async function loadAuditUpsell() {
       if (!hotelUid || !date || !auditUpsellId) {
         setLoading(false);
-        setError("Audit upsell kon niet geladen worden.");
+        setError("Audit upsell could not be loaded.");
         return;
       }
 
@@ -193,7 +193,7 @@ export default function UpsellDetailPage() {
       } catch (err) {
         console.error("Failed to load audit upsell detail", err);
         if (!active) return;
-        setError("Audit upsell detail kon niet geladen worden.");
+        setError("Audit upsell detail could not be loaded.");
       } finally {
         if (active) setLoading(false);
       }
@@ -234,14 +234,14 @@ export default function UpsellDetailPage() {
 
     const cleanedComment = validationComment.trim();
     if (!cleanedComment) {
-      setError("Een comment is verplicht om deze upsell te valideren of te weigeren.");
+      setError("A comment is required to validate or reject this upsell.");
       return;
     }
 
     const effectiveRevenue =
       validationModalAction === "approved" ? toNumericPrice(effectiveRevenueInput) : undefined;
     if (validationModalAction === "approved" && effectiveRevenue === null) {
-      setError("Vul een geldige effective revenue in.");
+      setError("Enter a valid effective revenue.");
       return;
     }
 
@@ -261,11 +261,11 @@ export default function UpsellDetailPage() {
       );
       const refreshedRecord = await getAuditUpsell(hotelUid, date, auditUpsellId);
       setAuditUpsell(refreshedRecord);
-      setMessage(validationModalAction === "approved" ? "Upsell werd gevalideerd." : "Upsell werd geweigerd.");
+      setMessage(validationModalAction === "approved" ? "Upsell was validated." : "Upsell was rejected.");
       closeValidationModal();
     } catch (err) {
       console.error("Failed to update audit upsell validation", err);
-      setError("De validatiestatus kon niet opgeslagen worden.");
+      setError("The validation status could not be saved.");
     } finally {
       setSavingAction("");
     }
@@ -285,18 +285,18 @@ export default function UpsellDetailPage() {
           onClick={() => navigate("/front-office/upselling")}
           className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
         >
-          <ArrowLeft className="h-4 w-4" /> Terug naar Upselling
+          <ArrowLeft className="h-4 w-4" /> Back to Upselling
         </button>
 
         {loading ? (
           <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">
-            Audit upsell detail wordt geladen...
+            Loading audit upsell detail...
           </div>
         ) : error && !auditUpsell ? (
           <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>
         ) : !auditUpsell ? (
           <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">
-            Audit upsell record werd niet gevonden.
+            Audit upsell record was not found.
           </div>
         ) : (
           <>
@@ -326,7 +326,7 @@ export default function UpsellDetailPage() {
                     className="inline-flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <CheckCircle2 className="h-4 w-4" />
-                    {savingAction === "approved" ? "Valideren..." : "Validate Upsell"}
+                    {savingAction === "approved" ? "Validating..." : "Validate Upsell"}
                   </button>
                   <button
                     type="button"
@@ -335,7 +335,7 @@ export default function UpsellDetailPage() {
                     className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <XCircle className="h-4 w-4" />
-                    {savingAction === "rejected" ? "Weigeren..." : "Reject Upsell"}
+                    {savingAction === "rejected" ? "Rejecting..." : "Reject Upsell"}
                   </button>
                 </div>
               </div>
@@ -390,7 +390,7 @@ export default function UpsellDetailPage() {
                             {transactions.length === 0 ? (
                               <tr>
                                 <td colSpan={6} className="px-4 py-6 text-sm text-gray-500">
-                                  Geen transacties gevonden voor deze folio.
+                                  No transactions found for this folio.
                                 </td>
                               </tr>
                             ) : (
@@ -469,7 +469,7 @@ export default function UpsellDetailPage() {
               onChange={(event) => setValidationComment(event.target.value)}
               rows={4}
               className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              placeholder="Voeg een comment toe..."
+              placeholder="Add a comment..."
             />
           </label>
           <div className="flex justify-end gap-2">
@@ -479,7 +479,7 @@ export default function UpsellDetailPage() {
               disabled={Boolean(savingAction)}
               className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Annuleren
+              Cancel
             </button>
             <button
               type="submit"
@@ -490,7 +490,7 @@ export default function UpsellDetailPage() {
                   : "rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
               }
             >
-              {savingAction ? "Opslaan..." : validationModalAction === "approved" ? "Validate Upsell" : "Reject Upsell"}
+              {savingAction ? "Saving..." : validationModalAction === "approved" ? "Validate Upsell" : "Reject Upsell"}
             </button>
           </div>
         </form>
