@@ -132,7 +132,7 @@ export default function UpsellsPage() {
       if (!dateRange.startDate || !dateRange.endDate || dateRange.startDate > dateRange.endDate) {
         setAuditUpsells([]);
         setLoading(false);
-        setError("Kies een geldige datumrange.");
+        setError("Choose a valid date range.");
         return;
       }
 
@@ -150,7 +150,7 @@ export default function UpsellsPage() {
       } catch (err) {
         console.error("Failed to load audit upsells", err);
         if (!active) return;
-        setError("Audit upsells konden niet geladen worden.");
+        setError("Audit upsells could not be loaded.");
       } finally {
         if (active) setLoading(false);
       }
@@ -205,14 +205,14 @@ export default function UpsellsPage() {
             <p className="text-sm uppercase tracking-wide text-gray-500">Front Office</p>
             <h1 className="text-3xl font-semibold">Upselling</h1>
             <p className="mt-1 text-gray-600">
-              Overzicht van audit upsells binnen de geselecteerde datumrange.
+              Overview of audit upsells within the selected date range.
             </p>
           </div>
           <button
             type="button"
             onClick={() => navigate("/front-office/upselling/settings")}
             className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
-            aria-label="Upsell settings openen"
+            aria-label="Open upsell settings"
           >
             <Settings className="h-5 w-5" />
           </button>
@@ -221,7 +221,7 @@ export default function UpsellsPage() {
         <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
           <div className="grid gap-4 sm:grid-cols-2 lg:max-w-xl">
             <label className="text-sm font-medium text-gray-700">
-              Startdatum
+              Start date
               <input
                 type="date"
                 value={dateRange.startDate}
@@ -230,7 +230,7 @@ export default function UpsellsPage() {
               />
             </label>
             <label className="text-sm font-medium text-gray-700">
-              Einddatum
+              End date
               <input
                 type="date"
                 value={dateRange.endDate}
@@ -244,13 +244,14 @@ export default function UpsellsPage() {
         {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
         {loading ? (
           <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">
-            Audit upsells worden geladen...
+            Loading audit upsells...
           </div>
         ) : (
           <DataListTable
             columns={columns}
             rows={auditUpsells}
-            emptyMessage="Geen audit upsells gevonden voor de geselecteerde datumrange."
+            onRowClick={(row) => navigate(`/front-office/upselling/${row.dateKey}/${row.documentId}`)}
+            emptyMessage="No audit upsells found for the selected date range."
           />
         )}
       </PageContainer>

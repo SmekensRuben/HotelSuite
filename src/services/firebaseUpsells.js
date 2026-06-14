@@ -1,4 +1,4 @@
-import { db, collection, doc, getDoc, getDocs, setDoc } from "../firebaseConfig";
+import { db, collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp } from "../firebaseConfig";
 
 const UPSELL_SETTINGS_DOC_ID = "upsells";
 
@@ -63,11 +63,39 @@ function formatFirestoreValue(value) {
   return value ?? "";
 }
 
-function getUpsellStatus(data) {
+function formatAuditUpsellData(data, auditUpsellDocId, dateKey) {
+  return {
+    ...data,
+    id: `${dateKey}-${auditUpsellDocId}`,
+    documentId: auditUpsellDocId,
+    dateKey,
+    logDate: formatFirestoreValue(data.logDate || dateKey),
+    logTime: formatFirestoreValue(data.logTime),
+    operaUser: data.operaUser || "",
+    packageCode: data.packageCode || "",
+    startDate: formatFirestoreValue(data.startDate),
+    endDate: formatFirestoreValue(data.endDate),
+    price: data.price ?? "",
+    status: getUpsellStatus(data),
+    confirmationNumber: data.confirmationNumber || auditUpsellDocId,
+  };
+}
+
+function getDefaultUpsellStatus(data) {
   if (data.status) return data.status;
   return data.reservationDetailsDate || data.roomNumber || data.fullName || data.rateCode
     ? "Arrived"
-    : "Created";
+    : "Pending";
+}
+
+function getUpsellStatus(data) {
+  const validationStatus = String(data.validationStatus || "").toLowerCase();
+  const folioLinkStatus = String(data.folioLinkStatus || "").toLowerCase();
+
+  if (validationStatus === "approved") return "Validated";
+  if (validationStatus === "rejected") return "Rejected";
+  if (folioLinkStatus === "linked") return "Checked Out";
+  return getDefaultUpsellStatus(data);
 }
 
 export async function getUpsellSettings(hotelUid) {
@@ -101,23 +129,52 @@ export async function getAuditUpsells(hotelUid, startDate, endDate) {
   );
 
   return snapshots.flatMap(({ dateKey, docs }) =>
-    docs.map((auditUpsellDoc) => {
-      const data = auditUpsellDoc.data() || {};
-      return {
-        id: `${dateKey}-${auditUpsellDoc.id}`,
-        documentId: auditUpsellDoc.id,
-        dateKey,
-        logDate: formatFirestoreValue(data.logDate || dateKey),
-        operaUser: data.operaUser || "",
-        packageCode: data.packageCode || "",
-        startDate: formatFirestoreValue(data.startDate),
-        endDate: formatFirestoreValue(data.endDate),
-        price: data.price ?? "",
-        status: getUpsellStatus(data),
-        confirmationNumber: data.confirmationNumber || auditUpsellDoc.id,
-      };
-    })
+    docs.map((auditUpsellDoc) => formatAuditUpsellData(auditUpsellDoc.data() || {}, auditUpsellDoc.id, dateKey))
   );
+}
+
+export async function getAuditUpsell(hotelUid, dateKey, auditUpsellId) {
+  if (!hotelUid || !dateKey || !auditUpsellId) return null;
+
+  const auditUpsellRef = doc(
+    db,
+    `hotels/${hotelUid}/upselling/auditUpsell/${dateKey}/${auditUpsellId}`
+  );
+  const snapshot = await getDoc(auditUpsellRef);
+
+  if (!snapshot.exists()) return null;
+
+  return formatAuditUpsellData(snapshot.data() || {}, snapshot.id, dateKey);
+}
+
+export async function updateAuditUpsellValidation(
+  hotelUid,
+  dateKey,
+  auditUpsellId,
+  validationStatus,
+  validationComment,
+  currentUser,
+  effectiveRevenue
+) {
+  if (!hotelUid || !dateKey || !auditUpsellId) return;
+
+  const auditUpsellRef = doc(
+    db,
+    `hotels/${hotelUid}/upselling/auditUpsell/${dateKey}/${auditUpsellId}`
+  );
+
+  const updateData = {
+    validationStatus,
+    validationComment,
+    validatedAt: serverTimestamp(),
+    validatedBy: currentUser || null,
+  };
+
+  if (effectiveRevenue !== undefined) {
+    updateData.effectiveRevenue = effectiveRevenue;
+  }
+
+  await updateDoc(auditUpsellRef, updateData);
 }
 
 export async function saveUpsellPackageCodes(hotelUid, packageCodes) {

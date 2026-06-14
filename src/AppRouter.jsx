@@ -54,6 +54,7 @@ import StockCountCreatePage from "./components/pages/StockCountCreatePage.jsx";
 import StockCountDetailPage from "./components/pages/StockCountDetailPage.jsx";
 import StockCountLocationPage from "./components/pages/StockCountLocationPage.jsx";
 import UpsellsPage from "./components/pages/UpsellsPage.jsx";
+import UpsellDetailPage from "./components/pages/UpsellDetailPage.jsx";
 import UpsellSettingsPage from "./components/pages/UpsellSettingsPage.jsx";
 import OperaSettingsPage from "./components/pages/OperaSettingsPage.jsx";
 
@@ -379,6 +380,14 @@ export default function AppRouter() {
         element={
           <ProtectedRoute>
             <UpsellsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/front-office/upselling/:date/:auditUpsellId"
+        element={
+          <ProtectedRoute>
+            <UpsellDetailPage />
           </ProtectedRoute>
         }
       />
