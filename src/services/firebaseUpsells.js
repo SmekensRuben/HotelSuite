@@ -1,4 +1,4 @@
-import { db, collection, doc, getDoc, getDocs, setDoc } from "../firebaseConfig";
+import { db, collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp } from "../firebaseConfig";
 
 const UPSELL_SETTINGS_DOC_ID = "upsells";
 
@@ -81,11 +81,21 @@ function formatAuditUpsellData(data, auditUpsellDocId, dateKey) {
   };
 }
 
-function getUpsellStatus(data) {
+function getDefaultUpsellStatus(data) {
   if (data.status) return data.status;
   return data.reservationDetailsDate || data.roomNumber || data.fullName || data.rateCode
     ? "Arrived"
-    : "Created";
+    : "Pending";
+}
+
+function getUpsellStatus(data) {
+  const validationStatus = String(data.validationStatus || "").toLowerCase();
+  const folioLinkStatus = String(data.folioLinkStatus || "").toLowerCase();
+
+  if (validationStatus === "approved") return "Validated";
+  if (validationStatus === "rejected") return "Rejected";
+  if (folioLinkStatus === "linked") return "Checked Out";
+  return getDefaultUpsellStatus(data);
 }
 
 export async function getUpsellSettings(hotelUid) {
@@ -135,6 +145,29 @@ export async function getAuditUpsell(hotelUid, dateKey, auditUpsellId) {
   if (!snapshot.exists()) return null;
 
   return formatAuditUpsellData(snapshot.data() || {}, snapshot.id, dateKey);
+}
+
+export async function updateAuditUpsellValidation(
+  hotelUid,
+  dateKey,
+  auditUpsellId,
+  validationStatus,
+  validationComment,
+  currentUser
+) {
+  if (!hotelUid || !dateKey || !auditUpsellId) return;
+
+  const auditUpsellRef = doc(
+    db,
+    `hotels/${hotelUid}/upselling/auditUpsell/${dateKey}/${auditUpsellId}`
+  );
+
+  await updateDoc(auditUpsellRef, {
+    validationStatus,
+    validationComment,
+    validatedAt: serverTimestamp(),
+    validatedBy: currentUser || null,
+  });
 }
 
 export async function saveUpsellPackageCodes(hotelUid, packageCodes) {

@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, CheckCircle2, XCircle } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getAuditUpsell } from "../../services/firebaseUpsells";
+import { getAuditUpsell, updateAuditUpsellValidation } from "../../services/firebaseUpsells";
 import { getSettings } from "../../services/firebaseSettings";
 
 function toNumericPrice(value) {
@@ -103,6 +103,16 @@ function statusBadgeClass(status) {
   return "border-gray-200 bg-gray-50 text-gray-700";
 }
 
+function getCurrentUserPayload(user) {
+  if (!user) return null;
+
+  return {
+    uid: user.uid || null,
+    email: user.email || null,
+    displayName: user.displayName || null,
+  };
+}
+
 function Badge({ children, className = "" }) {
   return (
     <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
@@ -120,11 +130,11 @@ function InfoCard({ title, children, className = "" }) {
   );
 }
 
-function DetailGrid({ items }) {
+function DetailGrid({ items, subtle = false }) {
   return (
     <dl className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {items.map((item) => (
-        <div key={item.label} className="rounded-lg bg-gray-50 p-3">
+        <div key={item.label} className={subtle ? "rounded-lg border border-gray-100 bg-white p-3" : "rounded-lg bg-gray-50 p-3"}>
           <dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">{item.label}</dt>
           <dd className="mt-1 text-sm font-medium text-gray-900">{item.value}</dd>
         </div>
@@ -140,7 +150,9 @@ export default function UpsellDetailPage() {
   const [auditUpsell, setAuditUpsell] = useState(null);
   const [operaUserMappings, setOperaUserMappings] = useState({});
   const [loading, setLoading] = useState(true);
+  const [savingAction, setSavingAction] = useState("");
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
   const today = useMemo(
     () =>
@@ -164,6 +176,7 @@ export default function UpsellDetailPage() {
 
       setLoading(true);
       setError("");
+      setMessage("");
 
       try {
         const [record, settings] = await Promise.all([
@@ -195,6 +208,41 @@ export default function UpsellDetailPage() {
     window.location.href = "/login";
   };
 
+  const handleValidationAction = async (validationStatus) => {
+    const actionLabel = validationStatus === "approved" ? "Validate Upsell" : "Reject Upsell";
+    const comment = window.prompt(`${actionLabel}: enter a comment to continue.`);
+    if (comment === null) return;
+
+    const cleanedComment = comment.trim();
+    if (!cleanedComment) {
+      setError("Een comment is verplicht om deze upsell te valideren of te weigeren.");
+      return;
+    }
+
+    setSavingAction(validationStatus);
+    setError("");
+    setMessage("");
+
+    try {
+      await updateAuditUpsellValidation(
+        hotelUid,
+        date,
+        auditUpsellId,
+        validationStatus,
+        cleanedComment,
+        getCurrentUserPayload(auth.currentUser)
+      );
+      const refreshedRecord = await getAuditUpsell(hotelUid, date, auditUpsellId);
+      setAuditUpsell(refreshedRecord);
+      setMessage(validationStatus === "approved" ? "Upsell werd gevalideerd." : "Upsell werd geweigerd.");
+    } catch (err) {
+      console.error("Failed to update audit upsell validation", err);
+      setError("De validatiestatus kon niet opgeslagen worden.");
+    } finally {
+      setSavingAction("");
+    }
+  };
+
   const mappedOperaUser = getMappedOperaUser(auditUpsell?.operaUser, operaUserMappings);
   const nights = getNights(auditUpsell);
   const expectedRevenue = getExpectedRevenue(auditUpsell);
@@ -216,7 +264,7 @@ export default function UpsellDetailPage() {
           <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">
             Audit upsell detail wordt geladen...
           </div>
-        ) : error ? (
+        ) : error && !auditUpsell ? (
           <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>
         ) : !auditUpsell ? (
           <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">
@@ -225,76 +273,104 @@ export default function UpsellDetailPage() {
         ) : (
           <>
             <header className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <p className="text-sm uppercase tracking-wide text-gray-500">Upsell Detail</p>
-              <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
-                  <h1 className="text-3xl font-semibold text-gray-900">{formatValue(auditUpsell.fullName)}</h1>
-                  <p className="mt-1 text-sm text-gray-500">Confirmation {formatValue(auditUpsell.confirmationNumber || auditUpsell.documentId)}</p>
+                  <p className="text-sm uppercase tracking-wide text-gray-500">Upsell Detail</p>
+                  <h1 className="mt-2 text-3xl font-semibold text-gray-900">{formatValue(auditUpsell.fullName)}</h1>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Badge className="border-blue-200 bg-blue-50 text-blue-700">{formatValue(auditUpsell.packageCode)}</Badge>
+                    <Badge className={statusBadgeClass(auditUpsell.validationStatus)}>
+                      Validation: {formatValue(auditUpsell.validationStatus)}
+                    </Badge>
+                    <Badge className={statusBadgeClass(auditUpsell.folioLinkStatus)}>
+                      Folio: {formatValue(auditUpsell.folioLinkStatus)}
+                    </Badge>
+                  </div>
                 </div>
-                <Badge className="border-blue-200 bg-blue-50 text-blue-700">{formatValue(auditUpsell.packageCode)}</Badge>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <button
+                    type="button"
+                    onClick={() => handleValidationAction("approved")}
+                    disabled={Boolean(savingAction)}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    {savingAction === "approved" ? "Valideren..." : "Validate Upsell"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleValidationAction("rejected")}
+                    disabled={Boolean(savingAction)}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <XCircle className="h-4 w-4" />
+                    {savingAction === "rejected" ? "Weigeren..." : "Reject Upsell"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+                {[
+                  { label: "Full Name", value: formatValue(auditUpsell.fullName) },
+                  { label: "Opera User", value: mappedOperaUser },
+                  { label: "Package Code", value: formatValue(auditUpsell.packageCode) },
+                  { label: "Package Price", value: formatCurrency(auditUpsell.price) },
+                  { label: "Nights", value: nights },
+                  { label: "Expected Revenue", value: formatCurrency(expectedRevenue) },
+                ].map((item) => (
+                  <div key={item.label} className="border-l border-gray-200 pl-3 first:border-l-0 first:pl-0 sm:first:border-l sm:first:pl-3 lg:first:border-l-0 lg:first:pl-0">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{item.label}</p>
+                    <p className="mt-1 text-sm font-semibold text-gray-900">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-5 grid gap-3 rounded-xl border border-gray-100 bg-gray-50 p-4 text-sm text-gray-700 sm:grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <span className="block text-xs font-semibold uppercase tracking-wide text-gray-500">Package Start Date</span>
+                  <span className="mt-1 block font-medium text-gray-900">{formatValue(auditUpsell.startDate)}</span>
+                </div>
+                <div>
+                  <span className="block text-xs font-semibold uppercase tracking-wide text-gray-500">Package End Date</span>
+                  <span className="mt-1 block font-medium text-gray-900">{formatValue(auditUpsell.endDate)}</span>
+                </div>
+                <div>
+                  <span className="block text-xs font-semibold uppercase tracking-wide text-gray-500">Linked Folios</span>
+                  <span className="mt-1 block font-medium text-gray-900">{detailedFolios.length}</span>
+                </div>
+                <div>
+                  <span className="block text-xs font-semibold uppercase tracking-wide text-gray-500">Confirmation</span>
+                  <span className="mt-1 block font-medium text-gray-900">{formatValue(auditUpsell.confirmationNumber || auditUpsell.documentId)}</span>
+                </div>
               </div>
             </header>
 
-            <InfoCard title="Suggested validation summary">
-              <DetailGrid
-                items={[
-                  {
-                    label: "Folio status",
-                    value: <Badge className={statusBadgeClass(auditUpsell.folioLinkStatus)}>{formatValue(auditUpsell.folioLinkStatus)}</Badge>,
-                  },
-                  {
-                    label: "Validation status",
-                    value: <Badge className={statusBadgeClass(auditUpsell.validationStatus)}>{formatValue(auditUpsell.validationStatus)}</Badge>,
-                  },
-                  { label: "Expected revenue", value: formatCurrency(expectedRevenue) },
-                  { label: "Linked folio count", value: detailedFolios.length },
-                ]}
-              />
-            </InfoCard>
+            {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+            {message && <div className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{message}</div>}
 
-            <InfoCard title="Summary">
-              <DetailGrid
-                items={[
-                  { label: "Full name", value: formatValue(auditUpsell.fullName) },
-                  { label: "Opera user", value: mappedOperaUser },
-                  { label: "Package code", value: formatValue(auditUpsell.packageCode) },
-                  { label: "Package price", value: formatCurrency(auditUpsell.price) },
-                  { label: "Nights", value: nights },
-                  { label: "Expected revenue", value: formatCurrency(expectedRevenue) },
-                ]}
-              />
-            </InfoCard>
-
-            <div className="grid gap-6 lg:grid-cols-2">
-              <InfoCard title="Stay details">
-                <DetailGrid
-                  items={[
-                    { label: "Start date", value: formatValue(auditUpsell.startDate) },
-                    { label: "End date", value: formatValue(auditUpsell.endDate) },
-                    { label: "Rate code", value: formatValue(auditUpsell.rateCode) },
-                    { label: "Room number", value: formatValue(auditUpsell.roomNumber) },
-                  ]}
-                />
-              </InfoCard>
-
-              <InfoCard title="Audit details">
-                <DetailGrid
-                  items={[
-                    { label: "Log date", value: formatValue(auditUpsell.logDate || auditUpsell.dateKey) },
-                    { label: "Log time", value: formatValue(auditUpsell.logTime) },
-                    { label: "Raw opera user", value: formatValue(auditUpsell.operaUser) },
-                    { label: "Mapped opera user", value: mappedOperaUser },
-                    { label: "Package code", value: formatValue(auditUpsell.packageCode) },
-                    { label: "Price", value: formatCurrency(auditUpsell.price) },
-                  ]}
-                />
-              </InfoCard>
-            </div>
+            <section className="rounded-xl border border-gray-100 bg-white/70 p-4 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-gray-900">Stay details</h2>
+                  <p className="mt-1 text-sm text-gray-500">Supporting reservation context.</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg bg-gray-50 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Rate Code</p>
+                    <p className="mt-1 text-sm font-medium text-gray-900">{formatValue(auditUpsell.rateCode)}</p>
+                  </div>
+                  <div className="rounded-lg bg-gray-50 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Room Number</p>
+                    <p className="mt-1 text-sm font-medium text-gray-900">{formatValue(auditUpsell.roomNumber)}</p>
+                  </div>
+                </div>
+              </div>
+            </section>
 
             <section className="space-y-4">
               <div>
                 <h2 className="text-xl font-semibold text-gray-900">Detailed folios</h2>
-                <p className="mt-1 text-sm text-gray-600">Linked folio transactions for this upsell validation record.</p>
+                <p className="mt-1 text-sm text-gray-600">Folio transactions are the main evidence for this upsell review.</p>
               </div>
 
               {detailedFolios.length === 0 ? (
@@ -306,7 +382,7 @@ export default function UpsellDetailPage() {
                   const transactions = Array.isArray(folio?.transactions) ? folio.transactions : [];
                   return (
                     <InfoCard key={`${folio?.billNumber || "folio"}-${index}`} title={`Folio ${formatValue(folio?.billNumber)}`}>
-                      <div className="mb-4 grid gap-4 sm:grid-cols-2">
+                      <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:max-w-xl">
                         <div className="rounded-lg bg-gray-50 p-3">
                           <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Bill number</p>
                           <p className="mt-1 text-sm font-medium text-gray-900">{formatValue(folio?.billNumber)}</p>
@@ -354,6 +430,24 @@ export default function UpsellDetailPage() {
                 })
               )}
             </section>
+
+            <details className="rounded-xl border border-gray-200 bg-white/70 p-5 shadow-sm">
+              <summary className="cursor-pointer text-base font-semibold text-gray-800">Audit details</summary>
+              <div className="mt-4">
+                <DetailGrid
+                  subtle
+                  items={[
+                    { label: "Log date", value: formatValue(auditUpsell.logDate || auditUpsell.dateKey) },
+                    { label: "Log time", value: formatValue(auditUpsell.logTime) },
+                    { label: "Raw opera user", value: formatValue(auditUpsell.operaUser) },
+                    { label: "Mapped opera user", value: mappedOperaUser },
+                    { label: "Package code", value: formatValue(auditUpsell.packageCode) },
+                    { label: "Price", value: formatCurrency(auditUpsell.price) },
+                    { label: "Validation comment", value: formatValue(auditUpsell.validationComment) },
+                  ]}
+                />
+              </div>
+            </details>
           </>
         )}
       </PageContainer>
