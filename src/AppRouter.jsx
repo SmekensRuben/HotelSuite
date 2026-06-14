@@ -55,6 +55,7 @@ import StockCountDetailPage from "./components/pages/StockCountDetailPage.jsx";
 import StockCountLocationPage from "./components/pages/StockCountLocationPage.jsx";
 import UpsellsPage from "./components/pages/UpsellsPage.jsx";
 import UpsellSettingsPage from "./components/pages/UpsellSettingsPage.jsx";
+import OperaSettingsPage from "./components/pages/OperaSettingsPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -362,6 +363,14 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="settings" action="update">
             <FileImportTypeEditPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/settings/opera"
+        element={
+          <ProtectedRoute feature="settings" action="read">
+            <OperaSettingsPage />
           </ProtectedRoute>
         }
       />
