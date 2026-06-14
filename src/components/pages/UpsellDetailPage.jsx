@@ -7,6 +7,7 @@ import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getAuditUpsell, updateAuditUpsellValidation } from "../../services/firebaseUpsells";
 import { getSettings } from "../../services/firebaseSettings";
+import Modal from "../shared/Modal";
 
 function toNumericPrice(value) {
   if (value === "" || value === null || value === undefined) return null;
@@ -151,6 +152,9 @@ export default function UpsellDetailPage() {
   const [operaUserMappings, setOperaUserMappings] = useState({});
   const [loading, setLoading] = useState(true);
   const [savingAction, setSavingAction] = useState("");
+  const [validationModalAction, setValidationModalAction] = useState("");
+  const [validationComment, setValidationComment] = useState("");
+  const [effectiveRevenueInput, setEffectiveRevenueInput] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -208,18 +212,40 @@ export default function UpsellDetailPage() {
     window.location.href = "/login";
   };
 
-  const handleValidationAction = async (validationStatus) => {
-    const actionLabel = validationStatus === "approved" ? "Validate Upsell" : "Reject Upsell";
-    const comment = window.prompt(`${actionLabel}: enter a comment to continue.`);
-    if (comment === null) return;
+  const openValidationModal = (validationStatus) => {
+    setValidationModalAction(validationStatus);
+    setValidationComment("");
+    setEffectiveRevenueInput(
+      validationStatus === "approved" && expectedRevenue !== null ? String(expectedRevenue.toFixed(2)) : ""
+    );
+    setError("");
+    setMessage("");
+  };
 
-    const cleanedComment = comment.trim();
+  const closeValidationModal = () => {
+    if (savingAction) return;
+    setValidationModalAction("");
+    setValidationComment("");
+    setEffectiveRevenueInput("");
+  };
+
+  const handleValidationSubmit = async (event) => {
+    event.preventDefault();
+
+    const cleanedComment = validationComment.trim();
     if (!cleanedComment) {
       setError("Een comment is verplicht om deze upsell te valideren of te weigeren.");
       return;
     }
 
-    setSavingAction(validationStatus);
+    const effectiveRevenue =
+      validationModalAction === "approved" ? toNumericPrice(effectiveRevenueInput) : undefined;
+    if (validationModalAction === "approved" && effectiveRevenue === null) {
+      setError("Vul een geldige effective revenue in.");
+      return;
+    }
+
+    setSavingAction(validationModalAction);
     setError("");
     setMessage("");
 
@@ -228,13 +254,15 @@ export default function UpsellDetailPage() {
         hotelUid,
         date,
         auditUpsellId,
-        validationStatus,
+        validationModalAction,
         cleanedComment,
-        getCurrentUserPayload(auth.currentUser)
+        getCurrentUserPayload(auth.currentUser),
+        effectiveRevenue
       );
       const refreshedRecord = await getAuditUpsell(hotelUid, date, auditUpsellId);
       setAuditUpsell(refreshedRecord);
-      setMessage(validationStatus === "approved" ? "Upsell werd gevalideerd." : "Upsell werd geweigerd.");
+      setMessage(validationModalAction === "approved" ? "Upsell werd gevalideerd." : "Upsell werd geweigerd.");
+      closeValidationModal();
     } catch (err) {
       console.error("Failed to update audit upsell validation", err);
       setError("De validatiestatus kon niet opgeslagen worden.");
@@ -276,7 +304,10 @@ export default function UpsellDetailPage() {
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                   <p className="text-sm uppercase tracking-wide text-gray-500">Upsell Detail</p>
-                  <h1 className="mt-2 text-3xl font-semibold text-gray-900">{formatValue(auditUpsell.fullName)}</h1>
+                  <h1 className="mt-2 text-3xl font-semibold text-gray-900">
+                    {formatValue(auditUpsell.fullName)}
+                    {auditUpsell.roomNumber ? ` (${auditUpsell.roomNumber})` : ""}
+                  </h1>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <Badge className="border-blue-200 bg-blue-50 text-blue-700">{formatValue(auditUpsell.packageCode)}</Badge>
                     <Badge className={statusBadgeClass(auditUpsell.validationStatus)}>
@@ -290,7 +321,7 @@ export default function UpsellDetailPage() {
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <button
                     type="button"
-                    onClick={() => handleValidationAction("approved")}
+                    onClick={() => openValidationModal("approved")}
                     disabled={Boolean(savingAction)}
                     className="inline-flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
@@ -299,7 +330,7 @@ export default function UpsellDetailPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleValidationAction("rejected")}
+                    onClick={() => openValidationModal("rejected")}
                     disabled={Boolean(savingAction)}
                     className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
@@ -311,7 +342,6 @@ export default function UpsellDetailPage() {
 
               <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                 {[
-                  { label: "Full Name", value: formatValue(auditUpsell.fullName) },
                   { label: "Opera User", value: mappedOperaUser },
                   { label: "Package Code", value: formatValue(auditUpsell.packageCode) },
                   { label: "Package Price", value: formatCurrency(auditUpsell.price) },
@@ -325,47 +355,10 @@ export default function UpsellDetailPage() {
                 ))}
               </div>
 
-              <div className="mt-5 grid gap-3 rounded-xl border border-gray-100 bg-gray-50 p-4 text-sm text-gray-700 sm:grid-cols-2 lg:grid-cols-4">
-                <div>
-                  <span className="block text-xs font-semibold uppercase tracking-wide text-gray-500">Package Start Date</span>
-                  <span className="mt-1 block font-medium text-gray-900">{formatValue(auditUpsell.startDate)}</span>
-                </div>
-                <div>
-                  <span className="block text-xs font-semibold uppercase tracking-wide text-gray-500">Package End Date</span>
-                  <span className="mt-1 block font-medium text-gray-900">{formatValue(auditUpsell.endDate)}</span>
-                </div>
-                <div>
-                  <span className="block text-xs font-semibold uppercase tracking-wide text-gray-500">Linked Folios</span>
-                  <span className="mt-1 block font-medium text-gray-900">{detailedFolios.length}</span>
-                </div>
-                <div>
-                  <span className="block text-xs font-semibold uppercase tracking-wide text-gray-500">Confirmation</span>
-                  <span className="mt-1 block font-medium text-gray-900">{formatValue(auditUpsell.confirmationNumber || auditUpsell.documentId)}</span>
-                </div>
-              </div>
             </header>
 
             {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
             {message && <div className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{message}</div>}
-
-            <section className="rounded-xl border border-gray-100 bg-white/70 p-4 shadow-sm">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-base font-semibold text-gray-900">Stay details</h2>
-                  <p className="mt-1 text-sm text-gray-500">Supporting reservation context.</p>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-lg bg-gray-50 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Rate Code</p>
-                    <p className="mt-1 text-sm font-medium text-gray-900">{formatValue(auditUpsell.rateCode)}</p>
-                  </div>
-                  <div className="rounded-lg bg-gray-50 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Room Number</p>
-                    <p className="mt-1 text-sm font-medium text-gray-900">{formatValue(auditUpsell.roomNumber)}</p>
-                  </div>
-                </div>
-              </div>
-            </section>
 
             <section className="space-y-4">
               <div>
@@ -382,16 +375,6 @@ export default function UpsellDetailPage() {
                   const transactions = Array.isArray(folio?.transactions) ? folio.transactions : [];
                   return (
                     <InfoCard key={`${folio?.billNumber || "folio"}-${index}`} title={`Folio ${formatValue(folio?.billNumber)}`}>
-                      <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:max-w-xl">
-                        <div className="rounded-lg bg-gray-50 p-3">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Bill number</p>
-                          <p className="mt-1 text-sm font-medium text-gray-900">{formatValue(folio?.billNumber)}</p>
-                        </div>
-                        <div className="rounded-lg bg-gray-50 p-3">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Room number</p>
-                          <p className="mt-1 text-sm font-medium text-gray-900">{formatValue(folio?.roomNumber)}</p>
-                        </div>
-                      </div>
                       <div className="overflow-x-auto rounded-lg border border-gray-200">
                         <table className="min-w-full divide-y divide-gray-200">
                           <thead className="bg-gray-50">
@@ -437,6 +420,8 @@ export default function UpsellDetailPage() {
                 <DetailGrid
                   subtle
                   items={[
+                    { label: "Package start date", value: formatValue(auditUpsell.startDate) },
+                    { label: "Package end date", value: formatValue(auditUpsell.endDate) },
                     { label: "Log date", value: formatValue(auditUpsell.logDate || auditUpsell.dateKey) },
                     { label: "Log time", value: formatValue(auditUpsell.logTime) },
                     { label: "Raw opera user", value: formatValue(auditUpsell.operaUser) },
@@ -444,6 +429,7 @@ export default function UpsellDetailPage() {
                     { label: "Package code", value: formatValue(auditUpsell.packageCode) },
                     { label: "Price", value: formatCurrency(auditUpsell.price) },
                     { label: "Validation comment", value: formatValue(auditUpsell.validationComment) },
+                    { label: "Effective revenue", value: formatCurrency(auditUpsell.effectiveRevenue) },
                   ]}
                 />
               </div>
@@ -451,6 +437,64 @@ export default function UpsellDetailPage() {
           </>
         )}
       </PageContainer>
+      <Modal
+        open={Boolean(validationModalAction)}
+        onClose={closeValidationModal}
+        title={validationModalAction === "approved" ? "Validate Upsell" : "Reject Upsell"}
+      >
+        <form onSubmit={handleValidationSubmit} className="space-y-4">
+          {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+          {validationModalAction === "approved" && (
+            <div className="grid gap-3 rounded-lg bg-gray-50 p-3 sm:grid-cols-2">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Expected Revenue</p>
+                <p className="mt-1 text-sm font-semibold text-gray-900">{formatCurrency(expectedRevenue)}</p>
+              </div>
+              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Effective Revenue
+                <input
+                  type="number"
+                  step="0.01"
+                  value={effectiveRevenueInput}
+                  onChange={(event) => setEffectiveRevenueInput(event.target.value)}
+                  className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium normal-case tracking-normal text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </label>
+            </div>
+          )}
+          <label className="block text-sm font-medium text-gray-700">
+            Comment
+            <textarea
+              value={validationComment}
+              onChange={(event) => setValidationComment(event.target.value)}
+              rows={4}
+              className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="Voeg een comment toe..."
+            />
+          </label>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeValidationModal}
+              disabled={Boolean(savingAction)}
+              className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Annuleren
+            </button>
+            <button
+              type="submit"
+              disabled={Boolean(savingAction)}
+              className={
+                validationModalAction === "approved"
+                  ? "rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  : "rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+              }
+            >
+              {savingAction ? "Opslaan..." : validationModalAction === "approved" ? "Validate Upsell" : "Reject Upsell"}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

@@ -153,7 +153,8 @@ export async function updateAuditUpsellValidation(
   auditUpsellId,
   validationStatus,
   validationComment,
-  currentUser
+  currentUser,
+  effectiveRevenue
 ) {
   if (!hotelUid || !dateKey || !auditUpsellId) return;
 
@@ -162,12 +163,18 @@ export async function updateAuditUpsellValidation(
     `hotels/${hotelUid}/upselling/auditUpsell/${dateKey}/${auditUpsellId}`
   );
 
-  await updateDoc(auditUpsellRef, {
+  const updateData = {
     validationStatus,
     validationComment,
     validatedAt: serverTimestamp(),
     validatedBy: currentUser || null,
-  });
+  };
+
+  if (effectiveRevenue !== undefined) {
+    updateData.effectiveRevenue = effectiveRevenue;
+  }
+
+  await updateDoc(auditUpsellRef, updateData);
 }
 
 export async function saveUpsellPackageCodes(hotelUid, packageCodes) {
