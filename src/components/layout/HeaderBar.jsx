@@ -65,6 +65,12 @@ export default function HeaderBar({ today, onLogout }) {
       visible: canViewSettings,
     },
     {
+      label: "Opera Settings",
+      action: () => navigate("/settings/opera"),
+      icon: Settings2,
+      visible: canViewSettings,
+    },
+    {
       label: "User Management",
       action: () => navigate("/settings/users"),
       icon: Users,

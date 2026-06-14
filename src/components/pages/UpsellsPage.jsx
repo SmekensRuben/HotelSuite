@@ -7,6 +7,7 @@ import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getAuditUpsells } from "../../services/firebaseUpsells";
+import { getSettings } from "../../services/firebaseSettings";
 
 function toDateInputValue(date) {
   const year = date.getFullYear();
@@ -37,12 +38,29 @@ function formatPrice(value) {
   }).format(numericValue);
 }
 
+function normalizeOperaUserMappings(rawMappings) {
+  if (!rawMappings || typeof rawMappings !== "object") return {};
+
+  return Object.entries(rawMappings).reduce((accumulator, [operaUser, employeeName]) => {
+    const cleanedOperaUser = String(operaUser || "").trim();
+    const cleanedEmployeeName = String(employeeName || "").trim();
+
+    if (cleanedOperaUser && cleanedEmployeeName) {
+      accumulator[cleanedOperaUser] = cleanedEmployeeName;
+      accumulator[cleanedOperaUser.toLowerCase()] = cleanedEmployeeName;
+    }
+
+    return accumulator;
+  }, {});
+}
+
 export default function UpsellsPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
   const defaultDateRange = useMemo(() => getDefaultDateRange(), []);
   const [dateRange, setDateRange] = useState(defaultDateRange);
   const [auditUpsells, setAuditUpsells] = useState([]);
+  const [operaUserMappings, setOperaUserMappings] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -62,6 +80,7 @@ export default function UpsellsPage() {
     async function loadAuditUpsells() {
       if (!hotelUid) {
         setAuditUpsells([]);
+        setOperaUserMappings({});
         setLoading(false);
         return;
       }
@@ -77,9 +96,13 @@ export default function UpsellsPage() {
       setError("");
 
       try {
-        const records = await getAuditUpsells(hotelUid, dateRange.startDate, dateRange.endDate);
+        const [records, settings] = await Promise.all([
+          getAuditUpsells(hotelUid, dateRange.startDate, dateRange.endDate),
+          getSettings(hotelUid),
+        ]);
         if (!active) return;
         setAuditUpsells(records);
+        setOperaUserMappings(normalizeOperaUserMappings(settings?.operaUserMappings));
       } catch (err) {
         console.error("Failed to load audit upsells", err);
         if (!active) return;
@@ -108,7 +131,14 @@ export default function UpsellsPage() {
 
   const columns = [
     { key: "logDate", label: "Log Date", sortValue: (row) => row.logDate || row.dateKey },
-    { key: "operaUser", label: "Opera User" },
+    {
+      key: "operaUser",
+      label: "Opera User",
+      render: (row) => {
+        const operaUser = String(row.operaUser || "").trim();
+        return operaUserMappings[operaUser] || operaUserMappings[operaUser.toLowerCase()] || operaUser;
+      },
+    },
     { key: "packageCode", label: "Package Code" },
     { key: "price", label: "Price", render: (row) => formatPrice(row.price) },
     { key: "roomNumber", label: "Room Number" },
