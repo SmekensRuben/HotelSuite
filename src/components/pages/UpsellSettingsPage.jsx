@@ -24,15 +24,13 @@ const emptyRuleForm = {
   stretchTargetRevenuePerOccupiedRoom: "",
 };
 
-function addDays(date, days) {
-  const nextDate = new Date(date);
-  nextDate.setDate(nextDate.getDate() + days);
-  return nextDate;
-}
-
 function getDefaultOccupancyRange() {
   const today = new Date();
-  return { startDate: toDateInputValue(today), endDate: toDateInputValue(addDays(today, 27)) };
+  const startDate = new Date(today);
+  startDate.setDate(1);
+  const endDate = new Date(today);
+  endDate.setMonth(today.getMonth() + 1, 0);
+  return { startDate: toDateInputValue(startDate), endDate: toDateInputValue(endDate) };
 }
 
 function formatMonthLabel(dateKey) {
@@ -54,6 +52,7 @@ export default function UpsellSettingsPage() {
   const [ruleForm, setRuleForm] = useState(emptyRuleForm);
   const [occupancyRange, setOccupancyRange] = useState(getDefaultOccupancyRange);
   const [bulkOccupancy, setBulkOccupancy] = useState("");
+  const [occupancyOpen, setOccupancyOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -89,7 +88,7 @@ export default function UpsellSettingsPage() {
       } catch (err) {
         console.error("Failed to load upsell settings", err);
         if (!active) return;
-        setError("Upsell settings konden niet geladen worden.");
+        setError("Upsell settings could not be loaded.");
       } finally {
         if (active) setLoading(false);
       }
@@ -116,7 +115,7 @@ export default function UpsellSettingsPage() {
 
   const runSave = async (saveAction, successMessage, failureMessage) => {
     if (!hotelUid) {
-      setError("Geen hotel geselecteerd om upsell settings op te slaan.");
+      setError("No hotel selected to save upsell settings.");
       return false;
     }
 
@@ -143,28 +142,28 @@ export default function UpsellSettingsPage() {
     const normalizedCode = String(newPackageCode || "").trim().toUpperCase();
 
     if (!normalizedCode) {
-      setError("Vul een package code in.");
+      setError("Enter a package code.");
       return;
     }
 
     if (packageCodes.includes(normalizedCode)) {
-      setError("Deze package code staat al in de lijst.");
+      setError("This package code is already in the list.");
       return;
     }
 
     const saved = await runSave(
       () => saveUpsellPackageCodes(hotelUid, [...packageCodes, normalizedCode]),
-      "Package codes opgeslagen in Firebase.",
-      "Package codes konden niet opgeslagen worden."
+      "Package codes saved in Firebase.",
+      "Package codes could not be saved."
     );
     if (saved) setNewPackageCode("");
   };
 
-  const saveOccupancy = (nextOccupancy, successMessage = "Expected occupancy opgeslagen in Firebase.") =>
+  const saveOccupancy = (nextOccupancy, successMessage = "Expected occupancy saved in Firebase.") =>
     runSave(
       () => saveUpsellDailyExpectedOccupancy(hotelUid, nextOccupancy),
       successMessage,
-      "Expected occupancy kon niet opgeslagen worden."
+      "Expected occupancy could not be saved."
     );
 
   const handleBulkOccupancySave = async (event) => {
@@ -173,7 +172,7 @@ export default function UpsellSettingsPage() {
     const dateKeys = getUpsellDateKeys(occupancyRange.startDate, occupancyRange.endDate);
 
     if (!dateKeys.length || occupancyValue === null) {
-      setError("Kies een geldige periode en positieve occupancy waarde.");
+      setError("Choose a valid period and positive occupancy value.");
       return;
     }
 
@@ -182,14 +181,15 @@ export default function UpsellSettingsPage() {
       nextOccupancy[dateKey] = occupancyValue;
     });
 
-    const saved = await saveOccupancy(nextOccupancy, `Expected occupancy opgeslagen voor ${dateKeys.length} dagen.`);
+    setDailyExpectedOccupancy(nextOccupancy);
+    const saved = await saveOccupancy(nextOccupancy, `Expected occupancy saved for ${dateKeys.length} days.`);
     if (saved) setBulkOccupancy("");
   };
 
   const handleOccupancyCellSave = (dateKey, value) => {
     const occupancyValue = toNonNegativeFormNumber(value);
     if (occupancyValue === null) {
-      setError("Vul een positieve occupancy waarde in.");
+      setError("Enter a positive occupancy value.");
       return;
     }
     saveOccupancy({ ...dailyExpectedOccupancy, [dateKey]: occupancyValue });
@@ -204,7 +204,7 @@ export default function UpsellSettingsPage() {
     };
 
     if (!ruleForm.startDate || !ruleForm.endDate || ruleForm.startDate > ruleForm.endDate || Object.values(values).some((value) => value === null)) {
-      setError("Kies een geldige periode en positieve target waardes.");
+      setError("Choose a valid period and positive target values.");
       return;
     }
 
@@ -220,8 +220,8 @@ export default function UpsellSettingsPage() {
 
     const saved = await runSave(
       () => saveUpsellRevenueTargetRules(hotelUid, nextRules),
-      "Target rule opgeslagen in Firebase.",
-      "Target rules konden niet opgeslagen worden."
+      "Target rule saved in Firebase.",
+      "Target rules could not be saved."
     );
     if (saved) setRuleForm(emptyRuleForm);
   };
@@ -239,16 +239,16 @@ export default function UpsellSettingsPage() {
     { key: "packageCode", label: "Package Code" },
     {
       key: "actions",
-      label: "Acties",
+      label: "Actions",
       sortable: false,
       render: (row) => (
         <button
           type="button"
-          onClick={() => runSave(() => saveUpsellPackageCodes(hotelUid, packageCodes.filter((code) => code !== row.packageCode)), "Package codes opgeslagen in Firebase.", "Package codes konden niet opgeslagen worden.")}
+          onClick={() => runSave(() => saveUpsellPackageCodes(hotelUid, packageCodes.filter((code) => code !== row.packageCode)), "Package codes saved in Firebase.", "Package codes could not be saved.")}
           disabled={saving}
           className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <Trash2 className="h-4 w-4" /> Verwijderen
+          <Trash2 className="h-4 w-4" /> Delete
         </button>
       ),
     },
@@ -256,26 +256,26 @@ export default function UpsellSettingsPage() {
 
   const ruleColumns = [
     { key: "startDate", label: "Start" },
-    { key: "endDate", label: "Einde" },
+    { key: "endDate", label: "End" },
     { key: "minimumTargetRevenuePerOccupiedRoom", label: "Minimum €/Occ. Room" },
     { key: "reachTargetRevenuePerOccupiedRoom", label: "Reach €/Occ. Room" },
     { key: "stretchTargetRevenuePerOccupiedRoom", label: "Stretch €/Occ. Room" },
     {
       key: "actions",
-      label: "Acties",
+      label: "Actions",
       sortable: false,
       render: (row) => (
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => setRuleForm(row)} disabled={saving} className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-            Bewerken
+            Edit
           </button>
           <button
             type="button"
-            onClick={() => runSave(() => saveUpsellRevenueTargetRules(hotelUid, revenueTargetRules.filter((rule) => rule.id !== row.id)), "Target rule verwijderd.", "Target rules konden niet opgeslagen worden.")}
+            onClick={() => runSave(() => saveUpsellRevenueTargetRules(hotelUid, revenueTargetRules.filter((rule) => rule.id !== row.id)), "Target rule deleted.", "Target rules could not be saved.")}
             disabled={saving}
             className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
           >
-            <Trash2 className="h-4 w-4" /> Verwijderen
+            <Trash2 className="h-4 w-4" /> Delete
           </button>
         </div>
       ),
@@ -290,10 +290,10 @@ export default function UpsellSettingsPage() {
           <div>
             <p className="text-sm uppercase tracking-wide text-gray-500">Front Office</p>
             <h1 className="text-3xl font-semibold">Upsell Settings</h1>
-            <p className="mt-1 text-gray-600">Beheer expected occupancy per dag en revenue target rules per periode.</p>
+            <p className="mt-1 text-gray-600">Manage daily expected occupancy and period-based revenue target rules.</p>
           </div>
           <button type="button" onClick={() => navigate("/front-office/upselling")} className="inline-flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50">
-            Terug naar Upselling
+            Back to Upselling
           </button>
         </div>
 
@@ -301,17 +301,23 @@ export default function UpsellSettingsPage() {
         {message && <div className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{message}</div>}
 
         {loading ? (
-          <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">Upsell settings worden geladen...</div>
+          <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">Loading upsell settings...</div>
         ) : (
           <>
-            <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-              <h2 className="text-lg font-semibold text-gray-900">Expected Occupancy</h2>
-              <p className="mt-1 text-sm text-gray-500">Gebruik de kalender om een compacte periode te beheren of pas dezelfde occupancy toe op meerdere dagen tegelijk.</p>
+            <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+              <button type="button" onClick={() => setOccupancyOpen((open) => !open)} className="flex w-full items-center justify-between gap-3 p-4 text-left">
+                <span>
+                  <span className="block text-lg font-semibold text-gray-900">Expected Occupancy</span>
+                  <span className="mt-1 block text-sm text-gray-500">Use the calendar to manage a compact period or apply the same occupancy to multiple days at once.</span>
+                </span>
+                <span className="text-sm font-semibold text-gray-600">{occupancyOpen ? "Collapse" : "Expand"}</span>
+              </button>
+              {occupancyOpen && <div className="border-t border-gray-100 p-4">
               <form onSubmit={handleBulkOccupancySave} className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_1fr_auto] lg:items-end">
                 <label className="text-sm font-semibold text-gray-700">Start<input type="date" value={occupancyRange.startDate} onChange={(event) => setOccupancyRange((range) => ({ ...range, startDate: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
-                <label className="text-sm font-semibold text-gray-700">Einde<input type="date" value={occupancyRange.endDate} onChange={(event) => setOccupancyRange((range) => ({ ...range, endDate: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
-                <label className="text-sm font-semibold text-gray-700">Bulk occupancy<input type="number" min="0" step="1" value={bulkOccupancy} onChange={(event) => setBulkOccupancy(event.target.value)} placeholder="Kamers" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
-                <button type="submit" disabled={saving} className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:opacity-50">Toepassen</button>
+                <label className="text-sm font-semibold text-gray-700">End<input type="date" value={occupancyRange.endDate} onChange={(event) => setOccupancyRange((range) => ({ ...range, endDate: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
+                <label className="text-sm font-semibold text-gray-700">Bulk occupancy<input type="number" min="0" step="1" value={bulkOccupancy} onChange={(event) => setBulkOccupancy(event.target.value)} placeholder="Rooms" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
+                <button type="submit" disabled={saving} className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:opacity-50">Apply</button>
               </form>
               <div className="mt-4 space-y-4">
                 {Object.entries(occupancyMonths).map(([monthKey, dateKeys]) => (
@@ -321,38 +327,39 @@ export default function UpsellSettingsPage() {
                       {dateKeys.map((dateKey) => (
                         <label key={dateKey} className="rounded-lg border border-gray-200 bg-gray-50 p-2 text-xs font-medium text-gray-600">
                           <span>{dateKey.slice(8, 10)}</span>
-                          <input type="number" min="0" step="1" defaultValue={dailyExpectedOccupancy[dateKey] ?? ""} onBlur={(event) => handleOccupancyCellSave(dateKey, event.target.value)} className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-900" />
+                          <input type="number" min="0" step="1" value={dailyExpectedOccupancy[dateKey] ?? ""} onChange={(event) => setDailyExpectedOccupancy((current) => ({ ...current, [dateKey]: event.target.value }))} onBlur={(event) => handleOccupancyCellSave(dateKey, event.target.value)} className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-900" />
                         </label>
                       ))}
                     </div>
                   </div>
                 ))}
               </div>
+              </div>}
             </section>
 
             <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
               <h2 className="text-lg font-semibold text-gray-900">Revenue Target Rules</h2>
-              <p className="mt-1 text-sm text-gray-500">Targets gelden voor een volledige date range en worden gecombineerd met de daily expected occupancy.</p>
+              <p className="mt-1 text-sm text-gray-500">Targets apply to a full date range and are combined with daily expected occupancy.</p>
               <form onSubmit={handleSaveRule} className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-6 xl:items-end">
                 <label className="text-sm font-semibold text-gray-700">Start<input type="date" value={ruleForm.startDate} onChange={(event) => setRuleForm((form) => ({ ...form, startDate: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
-                <label className="text-sm font-semibold text-gray-700">Einde<input type="date" value={ruleForm.endDate} onChange={(event) => setRuleForm((form) => ({ ...form, endDate: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
+                <label className="text-sm font-semibold text-gray-700">End<input type="date" value={ruleForm.endDate} onChange={(event) => setRuleForm((form) => ({ ...form, endDate: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
                 <label className="text-sm font-semibold text-gray-700">Minimum<input type="number" min="0" step="0.01" value={ruleForm.minimumTargetRevenuePerOccupiedRoom} onChange={(event) => setRuleForm((form) => ({ ...form, minimumTargetRevenuePerOccupiedRoom: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
                 <label className="text-sm font-semibold text-gray-700">Reach<input type="number" min="0" step="0.01" value={ruleForm.reachTargetRevenuePerOccupiedRoom} onChange={(event) => setRuleForm((form) => ({ ...form, reachTargetRevenuePerOccupiedRoom: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
                 <label className="text-sm font-semibold text-gray-700">Stretch<input type="number" min="0" step="0.01" value={ruleForm.stretchTargetRevenuePerOccupiedRoom} onChange={(event) => setRuleForm((form) => ({ ...form, stretchTargetRevenuePerOccupiedRoom: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
-                <button type="submit" disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:opacity-50"><Plus className="h-4 w-4" /> Rule opslaan</button>
+                <button type="submit" disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:opacity-50"><Plus className="h-4 w-4" /> Save rule</button>
               </form>
-              <div className="mt-4"><DataListTable columns={ruleColumns} rows={revenueTargetRules} emptyMessage="Nog geen revenue target rules toegevoegd." /></div>
+              <div className="mt-4"><DataListTable columns={ruleColumns} rows={revenueTargetRules} emptyMessage="No revenue target rules added yet." /></div>
             </section>
 
             <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
               <form onSubmit={handleAddPackageCode}>
-                <label htmlFor="package-code" className="block text-sm font-semibold text-gray-700">Package Code toevoegen</label>
+                <label htmlFor="package-code" className="block text-sm font-semibold text-gray-700">Add package code</label>
                 <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                  <input id="package-code" type="text" value={newPackageCode} onChange={(event) => setNewPackageCode(event.target.value)} placeholder="Bijv. PKG_BREAKFAST" className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm uppercase" disabled={saving} />
-                  <button type="submit" disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:opacity-50"><Plus className="h-4 w-4" /> Toevoegen</button>
+                  <input id="package-code" type="text" value={newPackageCode} onChange={(event) => setNewPackageCode(event.target.value)} placeholder="E.g. PKG_BREAKFAST" className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm uppercase" disabled={saving} />
+                  <button type="submit" disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:opacity-50"><Plus className="h-4 w-4" /> Add</button>
                 </div>
               </form>
-              <div className="mt-4"><DataListTable columns={packageColumns} rows={packageRows} emptyMessage="Nog geen package codes toegevoegd." /></div>
+              <div className="mt-4"><DataListTable columns={packageColumns} rows={packageRows} emptyMessage="No package codes added yet." /></div>
             </section>
           </>
         )}

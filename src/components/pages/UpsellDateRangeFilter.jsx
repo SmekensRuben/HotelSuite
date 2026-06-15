@@ -27,9 +27,16 @@ export function getDateRangeForPreset(preset) {
     startDate.setDate(1);
   }
 
+  const endDate = new Date(today);
+  if (preset === "thisMonth") {
+    endDate.setMonth(today.getMonth() + 1, 0);
+  } else if (preset === "thisYear") {
+    endDate.setMonth(11, 31);
+  }
+
   return {
     startDate: toDateInputValue(startDate),
-    endDate: toDateInputValue(today),
+    endDate: toDateInputValue(endDate),
   };
 }
 

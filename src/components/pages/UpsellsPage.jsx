@@ -244,10 +244,10 @@ export default function UpsellsPage() {
   }, [auditUpsells, dailyExpectedOccupancy, dateRange.endDate, dateRange.startDate, revenueTargetRules]);
 
   const statusLabels = {
-    belowMinimum: "Onder Minimum",
-    betweenMinimumAndReach: "Tussen Minimum en Reach",
-    betweenReachAndStretch: "Tussen Reach en Stretch",
-    aboveStretch: "Boven Stretch",
+    belowMinimum: "Below Minimum",
+    betweenMinimumAndReach: "Between Minimum and Reach",
+    betweenReachAndStretch: "Between Reach and Stretch",
+    aboveStretch: "Above Stretch",
   };
 
   const TargetSummaryCard = () => (
@@ -255,12 +255,12 @@ export default function UpsellsPage() {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Target revenue progress</h2>
-          <p className="mt-1 text-sm text-gray-500">Eén progress bar richting Stretch, met Minimum en Reach als thresholds.</p>
+          <p className="mt-1 text-sm text-gray-500">One progress bar toward Stretch, with Minimum and Reach thresholds.</p>
         </div>
         <div className="text-left sm:text-right">
           <p className="text-sm text-gray-500">Expected revenue</p>
           <p className="text-2xl font-semibold text-gray-900">{formatPrice(targetSummary.expectedRevenue)}</p>
-          <p className="text-xs font-medium text-gray-600">{statusLabels[targetSummary.status]} · {targetSummary.progress}% van Stretch</p>
+          <p className="text-xs font-medium text-gray-600">{statusLabels[targetSummary.status]} · {targetSummary.progress}% of Stretch</p>
         </div>
       </div>
       <div className="mt-5">
@@ -275,7 +275,7 @@ export default function UpsellsPage() {
           <span>Reach {formatPrice(targetSummary.reach)}</span>
           <span>Stretch {formatPrice(targetSummary.stretch)}</span>
         </div>
-        <p className="mt-3 text-xs text-gray-500">Expected occupancy in selectie: {targetSummary.expectedOccupancy} kamers.</p>
+        <p className="mt-3 text-xs text-gray-500">Expected occupancy in selection: {targetSummary.expectedOccupancy} rooms.</p>
       </div>
     </div>
   );
@@ -315,7 +315,7 @@ export default function UpsellsPage() {
             <p className="text-sm uppercase tracking-wide text-gray-500">Front Office</p>
             <h1 className="text-3xl font-semibold">Upselling</h1>
             <p className="mt-1 text-gray-600">
-              Dashboard van verwachte en effectieve upsell omzet binnen de geselecteerde periode.
+              Dashboard for expected and effective upsell revenue in the selected period.
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -356,15 +356,15 @@ export default function UpsellsPage() {
           <div className="grid gap-6 lg:grid-cols-2">
             <RankingCard
               title="Expected revenue ranking"
-              description="Alle audit upsell statussen tellen mee."
+              description="All audit upsell statuses are included."
               rows={revenueRankings.expected}
-              emptyMessage="Geen expected revenue gevonden voor deze periode."
+              emptyMessage="No expected revenue found for this period."
             />
             <RankingCard
               title="Effective revenue ranking"
-              description='Enkel audit upsells met status "Validated" tellen mee.'
+              description='Only audit upsells with status "Validated" are included.'
               rows={revenueRankings.effective}
-              emptyMessage="Geen validated revenue gevonden voor deze periode."
+              emptyMessage="No validated revenue found for this period."
             />
           </div>
         )}
