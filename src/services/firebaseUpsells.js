@@ -65,22 +65,52 @@ function toNonNegativeNumber(value) {
   return Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : 0;
 }
 
-function normalizeDailyRevenueTargets(dailyRevenueTargets) {
-  if (!dailyRevenueTargets || typeof dailyRevenueTargets !== "object") return {};
+function normalizeDailyExpectedOccupancy(dailyExpectedOccupancy, legacyDailyRevenueTargets = {}) {
+  const source = dailyExpectedOccupancy && typeof dailyExpectedOccupancy === "object"
+    ? dailyExpectedOccupancy
+    : Object.entries(legacyDailyRevenueTargets || {}).reduce((accumulator, [dateKey, target]) => {
+        accumulator[dateKey] = target?.expectedOccupancy;
+        return accumulator;
+      }, {});
 
-  return Object.entries(dailyRevenueTargets).reduce((accumulator, [dateKey, targets]) => {
+  if (!source || typeof source !== "object") return {};
+
+  return Object.entries(source).reduce((accumulator, [dateKey, occupancy]) => {
     const normalizedDateKey = normalizeDateKey(dateKey);
     if (!parseDateKey(normalizedDateKey)) return accumulator;
-
-    accumulator[normalizedDateKey] = {
-      expectedOccupancy: toNonNegativeNumber(targets?.expectedOccupancy),
-      minimumRevenuePerOccupiedRoom: toNonNegativeNumber(targets?.minimumRevenuePerOccupiedRoom),
-      reachRevenuePerOccupiedRoom: toNonNegativeNumber(targets?.reachRevenuePerOccupiedRoom),
-      stretchRevenuePerOccupiedRoom: toNonNegativeNumber(targets?.stretchRevenuePerOccupiedRoom),
-    };
-
+    accumulator[normalizedDateKey] = toNonNegativeNumber(occupancy);
     return accumulator;
   }, {});
+}
+
+function normalizeRevenueTargetRules(revenueTargetRules, legacyDailyRevenueTargets = {}) {
+  const rules = Array.isArray(revenueTargetRules)
+    ? revenueTargetRules
+    : Object.entries(legacyDailyRevenueTargets || {}).map(([dateKey, target]) => ({
+        startDate: dateKey,
+        endDate: dateKey,
+        minimumTargetRevenuePerOccupiedRoom: target?.minimumRevenuePerOccupiedRoom,
+        reachTargetRevenuePerOccupiedRoom: target?.reachRevenuePerOccupiedRoom,
+        stretchTargetRevenuePerOccupiedRoom: target?.stretchRevenuePerOccupiedRoom,
+      }));
+
+  return rules
+    .map((rule, index) => {
+      const startDate = normalizeDateKey(rule?.startDate);
+      const endDate = normalizeDateKey(rule?.endDate);
+      if (!parseDateKey(startDate) || !parseDateKey(endDate) || startDate > endDate) return null;
+
+      return {
+        id: String(rule?.id || `${startDate}-${endDate}-${index}`),
+        startDate,
+        endDate,
+        minimumTargetRevenuePerOccupiedRoom: toNonNegativeNumber(rule?.minimumTargetRevenuePerOccupiedRoom),
+        reachTargetRevenuePerOccupiedRoom: toNonNegativeNumber(rule?.reachTargetRevenuePerOccupiedRoom),
+        stretchTargetRevenuePerOccupiedRoom: toNonNegativeNumber(rule?.stretchTargetRevenuePerOccupiedRoom),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate));
 }
 
 function formatFirestoreValue(value) {
@@ -124,7 +154,7 @@ function getUpsellStatus(data) {
 }
 
 export async function getUpsellSettings(hotelUid) {
-  if (!hotelUid) return { packageCodes: [], dailyRevenueTargets: {} };
+  if (!hotelUid) return { packageCodes: [], dailyExpectedOccupancy: {}, revenueTargetRules: [] };
 
   const settingsRef = doc(db, `hotels/${hotelUid}/settings`, UPSELL_SETTINGS_DOC_ID);
   const snapshot = await getDoc(settingsRef);
@@ -133,7 +163,8 @@ export async function getUpsellSettings(hotelUid) {
   return {
     ...data,
     packageCodes: normalizePackageCodes(data.packageCodes),
-    dailyRevenueTargets: normalizeDailyRevenueTargets(data.dailyRevenueTargets),
+    dailyExpectedOccupancy: normalizeDailyExpectedOccupancy(data.dailyExpectedOccupancy, data.dailyRevenueTargets),
+    revenueTargetRules: normalizeRevenueTargetRules(data.revenueTargetRules, data.dailyRevenueTargets),
   };
 }
 
@@ -218,14 +249,28 @@ export async function saveUpsellPackageCodes(hotelUid, packageCodes) {
 }
 
 
-export async function saveUpsellDailyRevenueTargets(hotelUid, dailyRevenueTargets) {
+export async function saveUpsellDailyExpectedOccupancy(hotelUid, dailyExpectedOccupancy) {
   if (!hotelUid) return;
 
   const settingsRef = doc(db, `hotels/${hotelUid}/settings`, UPSELL_SETTINGS_DOC_ID);
   await setDoc(
     settingsRef,
     {
-      dailyRevenueTargets: normalizeDailyRevenueTargets(dailyRevenueTargets),
+      dailyExpectedOccupancy: normalizeDailyExpectedOccupancy(dailyExpectedOccupancy),
+      updatedAt: new Date(),
+    },
+    { merge: true }
+  );
+}
+
+export async function saveUpsellRevenueTargetRules(hotelUid, revenueTargetRules) {
+  if (!hotelUid) return;
+
+  const settingsRef = doc(db, `hotels/${hotelUid}/settings`, UPSELL_SETTINGS_DOC_ID);
+  await setDoc(
+    settingsRef,
+    {
+      revenueTargetRules: normalizeRevenueTargetRules(revenueTargetRules),
       updatedAt: new Date(),
     },
     { merge: true }

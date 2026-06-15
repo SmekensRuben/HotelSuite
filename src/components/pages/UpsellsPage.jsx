@@ -70,6 +70,17 @@ function getProgressPercentage(value, target) {
   return Math.min(100, Math.round((value / target) * 100));
 }
 
+function getTargetRuleForDate(dateKey, rules) {
+  return rules.find((rule) => rule.startDate <= dateKey && dateKey <= rule.endDate) || null;
+}
+
+function getTargetStatus(expectedRevenue, minimumTarget, reachTarget, stretchTarget) {
+  if (stretchTarget > 0 && expectedRevenue >= stretchTarget) return "aboveStretch";
+  if (reachTarget > 0 && expectedRevenue >= reachTarget) return "betweenReachAndStretch";
+  if (minimumTarget > 0 && expectedRevenue >= minimumTarget) return "betweenMinimumAndReach";
+  return "belowMinimum";
+}
+
 function normalizeOperaUserMappings(rawMappings) {
   if (!rawMappings || typeof rawMappings !== "object") return {};
 
@@ -94,7 +105,8 @@ export default function UpsellsPage() {
   const [dateRangePreset, setDateRangePreset] = useState("thisMonth");
   const [auditUpsells, setAuditUpsells] = useState([]);
   const [operaUserMappings, setOperaUserMappings] = useState({});
-  const [dailyRevenueTargets, setDailyRevenueTargets] = useState({});
+  const [dailyExpectedOccupancy, setDailyExpectedOccupancy] = useState({});
+  const [revenueTargetRules, setRevenueTargetRules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -115,7 +127,8 @@ export default function UpsellsPage() {
       if (!hotelUid) {
         setAuditUpsells([]);
         setOperaUserMappings({});
-        setDailyRevenueTargets({});
+        setDailyExpectedOccupancy({});
+        setRevenueTargetRules([]);
         setLoading(false);
         return;
       }
@@ -139,7 +152,8 @@ export default function UpsellsPage() {
         if (!active) return;
         setAuditUpsells(records);
         setOperaUserMappings(normalizeOperaUserMappings(settings?.operaUserMappings));
-        setDailyRevenueTargets(upsellSettings?.dailyRevenueTargets || {});
+        setDailyExpectedOccupancy(upsellSettings?.dailyExpectedOccupancy || {});
+        setRevenueTargetRules(upsellSettings?.revenueTargetRules || []);
       } catch (err) {
         console.error("Failed to load audit upsells", err);
         if (!active) return;
@@ -206,60 +220,62 @@ export default function UpsellsPage() {
 
     const totals = getUpsellDateKeys(dateRange.startDate, dateRange.endDate).reduce(
       (accumulator, dateKey) => {
-        const target = dailyRevenueTargets[dateKey] || {};
-        const expectedOccupancy = Number(target.expectedOccupancy || 0);
+        const rule = getTargetRuleForDate(dateKey, revenueTargetRules);
+        const expectedOccupancy = Number(dailyExpectedOccupancy[dateKey] || 0);
         accumulator.expectedOccupancy += expectedOccupancy;
-        accumulator.minimum += expectedOccupancy * Number(target.minimumRevenuePerOccupiedRoom || 0);
-        accumulator.reach += expectedOccupancy * Number(target.reachRevenuePerOccupiedRoom || 0);
-        accumulator.stretch += expectedOccupancy * Number(target.stretchRevenuePerOccupiedRoom || 0);
+
+        if (rule) {
+          accumulator.minimum += expectedOccupancy * Number(rule.minimumTargetRevenuePerOccupiedRoom || 0);
+          accumulator.reach += expectedOccupancy * Number(rule.reachTargetRevenuePerOccupiedRoom || 0);
+          accumulator.stretch += expectedOccupancy * Number(rule.stretchTargetRevenuePerOccupiedRoom || 0);
+        }
+
         return accumulator;
       },
       { expectedOccupancy: 0, minimum: 0, reach: 0, stretch: 0 }
     );
 
-    return {
-      expectedRevenue,
-      expectedOccupancy: totals.expectedOccupancy,
-      targets: [
-        { key: "minimum", label: "Minimum", value: totals.minimum },
-        { key: "reach", label: "Reach", value: totals.reach },
-        { key: "stretch", label: "Stretch", value: totals.stretch },
-      ],
-    };
-  }, [auditUpsells, dailyRevenueTargets, dateRange.endDate, dateRange.startDate]);
+    const progress = getProgressPercentage(expectedRevenue, totals.stretch);
+    const minimumMarker = getProgressPercentage(totals.minimum, totals.stretch);
+    const reachMarker = getProgressPercentage(totals.reach, totals.stretch);
+    const status = getTargetStatus(expectedRevenue, totals.minimum, totals.reach, totals.stretch);
+
+    return { expectedRevenue, expectedOccupancy: totals.expectedOccupancy, ...totals, progress, minimumMarker, reachMarker, status };
+  }, [auditUpsells, dailyExpectedOccupancy, dateRange.endDate, dateRange.startDate, revenueTargetRules]);
+
+  const statusLabels = {
+    belowMinimum: "Onder Minimum",
+    betweenMinimumAndReach: "Tussen Minimum en Reach",
+    betweenReachAndStretch: "Tussen Reach en Stretch",
+    aboveStretch: "Boven Stretch",
+  };
 
   const TargetSummaryCard = () => (
     <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">Target revenue summary</h2>
-          <p className="mt-1 text-sm text-gray-500">Progress op basis van expected revenue tegenover de targets uit Upsell Settings.</p>
+          <h2 className="text-lg font-semibold text-gray-900">Target revenue progress</h2>
+          <p className="mt-1 text-sm text-gray-500">Eén progress bar richting Stretch, met Minimum en Reach als thresholds.</p>
         </div>
         <div className="text-left sm:text-right">
           <p className="text-sm text-gray-500">Expected revenue</p>
           <p className="text-2xl font-semibold text-gray-900">{formatPrice(targetSummary.expectedRevenue)}</p>
-          <p className="text-xs text-gray-500">Expected occupancy: {targetSummary.expectedOccupancy} kamers</p>
+          <p className="text-xs font-medium text-gray-600">{statusLabels[targetSummary.status]} · {targetSummary.progress}% van Stretch</p>
         </div>
       </div>
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
-        {targetSummary.targets.map((target) => {
-          const progress = getProgressPercentage(targetSummary.expectedRevenue, target.value);
-          return (
-            <div key={target.key} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="font-semibold text-gray-800">{target.label}</span>
-                <span className="text-gray-600">{formatPrice(target.value)}</span>
-              </div>
-              <div className="mt-3 h-3 overflow-hidden rounded-full bg-gray-200">
-                <div
-                  className="h-full rounded-full bg-[#b41f1f] transition-all"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <p className="mt-2 text-xs font-medium text-gray-600">{progress}% van target revenue</p>
-            </div>
-          );
-        })}
+      <div className="mt-5">
+        <div className="relative h-5 overflow-hidden rounded-full bg-gray-200">
+          <div className="h-full rounded-full bg-[#b41f1f] transition-all" style={{ width: `${targetSummary.progress}%` }} />
+          {[{ label: "Minimum", left: targetSummary.minimumMarker }, { label: "Reach", left: targetSummary.reachMarker }, { label: "Stretch", left: 100 }].map((marker) => (
+            <div key={marker.label} className="absolute top-0 h-full w-0.5 bg-gray-900/70" style={{ left: `${marker.left}%` }} title={marker.label} />
+          ))}
+        </div>
+        <div className="mt-2 flex justify-between gap-3 text-xs text-gray-600">
+          <span>Minimum {formatPrice(targetSummary.minimum)}</span>
+          <span>Reach {formatPrice(targetSummary.reach)}</span>
+          <span>Stretch {formatPrice(targetSummary.stretch)}</span>
+        </div>
+        <p className="mt-3 text-xs text-gray-500">Expected occupancy in selectie: {targetSummary.expectedOccupancy} kamers.</p>
       </div>
     </div>
   );
@@ -302,7 +318,14 @@ export default function UpsellsPage() {
               Dashboard van verwachte en effectieve upsell omzet binnen de geselecteerde periode.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <UpsellDateRangeFilter
+              dateRange={dateRange}
+              preset={dateRangePreset}
+              onPresetChange={setDateRangePreset}
+              onDateRangeChange={setDateRange}
+              compact
+            />
             <button
               type="button"
               onClick={() => navigate("/front-office/upselling/audit")}
@@ -322,13 +345,6 @@ export default function UpsellsPage() {
             </button>
           </div>
         </div>
-
-        <UpsellDateRangeFilter
-          dateRange={dateRange}
-          preset={dateRangePreset}
-          onPresetChange={setDateRangePreset}
-          onDateRangeChange={setDateRange}
-        />
 
         {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
         {!loading && <TargetSummaryCard />}
