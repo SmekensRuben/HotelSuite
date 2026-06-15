@@ -32,6 +32,20 @@ function formatCurrency(value) {
   }).format(numericValue);
 }
 
+function formatCompactEuro(value) {
+  const numericValue = toNumericPrice(value);
+  if (numericValue === null) return "—";
+
+  return `€${new Intl.NumberFormat("nl-BE", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(numericValue)}`;
+}
+
+function isValidationFinalStatus(status) {
+  return ["approved", "rejected", "validated"].includes(String(status || "").toLowerCase());
+}
+
 function parseDateKey(dateKey) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ""))) return null;
 
@@ -213,6 +227,8 @@ export default function UpsellDetailPage() {
   };
 
   const openValidationModal = (validationStatus) => {
+    if (isValidationFinalStatus(auditUpsell?.validationStatus)) return;
+
     setValidationModalAction(validationStatus);
     setValidationComment("");
     setEffectiveRevenueInput(
@@ -274,6 +290,16 @@ export default function UpsellDetailPage() {
   const mappedOperaUser = getMappedOperaUser(auditUpsell?.operaUser, operaUserMappings);
   const nights = getNights(auditUpsell);
   const expectedRevenue = getExpectedRevenue(auditUpsell);
+  const validationStatus = String(auditUpsell?.validationStatus || "").toLowerCase();
+  const isValidationLocked = isValidationFinalStatus(validationStatus);
+  const effectiveRevenue =
+    validationStatus === "approved" || validationStatus === "validated"
+      ? toNumericPrice(auditUpsell?.effectiveRevenue) ?? expectedRevenue
+      : null;
+  const validatedRevenueLabel =
+    effectiveRevenue !== null && expectedRevenue !== null
+      ? `${formatCompactEuro(effectiveRevenue)}/${formatCompactEuro(expectedRevenue)} Validated`
+      : null;
   const detailedFolios = Array.isArray(auditUpsell?.detailedFolios) ? auditUpsell.detailedFolios : [];
 
   return (
@@ -313,6 +339,11 @@ export default function UpsellDetailPage() {
                     <Badge className={statusBadgeClass(auditUpsell.validationStatus)}>
                       Validation: {formatValue(auditUpsell.validationStatus)}
                     </Badge>
+                    {validatedRevenueLabel && (
+                      <Badge className="border-green-200 bg-green-50 text-green-700">
+                        {validatedRevenueLabel}
+                      </Badge>
+                    )}
                     <Badge className={statusBadgeClass(auditUpsell.folioLinkStatus)}>
                       Folio: {formatValue(auditUpsell.folioLinkStatus)}
                     </Badge>
@@ -322,7 +353,7 @@ export default function UpsellDetailPage() {
                   <button
                     type="button"
                     onClick={() => openValidationModal("approved")}
-                    disabled={Boolean(savingAction)}
+                    disabled={Boolean(savingAction) || isValidationLocked}
                     className="inline-flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <CheckCircle2 className="h-4 w-4" />
@@ -331,7 +362,7 @@ export default function UpsellDetailPage() {
                   <button
                     type="button"
                     onClick={() => openValidationModal("rejected")}
-                    disabled={Boolean(savingAction)}
+                    disabled={Boolean(savingAction) || isValidationLocked}
                     className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <XCircle className="h-4 w-4" />
@@ -347,6 +378,9 @@ export default function UpsellDetailPage() {
                   { label: "Package Price", value: formatCurrency(auditUpsell.price) },
                   { label: "Nights", value: nights },
                   { label: "Expected Revenue", value: formatCurrency(expectedRevenue) },
+                  ...(validatedRevenueLabel
+                    ? [{ label: "Validated Revenue", value: validatedRevenueLabel }]
+                    : []),
                 ].map((item) => (
                   <div key={item.label} className="border-l border-gray-200 pl-3 first:border-l-0 first:pl-0 sm:first:border-l sm:first:pl-3 lg:first:border-l-0 lg:first:pl-0">
                     <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{item.label}</p>
