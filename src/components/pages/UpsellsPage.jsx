@@ -5,7 +5,7 @@ import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getAuditUpsells } from "../../services/firebaseUpsells";
+import { getAuditUpsells, getUpsellDateKeys, getUpsellSettings } from "../../services/firebaseUpsells";
 import { getSettings } from "../../services/firebaseSettings";
 import UpsellDateRangeFilter, { getDateRangeForPreset } from "./UpsellDateRangeFilter";
 
@@ -64,6 +64,12 @@ function getExpectedRevenue(row) {
   return price * nights;
 }
 
+
+function getProgressPercentage(value, target) {
+  if (!target || target <= 0) return 0;
+  return Math.min(100, Math.round((value / target) * 100));
+}
+
 function normalizeOperaUserMappings(rawMappings) {
   if (!rawMappings || typeof rawMappings !== "object") return {};
 
@@ -88,6 +94,7 @@ export default function UpsellsPage() {
   const [dateRangePreset, setDateRangePreset] = useState("thisMonth");
   const [auditUpsells, setAuditUpsells] = useState([]);
   const [operaUserMappings, setOperaUserMappings] = useState({});
+  const [dailyRevenueTargets, setDailyRevenueTargets] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -108,6 +115,7 @@ export default function UpsellsPage() {
       if (!hotelUid) {
         setAuditUpsells([]);
         setOperaUserMappings({});
+        setDailyRevenueTargets({});
         setLoading(false);
         return;
       }
@@ -123,13 +131,15 @@ export default function UpsellsPage() {
       setError("");
 
       try {
-        const [records, settings] = await Promise.all([
+        const [records, settings, upsellSettings] = await Promise.all([
           getAuditUpsells(hotelUid, dateRange.startDate, dateRange.endDate),
           getSettings(hotelUid),
+          getUpsellSettings(hotelUid),
         ]);
         if (!active) return;
         setAuditUpsells(records);
         setOperaUserMappings(normalizeOperaUserMappings(settings?.operaUserMappings));
+        setDailyRevenueTargets(upsellSettings?.dailyRevenueTargets || {});
       } catch (err) {
         console.error("Failed to load audit upsells", err);
         if (!active) return;
@@ -186,6 +196,73 @@ export default function UpsellsPage() {
       effective: toSortedRanking(effectiveRevenueByUser),
     };
   }, [auditUpsells, operaUserMappings]);
+
+
+  const targetSummary = useMemo(() => {
+    const expectedRevenue = auditUpsells.reduce((total, record) => {
+      const recordExpectedRevenue = getExpectedRevenue(record);
+      return recordExpectedRevenue === "" ? total : total + recordExpectedRevenue;
+    }, 0);
+
+    const totals = getUpsellDateKeys(dateRange.startDate, dateRange.endDate).reduce(
+      (accumulator, dateKey) => {
+        const target = dailyRevenueTargets[dateKey] || {};
+        const expectedOccupancy = Number(target.expectedOccupancy || 0);
+        accumulator.expectedOccupancy += expectedOccupancy;
+        accumulator.minimum += expectedOccupancy * Number(target.minimumRevenuePerOccupiedRoom || 0);
+        accumulator.reach += expectedOccupancy * Number(target.reachRevenuePerOccupiedRoom || 0);
+        accumulator.stretch += expectedOccupancy * Number(target.stretchRevenuePerOccupiedRoom || 0);
+        return accumulator;
+      },
+      { expectedOccupancy: 0, minimum: 0, reach: 0, stretch: 0 }
+    );
+
+    return {
+      expectedRevenue,
+      expectedOccupancy: totals.expectedOccupancy,
+      targets: [
+        { key: "minimum", label: "Minimum", value: totals.minimum },
+        { key: "reach", label: "Reach", value: totals.reach },
+        { key: "stretch", label: "Stretch", value: totals.stretch },
+      ],
+    };
+  }, [auditUpsells, dailyRevenueTargets, dateRange.endDate, dateRange.startDate]);
+
+  const TargetSummaryCard = () => (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Target revenue summary</h2>
+          <p className="mt-1 text-sm text-gray-500">Progress op basis van expected revenue tegenover de targets uit Upsell Settings.</p>
+        </div>
+        <div className="text-left sm:text-right">
+          <p className="text-sm text-gray-500">Expected revenue</p>
+          <p className="text-2xl font-semibold text-gray-900">{formatPrice(targetSummary.expectedRevenue)}</p>
+          <p className="text-xs text-gray-500">Expected occupancy: {targetSummary.expectedOccupancy} kamers</p>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        {targetSummary.targets.map((target) => {
+          const progress = getProgressPercentage(targetSummary.expectedRevenue, target.value);
+          return (
+            <div key={target.key} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="font-semibold text-gray-800">{target.label}</span>
+                <span className="text-gray-600">{formatPrice(target.value)}</span>
+              </div>
+              <div className="mt-3 h-3 overflow-hidden rounded-full bg-gray-200">
+                <div
+                  className="h-full rounded-full bg-[#b41f1f] transition-all"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <p className="mt-2 text-xs font-medium text-gray-600">{progress}% van target revenue</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   const RankingCard = ({ title, description, rows, emptyMessage }) => (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -254,6 +331,7 @@ export default function UpsellsPage() {
         />
 
         {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+        {!loading && <TargetSummaryCard />}
         {loading ? (
           <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">
             Loading upsell dashboard...

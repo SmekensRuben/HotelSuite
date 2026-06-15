@@ -58,6 +58,31 @@ function enumerateDateKeys(startDate, endDate) {
   return dateKeys;
 }
 
+
+function toNonNegativeNumber(value) {
+  if (value === "" || value === null || value === undefined) return 0;
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : 0;
+}
+
+function normalizeDailyRevenueTargets(dailyRevenueTargets) {
+  if (!dailyRevenueTargets || typeof dailyRevenueTargets !== "object") return {};
+
+  return Object.entries(dailyRevenueTargets).reduce((accumulator, [dateKey, targets]) => {
+    const normalizedDateKey = normalizeDateKey(dateKey);
+    if (!parseDateKey(normalizedDateKey)) return accumulator;
+
+    accumulator[normalizedDateKey] = {
+      expectedOccupancy: toNonNegativeNumber(targets?.expectedOccupancy),
+      minimumRevenuePerOccupiedRoom: toNonNegativeNumber(targets?.minimumRevenuePerOccupiedRoom),
+      reachRevenuePerOccupiedRoom: toNonNegativeNumber(targets?.reachRevenuePerOccupiedRoom),
+      stretchRevenuePerOccupiedRoom: toNonNegativeNumber(targets?.stretchRevenuePerOccupiedRoom),
+    };
+
+    return accumulator;
+  }, {});
+}
+
 function formatFirestoreValue(value) {
   if (value?.toDate) return toDateKey(value.toDate());
   return value ?? "";
@@ -99,7 +124,7 @@ function getUpsellStatus(data) {
 }
 
 export async function getUpsellSettings(hotelUid) {
-  if (!hotelUid) return { packageCodes: [] };
+  if (!hotelUid) return { packageCodes: [], dailyRevenueTargets: {} };
 
   const settingsRef = doc(db, `hotels/${hotelUid}/settings`, UPSELL_SETTINGS_DOC_ID);
   const snapshot = await getDoc(settingsRef);
@@ -108,6 +133,7 @@ export async function getUpsellSettings(hotelUid) {
   return {
     ...data,
     packageCodes: normalizePackageCodes(data.packageCodes),
+    dailyRevenueTargets: normalizeDailyRevenueTargets(data.dailyRevenueTargets),
   };
 }
 
@@ -189,4 +215,23 @@ export async function saveUpsellPackageCodes(hotelUid, packageCodes) {
     },
     { merge: true }
   );
+}
+
+
+export async function saveUpsellDailyRevenueTargets(hotelUid, dailyRevenueTargets) {
+  if (!hotelUid) return;
+
+  const settingsRef = doc(db, `hotels/${hotelUid}/settings`, UPSELL_SETTINGS_DOC_ID);
+  await setDoc(
+    settingsRef,
+    {
+      dailyRevenueTargets: normalizeDailyRevenueTargets(dailyRevenueTargets),
+      updatedAt: new Date(),
+    },
+    { merge: true }
+  );
+}
+
+export function getUpsellDateKeys(startDate, endDate) {
+  return enumerateDateKeys(startDate, endDate);
 }
