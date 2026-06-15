@@ -90,6 +90,7 @@ export default function UpsellAuditPage() {
   const [auditUpsells, setAuditUpsells] = useState([]);
   const [operaUserMappings, setOperaUserMappings] = useState({});
   const [selectedStatuses, setSelectedStatuses] = useState(["Checked Out"]);
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -227,21 +228,31 @@ export default function UpsellAuditPage() {
               onDateRangeChange={setDateRange}
               compact
             />
-            <div>
+            <div className="relative">
               <p className="text-sm font-medium text-gray-700">Status</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {statusOptions.map((status) => (
-                  <label key={status} className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={selectedStatuses.includes(status)}
-                      onChange={() => handleStatusToggle(status)}
-                      className="h-4 w-4 rounded border-gray-300 text-[#b41f1f] focus:ring-[#b41f1f]"
-                    />
-                    {status}
-                  </label>
-                ))}
-              </div>
+              <button
+                type="button"
+                onClick={() => setStatusDropdownOpen((open) => !open)}
+                className="mt-2 inline-flex min-w-48 items-center justify-between gap-3 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+              >
+                <span>{selectedStatuses.length ? `${selectedStatuses.length} selected` : "No statuses selected"}</span>
+                <span aria-hidden="true">▾</span>
+              </button>
+              {statusDropdownOpen && (
+                <div className="absolute right-0 z-10 mt-2 w-64 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+                  {statusOptions.map((status) => (
+                    <label key={status} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={selectedStatuses.includes(status)}
+                        onChange={() => handleStatusToggle(status)}
+                        className="h-4 w-4 rounded border-gray-300 text-[#b41f1f] focus:ring-[#b41f1f]"
+                      />
+                      {status}
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
