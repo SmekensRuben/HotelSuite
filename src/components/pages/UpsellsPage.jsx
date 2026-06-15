@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Settings } from "lucide-react";
+import { ListTodo, Settings } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
@@ -17,13 +17,12 @@ function toDateInputValue(date) {
 }
 
 function getDefaultDateRange() {
-  const endDate = new Date();
-  const startDate = new Date();
-  startDate.setDate(endDate.getDate() - 6);
+  const today = new Date();
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
 
   return {
-    startDate: toDateInputValue(startDate),
-    endDate: toDateInputValue(endDate),
+    startDate: toDateInputValue(monthStart),
+    endDate: toDateInputValue(today),
   };
 }
 
@@ -104,6 +103,7 @@ export default function UpsellsPage() {
   const defaultDateRange = useMemo(() => getDefaultDateRange(), []);
   const [dateRange, setDateRange] = useState(defaultDateRange);
   const [auditUpsells, setAuditUpsells] = useState([]);
+  const [showAuditList, setShowAuditList] = useState(false);
   const [operaUserMappings, setOperaUserMappings] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -173,6 +173,67 @@ export default function UpsellsPage() {
     setDateRange((prev) => ({ ...prev, [field]: event.target.value }));
   };
 
+  const getOperaUserLabel = (operaUserValue) => {
+    const operaUser = String(operaUserValue || "").trim();
+    return operaUserMappings[operaUser] || operaUserMappings[operaUser.toLowerCase()] || operaUser || "Unknown";
+  };
+
+  const revenueRankings = useMemo(() => {
+    const expectedRevenueByUser = new Map();
+    const effectiveRevenueByUser = new Map();
+
+    auditUpsells.forEach((record) => {
+      const userLabel = getOperaUserLabel(record.operaUser);
+      const expectedRevenue = getExpectedRevenue(record);
+      if (expectedRevenue !== "") {
+        expectedRevenueByUser.set(userLabel, (expectedRevenueByUser.get(userLabel) || 0) + expectedRevenue);
+      }
+
+      if (String(record.status || "").toLowerCase() === "validated") {
+        const effectiveRevenue = toNumericPrice(record.effectiveRevenue) ?? expectedRevenue;
+        if (effectiveRevenue !== "") {
+          effectiveRevenueByUser.set(userLabel, (effectiveRevenueByUser.get(userLabel) || 0) + effectiveRevenue);
+        }
+      }
+    });
+
+    const toSortedRanking = (revenueMap) =>
+      Array.from(revenueMap.entries())
+        .map(([operaUser, revenue]) => ({ operaUser, revenue }))
+        .sort((a, b) => b.revenue - a.revenue);
+
+    return {
+      expected: toSortedRanking(expectedRevenueByUser),
+      effective: toSortedRanking(effectiveRevenueByUser),
+    };
+  }, [auditUpsells, operaUserMappings]);
+
+  const RankingCard = ({ title, description, rows, emptyMessage }) => (
+    <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="border-b border-gray-100 p-4">
+        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+        <p className="mt-1 text-sm text-gray-500">{description}</p>
+      </div>
+      <div className="divide-y divide-gray-100">
+        {rows.length ? (
+          rows.map((row, index) => (
+            <div key={row.operaUser} className="flex items-center justify-between gap-4 p-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-50 text-sm font-semibold text-blue-700">
+                  {index + 1}
+                </span>
+                <span className="truncate font-medium text-gray-900">{row.operaUser}</span>
+              </div>
+              <span className="shrink-0 font-semibold text-gray-900">{formatPrice(row.revenue)}</span>
+            </div>
+          ))
+        ) : (
+          <div className="p-4 text-sm text-gray-500">{emptyMessage}</div>
+        )}
+      </div>
+    </div>
+  );
+
   const columns = [
     { key: "logDate", label: "Log Date", sortValue: (row) => row.logDate || row.dateKey },
     {
@@ -205,17 +266,28 @@ export default function UpsellsPage() {
             <p className="text-sm uppercase tracking-wide text-gray-500">Front Office</p>
             <h1 className="text-3xl font-semibold">Upselling</h1>
             <p className="mt-1 text-gray-600">
-              Overview of audit upsells within the selected date range.
+              Dashboard van verwachte en effectieve upsell omzet binnen de geselecteerde periode.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => navigate("/front-office/upselling/settings")}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
-            aria-label="Open upsell settings"
-          >
-            <Settings className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowAuditList((prev) => !prev)}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
+              aria-label="Toon upsell lijst"
+              title="Toon upsell lijst"
+            >
+              <ListTodo className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate("/front-office/upselling/settings")}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
+              aria-label="Open upsell settings"
+            >
+              <Settings className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -244,15 +316,34 @@ export default function UpsellsPage() {
         {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
         {loading ? (
           <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">
-            Loading audit upsells...
+            Loading upsell dashboard...
           </div>
         ) : (
-          <DataListTable
-            columns={columns}
-            rows={auditUpsells}
-            onRowClick={(row) => navigate(`/front-office/upselling/${row.dateKey}/${row.documentId}`)}
-            emptyMessage="No audit upsells found for the selected date range."
-          />
+          <>
+            <div className="grid gap-6 lg:grid-cols-2">
+              <RankingCard
+                title="Expected revenue ranking"
+                description="Alle audit upsell statussen tellen mee."
+                rows={revenueRankings.expected}
+                emptyMessage="Geen expected revenue gevonden voor deze periode."
+              />
+              <RankingCard
+                title="Effective revenue ranking"
+                description='Enkel audit upsells met status "Validated" tellen mee.'
+                rows={revenueRankings.effective}
+                emptyMessage="Geen validated revenue gevonden voor deze periode."
+              />
+            </div>
+
+            {showAuditList && (
+              <DataListTable
+                columns={columns}
+                rows={auditUpsells}
+                onRowClick={(row) => navigate(`/front-office/upselling/${row.dateKey}/${row.documentId}`)}
+                emptyMessage="No audit upsells found for the selected date range."
+              />
+            )}
+          </>
         )}
       </PageContainer>
     </div>
