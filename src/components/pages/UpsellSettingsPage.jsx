@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Upload } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
-import { auth, signOut } from "../../firebaseConfig";
+import { auth, ref, signOut, storage, uploadBytes } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import {
   getUpsellDateKeys,
@@ -13,7 +13,14 @@ import {
   saveUpsellPackageCodes,
   saveUpsellRevenueTargetRules,
 } from "../../services/firebaseUpsells";
+import { getFileImportTypes } from "../../services/firebaseSettings";
 import { toDateInputValue } from "./UpsellDateRangeFilter";
+
+const emptyManualImportForm = {
+  fileImportTypeId: "",
+  targetDate: toDateInputValue(new Date()),
+  file: null,
+};
 
 const emptyRuleForm = {
   id: "",
@@ -48,10 +55,12 @@ export default function UpsellSettingsPage() {
   const [packageCodes, setPackageCodes] = useState([]);
   const [dailyExpectedOccupancy, setDailyExpectedOccupancy] = useState({});
   const [revenueTargetRules, setRevenueTargetRules] = useState([]);
+  const [fileImportTypes, setFileImportTypes] = useState([]);
   const [newPackageCode, setNewPackageCode] = useState("");
   const [ruleForm, setRuleForm] = useState(emptyRuleForm);
   const [occupancyRange, setOccupancyRange] = useState(getDefaultOccupancyRange);
   const [bulkOccupancy, setBulkOccupancy] = useState("");
+  const [manualImportForm, setManualImportForm] = useState(emptyManualImportForm);
   const [occupancyOpen, setOccupancyOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -71,6 +80,7 @@ export default function UpsellSettingsPage() {
         setPackageCodes([]);
         setDailyExpectedOccupancy({});
         setRevenueTargetRules([]);
+        setFileImportTypes([]);
         setLoading(false);
         return;
       }
@@ -80,11 +90,15 @@ export default function UpsellSettingsPage() {
       setMessage("");
 
       try {
-        const settings = await getUpsellSettings(hotelUid);
+        const [settings, importTypes] = await Promise.all([
+          getUpsellSettings(hotelUid),
+          getFileImportTypes(hotelUid),
+        ]);
         if (!active) return;
         setPackageCodes(settings.packageCodes || []);
         setDailyExpectedOccupancy(settings.dailyExpectedOccupancy || {});
         setRevenueTargetRules(settings.revenueTargetRules || []);
+        setFileImportTypes(importTypes.filter((importType) => importType.enabled !== false));
       } catch (err) {
         console.error("Failed to load upsell settings", err);
         if (!active) return;
@@ -193,6 +207,60 @@ export default function UpsellSettingsPage() {
       return;
     }
     saveOccupancy({ ...dailyExpectedOccupancy, [dateKey]: occupancyValue });
+  };
+
+  const handleManualImportUpload = async (event) => {
+    event.preventDefault();
+
+    if (!hotelUid) {
+      setError("No hotel selected to upload an import file.");
+      return;
+    }
+
+    const selectedImportType = fileImportTypes.find((importType) => importType.id === manualImportForm.fileImportTypeId);
+    if (!selectedImportType?.fileType) {
+      setError("Select a file import type.");
+      return;
+    }
+
+    if (!manualImportForm.targetDate) {
+      setError("Choose an import date.");
+      return;
+    }
+
+    if (!manualImportForm.file) {
+      setError("Choose a file to upload.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const safeName = manualImportForm.file.name.replace(/[^a-zA-Z0-9._-]+/g, "_");
+      const storagePath = `imports/manual/${hotelUid}/${Date.now()}-${safeName}`;
+      const fileRef = ref(storage, storagePath);
+
+      await uploadBytes(fileRef, manualImportForm.file, {
+        contentType: manualImportForm.file.type || "application/octet-stream",
+        customMetadata: {
+          hotelUid,
+          fileType: selectedImportType.fileType,
+          targetDateOverride: manualImportForm.targetDate,
+          manualUpload: "true",
+          fileImportTypeId: selectedImportType.id,
+        },
+      });
+
+      setManualImportForm({ ...emptyManualImportForm, targetDate: manualImportForm.targetDate });
+      setMessage("Import file uploaded. Processing will start automatically.");
+    } catch (err) {
+      console.error("Manual import upload failed", err);
+      setError("Import file could not be uploaded.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSaveRule = async (event) => {
@@ -304,6 +372,31 @@ export default function UpsellSettingsPage() {
           <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">Loading upsell settings...</div>
         ) : (
           <>
+            <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+              <h2 className="text-lg font-semibold text-gray-900">Manual File Import</h2>
+              <p className="mt-1 text-sm text-gray-500">Upload a file for a selected File Import Type. The chosen date overrides the Date Source configured on that type.</p>
+              <form onSubmit={handleManualImportUpload} className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto_1.5fr_auto] lg:items-end">
+                <label className="text-sm font-semibold text-gray-700">
+                  File Import Type
+                  <select value={manualImportForm.fileImportTypeId} onChange={(event) => setManualImportForm((form) => ({ ...form, fileImportTypeId: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" disabled={saving}>
+                    <option value="">Select a file import type</option>
+                    {fileImportTypes.map((importType) => (
+                      <option key={importType.id} value={importType.id}>{importType.fileType || importType.name || importType.id}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-sm font-semibold text-gray-700">
+                  Import date
+                  <input type="date" value={manualImportForm.targetDate} onChange={(event) => setManualImportForm((form) => ({ ...form, targetDate: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" disabled={saving} />
+                </label>
+                <label className="text-sm font-semibold text-gray-700">
+                  File
+                  <input type="file" onChange={(event) => setManualImportForm((form) => ({ ...form, file: event.target.files?.[0] || null }))} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" disabled={saving} />
+                </label>
+                <button type="submit" disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:opacity-50"><Upload className="h-4 w-4" /> Upload import</button>
+              </form>
+            </section>
+
             <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
               <button type="button" onClick={() => setOccupancyOpen((open) => !open)} className="flex w-full items-center justify-between gap-3 p-4 text-left">
                 <span>

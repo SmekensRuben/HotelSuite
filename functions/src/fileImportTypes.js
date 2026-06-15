@@ -809,6 +809,11 @@ function formatDateValue(value) {
   return convertDateValue(value, "yyyy-MM-dd", "yyyy-MM-dd").value;
 }
 
+function normalizeTargetDateOverride(value) {
+  const formattedDate = formatDateValue(value);
+  return /^\d{4}-\d{2}-\d{2}$/.test(formattedDate) ? formattedDate : "";
+}
+
 function resolveCurrentDateWithOffset(offsetDays) {
   const normalizedOffset = Number.isInteger(Number(offsetDays)) ? Number(offsetDays) : 0;
   const currentDate = new Date();
@@ -833,9 +838,10 @@ function buildDocumentId(mappedRow, fileImportType, fallbackValue) {
 }
 
 function buildTemplateContext({ hotelUid, fileType, fileImportType, mappedRow, object, rowIndex }) {
-  const dateValue = fileImportType?.targetDateSourceType === "databaseField"
-    ? formatDateValue(mappedRow?.[fileImportType.targetDateSourceField])
-    : resolveCurrentDateWithOffset(fileImportType?.targetDateOffsetDays);
+  const dateValue = fileImportType?.targetDateOverride
+    || (fileImportType?.targetDateSourceType === "databaseField"
+      ? formatDateValue(mappedRow?.[fileImportType.targetDateSourceField])
+      : resolveCurrentDateWithOffset(fileImportType?.targetDateOffsetDays));
 
   const sourceName = String(object?.name || "").split("/").pop() || "import-file";
   const sourceBaseName = sourceName.replace(/\.[^.]+$/, "") || "import-file";
@@ -1295,6 +1301,7 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
   const metadata = object.metadata || {};
   const hotelUid = String(metadata.hotelUid || "").trim();
   const fileType = String(metadata.fileType || "").trim();
+  const targetDateOverride = normalizeTargetDateOverride(metadata.targetDateOverride);
 
   if (!hotelUid || !fileType) {
     logger.warn("Import skipped: missing hotelUid/fileType metadata", {
@@ -1323,7 +1330,11 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
   }
 
   const importTypeDoc = importTypeSnapshot.docs[0];
-  const fileImportType = { id: importTypeDoc.id, ...(importTypeDoc.data() || {}) };
+  const fileImportType = {
+    id: importTypeDoc.id,
+    ...(importTypeDoc.data() || {}),
+    ...(targetDateOverride ? { targetDateOverride } : {}),
+  };
 
   if (fileImportType.enabled === false) {
     logger.info("Import skipped: matching file import type is disabled", {
@@ -1388,6 +1399,7 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
     fileType,
     fileImportTypeId: fileImportType.id,
     parserType,
+    targetDateOverride: targetDateOverride || null,
     writtenCount: writeSummary.writtenCount,
     firstWrittenPath: writeSummary.firstWrittenPath,
   });
