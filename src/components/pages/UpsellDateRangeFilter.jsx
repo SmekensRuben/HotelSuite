@@ -27,13 +27,20 @@ export function getDateRangeForPreset(preset) {
     startDate.setDate(1);
   }
 
+  const endDate = new Date(today);
+  if (preset === "thisMonth") {
+    endDate.setMonth(today.getMonth() + 1, 0);
+  } else if (preset === "thisYear") {
+    endDate.setMonth(11, 31);
+  }
+
   return {
     startDate: toDateInputValue(startDate),
-    endDate: toDateInputValue(today),
+    endDate: toDateInputValue(endDate),
   };
 }
 
-export default function UpsellDateRangeFilter({ dateRange, preset, onPresetChange, onDateRangeChange }) {
+export default function UpsellDateRangeFilter({ dateRange, preset, onPresetChange, onDateRangeChange, compact = false }) {
   const [customRangeOpen, setCustomRangeOpen] = useState(false);
 
   const handlePresetChange = (event) => {
@@ -51,14 +58,14 @@ export default function UpsellDateRangeFilter({ dateRange, preset, onPresetChang
   };
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+    <div className={compact ? "" : "rounded-xl border border-gray-200 bg-white p-4 shadow-sm"}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <label className="text-sm font-medium text-gray-700">
-          Period
+          {!compact && "Period"}
           <select
             value={preset}
             onChange={handlePresetChange}
-            className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:w-48"
+            className={compact ? "block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:w-40" : "mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:w-48"}
           >
             {Object.entries(DATE_RANGE_PRESETS).map(([value, label]) => (
               <option key={value} value={value}>

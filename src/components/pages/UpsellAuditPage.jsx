@@ -89,6 +89,8 @@ export default function UpsellAuditPage() {
   const [dateRangePreset, setDateRangePreset] = useState("thisMonth");
   const [auditUpsells, setAuditUpsells] = useState([]);
   const [operaUserMappings, setOperaUserMappings] = useState({});
+  const [selectedStatuses, setSelectedStatuses] = useState(["Checked Out"]);
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -153,6 +155,28 @@ export default function UpsellAuditPage() {
     window.location.href = "/login";
   };
 
+
+  const statusOptions = useMemo(() => {
+    const statuses = new Set(["Checked Out"]);
+    auditUpsells.forEach((record) => {
+      if (record.status) statuses.add(record.status);
+    });
+    return Array.from(statuses).sort((a, b) => a.localeCompare(b));
+  }, [auditUpsells]);
+
+  const filteredAuditUpsells = useMemo(() => {
+    if (!selectedStatuses.length) return [];
+    return auditUpsells.filter((record) => selectedStatuses.includes(record.status));
+  }, [auditUpsells, selectedStatuses]);
+
+  const handleStatusToggle = (status) => {
+    setSelectedStatuses((currentStatuses) =>
+      currentStatuses.includes(status)
+        ? currentStatuses.filter((currentStatus) => currentStatus !== status)
+        : [...currentStatuses, status]
+    );
+  };
+
   const columns = [
     { key: "logDate", label: "Log Date", sortValue: (row) => row.logDate || row.dateKey },
     {
@@ -195,12 +219,43 @@ export default function UpsellAuditPage() {
           </button>
         </div>
 
-        <UpsellDateRangeFilter
-          dateRange={dateRange}
-          preset={dateRangePreset}
-          onPresetChange={setDateRangePreset}
-          onDateRangeChange={setDateRange}
-        />
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <UpsellDateRangeFilter
+              dateRange={dateRange}
+              preset={dateRangePreset}
+              onPresetChange={setDateRangePreset}
+              onDateRangeChange={setDateRange}
+              compact
+            />
+            <div className="relative">
+              <p className="text-sm font-medium text-gray-700">Status</p>
+              <button
+                type="button"
+                onClick={() => setStatusDropdownOpen((open) => !open)}
+                className="mt-2 inline-flex min-w-48 items-center justify-between gap-3 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+              >
+                <span>{selectedStatuses.length ? `${selectedStatuses.length} selected` : "No statuses selected"}</span>
+                <span aria-hidden="true">▾</span>
+              </button>
+              {statusDropdownOpen && (
+                <div className="absolute right-0 z-10 mt-2 w-64 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+                  {statusOptions.map((status) => (
+                    <label key={status} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={selectedStatuses.includes(status)}
+                        onChange={() => handleStatusToggle(status)}
+                        className="h-4 w-4 rounded border-gray-300 text-[#b41f1f] focus:ring-[#b41f1f]"
+                      />
+                      {status}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
 
         {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
         {loading ? (
@@ -210,9 +265,9 @@ export default function UpsellAuditPage() {
         ) : (
           <DataListTable
             columns={columns}
-            rows={auditUpsells}
+            rows={filteredAuditUpsells}
             onRowClick={(row) => navigate(`/front-office/upselling/${row.dateKey}/${row.documentId}`)}
-            emptyMessage="No audit upsells found for the selected date range."
+            emptyMessage="No audit upsells found for the selected date range and status filters."
           />
         )}
       </PageContainer>

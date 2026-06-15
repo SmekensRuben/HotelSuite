@@ -5,7 +5,7 @@ import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getAuditUpsells } from "../../services/firebaseUpsells";
+import { getAuditUpsells, getUpsellDateKeys, getUpsellSettings } from "../../services/firebaseUpsells";
 import { getSettings } from "../../services/firebaseSettings";
 import UpsellDateRangeFilter, { getDateRangeForPreset } from "./UpsellDateRangeFilter";
 
@@ -64,6 +64,23 @@ function getExpectedRevenue(row) {
   return price * nights;
 }
 
+
+function getProgressPercentage(value, target) {
+  if (!target || target <= 0) return 0;
+  return Math.min(100, Math.round((value / target) * 100));
+}
+
+function getTargetRuleForDate(dateKey, rules) {
+  return rules.find((rule) => rule.startDate <= dateKey && dateKey <= rule.endDate) || null;
+}
+
+function getTargetStatus(expectedRevenue, minimumTarget, reachTarget, stretchTarget) {
+  if (stretchTarget > 0 && expectedRevenue >= stretchTarget) return "aboveStretch";
+  if (reachTarget > 0 && expectedRevenue >= reachTarget) return "betweenReachAndStretch";
+  if (minimumTarget > 0 && expectedRevenue >= minimumTarget) return "betweenMinimumAndReach";
+  return "belowMinimum";
+}
+
 function normalizeOperaUserMappings(rawMappings) {
   if (!rawMappings || typeof rawMappings !== "object") return {};
 
@@ -88,6 +105,8 @@ export default function UpsellsPage() {
   const [dateRangePreset, setDateRangePreset] = useState("thisMonth");
   const [auditUpsells, setAuditUpsells] = useState([]);
   const [operaUserMappings, setOperaUserMappings] = useState({});
+  const [dailyExpectedOccupancy, setDailyExpectedOccupancy] = useState({});
+  const [revenueTargetRules, setRevenueTargetRules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -108,6 +127,8 @@ export default function UpsellsPage() {
       if (!hotelUid) {
         setAuditUpsells([]);
         setOperaUserMappings({});
+        setDailyExpectedOccupancy({});
+        setRevenueTargetRules([]);
         setLoading(false);
         return;
       }
@@ -123,13 +144,16 @@ export default function UpsellsPage() {
       setError("");
 
       try {
-        const [records, settings] = await Promise.all([
+        const [records, settings, upsellSettings] = await Promise.all([
           getAuditUpsells(hotelUid, dateRange.startDate, dateRange.endDate),
           getSettings(hotelUid),
+          getUpsellSettings(hotelUid),
         ]);
         if (!active) return;
         setAuditUpsells(records);
         setOperaUserMappings(normalizeOperaUserMappings(settings?.operaUserMappings));
+        setDailyExpectedOccupancy(upsellSettings?.dailyExpectedOccupancy || {});
+        setRevenueTargetRules(upsellSettings?.revenueTargetRules || []);
       } catch (err) {
         console.error("Failed to load audit upsells", err);
         if (!active) return;
@@ -187,6 +211,75 @@ export default function UpsellsPage() {
     };
   }, [auditUpsells, operaUserMappings]);
 
+
+  const targetSummary = useMemo(() => {
+    const expectedRevenue = auditUpsells.reduce((total, record) => {
+      const recordExpectedRevenue = getExpectedRevenue(record);
+      return recordExpectedRevenue === "" ? total : total + recordExpectedRevenue;
+    }, 0);
+
+    const totals = getUpsellDateKeys(dateRange.startDate, dateRange.endDate).reduce(
+      (accumulator, dateKey) => {
+        const rule = getTargetRuleForDate(dateKey, revenueTargetRules);
+        const expectedOccupancy = Number(dailyExpectedOccupancy[dateKey] || 0);
+        accumulator.expectedOccupancy += expectedOccupancy;
+
+        if (rule) {
+          accumulator.minimum += expectedOccupancy * Number(rule.minimumTargetRevenuePerOccupiedRoom || 0);
+          accumulator.reach += expectedOccupancy * Number(rule.reachTargetRevenuePerOccupiedRoom || 0);
+          accumulator.stretch += expectedOccupancy * Number(rule.stretchTargetRevenuePerOccupiedRoom || 0);
+        }
+
+        return accumulator;
+      },
+      { expectedOccupancy: 0, minimum: 0, reach: 0, stretch: 0 }
+    );
+
+    const progress = getProgressPercentage(expectedRevenue, totals.stretch);
+    const minimumMarker = getProgressPercentage(totals.minimum, totals.stretch);
+    const reachMarker = getProgressPercentage(totals.reach, totals.stretch);
+    const status = getTargetStatus(expectedRevenue, totals.minimum, totals.reach, totals.stretch);
+
+    return { expectedRevenue, expectedOccupancy: totals.expectedOccupancy, ...totals, progress, minimumMarker, reachMarker, status };
+  }, [auditUpsells, dailyExpectedOccupancy, dateRange.endDate, dateRange.startDate, revenueTargetRules]);
+
+  const statusLabels = {
+    belowMinimum: "Below Minimum",
+    betweenMinimumAndReach: "Between Minimum and Reach",
+    betweenReachAndStretch: "Between Reach and Stretch",
+    aboveStretch: "Above Stretch",
+  };
+
+  const TargetSummaryCard = () => (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Target revenue progress</h2>
+          <p className="mt-1 text-sm text-gray-500">One progress bar toward Stretch, with Minimum and Reach thresholds.</p>
+        </div>
+        <div className="text-left sm:text-right">
+          <p className="text-sm text-gray-500">Expected revenue</p>
+          <p className="text-2xl font-semibold text-gray-900">{formatPrice(targetSummary.expectedRevenue)}</p>
+          <p className="text-xs font-medium text-gray-600">{statusLabels[targetSummary.status]} · {targetSummary.progress}% of Stretch</p>
+        </div>
+      </div>
+      <div className="mt-5">
+        <div className="relative h-5 overflow-hidden rounded-full bg-gray-200">
+          <div className="h-full rounded-full bg-[#b41f1f] transition-all" style={{ width: `${targetSummary.progress}%` }} />
+          {[{ label: "Minimum", left: targetSummary.minimumMarker }, { label: "Reach", left: targetSummary.reachMarker }, { label: "Stretch", left: 100 }].map((marker) => (
+            <div key={marker.label} className="absolute top-0 h-full w-0.5 bg-gray-900/70" style={{ left: `${marker.left}%` }} title={marker.label} />
+          ))}
+        </div>
+        <div className="mt-2 flex justify-between gap-3 text-xs text-gray-600">
+          <span>Minimum {formatPrice(targetSummary.minimum)}</span>
+          <span>Reach {formatPrice(targetSummary.reach)}</span>
+          <span>Stretch {formatPrice(targetSummary.stretch)}</span>
+        </div>
+        <p className="mt-3 text-xs text-gray-500">Expected occupancy in selection: {targetSummary.expectedOccupancy} rooms.</p>
+      </div>
+    </div>
+  );
+
   const RankingCard = ({ title, description, rows, emptyMessage }) => (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
       <div className="border-b border-gray-100 p-4">
@@ -222,10 +315,17 @@ export default function UpsellsPage() {
             <p className="text-sm uppercase tracking-wide text-gray-500">Front Office</p>
             <h1 className="text-3xl font-semibold">Upselling</h1>
             <p className="mt-1 text-gray-600">
-              Dashboard van verwachte en effectieve upsell omzet binnen de geselecteerde periode.
+              Dashboard for expected and effective upsell revenue in the selected period.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <UpsellDateRangeFilter
+              dateRange={dateRange}
+              preset={dateRangePreset}
+              onPresetChange={setDateRangePreset}
+              onDateRangeChange={setDateRange}
+              compact
+            />
             <button
               type="button"
               onClick={() => navigate("/front-office/upselling/audit")}
@@ -246,14 +346,8 @@ export default function UpsellsPage() {
           </div>
         </div>
 
-        <UpsellDateRangeFilter
-          dateRange={dateRange}
-          preset={dateRangePreset}
-          onPresetChange={setDateRangePreset}
-          onDateRangeChange={setDateRange}
-        />
-
         {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+        {!loading && <TargetSummaryCard />}
         {loading ? (
           <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">
             Loading upsell dashboard...
@@ -262,15 +356,15 @@ export default function UpsellsPage() {
           <div className="grid gap-6 lg:grid-cols-2">
             <RankingCard
               title="Expected revenue ranking"
-              description="Alle audit upsell statussen tellen mee."
+              description="All audit upsell statuses are included."
               rows={revenueRankings.expected}
-              emptyMessage="Geen expected revenue gevonden voor deze periode."
+              emptyMessage="No expected revenue found for this period."
             />
             <RankingCard
               title="Effective revenue ranking"
-              description='Enkel audit upsells met status "Validated" tellen mee.'
+              description='Only audit upsells with status "Validated" are included.'
               rows={revenueRankings.effective}
-              emptyMessage="Geen validated revenue gevonden voor deze periode."
+              emptyMessage="No validated revenue found for this period."
             />
           </div>
         )}
