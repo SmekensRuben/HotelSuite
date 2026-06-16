@@ -124,10 +124,11 @@ function getTodayDateKey(now = new Date(), timeZone = DEFAULT_TIMEZONE) {
 
 const BILL_LINKABLE_AUDIT_UPSELL_STATUSES = new Set(['Arrived', 'Created', 'Pending']);
 
-function getLatestDateCollection(collectionRefs) {
+function getDateCollectionsDescending(collectionRefs, maxDateKey = null) {
   return collectionRefs
     .filter((collectionRef) => /^\d{4}-\d{2}-\d{2}$/.test(collectionRef.id))
-    .sort((a, b) => b.id.localeCompare(a.id))[0] || null;
+    .filter((collectionRef) => !maxDateKey || collectionRef.id <= maxDateKey)
+    .sort((a, b) => b.id.localeCompare(a.id));
 }
 
 function getReservationBillNumbers(reservationBill, documentId) {
@@ -163,56 +164,57 @@ async function findLinkableAuditUpsellSnapshot(hotelUid, auditUpsellDocumentId) 
   return null;
 }
 
-async function linkLatestReservationBillsForHotel(hotelUid) {
+async function linkReservationBillsForHotel(hotelUid, maxDateKey = getTodayDateKey()) {
   const reservationBillsRootRef = db.doc(`hotels/${hotelUid}/reports/reservationbills`);
-  const latestReservationBillsCollection = getLatestDateCollection(await reservationBillsRootRef.listCollections());
-
-  if (!latestReservationBillsCollection) {
-    return { latestReservationBillsDate: null, checkedReservationBills: 0, linkedReservationBills: 0 };
-  }
-
-  const reservationBillsSnap = await latestReservationBillsCollection.get();
+  const reservationBillsDateCollections = getDateCollectionsDescending(
+    await reservationBillsRootRef.listCollections(),
+    maxDateKey
+  );
   let checkedReservationBills = 0;
   let linkedReservationBills = 0;
   let batch = db.batch();
   let writesInBatch = 0;
 
-  for (const reservationBillSnap of reservationBillsSnap.docs) {
-    const reservationBill = reservationBillSnap.data() || {};
-    const confirmationNumber = String(reservationBill.confirmationNumber || '').trim();
-    if (!confirmationNumber) continue;
+  for (const reservationBillsDateCollection of reservationBillsDateCollections) {
+    const reservationBillsSnap = await reservationBillsDateCollection.get();
 
-    checkedReservationBills += 1;
-    const auditUpsellSnap = await findLinkableAuditUpsellSnapshot(hotelUid, confirmationNumber);
-    if (!auditUpsellSnap) continue;
+    for (const reservationBillSnap of reservationBillsSnap.docs) {
+      const reservationBill = reservationBillSnap.data() || {};
+      const confirmationNumber = String(reservationBill.confirmationNumber || '').trim();
+      if (!confirmationNumber) continue;
 
-    const billNumbers = getReservationBillNumbers(reservationBill, reservationBillSnap.id);
-    if (!billNumbers.length) continue;
+      checkedReservationBills += 1;
+      const auditUpsellSnap = await findLinkableAuditUpsellSnapshot(hotelUid, confirmationNumber);
+      if (!auditUpsellSnap) continue;
 
-    batch.set(
-      auditUpsellSnap.ref,
-      {
-        billNumbers: admin.firestore.FieldValue.arrayUnion(...billNumbers),
-        reservationBillLinkStatus: 'linked',
-        reservationBillLinkedAt: admin.firestore.FieldValue.serverTimestamp(),
-        sourceReservationBillsDate: latestReservationBillsCollection.id,
-      },
-      { merge: true }
-    );
-    writesInBatch += 1;
-    linkedReservationBills += 1;
+      const billNumbers = getReservationBillNumbers(reservationBill, reservationBillSnap.id);
+      if (!billNumbers.length) continue;
 
-    if (writesInBatch >= 450) {
-      await batch.commit();
-      batch = db.batch();
-      writesInBatch = 0;
+      batch.set(
+        auditUpsellSnap.ref,
+        {
+          billNumbers: admin.firestore.FieldValue.arrayUnion(...billNumbers),
+          reservationBillLinkStatus: 'linked',
+          reservationBillLinkedAt: admin.firestore.FieldValue.serverTimestamp(),
+          sourceReservationBillsDates: admin.firestore.FieldValue.arrayUnion(reservationBillsDateCollection.id),
+        },
+        { merge: true }
+      );
+      writesInBatch += 1;
+      linkedReservationBills += 1;
+
+      if (writesInBatch >= 450) {
+        await batch.commit();
+        batch = db.batch();
+        writesInBatch = 0;
+      }
     }
   }
 
   if (writesInBatch > 0) await batch.commit();
 
   return {
-    latestReservationBillsDate: latestReservationBillsCollection.id,
+    reservationBillsDates: reservationBillsDateCollections.map((collectionRef) => collectionRef.id),
     checkedReservationBills,
     linkedReservationBills,
   };
@@ -291,7 +293,15 @@ async function getPendingAuditUpsellSnapshots(hotelUid) {
   for (const dateCollection of dateCollections) {
     const auditUpsellsSnap = await dateCollection.get();
     for (const auditUpsellSnap of auditUpsellsSnap.docs) {
-      if ((auditUpsellSnap.data() || {}).folioLinkStatus === 'linked') continue;
+      const auditUpsell = auditUpsellSnap.data() || {};
+      const billNumbers = normalizeBillNumbers(auditUpsell.billNumbers);
+      const detailedFolios = Array.isArray(auditUpsell.detailedFolios) ? auditUpsell.detailedFolios : [];
+      const linkedBillNumbers = new Set(
+        detailedFolios.map((folio) => String(folio?.billNumber || '').trim()).filter(Boolean)
+      );
+      const hasUnlinkedBillNumbers = billNumbers.some((billNumber) => !linkedBillNumbers.has(billNumber));
+
+      if (auditUpsell.folioLinkStatus === 'linked' && !hasUnlinkedBillNumbers) continue;
       pendingSnapshots.push(auditUpsellSnap);
     }
   }
@@ -373,41 +383,43 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
 
     if (packageCodes.length) {
       processedHotels += 1;
-      const audittrailSnap = await db
-        .collection(`hotels/${hotelUid}/reports/audittrail/${dateKey}`)
-        .get();
-
+      const audittrailRootRef = db.doc(`hotels/${hotelUid}/reports/audittrail`);
+      const audittrailDateCollections = getDateCollectionsDescending(await audittrailRootRef.listCollections(), dateKey);
       let batch = db.batch();
       let writesInBatch = 0;
 
-      for (const auditDoc of audittrailSnap.docs) {
-        const auditUpsellRecords = parseUpsellAuditRecords(auditDoc.data() || {}, packageCodes);
-        if (!auditUpsellRecords.length) continue;
+      for (const audittrailDateCollection of audittrailDateCollections) {
+        const audittrailSnap = await audittrailDateCollection.get();
 
-        for (const auditUpsellRecord of auditUpsellRecords) {
-          const targetDate = auditUpsellRecord.logDate || dateKey;
-          const targetDocumentId = auditUpsellRecord.confirmationNumber;
-          const reservationDetails = await findReservationDetailsForUpsell(hotelUid, auditUpsellRecord);
-          const targetRef = db.doc(`hotels/${hotelUid}/upselling/auditUpsell/${targetDate}/${targetDocumentId}`);
-          batch.set(
-            targetRef,
-            {
-              ...auditUpsellRecord,
-              ...(reservationDetails || {}),
-              status: reservationDetails ? 'Arrived' : 'Created',
-              sourceAudittrailDate: dateKey,
-              sourceAudittrailDocumentId: auditDoc.id,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-            { merge: true }
-          );
-          writesInBatch += 1;
-          createdRecords += 1;
+        for (const auditDoc of audittrailSnap.docs) {
+          const auditUpsellRecords = parseUpsellAuditRecords(auditDoc.data() || {}, packageCodes);
+          if (!auditUpsellRecords.length) continue;
 
-          if (writesInBatch >= 450) {
-            await batch.commit();
-            batch = db.batch();
-            writesInBatch = 0;
+          for (const auditUpsellRecord of auditUpsellRecords) {
+            const targetDate = auditUpsellRecord.logDate || audittrailDateCollection.id;
+            const targetDocumentId = auditUpsellRecord.confirmationNumber;
+            const reservationDetails = await findReservationDetailsForUpsell(hotelUid, auditUpsellRecord);
+            const targetRef = db.doc(`hotels/${hotelUid}/upselling/auditUpsell/${targetDate}/${targetDocumentId}`);
+            batch.set(
+              targetRef,
+              {
+                ...auditUpsellRecord,
+                ...(reservationDetails || {}),
+                status: reservationDetails ? 'Arrived' : 'Created',
+                sourceAudittrailDate: audittrailDateCollection.id,
+                sourceAudittrailDocumentId: auditDoc.id,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+            writesInBatch += 1;
+            createdRecords += 1;
+
+            if (writesInBatch >= 450) {
+              await batch.commit();
+              batch = db.batch();
+              writesInBatch = 0;
+            }
           }
         }
       }
@@ -415,7 +427,7 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
       if (writesInBatch > 0) await batch.commit();
     }
 
-    const reservationBillLinkResult = await linkLatestReservationBillsForHotel(hotelUid);
+    const reservationBillLinkResult = await linkReservationBillsForHotel(hotelUid);
     logger.info('Audit upsell reservation bill linking completed', {
       hotelUid,
       ...reservationBillLinkResult,
@@ -449,7 +461,7 @@ module.exports = {
   parseUpsellAuditRecords,
   findReservationDetailsForUpsell,
   findDetailedFolioForBillNumber,
-  linkLatestReservationBillsForHotel,
+  linkReservationBillsForHotel,
   linkDetailedFoliosForHotel,
   enumerateStayDateKeys,
   getDetailedFolioSearchDateKeys,
