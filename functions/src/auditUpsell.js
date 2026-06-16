@@ -121,6 +121,103 @@ function getTodayDateKey(now = new Date(), timeZone = DEFAULT_TIMEZONE) {
   }).format(now);
 }
 
+
+const BILL_LINKABLE_AUDIT_UPSELL_STATUSES = new Set(['Arrived', 'Created', 'Pending']);
+
+function getLatestDateCollection(collectionRefs) {
+  return collectionRefs
+    .filter((collectionRef) => /^\d{4}-\d{2}-\d{2}$/.test(collectionRef.id))
+    .sort((a, b) => b.id.localeCompare(a.id))[0] || null;
+}
+
+function getReservationBillNumbers(reservationBill, documentId) {
+  const candidates = [
+    reservationBill.billNumber,
+    reservationBill.billNo,
+    reservationBill.billId,
+    reservationBill.folioNumber,
+    reservationBill.folioNo,
+    reservationBill.folioId,
+    reservationBill.billNumbers,
+  ];
+
+  const billNumbers = candidates.flatMap((candidate) => (Array.isArray(candidate) ? candidate : [candidate]));
+  const normalizedBillNumbers = normalizeBillNumbers(billNumbers);
+  return normalizedBillNumbers.length ? normalizedBillNumbers : normalizeBillNumbers([documentId]);
+}
+
+async function findLinkableAuditUpsellSnapshot(hotelUid, auditUpsellDocumentId) {
+  const auditUpsellRootRef = db.doc(`hotels/${hotelUid}/upselling/auditUpsell`);
+  const dateCollections = await auditUpsellRootRef.listCollections();
+
+  for (const dateCollection of dateCollections) {
+    const auditUpsellSnap = await dateCollection.doc(auditUpsellDocumentId).get();
+    if (!auditUpsellSnap.exists) continue;
+
+    const auditUpsell = auditUpsellSnap.data() || {};
+    if (!BILL_LINKABLE_AUDIT_UPSELL_STATUSES.has(auditUpsell.status)) continue;
+
+    return auditUpsellSnap;
+  }
+
+  return null;
+}
+
+async function linkLatestReservationBillsForHotel(hotelUid) {
+  const reservationBillsRootRef = db.doc(`hotels/${hotelUid}/reports/reservationbills`);
+  const latestReservationBillsCollection = getLatestDateCollection(await reservationBillsRootRef.listCollections());
+
+  if (!latestReservationBillsCollection) {
+    return { latestReservationBillsDate: null, checkedReservationBills: 0, linkedReservationBills: 0 };
+  }
+
+  const reservationBillsSnap = await latestReservationBillsCollection.get();
+  let checkedReservationBills = 0;
+  let linkedReservationBills = 0;
+  let batch = db.batch();
+  let writesInBatch = 0;
+
+  for (const reservationBillSnap of reservationBillsSnap.docs) {
+    const reservationBill = reservationBillSnap.data() || {};
+    const confirmationNumber = String(reservationBill.confirmationNumber || '').trim();
+    if (!confirmationNumber) continue;
+
+    checkedReservationBills += 1;
+    const auditUpsellSnap = await findLinkableAuditUpsellSnapshot(hotelUid, confirmationNumber);
+    if (!auditUpsellSnap) continue;
+
+    const billNumbers = getReservationBillNumbers(reservationBill, reservationBillSnap.id);
+    if (!billNumbers.length) continue;
+
+    batch.set(
+      auditUpsellSnap.ref,
+      {
+        billNumbers: admin.firestore.FieldValue.arrayUnion(...billNumbers),
+        reservationBillLinkStatus: 'linked',
+        reservationBillLinkedAt: admin.firestore.FieldValue.serverTimestamp(),
+        sourceReservationBillsDate: latestReservationBillsCollection.id,
+      },
+      { merge: true }
+    );
+    writesInBatch += 1;
+    linkedReservationBills += 1;
+
+    if (writesInBatch >= 450) {
+      await batch.commit();
+      batch = db.batch();
+      writesInBatch = 0;
+    }
+  }
+
+  if (writesInBatch > 0) await batch.commit();
+
+  return {
+    latestReservationBillsDate: latestReservationBillsCollection.id,
+    checkedReservationBills,
+    linkedReservationBills,
+  };
+}
+
 function normalizeBillNumbers(value) {
   if (!Array.isArray(value)) return [];
   return Array.from(new Set(value.map((item) => String(item || '').trim()).filter(Boolean)));
@@ -318,6 +415,12 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
       if (writesInBatch > 0) await batch.commit();
     }
 
+    const reservationBillLinkResult = await linkLatestReservationBillsForHotel(hotelUid);
+    logger.info('Audit upsell reservation bill linking completed', {
+      hotelUid,
+      ...reservationBillLinkResult,
+    });
+
     const folioLinkResult = await linkDetailedFoliosForHotel(hotelUid);
     logger.info('Audit upsell detailed folio linking completed', {
       hotelUid,
@@ -346,6 +449,7 @@ module.exports = {
   parseUpsellAuditRecords,
   findReservationDetailsForUpsell,
   findDetailedFolioForBillNumber,
+  linkLatestReservationBillsForHotel,
   linkDetailedFoliosForHotel,
   enumerateStayDateKeys,
   getDetailedFolioSearchDateKeys,
