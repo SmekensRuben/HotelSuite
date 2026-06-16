@@ -130,6 +130,8 @@ function formatAuditUpsellData(data, auditUpsellDocId, dateKey) {
     packageCode: data.packageCode || "",
     startDate: formatFirestoreValue(data.startDate),
     endDate: formatFirestoreValue(data.endDate),
+    arrivalDate: formatFirestoreValue(data.arrivalDate),
+    departureDate: formatFirestoreValue(data.departureDate),
     price: data.price ?? "",
     status: getUpsellStatus(data),
     confirmationNumber: data.confirmationNumber || auditUpsellDocId,
