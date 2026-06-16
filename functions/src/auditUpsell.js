@@ -390,6 +390,26 @@ async function linkDetailedFoliosForHotel(hotelUid, todayDateKey = getTodayDateK
   return { checkedRecords, linkedRecords, linkedFolios };
 }
 
+
+function getAudittrailPendingDatesCollection(hotelUid) {
+  return db.collection(`hotels/${hotelUid}/upselling/auditUpsell/pendingAudittrailDates`);
+}
+
+function getAudittrailProcessedDatesCollection(hotelUid) {
+  return db.collection(`hotels/${hotelUid}/upselling/auditUpsell/processedAudittrailDates`);
+}
+
+async function getAudittrailDateKeysToProcess(hotelUid, fallbackDateKey = getYesterdayDateKey()) {
+  const pendingDatesSnap = await getAudittrailPendingDatesCollection(hotelUid).get();
+  const dateKeys = pendingDatesSnap.docs
+    .map((pendingDateSnap) => pendingDateSnap.id)
+    .filter((pendingDateKey) => /^\d{4}-\d{2}-\d{2}$/.test(pendingDateKey))
+    .filter((pendingDateKey) => !fallbackDateKey || pendingDateKey <= fallbackDateKey);
+
+  if (fallbackDateKey) dateKeys.push(fallbackDateKey);
+  return Array.from(new Set(dateKeys)).sort((a, b) => b.localeCompare(a));
+}
+
 async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
   const hotelsSnap = await db.collection('hotels').get();
   let processedHotels = 0;
@@ -402,25 +422,19 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
 
     if (packageCodes.length) {
       processedHotels += 1;
-      const audittrailRootRef = db.doc(`hotels/${hotelUid}/reports/audittrail`);
-      const minDateKey = getReportLookbackStartDateKey(dateKey);
-      const audittrailDateCollections = getDateCollectionsDescending(
-        await audittrailRootRef.listCollections(),
-        minDateKey,
-        dateKey
-      );
-      let batch = db.batch();
-      let writesInBatch = 0;
+      const audittrailDateKeys = await getAudittrailDateKeysToProcess(hotelUid, dateKey);
 
-      for (const audittrailDateCollection of audittrailDateCollections) {
-        const audittrailSnap = await audittrailDateCollection.get();
+      for (const audittrailDateKey of audittrailDateKeys) {
+        const audittrailSnap = await db.collection(`hotels/${hotelUid}/reports/audittrail/${audittrailDateKey}`).get();
+        let batch = db.batch();
+        let writesInBatch = 0;
 
         for (const auditDoc of audittrailSnap.docs) {
           const auditUpsellRecords = parseUpsellAuditRecords(auditDoc.data() || {}, packageCodes);
           if (!auditUpsellRecords.length) continue;
 
           for (const auditUpsellRecord of auditUpsellRecords) {
-            const targetDate = auditUpsellRecord.logDate || audittrailDateCollection.id;
+            const targetDate = auditUpsellRecord.logDate || audittrailDateKey;
             const targetDocumentId = auditUpsellRecord.confirmationNumber;
             const reservationDetails = await findReservationDetailsForUpsell(hotelUid, auditUpsellRecord);
             const targetRef = db.doc(`hotels/${hotelUid}/upselling/auditUpsell/${targetDate}/${targetDocumentId}`);
@@ -430,7 +444,7 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
                 ...auditUpsellRecord,
                 ...(reservationDetails || {}),
                 status: reservationDetails ? 'Arrived' : 'Created',
-                sourceAudittrailDate: audittrailDateCollection.id,
+                sourceAudittrailDate: audittrailDateKey,
                 sourceAudittrailDocumentId: auditDoc.id,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
               },
@@ -446,9 +460,24 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
             }
           }
         }
-      }
 
-      if (writesInBatch > 0) await batch.commit();
+        batch.set(
+          getAudittrailProcessedDatesCollection(hotelUid).doc(audittrailDateKey),
+          {
+            processedAt: admin.firestore.FieldValue.serverTimestamp(),
+            recordsScanned: audittrailSnap.size,
+          },
+          { merge: true }
+        );
+        writesInBatch += 1;
+
+        if (!audittrailSnap.empty) {
+          batch.delete(getAudittrailPendingDatesCollection(hotelUid).doc(audittrailDateKey));
+          writesInBatch += 1;
+        }
+
+        if (writesInBatch > 0) await batch.commit();
+      }
     }
 
     const reservationBillLinkResult = await linkReservationBillsForHotel(hotelUid);
@@ -492,4 +521,5 @@ module.exports = {
   getTodayDateKey,
   getYesterdayDateKey,
   getReportLookbackStartDateKey,
+  getAudittrailDateKeysToProcess,
 };
