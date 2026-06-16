@@ -2,6 +2,7 @@ const { onSchedule, logger, admin } = require('./config');
 
 const db = admin.firestore();
 const DEFAULT_TIMEZONE = 'Europe/Amsterdam';
+const REPORT_LOOKBACK_DAYS = 31;
 const MONTHS = {
   jan: '01',
   feb: '02',
@@ -16,6 +17,21 @@ const MONTHS = {
   nov: '11',
   dec: '12',
 };
+
+
+function shiftDateKey(dateKey, days) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))) return null;
+
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return null;
+
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function getReportLookbackStartDateKey(maxDateKey, lookbackDays = REPORT_LOOKBACK_DAYS) {
+  return shiftDateKey(maxDateKey, -(Math.max(1, lookbackDays) - 1));
+}
 
 function getYesterdayDateKey(now = new Date(), timeZone = DEFAULT_TIMEZONE) {
   const formatter = new Intl.DateTimeFormat('en-CA', {
@@ -124,9 +140,10 @@ function getTodayDateKey(now = new Date(), timeZone = DEFAULT_TIMEZONE) {
 
 const BILL_LINKABLE_AUDIT_UPSELL_STATUSES = new Set(['Arrived', 'Created', 'Pending']);
 
-function getDateCollectionsDescending(collectionRefs, maxDateKey = null) {
+function getDateCollectionsDescending(collectionRefs, minDateKey = null, maxDateKey = null) {
   return collectionRefs
     .filter((collectionRef) => /^\d{4}-\d{2}-\d{2}$/.test(collectionRef.id))
+    .filter((collectionRef) => !minDateKey || collectionRef.id >= minDateKey)
     .filter((collectionRef) => !maxDateKey || collectionRef.id <= maxDateKey)
     .sort((a, b) => b.id.localeCompare(a.id));
 }
@@ -166,8 +183,10 @@ async function findLinkableAuditUpsellSnapshot(hotelUid, auditUpsellDocumentId) 
 
 async function linkReservationBillsForHotel(hotelUid, maxDateKey = getTodayDateKey()) {
   const reservationBillsRootRef = db.doc(`hotels/${hotelUid}/reports/reservationbills`);
+  const minDateKey = getReportLookbackStartDateKey(maxDateKey);
   const reservationBillsDateCollections = getDateCollectionsDescending(
     await reservationBillsRootRef.listCollections(),
+    minDateKey,
     maxDateKey
   );
   let checkedReservationBills = 0;
@@ -384,7 +403,12 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
     if (packageCodes.length) {
       processedHotels += 1;
       const audittrailRootRef = db.doc(`hotels/${hotelUid}/reports/audittrail`);
-      const audittrailDateCollections = getDateCollectionsDescending(await audittrailRootRef.listCollections(), dateKey);
+      const minDateKey = getReportLookbackStartDateKey(dateKey);
+      const audittrailDateCollections = getDateCollectionsDescending(
+        await audittrailRootRef.listCollections(),
+        minDateKey,
+        dateKey
+      );
       let batch = db.batch();
       let writesInBatch = 0;
 
@@ -467,4 +491,5 @@ module.exports = {
   getDetailedFolioSearchDateKeys,
   getTodayDateKey,
   getYesterdayDateKey,
+  getReportLookbackStartDateKey,
 };
