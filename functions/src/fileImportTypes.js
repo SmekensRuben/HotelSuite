@@ -22,6 +22,37 @@ function normalizeLookupKey(value) {
     .replace(/\s+/g, " ");
 }
 
+
+function getAudittrailDateKeyFromPath(path, hotelUid) {
+  const escapedHotelUid = String(hotelUid || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = String(path || "").match(new RegExp(`^hotels/${escapedHotelUid}/reports/audittrail/(\\d{4}-\\d{2}-\\d{2})(?:/|$)`));
+  return match?.[1] || null;
+}
+
+function getAudittrailPendingDateRef(db, hotelUid, dateKey) {
+  return db.doc(`hotels/${hotelUid}/upselling/auditUpsell/pendingAudittrailDates/${dateKey}`);
+}
+
+async function markAudittrailDatesPending(db, hotelUid, dateKeys, objectName) {
+  const uniqueDateKeys = Array.from(new Set(dateKeys.filter(Boolean)));
+  if (!uniqueDateKeys.length) return;
+
+  const batch = db.batch();
+  uniqueDateKeys.forEach((dateKey) => {
+    batch.set(
+      getAudittrailPendingDateRef(db, hotelUid, dateKey),
+      {
+        source: "fileImport",
+        sourceObjectName: objectName || null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  });
+
+  await batch.commit();
+}
+
 function normalizeTargetType(value) {
   const normalized = String(value || "string").trim().toLowerCase();
   return ["string", "number", "array", "date", "list"].includes(normalized) ? normalized : "string";
@@ -1207,6 +1238,7 @@ async function processMappedDocumentStream({
   const readConcurrency = 25;
   let writtenCount = 0;
   let firstWrittenPath = null;
+  const audittrailDateKeys = new Set();
 
   const registerWrittenPaths = (flushedPaths = []) => {
     flushedPaths.forEach((writtenPath) => {
@@ -1214,6 +1246,11 @@ async function processMappedDocumentStream({
       writtenCount += 1;
       if (!firstWrittenPath) {
         firstWrittenPath = writtenPath;
+      }
+
+      const audittrailDateKey = getAudittrailDateKeyFromPath(writtenPath, hotelUid);
+      if (audittrailDateKey) {
+        audittrailDateKeys.add(audittrailDateKey);
       }
     });
   };
@@ -1288,7 +1325,7 @@ async function processMappedDocumentStream({
 
   await batchWriter.close();
 
-  return { writtenCount, firstWrittenPath };
+  return { writtenCount, firstWrittenPath, audittrailDateKeys: Array.from(audittrailDateKeys) };
 }
 
 const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", memory: "1GiB" }, async (event) => {
@@ -1393,6 +1430,8 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
     return;
   }
 
+  await markAudittrailDatesPending(db, hotelUid, writeSummary.audittrailDateKeys || [], objectName);
+
   logger.info("Import processed to Firestore", {
     objectName,
     hotelUid,
@@ -1402,6 +1441,7 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
     targetDateOverride: targetDateOverride || null,
     writtenCount: writeSummary.writtenCount,
     firstWrittenPath: writeSummary.firstWrittenPath,
+    audittrailDateKeys: writeSummary.audittrailDateKeys || [],
   });
 });
 
