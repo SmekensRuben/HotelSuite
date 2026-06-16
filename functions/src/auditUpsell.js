@@ -391,23 +391,32 @@ async function linkDetailedFoliosForHotel(hotelUid, todayDateKey = getTodayDateK
 }
 
 
-function getAudittrailPendingDatesCollection(hotelUid) {
-  return db.collection(`hotels/${hotelUid}/upselling/auditUpsell/pendingAudittrailDates`);
-}
-
 function getAudittrailProcessedDatesCollection(hotelUid) {
   return db.collection(`hotels/${hotelUid}/upselling/auditUpsell/processedAudittrailDates`);
 }
 
-async function getAudittrailDateKeysToProcess(hotelUid, fallbackDateKey = getYesterdayDateKey()) {
-  const pendingDatesSnap = await getAudittrailPendingDatesCollection(hotelUid).get();
-  const dateKeys = pendingDatesSnap.docs
-    .map((pendingDateSnap) => pendingDateSnap.id)
-    .filter((pendingDateKey) => /^\d{4}-\d{2}-\d{2}$/.test(pendingDateKey))
-    .filter((pendingDateKey) => !fallbackDateKey || pendingDateKey <= fallbackDateKey);
+async function getProcessedAudittrailDateKeys(hotelUid, dateKeys) {
+  if (!dateKeys.length) return new Set();
 
-  if (fallbackDateKey) dateKeys.push(fallbackDateKey);
-  return Array.from(new Set(dateKeys)).sort((a, b) => b.localeCompare(a));
+  const processedDateRefs = dateKeys.map((dateKey) => getAudittrailProcessedDatesCollection(hotelUid).doc(dateKey));
+  const processedDateSnaps = await db.getAll(...processedDateRefs);
+  return new Set(processedDateSnaps.filter((dateSnap) => dateSnap.exists).map((dateSnap) => dateSnap.id));
+}
+
+async function getAudittrailDateCollectionsToProcess(hotelUid, maxDateKey = getYesterdayDateKey()) {
+  const audittrailRootRef = db.doc(`hotels/${hotelUid}/reports/audittrail`);
+  const minDateKey = getReportLookbackStartDateKey(maxDateKey);
+  const audittrailDateCollections = getDateCollectionsDescending(
+    await audittrailRootRef.listCollections(),
+    minDateKey,
+    maxDateKey
+  );
+  const processedDateKeys = await getProcessedAudittrailDateKeys(
+    hotelUid,
+    audittrailDateCollections.map((dateCollection) => dateCollection.id)
+  );
+
+  return audittrailDateCollections.filter((dateCollection) => !processedDateKeys.has(dateCollection.id));
 }
 
 async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
@@ -422,10 +431,11 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
 
     if (packageCodes.length) {
       processedHotels += 1;
-      const audittrailDateKeys = await getAudittrailDateKeysToProcess(hotelUid, dateKey);
+      const audittrailDateCollections = await getAudittrailDateCollectionsToProcess(hotelUid, dateKey);
 
-      for (const audittrailDateKey of audittrailDateKeys) {
-        const audittrailSnap = await db.collection(`hotels/${hotelUid}/reports/audittrail/${audittrailDateKey}`).get();
+      for (const audittrailDateCollection of audittrailDateCollections) {
+        const audittrailDateKey = audittrailDateCollection.id;
+        const audittrailSnap = await audittrailDateCollection.get();
         let batch = db.batch();
         let writesInBatch = 0;
 
@@ -470,11 +480,6 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
           { merge: true }
         );
         writesInBatch += 1;
-
-        if (!audittrailSnap.empty) {
-          batch.delete(getAudittrailPendingDatesCollection(hotelUid).doc(audittrailDateKey));
-          writesInBatch += 1;
-        }
 
         if (writesInBatch > 0) await batch.commit();
       }
@@ -521,5 +526,5 @@ module.exports = {
   getTodayDateKey,
   getYesterdayDateKey,
   getReportLookbackStartDateKey,
-  getAudittrailDateKeysToProcess,
+  getAudittrailDateCollectionsToProcess,
 };
