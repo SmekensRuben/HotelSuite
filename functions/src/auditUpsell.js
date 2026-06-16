@@ -297,6 +297,8 @@ async function findReservationDetailsForUpsell(hotelUid, auditUpsellRecord) {
       fullName: reservationDetails.fullName || null,
       rateCode: reservationDetails.rateCode || null,
       roomNumber: reservationDetails.roomNumber || null,
+      arrivalDate: reservationDetails.arrivalDate || null,
+      departureDate: reservationDetails.departureDate || null,
       reservationDetailsDate: dateKey,
     };
   }

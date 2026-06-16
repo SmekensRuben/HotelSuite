@@ -188,6 +188,8 @@ export default function UpsellAuditPage() {
       },
     },
     { key: "packageCode", label: "Package Code" },
+    { key: "arrivalDate", label: "Arrival Date" },
+    { key: "departureDate", label: "Departure Date" },
     { key: "price", label: "Price", render: (row) => formatPrice(row.price) },
     { key: "nights", label: "Nights", render: getNights, sortValue: getNights },
     {
