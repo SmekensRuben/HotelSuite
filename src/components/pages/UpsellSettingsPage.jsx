@@ -9,8 +9,9 @@ import { useHotelContext } from "../../contexts/HotelContext";
 import {
   getUpsellDateKeys,
   getUpsellSettings,
+  deleteUpsellPackageCode,
   saveUpsellDailyExpectedOccupancy,
-  saveUpsellPackageCodes,
+  saveUpsellPackageCode,
   saveUpsellRevenueTargetRules,
 } from "../../services/firebaseUpsells";
 import { getFileImportTypes } from "../../services/firebaseSettings";
@@ -20,6 +21,12 @@ const emptyManualImportForm = {
   fileImportTypeId: "",
   targetDate: toDateInputValue(new Date()),
   file: null,
+};
+
+const emptyPackageCodeForm = {
+  packageCode: "",
+  category: "",
+  description: "",
 };
 
 const emptyRuleForm = {
@@ -56,7 +63,7 @@ export default function UpsellSettingsPage() {
   const [dailyExpectedOccupancy, setDailyExpectedOccupancy] = useState({});
   const [revenueTargetRules, setRevenueTargetRules] = useState([]);
   const [fileImportTypes, setFileImportTypes] = useState([]);
-  const [newPackageCode, setNewPackageCode] = useState("");
+  const [packageCodeForm, setPackageCodeForm] = useState(emptyPackageCodeForm);
   const [ruleForm, setRuleForm] = useState(emptyRuleForm);
   const [occupancyRange, setOccupancyRange] = useState(getDefaultOccupancyRange);
   const [bulkOccupancy, setBulkOccupancy] = useState("");
@@ -153,24 +160,24 @@ export default function UpsellSettingsPage() {
 
   const handleAddPackageCode = async (event) => {
     event.preventDefault();
-    const normalizedCode = String(newPackageCode || "").trim().toUpperCase();
+    const normalizedCode = String(packageCodeForm.packageCode || "").trim().toUpperCase();
 
     if (!normalizedCode) {
       setError("Enter a package code.");
       return;
     }
 
-    if (packageCodes.includes(normalizedCode)) {
+    if (packageCodes.some((packageCode) => packageCode.packageCode === normalizedCode)) {
       setError("This package code is already in the list.");
       return;
     }
 
     const saved = await runSave(
-      () => saveUpsellPackageCodes(hotelUid, [...packageCodes, normalizedCode]),
-      "Package codes saved in Firebase.",
+      () => saveUpsellPackageCode(hotelUid, { ...packageCodeForm, packageCode: normalizedCode }),
+      "Package code saved in Firebase.",
       "Package codes could not be saved."
     );
-    if (saved) setNewPackageCode("");
+    if (saved) setPackageCodeForm(emptyPackageCodeForm);
   };
 
   const saveOccupancy = (nextOccupancy, successMessage = "Expected occupancy saved in Firebase.") =>
@@ -301,10 +308,12 @@ export default function UpsellSettingsPage() {
     return months;
   }, {});
 
-  const packageRows = useMemo(() => packageCodes.map((packageCode) => ({ id: packageCode, packageCode })), [packageCodes]);
+  const packageRows = useMemo(() => packageCodes, [packageCodes]);
 
   const packageColumns = [
     { key: "packageCode", label: "Package Code" },
+    { key: "category", label: "Category" },
+    { key: "description", label: "Description" },
     {
       key: "actions",
       label: "Actions",
@@ -312,7 +321,7 @@ export default function UpsellSettingsPage() {
       render: (row) => (
         <button
           type="button"
-          onClick={() => runSave(() => saveUpsellPackageCodes(hotelUid, packageCodes.filter((code) => code !== row.packageCode)), "Package codes saved in Firebase.", "Package codes could not be saved.")}
+          onClick={() => runSave(() => deleteUpsellPackageCode(hotelUid, row.id), "Package code deleted.", "Package code could not be deleted.")}
           disabled={saving}
           className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -447,8 +456,10 @@ export default function UpsellSettingsPage() {
             <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
               <form onSubmit={handleAddPackageCode}>
                 <label htmlFor="package-code" className="block text-sm font-semibold text-gray-700">Add package code</label>
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                  <input id="package-code" type="text" value={newPackageCode} onChange={(event) => setNewPackageCode(event.target.value)} placeholder="E.g. PKG_BREAKFAST" className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm uppercase" disabled={saving} />
+                <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-[1fr_1fr_2fr_auto] xl:items-end">
+                  <input id="package-code" type="text" value={packageCodeForm.packageCode} onChange={(event) => setPackageCodeForm((form) => ({ ...form, packageCode: event.target.value }))} placeholder="E.g. PKG_BREAKFAST" className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm uppercase" disabled={saving} />
+                  <input type="text" value={packageCodeForm.category} onChange={(event) => setPackageCodeForm((form) => ({ ...form, category: event.target.value }))} placeholder="Category" className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" disabled={saving} />
+                  <input type="text" value={packageCodeForm.description} onChange={(event) => setPackageCodeForm((form) => ({ ...form, description: event.target.value }))} placeholder="Description" className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" disabled={saving} />
                   <button type="submit" disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:opacity-50"><Plus className="h-4 w-4" /> Add</button>
                 </div>
               </form>

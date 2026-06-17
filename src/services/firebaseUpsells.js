@@ -1,17 +1,30 @@
-import { db, collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp } from "../firebaseConfig";
+import { db, collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp } from "../firebaseConfig";
 
 const UPSELL_SETTINGS_DOC_ID = "upsells";
+
+function normalizePackageCode(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function normalizePackageCodeDocument(packageCode, documentId = "") {
+  const code = normalizePackageCode(packageCode?.packageCode || packageCode?.id || documentId);
+  if (!code) return null;
+
+  return {
+    id: documentId || code,
+    packageCode: code,
+    category: String(packageCode?.category || "").trim(),
+    description: String(packageCode?.description || "").trim(),
+  };
+}
 
 function normalizePackageCodes(packageCodes) {
   if (!Array.isArray(packageCodes)) return [];
 
-  return Array.from(
-    new Set(
-      packageCodes
-        .map((code) => String(code || "").trim().toUpperCase())
-        .filter(Boolean)
-    )
-  ).sort((a, b) => a.localeCompare(b));
+  return packageCodes
+    .map((packageCode) => normalizePackageCodeDocument(packageCode))
+    .filter(Boolean)
+    .sort((a, b) => a.packageCode.localeCompare(b.packageCode));
 }
 
 function normalizeDateKey(dateKey) {
@@ -159,12 +172,13 @@ export async function getUpsellSettings(hotelUid) {
   if (!hotelUid) return { packageCodes: [], dailyExpectedOccupancy: {}, revenueTargetRules: [] };
 
   const settingsRef = doc(db, `hotels/${hotelUid}/settings`, UPSELL_SETTINGS_DOC_ID);
-  const snapshot = await getDoc(settingsRef);
+  const packageCodesRef = collection(db, `hotels/${hotelUid}/settings/${UPSELL_SETTINGS_DOC_ID}/packagecodes`);
+  const [snapshot, packageCodesSnapshot] = await Promise.all([getDoc(settingsRef), getDocs(packageCodesRef)]);
   const data = snapshot.exists() ? snapshot.data() : {};
 
   return {
     ...data,
-    packageCodes: normalizePackageCodes(data.packageCodes),
+    packageCodes: normalizePackageCodes(packageCodesSnapshot.docs.map((packageCodeDoc) => normalizePackageCodeDocument(packageCodeDoc.data() || {}, packageCodeDoc.id))),
     dailyExpectedOccupancy: normalizeDailyExpectedOccupancy(data.dailyExpectedOccupancy, data.dailyRevenueTargets),
     revenueTargetRules: normalizeRevenueTargetRules(data.revenueTargetRules, data.dailyRevenueTargets),
   };
@@ -236,18 +250,40 @@ export async function updateAuditUpsellValidation(
   await updateDoc(auditUpsellRef, updateData);
 }
 
-export async function saveUpsellPackageCodes(hotelUid, packageCodes) {
+export async function saveUpsellPackageCode(hotelUid, packageCode) {
   if (!hotelUid) return;
 
+  const normalizedPackageCode = normalizePackageCodeDocument(packageCode);
+  if (!normalizedPackageCode) return;
+
   const settingsRef = doc(db, `hotels/${hotelUid}/settings`, UPSELL_SETTINGS_DOC_ID);
-  await setDoc(
-    settingsRef,
-    {
-      packageCodes: normalizePackageCodes(packageCodes),
-      updatedAt: new Date(),
-    },
-    { merge: true }
+  const packageCodeRef = doc(
+    db,
+    `hotels/${hotelUid}/settings/${UPSELL_SETTINGS_DOC_ID}/packagecodes`,
+    normalizedPackageCode.packageCode
   );
+
+  await Promise.all([
+    setDoc(settingsRef, { updatedAt: new Date() }, { merge: true }),
+    setDoc(packageCodeRef, {
+      packageCode: normalizedPackageCode.packageCode,
+      category: normalizedPackageCode.category,
+      description: normalizedPackageCode.description,
+      updatedAt: new Date(),
+    }),
+  ]);
+}
+
+export async function deleteUpsellPackageCode(hotelUid, packageCodeId) {
+  if (!hotelUid || !packageCodeId) return;
+
+  const settingsRef = doc(db, `hotels/${hotelUid}/settings`, UPSELL_SETTINGS_DOC_ID);
+  const packageCodeRef = doc(db, `hotels/${hotelUid}/settings/${UPSELL_SETTINGS_DOC_ID}/packagecodes`, packageCodeId);
+
+  await Promise.all([
+    setDoc(settingsRef, { updatedAt: new Date() }, { merge: true }),
+    deleteDoc(packageCodeRef),
+  ]);
 }
 
 
