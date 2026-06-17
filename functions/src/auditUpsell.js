@@ -49,7 +49,17 @@ function getYesterdayDateKey(now = new Date(), timeZone = DEFAULT_TIMEZONE) {
 
 function normalizePackageCodes(value) {
   if (!Array.isArray(value)) return [];
-  return Array.from(new Set(value.map((item) => String(item || '').trim()).filter(Boolean)));
+  return Array.from(new Set(value.map((item) => String(item?.packageCode || item?.id || item || '').trim()).filter(Boolean)));
+}
+
+async function getUpsellPackageCodes(hotelUid) {
+  const packageCodesSnap = await db.collection(`hotels/${hotelUid}/settings/upsells/packagecodes`).get();
+  return normalizePackageCodes(
+    packageCodesSnap.docs.map((packageCodeDoc) => ({
+      id: packageCodeDoc.id,
+      ...(packageCodeDoc.data() || {}),
+    }))
+  );
 }
 
 function normalizeActionDescription(value) {
@@ -443,8 +453,7 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
 
   for (const hotelDoc of hotelsSnap.docs) {
     const hotelUid = hotelDoc.id;
-    const upsellSettingsSnap = await db.doc(`hotels/${hotelUid}/settings/upsells`).get();
-    const packageCodes = normalizePackageCodes(upsellSettingsSnap.data()?.packageCodes);
+    const packageCodes = await getUpsellPackageCodes(hotelUid);
 
     if (packageCodes.length) {
       processedHotels += 1;
