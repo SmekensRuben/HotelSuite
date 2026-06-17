@@ -3,6 +3,7 @@ const { onSchedule, logger, admin } = require('./config');
 const db = admin.firestore();
 const DEFAULT_TIMEZONE = 'Europe/Amsterdam';
 const REPORT_LOOKBACK_DAYS = 31;
+const AUDIT_UPSELL_JOB_TIMEOUT_SECONDS = 900;
 const MONTHS = {
   jan: '01',
   feb: '02',
@@ -164,21 +165,34 @@ function getReservationBillNumbers(reservationBill, documentId) {
   return normalizedBillNumbers.length ? normalizedBillNumbers : normalizeBillNumbers([documentId]);
 }
 
-async function findLinkableAuditUpsellSnapshot(hotelUid, auditUpsellDocumentId) {
+async function getLinkableAuditUpsellSnapshotMap(hotelUid, minDateKey = null, maxDateKey = null) {
   const auditUpsellRootRef = db.doc(`hotels/${hotelUid}/upselling/auditUpsell`);
-  const dateCollections = await auditUpsellRootRef.listCollections();
+  const dateCollections = getDateCollectionsDescending(
+    await auditUpsellRootRef.listCollections(),
+    minDateKey,
+    maxDateKey
+  );
+  const linkableAuditUpsellSnapshotMap = new Map();
 
   for (const dateCollection of dateCollections) {
-    const auditUpsellSnap = await dateCollection.doc(auditUpsellDocumentId).get();
-    if (!auditUpsellSnap.exists) continue;
+    const auditUpsellsSnap = await dateCollection.get();
 
-    const auditUpsell = auditUpsellSnap.data() || {};
-    if (!BILL_LINKABLE_AUDIT_UPSELL_STATUSES.has(auditUpsell.status)) continue;
+    for (const auditUpsellSnap of auditUpsellsSnap.docs) {
+      if (linkableAuditUpsellSnapshotMap.has(auditUpsellSnap.id)) continue;
 
-    return auditUpsellSnap;
+      const auditUpsell = auditUpsellSnap.data() || {};
+      if (!BILL_LINKABLE_AUDIT_UPSELL_STATUSES.has(auditUpsell.status)) continue;
+
+      linkableAuditUpsellSnapshotMap.set(auditUpsellSnap.id, auditUpsellSnap);
+    }
   }
 
-  return null;
+  return linkableAuditUpsellSnapshotMap;
+}
+
+async function findLinkableAuditUpsellSnapshot(hotelUid, auditUpsellDocumentId) {
+  const linkableAuditUpsellSnapshotMap = await getLinkableAuditUpsellSnapshotMap(hotelUid);
+  return linkableAuditUpsellSnapshotMap.get(auditUpsellDocumentId) || null;
 }
 
 async function linkReservationBillsForHotel(hotelUid, maxDateKey = getTodayDateKey()) {
@@ -193,6 +207,7 @@ async function linkReservationBillsForHotel(hotelUid, maxDateKey = getTodayDateK
   let linkedReservationBills = 0;
   let batch = db.batch();
   let writesInBatch = 0;
+  const linkableAuditUpsellSnapshotMap = await getLinkableAuditUpsellSnapshotMap(hotelUid);
 
   for (const reservationBillsDateCollection of reservationBillsDateCollections) {
     const reservationBillsSnap = await reservationBillsDateCollection.get();
@@ -203,7 +218,7 @@ async function linkReservationBillsForHotel(hotelUid, maxDateKey = getTodayDateK
       if (!confirmationNumber) continue;
 
       checkedReservationBills += 1;
-      const auditUpsellSnap = await findLinkableAuditUpsellSnapshot(hotelUid, confirmationNumber);
+      const auditUpsellSnap = linkableAuditUpsellSnapshotMap.get(confirmationNumber);
       if (!auditUpsellSnap) continue;
 
       const billNumbers = getReservationBillNumbers(reservationBill, reservationBillSnap.id);
@@ -508,6 +523,7 @@ const processScheduledAuditUpsells = onSchedule(
   {
     schedule: '30 7 * * *',
     timeZone: DEFAULT_TIMEZONE,
+    timeoutSeconds: AUDIT_UPSELL_JOB_TIMEOUT_SECONDS,
   },
   async () => {
     await processAuditUpsellsForDate();
@@ -520,6 +536,7 @@ module.exports = {
   parseUpsellAuditRecord,
   parseUpsellAuditRecords,
   findReservationDetailsForUpsell,
+  getLinkableAuditUpsellSnapshotMap,
   findDetailedFolioForBillNumber,
   linkReservationBillsForHotel,
   linkDetailedFoliosForHotel,
