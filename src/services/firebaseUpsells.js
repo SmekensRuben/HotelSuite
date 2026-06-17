@@ -13,7 +13,6 @@ function normalizePackageCodeDocument(packageCode, documentId = "") {
   return {
     id: documentId || code,
     packageCode: code,
-    name: String(packageCode?.name || "").trim(),
     category: String(packageCode?.category || "").trim(),
     description: String(packageCode?.description || "").trim(),
   };
@@ -268,7 +267,6 @@ export async function saveUpsellPackageCode(hotelUid, packageCode) {
     setDoc(settingsRef, { updatedAt: new Date() }, { merge: true }),
     setDoc(packageCodeRef, {
       packageCode: normalizedPackageCode.packageCode,
-      name: normalizedPackageCode.name,
       category: normalizedPackageCode.category,
       description: normalizedPackageCode.description,
       updatedAt: new Date(),

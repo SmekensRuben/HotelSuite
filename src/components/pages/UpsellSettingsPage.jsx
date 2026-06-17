@@ -25,7 +25,6 @@ const emptyManualImportForm = {
 
 const emptyPackageCodeForm = {
   packageCode: "",
-  name: "",
   category: "",
   description: "",
 };
@@ -313,7 +312,6 @@ export default function UpsellSettingsPage() {
 
   const packageColumns = [
     { key: "packageCode", label: "Package Code" },
-    { key: "name", label: "Name" },
     { key: "category", label: "Category" },
     { key: "description", label: "Description" },
     {
@@ -458,9 +456,8 @@ export default function UpsellSettingsPage() {
             <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
               <form onSubmit={handleAddPackageCode}>
                 <label htmlFor="package-code" className="block text-sm font-semibold text-gray-700">Add package code</label>
-                <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_2fr_auto] xl:items-end">
+                <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-[1fr_1fr_2fr_auto] xl:items-end">
                   <input id="package-code" type="text" value={packageCodeForm.packageCode} onChange={(event) => setPackageCodeForm((form) => ({ ...form, packageCode: event.target.value }))} placeholder="E.g. PKG_BREAKFAST" className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm uppercase" disabled={saving} />
-                  <input type="text" value={packageCodeForm.name} onChange={(event) => setPackageCodeForm((form) => ({ ...form, name: event.target.value }))} placeholder="Name" className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" disabled={saving} />
                   <input type="text" value={packageCodeForm.category} onChange={(event) => setPackageCodeForm((form) => ({ ...form, category: event.target.value }))} placeholder="Category" className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" disabled={saving} />
                   <input type="text" value={packageCodeForm.description} onChange={(event) => setPackageCodeForm((form) => ({ ...form, description: event.target.value }))} placeholder="Description" className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" disabled={saving} />
                   <button type="submit" disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:opacity-50"><Plus className="h-4 w-4" /> Add</button>
