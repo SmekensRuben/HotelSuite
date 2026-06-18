@@ -81,8 +81,9 @@ function parseOperaDate(value) {
 
 function parseUpsellAuditRecords(auditRecord, packageCodes) {
   const actionDescription = normalizeActionDescription(auditRecord.actionDescription);
-  const confirmationItem = actionDescription.find((item) => /^Confirmation No\.\s*(.+)$/i.test(item));
-  const confirmationMatch = confirmationItem?.match(/^Confirmation No\.\s*(.+)$/i);
+  const confirmationRegex = /(?:^|[:\s])Confirmation No\.\s*(.+)$/i;
+  const confirmationItem = actionDescription.find((item) => confirmationRegex.test(item));
+  const confirmationMatch = confirmationItem?.match(confirmationRegex);
 
   return packageCodes.flatMap((packageCode) => {
     const escapedPackageCode = packageCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -91,15 +92,23 @@ function parseUpsellAuditRecords(auditRecord, packageCodes) {
       `^PRODUCT\\s+(${escapedPackageCode})\\s+BETWEEN\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s+AND\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s*:\\s*PRICE\\s*->\\s*(.*?)(?:\\s+Confirmation No\\.\\s*(.+))?$`,
       'i'
     );
+    const productConfirmationRegex = new RegExp(
+      `^PRODUCT\\s+${escapedPackageCode}\\s+BETWEEN\\s+\\d{1,2}-[A-Za-z]{3}-\\d{4}\\s+AND\\s+\\d{1,2}-[A-Za-z]{3}-\\d{4}\\s*:\\s*Confirmation No\\.\\s*(.+)$`,
+      'i'
+    );
 
     const productAddedItem = actionDescription.find((item) => productAddedRegex.test(item));
     if (!productAddedItem) return [];
+    const packageConfirmationItem = actionDescription.find((item) => productConfirmationRegex.test(item));
+    const packageConfirmationMatch = packageConfirmationItem?.match(productConfirmationRegex);
 
     return actionDescription.flatMap((item) => {
       const productPriceMatch = item.match(productPriceRegex);
       if (!productPriceMatch) return [];
 
-      const confirmationNumber = productPriceMatch[5]?.trim() || confirmationMatch?.[1]?.trim();
+      const confirmationNumber = productPriceMatch[5]?.trim()
+        || packageConfirmationMatch?.[1]?.trim()
+        || confirmationMatch?.[1]?.trim();
       if (!confirmationNumber) return [];
 
       return [
