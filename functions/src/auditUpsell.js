@@ -91,15 +91,23 @@ function parseUpsellAuditRecords(auditRecord, packageCodes) {
       `^PRODUCT\\s+(${escapedPackageCode})\\s+BETWEEN\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s+AND\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s*:\\s*PRICE\\s*->\\s*(.*?)(?:\\s+Confirmation No\\.\\s*(.+))?$`,
       'i'
     );
+    const productConfirmationRegex = new RegExp(
+      `^PRODUCT\\s+${escapedPackageCode}\\s+BETWEEN\\s+\\d{1,2}-[A-Za-z]{3}-\\d{4}\\s+AND\\s+\\d{1,2}-[A-Za-z]{3}-\\d{4}\\s*:\\s*Confirmation No\\.\\s*(.+)$`,
+      'i'
+    );
 
     const productAddedItem = actionDescription.find((item) => productAddedRegex.test(item));
     if (!productAddedItem) return [];
+    const packageConfirmationItem = actionDescription.find((item) => productConfirmationRegex.test(item));
+    const packageConfirmationMatch = packageConfirmationItem?.match(productConfirmationRegex);
 
     return actionDescription.flatMap((item) => {
       const productPriceMatch = item.match(productPriceRegex);
       if (!productPriceMatch) return [];
 
-      const confirmationNumber = productPriceMatch[5]?.trim() || confirmationMatch?.[1]?.trim();
+      const confirmationNumber = productPriceMatch[5]?.trim()
+        || packageConfirmationMatch?.[1]?.trim()
+        || confirmationMatch?.[1]?.trim();
       if (!confirmationNumber) return [];
 
       return [
