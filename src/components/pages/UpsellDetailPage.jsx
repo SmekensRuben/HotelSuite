@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, CheckCircle2, XCircle } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
@@ -160,6 +160,7 @@ function DetailGrid({ items, subtle = false }) {
 
 export default function UpsellDetailPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { date, auditUpsellId } = useParams();
   const { hotelUid } = useHotelContext();
   const [auditUpsell, setAuditUpsell] = useState(null);
@@ -301,6 +302,11 @@ export default function UpsellDetailPage() {
       ? `${formatCompactEuro(effectiveRevenue)}/${formatCompactEuro(expectedRevenue)} Validated`
       : null;
   const detailedFolios = Array.isArray(auditUpsell?.detailedFolios) ? auditUpsell.detailedFolios : [];
+  const backToAudit = Boolean(location.state?.fromUpsellAudit);
+  const backPath = backToAudit
+    ? `/front-office/upselling/audit${location.state?.auditSearch || ""}`
+    : "/front-office/upselling";
+  const backLabel = backToAudit ? "Back to Upsell Audit" : "Back to Upselling";
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -308,10 +314,10 @@ export default function UpsellDetailPage() {
       <PageContainer className="space-y-6">
         <button
           type="button"
-          onClick={() => navigate("/front-office/upselling")}
+          onClick={() => navigate(backPath)}
           className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
         >
-          <ArrowLeft className="h-4 w-4" /> Back to Upselling
+          <ArrowLeft className="h-4 w-4" /> {backLabel}
         </button>
 
         {loading ? (
