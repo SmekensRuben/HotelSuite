@@ -226,7 +226,7 @@ export async function getUpsellSettings(hotelUid) {
 }
 
 function getUpsellFilterDate(record) {
-  return record.departureDate || record.endDate || record.logDate || record.dateKey;
+  return record.departureDate || record.endDate || "";
 }
 
 export async function getAuditUpsells(hotelUid, startDate, endDate, options = {}) {
