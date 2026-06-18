@@ -160,7 +160,7 @@ export default function UpsellsPage() {
 
       try {
         const [records, settings, upsellSettings] = await Promise.all([
-          getAuditUpsells(hotelUid, dateRange.startDate, dateRange.endDate),
+          getAuditUpsells(hotelUid, dateRange.startDate, dateRange.endDate, { dateFilter: "departureDate" }),
           getSettings(hotelUid),
           getUpsellSettings(hotelUid),
         ]);

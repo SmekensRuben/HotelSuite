@@ -48,6 +48,13 @@ function parseDateKey(dateKey) {
   return date;
 }
 
+function addDaysToDateKey(dateKey, days) {
+  const date = parseDateKey(dateKey);
+  if (!date) return dateKey;
+  date.setDate(date.getDate() + days);
+  return toDateKey(date);
+}
+
 function toDateKey(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -218,10 +225,16 @@ export async function getUpsellSettings(hotelUid) {
   };
 }
 
-export async function getAuditUpsells(hotelUid, startDate, endDate) {
+function getUpsellFilterDate(record) {
+  return record.departureDate || record.endDate || "";
+}
+
+export async function getAuditUpsells(hotelUid, startDate, endDate, options = {}) {
   if (!hotelUid) return [];
 
-  const dateKeys = enumerateDateKeys(startDate, endDate);
+  const filterByDepartureDate = options.dateFilter === "departureDate";
+  const fetchStartDate = filterByDepartureDate ? addDaysToDateKey(startDate, -120) : startDate;
+  const dateKeys = enumerateDateKeys(fetchStartDate, endDate);
   if (!dateKeys.length) return [];
 
   const snapshots = await Promise.all(
@@ -235,9 +248,16 @@ export async function getAuditUpsells(hotelUid, startDate, endDate) {
     })
   );
 
-  return snapshots.flatMap(({ dateKey, docs }) =>
+  const records = snapshots.flatMap(({ dateKey, docs }) =>
     docs.map((auditUpsellDoc) => formatAuditUpsellData(auditUpsellDoc.data() || {}, auditUpsellDoc.id, dateKey))
   );
+
+  if (!filterByDepartureDate) return records;
+
+  return records.filter((record) => {
+    const filterDate = getUpsellFilterDate(record);
+    return filterDate >= startDate && filterDate <= endDate;
+  });
 }
 
 export async function getAuditUpsell(hotelUid, dateKey, auditUpsellId) {
