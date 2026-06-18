@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { ArrowLeft, Download } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
+import * as XLSX from "xlsx";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
@@ -81,15 +82,52 @@ function normalizeOperaUserMappings(rawMappings) {
   }, {});
 }
 
+function getInitialDateRange(searchParams, fallbackDateRange) {
+  const startDate = searchParams.get("startDate");
+  const endDate = searchParams.get("endDate");
+
+  if (parseDateKey(startDate) && parseDateKey(endDate) && startDate <= endDate) {
+    return { startDate, endDate };
+  }
+
+  return fallbackDateRange;
+}
+
+function getInitialStatuses(searchParams) {
+  const statuses = searchParams
+    .get("statuses")
+    ?.split(",")
+    .map((status) => status.trim())
+    .filter(Boolean);
+
+  return statuses?.length ? statuses : ["Checked Out"];
+}
+
+function getExportValue(value) {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) return value.map((item) => (typeof item === "object" ? JSON.stringify(item) : item)).join("; ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return value;
+}
+
+function sanitizeFileName(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^a-z0-9-_]+/gi, "-")
+    .replace(/^-+|-+$/g, "") || "export";
+}
+
 export default function UpsellAuditPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { hotelUid } = useHotelContext();
   const defaultDateRange = useMemo(() => getDateRangeForPreset("thisMonth"), []);
-  const [dateRange, setDateRange] = useState(defaultDateRange);
-  const [dateRangePreset, setDateRangePreset] = useState("thisMonth");
+  const initialSearchParams = useMemo(() => new URLSearchParams(location.search), []);
+  const [dateRange, setDateRange] = useState(() => getInitialDateRange(initialSearchParams, defaultDateRange));
+  const [dateRangePreset, setDateRangePreset] = useState(() => initialSearchParams.get("preset") || "thisMonth");
   const [auditUpsells, setAuditUpsells] = useState([]);
   const [operaUserMappings, setOperaUserMappings] = useState({});
-  const [selectedStatuses, setSelectedStatuses] = useState(["Checked Out"]);
+  const [selectedStatuses, setSelectedStatuses] = useState(() => getInitialStatuses(initialSearchParams));
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -103,6 +141,21 @@ export default function UpsellAuditPage() {
       }),
     []
   );
+
+
+  useEffect(() => {
+    const nextSearchParams = new URLSearchParams();
+
+    if (dateRange.startDate) nextSearchParams.set("startDate", dateRange.startDate);
+    if (dateRange.endDate) nextSearchParams.set("endDate", dateRange.endDate);
+    if (dateRangePreset) nextSearchParams.set("preset", dateRangePreset);
+    if (selectedStatuses.length) nextSearchParams.set("statuses", selectedStatuses.join(","));
+
+    const nextSearch = nextSearchParams.toString() ? `?${nextSearchParams.toString()}` : "";
+    if (nextSearch !== location.search) {
+      navigate({ pathname: location.pathname, search: nextSearch }, { replace: true });
+    }
+  }, [dateRange.endDate, dateRange.startDate, dateRangePreset, location.pathname, location.search, navigate, selectedStatuses]);
 
   useEffect(() => {
     let active = true;
@@ -177,6 +230,69 @@ export default function UpsellAuditPage() {
     );
   };
 
+  const handleExport = () => {
+    const preferredKeys = [
+      "logDate",
+      "logTime",
+      "operaUser",
+      "mappedOperaUser",
+      "packageCode",
+      "startDate",
+      "endDate",
+      "arrivalDate",
+      "departureDate",
+      "price",
+      "nights",
+      "expectedRevenue",
+      "status",
+      "validationStatus",
+      "validationComment",
+      "effectiveRevenue",
+      "folioLinkStatus",
+      "confirmationNumber",
+      "documentId",
+      "dateKey",
+      "fullName",
+      "roomNumber",
+      "rateCode",
+      "billNumbers",
+    ];
+    const allKeys = Array.from(
+      auditUpsells.reduce((keys, record) => {
+        Object.keys(record || {}).forEach((key) => keys.add(key));
+        return keys;
+      }, new Set(preferredKeys))
+    );
+    const exportKeys = [
+      ...preferredKeys,
+      ...allKeys.filter((key) => !preferredKeys.includes(key) && key !== "id"),
+    ];
+
+    const rows = auditUpsells.map((record) => {
+      const operaUser = String(record.operaUser || "").trim();
+      return exportKeys.reduce((row, key) => {
+        if (key === "mappedOperaUser") {
+          row[key] = operaUserMappings[operaUser] || operaUserMappings[operaUser.toLowerCase()] || operaUser;
+        } else if (key === "nights") {
+          row[key] = getNights(record);
+        } else if (key === "expectedRevenue") {
+          row[key] = getExpectedRevenue(record);
+        } else {
+          row[key] = getExportValue(record[key]);
+        }
+        return row;
+      }, {});
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(rows, { header: exportKeys });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Upsell Audit");
+    XLSX.writeFile(
+      workbook,
+      `${sanitizeFileName(`upsell-audit-${dateRange.startDate}-to-${dateRange.endDate}`)}.xlsx`
+    );
+  };
+
   const columns = [
     { key: "logDate", label: "Log Date", sortValue: (row) => row.logDate || row.dateKey },
     {
@@ -212,13 +328,23 @@ export default function UpsellAuditPage() {
             <h1 className="text-3xl font-semibold">Upsell Audit</h1>
             <p className="mt-1 text-gray-600">Audit upsells within the selected date range.</p>
           </div>
-          <button
-            type="button"
-            onClick={() => navigate("/front-office/upselling")}
-            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-          >
-            <ArrowLeft className="h-4 w-4" /> Back to Upselling
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={!auditUpsells.length}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#981b1b] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Download className="h-4 w-4" /> Export
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate("/front-office/upselling")}
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+            >
+              <ArrowLeft className="h-4 w-4" /> Back to Upselling
+            </button>
+          </div>
         </div>
 
         <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -268,7 +394,11 @@ export default function UpsellAuditPage() {
           <DataListTable
             columns={columns}
             rows={filteredAuditUpsells}
-            onRowClick={(row) => navigate(`/front-office/upselling/${row.dateKey}/${row.documentId}`)}
+            onRowClick={(row) =>
+              navigate(`/front-office/upselling/${row.dateKey}/${row.documentId}`, {
+                state: { fromUpsellAudit: true, auditSearch: location.search },
+              })
+            }
             emptyMessage="No audit upsells found for the selected date range and status filters."
           />
         )}
