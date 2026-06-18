@@ -108,6 +108,16 @@ function getInitialDateRange(searchParams, fallbackDateRange) {
   return fallbackDateRange;
 }
 
+function getInitialOperaUsers(searchParams) {
+  const operaUsers = searchParams
+    .get("operaUsers")
+    ?.split(",")
+    .map((operaUser) => operaUser.trim())
+    .filter(Boolean);
+
+  return operaUsers || [];
+}
+
 function getInitialStatuses(searchParams) {
   const statuses = searchParams
     .get("statuses")
@@ -143,7 +153,9 @@ export default function UpsellAuditPage() {
   const [auditUpsells, setAuditUpsells] = useState([]);
   const [operaUserMappings, setOperaUserMappings] = useState({});
   const [selectedStatuses, setSelectedStatuses] = useState(() => getInitialStatuses(initialSearchParams));
+  const [selectedOperaUsers, setSelectedOperaUsers] = useState(() => getInitialOperaUsers(initialSearchParams));
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
+  const [operaUserDropdownOpen, setOperaUserDropdownOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -165,12 +177,13 @@ export default function UpsellAuditPage() {
     if (dateRange.endDate) nextSearchParams.set("endDate", dateRange.endDate);
     if (dateRangePreset) nextSearchParams.set("preset", dateRangePreset);
     if (selectedStatuses.length) nextSearchParams.set("statuses", selectedStatuses.join(","));
+    if (selectedOperaUsers.length) nextSearchParams.set("operaUsers", selectedOperaUsers.join(","));
 
     const nextSearch = nextSearchParams.toString() ? `?${nextSearchParams.toString()}` : "";
     if (nextSearch !== location.search) {
       navigate({ pathname: location.pathname, search: nextSearch }, { replace: true });
     }
-  }, [dateRange.endDate, dateRange.startDate, dateRangePreset, location.pathname, location.search, navigate, selectedStatuses]);
+  }, [dateRange.endDate, dateRange.startDate, dateRangePreset, location.pathname, location.search, navigate, selectedOperaUsers, selectedStatuses]);
 
   useEffect(() => {
     let active = true;
@@ -232,10 +245,31 @@ export default function UpsellAuditPage() {
     return Array.from(statuses).sort((a, b) => a.localeCompare(b));
   }, [auditUpsells]);
 
+  const operaUserOptions = useMemo(() => {
+    const operaUsers = new Set();
+    auditUpsells.forEach((record) => {
+      const operaUser = String(record.operaUser || "").trim();
+      if (operaUser) operaUsers.add(operaUser);
+    });
+    return Array.from(operaUsers).sort((a, b) => a.localeCompare(b));
+  }, [auditUpsells]);
+
   const filteredAuditUpsells = useMemo(() => {
     if (!selectedStatuses.length) return [];
-    return auditUpsells.filter((record) => selectedStatuses.includes(record.status));
-  }, [auditUpsells, selectedStatuses]);
+    return auditUpsells.filter((record) => {
+      const operaUser = String(record.operaUser || "").trim();
+      return selectedStatuses.includes(record.status)
+        && (!selectedOperaUsers.length || selectedOperaUsers.includes(operaUser));
+    });
+  }, [auditUpsells, selectedOperaUsers, selectedStatuses]);
+
+  const handleOperaUserToggle = (operaUser) => {
+    setSelectedOperaUsers((currentOperaUsers) =>
+      currentOperaUsers.includes(operaUser)
+        ? currentOperaUsers.filter((currentOperaUser) => currentOperaUser !== operaUser)
+        : [...currentOperaUsers, operaUser]
+    );
+  };
 
   const handleStatusToggle = (status) => {
     setSelectedStatuses((currentStatuses) =>
@@ -283,7 +317,7 @@ export default function UpsellAuditPage() {
       ...allKeys.filter((key) => !preferredKeys.includes(key) && key !== "id"),
     ];
 
-    const rows = auditUpsells.map((record) => {
+    const rows = filteredAuditUpsells.map((record) => {
       const operaUser = String(record.operaUser || "").trim();
       return exportKeys.reduce((row, key) => {
         if (key === "mappedOperaUser") {
@@ -371,6 +405,35 @@ export default function UpsellAuditPage() {
               onDateRangeChange={setDateRange}
               compact
             />
+
+            <div className="relative">
+              <p className="text-sm font-medium text-gray-700">Opera User</p>
+              <button
+                type="button"
+                onClick={() => setOperaUserDropdownOpen((open) => !open)}
+                className="mt-2 inline-flex min-w-48 items-center justify-between gap-3 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+              >
+                <span>{selectedOperaUsers.length ? `${selectedOperaUsers.length} selected` : "All opera users"}</span>
+                <span aria-hidden="true">▾</span>
+              </button>
+              {operaUserDropdownOpen && (
+                <div className="absolute right-0 z-10 mt-2 max-h-72 w-64 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+                  {operaUserOptions.length ? operaUserOptions.map((operaUser) => (
+                    <label key={operaUser} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={selectedOperaUsers.includes(operaUser)}
+                        onChange={() => handleOperaUserToggle(operaUser)}
+                        className="h-4 w-4 rounded border-gray-300 text-[#b41f1f] focus:ring-[#b41f1f]"
+                      />
+                      {operaUserMappings[operaUser] || operaUserMappings[operaUser.toLowerCase()] || operaUser}
+                    </label>
+                  )) : (
+                    <div className="px-3 py-2 text-sm text-gray-500">No opera users found</div>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="relative">
               <p className="text-sm font-medium text-gray-700">Status</p>
               <button
