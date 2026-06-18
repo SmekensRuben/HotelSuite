@@ -81,8 +81,9 @@ function parseOperaDate(value) {
 
 function parseUpsellAuditRecords(auditRecord, packageCodes) {
   const actionDescription = normalizeActionDescription(auditRecord.actionDescription);
-  const confirmationItem = actionDescription.find((item) => /^Confirmation No\.\s*(.+)$/i.test(item));
-  const confirmationMatch = confirmationItem?.match(/^Confirmation No\.\s*(.+)$/i);
+  const confirmationRegex = /(?:^|[:\s])Confirmation No\.\s*(.+)$/i;
+  const confirmationItem = actionDescription.find((item) => confirmationRegex.test(item));
+  const confirmationMatch = confirmationItem?.match(confirmationRegex);
 
   return packageCodes.flatMap((packageCode) => {
     const escapedPackageCode = packageCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -91,15 +92,23 @@ function parseUpsellAuditRecords(auditRecord, packageCodes) {
       `^PRODUCT\\s+(${escapedPackageCode})\\s+BETWEEN\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s+AND\\s+(\\d{1,2}-[A-Za-z]{3}-\\d{4})\\s*:\\s*PRICE\\s*->\\s*(.*?)(?:\\s+Confirmation No\\.\\s*(.+))?$`,
       'i'
     );
+    const productConfirmationRegex = new RegExp(
+      `^PRODUCT\\s+${escapedPackageCode}\\s+BETWEEN\\s+\\d{1,2}-[A-Za-z]{3}-\\d{4}\\s+AND\\s+\\d{1,2}-[A-Za-z]{3}-\\d{4}\\s*:\\s*Confirmation No\\.\\s*(.+)$`,
+      'i'
+    );
 
     const productAddedItem = actionDescription.find((item) => productAddedRegex.test(item));
     if (!productAddedItem) return [];
+    const packageConfirmationItem = actionDescription.find((item) => productConfirmationRegex.test(item));
+    const packageConfirmationMatch = packageConfirmationItem?.match(productConfirmationRegex);
 
     return actionDescription.flatMap((item) => {
       const productPriceMatch = item.match(productPriceRegex);
       if (!productPriceMatch) return [];
 
-      const confirmationNumber = productPriceMatch[5]?.trim() || confirmationMatch?.[1]?.trim();
+      const confirmationNumber = productPriceMatch[5]?.trim()
+        || packageConfirmationMatch?.[1]?.trim()
+        || confirmationMatch?.[1]?.trim();
       if (!confirmationNumber) return [];
 
       return [
@@ -120,6 +129,41 @@ function parseUpsellAuditRecords(auditRecord, packageCodes) {
 
 function parseUpsellAuditRecord(auditRecord, packageCodes) {
   return parseUpsellAuditRecords(auditRecord, packageCodes)[0] || null;
+}
+
+function getPackageKey(packageRecord) {
+  return [
+    packageRecord.packageCode,
+    packageRecord.startDate,
+    packageRecord.endDate,
+    packageRecord.price,
+  ].map((value) => String(value || '').trim()).join('|');
+}
+
+function toAuditUpsellPackage(auditUpsellRecord, sourceAudittrailDate, sourceAudittrailDocumentId) {
+  return {
+    packageCode: auditUpsellRecord.packageCode,
+    startDate: auditUpsellRecord.startDate,
+    endDate: auditUpsellRecord.endDate,
+    price: auditUpsellRecord.price,
+    sourceAudittrailDate,
+    sourceAudittrailDocumentId,
+  };
+}
+
+function mergeAuditUpsellPackages(existingPackages, newPackages) {
+  const packagesByKey = new Map();
+
+  [...(Array.isArray(existingPackages) ? existingPackages : []), ...newPackages].forEach((packageRecord) => {
+    if (!packageRecord?.packageCode) return;
+    packagesByKey.set(getPackageKey(packageRecord), packageRecord);
+  });
+
+  return Array.from(packagesByKey.values());
+}
+
+function getAuditUpsellPackageCodes(packages) {
+  return Array.from(new Set(packages.map((packageRecord) => packageRecord.packageCode).filter(Boolean)));
 }
 
 function enumerateStayDateKeys(startDate, endDate) {
@@ -270,7 +314,10 @@ function normalizeBillNumbers(value) {
 }
 
 function getDetailedFolioSearchDateKeys(auditUpsellRecord, todayDateKey = getTodayDateKey()) {
-  const startDate = auditUpsellRecord.packageStartDate || auditUpsellRecord.startDate;
+  const packageStartDates = Array.isArray(auditUpsellRecord.packages)
+    ? auditUpsellRecord.packages.map((packageRecord) => packageRecord?.startDate).filter(Boolean).sort()
+    : [];
+  const startDate = auditUpsellRecord.packageStartDate || auditUpsellRecord.startDate || packageStartDates[0];
   return enumerateStayDateKeys(startDate, todayDateKey);
 }
 
@@ -462,8 +509,7 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
       for (const audittrailDateCollection of audittrailDateCollections) {
         const audittrailDateKey = audittrailDateCollection.id;
         const audittrailSnap = await audittrailDateCollection.get();
-        let batch = db.batch();
-        let writesInBatch = 0;
+        const auditUpsellsByPath = new Map();
 
         for (const auditDoc of audittrailSnap.docs) {
           const auditUpsellRecords = parseUpsellAuditRecords(auditDoc.data() || {}, packageCodes);
@@ -472,28 +518,65 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
           for (const auditUpsellRecord of auditUpsellRecords) {
             const targetDate = auditUpsellRecord.logDate || audittrailDateKey;
             const targetDocumentId = auditUpsellRecord.confirmationNumber;
-            const reservationDetails = await findReservationDetailsForUpsell(hotelUid, auditUpsellRecord);
             const targetRef = db.doc(`hotels/${hotelUid}/upselling/auditUpsell/${targetDate}/${targetDocumentId}`);
-            batch.set(
-              targetRef,
-              {
-                ...auditUpsellRecord,
-                ...(reservationDetails || {}),
-                status: reservationDetails ? 'Arrived' : 'Created',
-                sourceAudittrailDate: audittrailDateKey,
-                sourceAudittrailDocumentId: auditDoc.id,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-              },
-              { merge: true }
-            );
-            writesInBatch += 1;
-            createdRecords += 1;
+            const packageRecord = toAuditUpsellPackage(auditUpsellRecord, audittrailDateKey, auditDoc.id);
+            const existingPendingAuditUpsell = auditUpsellsByPath.get(targetRef.path);
+            const pendingPackages = existingPendingAuditUpsell?.packages || [];
+            const packages = mergeAuditUpsellPackages(pendingPackages, [packageRecord]);
+            const reservationDetails = existingPendingAuditUpsell?.reservationDetails
+              || await findReservationDetailsForUpsell(hotelUid, auditUpsellRecord);
 
-            if (writesInBatch >= 450) {
-              await batch.commit();
-              batch = db.batch();
-              writesInBatch = 0;
-            }
+            auditUpsellsByPath.set(targetRef.path, {
+              ref: targetRef,
+              auditUpsellRecord,
+              packages,
+              reservationDetails,
+              sourceAudittrailDates: Array.from(new Set([
+                ...(existingPendingAuditUpsell?.sourceAudittrailDates || []),
+                audittrailDateKey,
+              ])),
+              sourceAudittrailDocumentIds: Array.from(new Set([
+                ...(existingPendingAuditUpsell?.sourceAudittrailDocumentIds || []),
+                auditDoc.id,
+              ])),
+            });
+            createdRecords += 1;
+          }
+        }
+
+        let batch = db.batch();
+        let writesInBatch = 0;
+
+        for (const pendingAuditUpsell of auditUpsellsByPath.values()) {
+          const existingAuditUpsellSnap = await pendingAuditUpsell.ref.get();
+          const existingAuditUpsell = existingAuditUpsellSnap.data() || {};
+          const packages = mergeAuditUpsellPackages(existingAuditUpsell.packages, pendingAuditUpsell.packages);
+
+          batch.set(
+            pendingAuditUpsell.ref,
+            {
+              logDate: pendingAuditUpsell.auditUpsellRecord.logDate,
+              logTime: pendingAuditUpsell.auditUpsellRecord.logTime,
+              operaUser: pendingAuditUpsell.auditUpsellRecord.operaUser,
+              confirmationNumber: pendingAuditUpsell.auditUpsellRecord.confirmationNumber,
+              packageCodes: getAuditUpsellPackageCodes(packages),
+              packages,
+              ...(pendingAuditUpsell.reservationDetails || {}),
+              status: pendingAuditUpsell.reservationDetails ? 'Arrived' : existingAuditUpsell.status || 'Created',
+              sourceAudittrailDate: pendingAuditUpsell.sourceAudittrailDates.at(-1),
+              sourceAudittrailDocumentId: pendingAuditUpsell.sourceAudittrailDocumentIds.at(-1),
+              sourceAudittrailDates: admin.firestore.FieldValue.arrayUnion(...pendingAuditUpsell.sourceAudittrailDates),
+              sourceAudittrailDocumentIds: admin.firestore.FieldValue.arrayUnion(...pendingAuditUpsell.sourceAudittrailDocumentIds),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+          writesInBatch += 1;
+
+          if (writesInBatch >= 450) {
+            await batch.commit();
+            batch = db.batch();
+            writesInBatch = 0;
           }
         }
 
@@ -555,4 +638,6 @@ module.exports = {
   getYesterdayDateKey,
   getReportLookbackStartDateKey,
   getAudittrailDateCollectionsToProcess,
+  mergeAuditUpsellPackages,
+  getAuditUpsellPackageCodes,
 };

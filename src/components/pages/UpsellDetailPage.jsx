@@ -71,6 +71,18 @@ function getNights(record) {
 }
 
 function getExpectedRevenue(record) {
+  if (Array.isArray(record?.packages) && record.packages.length) {
+    return record.packages.reduce((sum, packageRecord) => {
+      const startDate = parseDateKey(packageRecord?.startDate);
+      const endDate = parseDateKey(packageRecord?.endDate);
+      const price = toNumericPrice(packageRecord?.price);
+      if (!startDate || !endDate || startDate > endDate || price === null) return sum;
+
+      const nights = Math.round((endDate - startDate) / (24 * 60 * 60 * 1000)) + 1;
+      return sum + price * nights;
+    }, 0);
+  }
+
   const nights = getNights(record);
   const price = toNumericPrice(record?.price);
   if (nights === "—" || price === null) return null;

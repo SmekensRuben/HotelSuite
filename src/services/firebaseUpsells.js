@@ -131,7 +131,40 @@ function formatFirestoreValue(value) {
   return value ?? "";
 }
 
+function getAuditUpsellPackages(data) {
+  return Array.isArray(data.packages) ? data.packages : [];
+}
+
+function getAuditUpsellPackageCodes(data) {
+  const packages = getAuditUpsellPackages(data);
+  return Array.from(new Set(packages.map((packageRecord) => packageRecord?.packageCode).filter(Boolean)));
+}
+
+function getAuditUpsellDateRange(data, dateField) {
+  const packageDates = getAuditUpsellPackages(data)
+    .map((packageRecord) => formatFirestoreValue(packageRecord?.[dateField]))
+    .filter(Boolean)
+    .sort();
+
+  if (!packageDates.length) return "";
+  return dateField === "startDate" ? packageDates[0] : packageDates[packageDates.length - 1];
+}
+
+function getAuditUpsellPrice(data) {
+  const packages = getAuditUpsellPackages(data);
+  if (!packages.length) return "";
+
+  const total = packages.reduce((sum, packageRecord) => {
+    const numericPrice = Number.parseFloat(String(packageRecord?.price || "").replace(",", "."));
+    return Number.isFinite(numericPrice) ? sum + numericPrice : sum;
+  }, 0);
+
+  return Number.isInteger(total) ? String(total) : total.toFixed(2);
+}
+
 function formatAuditUpsellData(data, auditUpsellDocId, dateKey) {
+  const packageCodes = getAuditUpsellPackageCodes(data);
+
   return {
     ...data,
     id: `${dateKey}-${auditUpsellDocId}`,
@@ -140,12 +173,13 @@ function formatAuditUpsellData(data, auditUpsellDocId, dateKey) {
     logDate: formatFirestoreValue(data.logDate || dateKey),
     logTime: formatFirestoreValue(data.logTime),
     operaUser: data.operaUser || "",
-    packageCode: data.packageCode || "",
-    startDate: formatFirestoreValue(data.startDate),
-    endDate: formatFirestoreValue(data.endDate),
+    packageCodes,
+    packageCode: packageCodes.join(", "),
+    startDate: getAuditUpsellDateRange(data, "startDate"),
+    endDate: getAuditUpsellDateRange(data, "endDate"),
     arrivalDate: formatFirestoreValue(data.arrivalDate),
     departureDate: formatFirestoreValue(data.departureDate),
-    price: data.price ?? "",
+    price: getAuditUpsellPrice(data),
     status: getUpsellStatus(data),
     confirmationNumber: data.confirmationNumber || auditUpsellDocId,
   };

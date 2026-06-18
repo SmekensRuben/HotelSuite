@@ -58,6 +58,21 @@ function getNights(row) {
 }
 
 function getExpectedRevenue(row) {
+  if (Array.isArray(row.packages) && row.packages.length) {
+    const total = row.packages.reduce((sum, packageRecord) => {
+      const startDate = parseDateKey(packageRecord?.startDate);
+      const endDate = parseDateKey(packageRecord?.endDate);
+      const price = toNumericPrice(packageRecord?.price);
+      if (!startDate || !endDate || startDate > endDate || price === null) return sum;
+
+      const millisecondsPerDay = 24 * 60 * 60 * 1000;
+      const nights = Math.round((endDate - startDate) / millisecondsPerDay) + 1;
+      return sum + price * nights;
+    }, 0);
+
+    return total;
+  }
+
   const nights = getNights(row);
   const price = toNumericPrice(row.price);
   if (nights === "" || price === null) return "";
