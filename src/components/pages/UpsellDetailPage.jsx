@@ -116,6 +116,35 @@ function formatValue(value) {
   return String(value);
 }
 
+
+function getAuditUpsellPackageRows(record) {
+  const packages = Array.isArray(record?.packages) ? record.packages : [];
+
+  if (packages.length) {
+    return packages.map((packageRecord, index) => ({
+      id: `${packageRecord?.packageCode || "package"}-${packageRecord?.startDate || "start"}-${packageRecord?.endDate || "end"}-${index}`,
+      packageCode: packageRecord?.packageCode,
+      startDate: packageRecord?.startDate,
+      endDate: packageRecord?.endDate,
+      price: packageRecord?.price,
+      logDate: packageRecord?.logDate || record?.logDate || record?.dateKey,
+      logTime: packageRecord?.logTime || record?.logTime,
+    }));
+  }
+
+  return [
+    {
+      id: "legacy-package",
+      packageCode: record?.packageCode,
+      startDate: record?.startDate,
+      endDate: record?.endDate,
+      price: record?.price,
+      logDate: record?.logDate || record?.dateKey,
+      logTime: record?.logTime,
+    },
+  ];
+}
+
 function statusBadgeClass(status) {
   const normalizedStatus = String(status || "").toLowerCase();
   if (["linked", "valid", "validated", "approved"].includes(normalizedStatus)) {
@@ -314,6 +343,7 @@ export default function UpsellDetailPage() {
       ? `${formatCompactEuro(effectiveRevenue)}/${formatCompactEuro(expectedRevenue)} Validated`
       : null;
   const detailedFolios = Array.isArray(auditUpsell?.detailedFolios) ? auditUpsell.detailedFolios : [];
+  const packageRows = getAuditUpsellPackageRows(auditUpsell);
   const backToAudit = Boolean(location.state?.fromUpsellAudit);
   const backPath = backToAudit
     ? `/front-office/upselling/audit${location.state?.auditSearch || ""}`
@@ -464,6 +494,42 @@ export default function UpsellDetailPage() {
                   );
                 })
               )}
+            </section>
+
+
+            <section className="space-y-4">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Packages</h2>
+                <p className="mt-1 text-sm text-gray-600">All packages included in this audit upsell record.</p>
+              </div>
+
+              <InfoCard title="Audit upsell packages">
+                <div className="overflow-x-auto rounded-lg border border-gray-200">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        {["Package", "Start date", "End date", "Price", "Log date", "Log time"].map((heading) => (
+                          <th key={heading} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                            {heading}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {packageRows.map((packageRecord) => (
+                        <tr key={packageRecord.id}>
+                          <td className="px-4 py-3 text-sm font-medium text-gray-900">{formatValue(packageRecord.packageCode)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{formatValue(packageRecord.startDate)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{formatValue(packageRecord.endDate)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{formatCurrency(packageRecord.price)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{formatValue(packageRecord.logDate)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{formatValue(packageRecord.logTime)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </InfoCard>
             </section>
 
             <details className="rounded-xl border border-gray-200 bg-white/70 p-5 shadow-sm">
