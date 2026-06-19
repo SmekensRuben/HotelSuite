@@ -146,6 +146,8 @@ function toAuditUpsellPackage(auditUpsellRecord, sourceAudittrailDate, sourceAud
     startDate: auditUpsellRecord.startDate,
     endDate: auditUpsellRecord.endDate,
     price: auditUpsellRecord.price,
+    logDate: auditUpsellRecord.logDate,
+    logTime: auditUpsellRecord.logTime,
     sourceAudittrailDate,
     sourceAudittrailDocumentId,
   };
