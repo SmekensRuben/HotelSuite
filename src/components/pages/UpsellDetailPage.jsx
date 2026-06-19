@@ -211,6 +211,7 @@ export default function UpsellDetailPage() {
   const [validationModalAction, setValidationModalAction] = useState("");
   const [validationComment, setValidationComment] = useState("");
   const [effectiveRevenueInput, setEffectiveRevenueInput] = useState("");
+  const [validationOperaUserInput, setValidationOperaUserInput] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -273,6 +274,7 @@ export default function UpsellDetailPage() {
 
     setValidationModalAction(validationStatus);
     setValidationComment("");
+    setValidationOperaUserInput(String(auditUpsell?.operaUser || "").trim());
     setEffectiveRevenueInput(
       validationStatus === "approved" && expectedRevenue !== null ? String(expectedRevenue.toFixed(2)) : ""
     );
@@ -285,6 +287,7 @@ export default function UpsellDetailPage() {
     setValidationModalAction("");
     setValidationComment("");
     setEffectiveRevenueInput("");
+    setValidationOperaUserInput("");
   };
 
   const handleValidationSubmit = async (event) => {
@@ -296,6 +299,7 @@ export default function UpsellDetailPage() {
       return;
     }
 
+    const cleanedOperaUser = validationOperaUserInput.trim();
     const effectiveRevenue =
       validationModalAction === "approved" ? toNumericPrice(effectiveRevenueInput) : undefined;
     if (validationModalAction === "approved" && effectiveRevenue === null) {
@@ -315,7 +319,8 @@ export default function UpsellDetailPage() {
         validationModalAction,
         cleanedComment,
         getCurrentUserPayload(auth.currentUser),
-        effectiveRevenue
+        effectiveRevenue,
+        validationModalAction === "approved" ? cleanedOperaUser : undefined
       );
       const refreshedRecord = await getAuditUpsell(hotelUid, date, auditUpsellId);
       setAuditUpsell(refreshedRecord);
@@ -576,6 +581,16 @@ export default function UpsellDetailPage() {
                   value={effectiveRevenueInput}
                   onChange={(event) => setEffectiveRevenueInput(event.target.value)}
                   className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium normal-case tracking-normal text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </label>
+              <label className="sm:col-span-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Opera User
+                <input
+                  type="text"
+                  value={validationOperaUserInput}
+                  onChange={(event) => setValidationOperaUserInput(event.target.value)}
+                  className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium normal-case tracking-normal text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="Opera user"
                 />
               </label>
             </div>

@@ -281,7 +281,8 @@ export async function updateAuditUpsellValidation(
   validationStatus,
   validationComment,
   currentUser,
-  effectiveRevenue
+  effectiveRevenue,
+  operaUser
 ) {
   if (!hotelUid || !dateKey || !auditUpsellId) return;
 
@@ -299,6 +300,10 @@ export async function updateAuditUpsellValidation(
 
   if (effectiveRevenue !== undefined) {
     updateData.effectiveRevenue = effectiveRevenue;
+  }
+
+  if (operaUser !== undefined) {
+    updateData.operaUser = String(operaUser || "").trim();
   }
 
   await updateDoc(auditUpsellRef, updateData);
