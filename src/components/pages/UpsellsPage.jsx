@@ -321,7 +321,7 @@ export default function UpsellsPage() {
           <p className="text-2xl font-semibold text-gray-900">{formatPrice(targetSummary.expectedRevenue)}</p>
           <p className="text-xs font-medium text-gray-600">{statusLabels[targetSummary.status]} · {targetSummary.progress}% of Stretch</p>
           <p className={`mt-1 inline-flex rounded-full px-2 py-1 text-xs font-semibold ${targetSummary.onSchedule ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
-            {targetSummary.onSchedule ? "Op schema t.o.v. Minimum" : "Niet op schema t.o.v. Minimum"}
+            {targetSummary.onSchedule ? "On schedule vs Minimum" : "Behind schedule vs Minimum"}
           </p>
         </div>
       </div>
@@ -331,7 +331,7 @@ export default function UpsellsPage() {
             className={`absolute top-0 rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 ring-1 ring-blue-200 ${targetSummary.scheduleMarker >= 95 ? "-translate-x-full" : targetSummary.scheduleMarker <= 5 ? "translate-x-0" : "-translate-x-1/2"}`}
             style={{ left: `${targetSummary.scheduleMarker}%` }}
           >
-            Vandaag: {formatPrice(targetSummary.scheduleTarget)}
+            Today: {formatPrice(targetSummary.scheduleTarget)}
           </div>
           <div className="relative h-5 rounded-full bg-gray-200">
             <div className={`h-full rounded-full transition-all ${targetSummary.onSchedule ? "bg-emerald-500" : "bg-[#b41f1f]"}`} style={{ width: `${targetSummary.progress}%` }} />
@@ -352,7 +352,7 @@ export default function UpsellsPage() {
             );
           })}
         </div>
-        <p className="mt-3 text-xs text-gray-500">De blauwe lijn toont hoeveel expected revenue vandaag nodig is om op schema te zitten t.o.v. Minimum ({formatPrice(targetSummary.scheduleTarget)}).</p>
+        <p className="mt-3 text-xs text-gray-500">The blue line shows the expected revenue needed today to stay on schedule versus Minimum ({formatPrice(targetSummary.scheduleTarget)}).</p>
         <p className="mt-3 text-xs text-gray-500">Expected occupancy in selection: {targetSummary.expectedOccupancy} rooms.</p>
       </div>
     </div>
