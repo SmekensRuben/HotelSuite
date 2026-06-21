@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ListTodo, Settings } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
+import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getAuditUpsells, getUpsellDateKeys, getUpsellSettings } from "../../services/firebaseUpsells";
@@ -131,6 +132,7 @@ export default function UpsellsPage() {
   const [revenueTargetRules, setRevenueTargetRules] = useState([]);
   const [packageCodes, setPackageCodes] = useState([]);
   const [expandedRankings, setExpandedRankings] = useState({});
+  const [selectedRankingUser, setSelectedRankingUser] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -154,6 +156,7 @@ export default function UpsellsPage() {
         setDailyExpectedOccupancy({});
         setRevenueTargetRules([]);
         setPackageCodes([]);
+        setSelectedRankingUser("");
         setLoading(false);
         return;
       }
@@ -287,7 +290,7 @@ export default function UpsellsPage() {
     const dateKeys = getUpsellDateKeys(dateRange.startDate, dateRange.endDate);
     const todayKey = new Date().toISOString().slice(0, 10);
     const elapsedDays = dateKeys.filter((dateKey) => dateKey <= todayKey).length;
-    const scheduleTarget = dateKeys.length ? totals.stretch * (Math.min(elapsedDays, dateKeys.length) / dateKeys.length) : 0;
+    const scheduleTarget = dateKeys.length ? totals.minimum * (Math.min(elapsedDays, dateKeys.length) / dateKeys.length) : 0;
     const scheduleMarker = getClampedPercentage(scheduleTarget, totals.stretch);
     const onSchedule = expectedRevenue >= scheduleTarget;
 
@@ -317,15 +320,26 @@ export default function UpsellsPage() {
           <p className="text-sm text-gray-500">Expected revenue</p>
           <p className="text-2xl font-semibold text-gray-900">{formatPrice(targetSummary.expectedRevenue)}</p>
           <p className="text-xs font-medium text-gray-600">{statusLabels[targetSummary.status]} · {targetSummary.progress}% of Stretch</p>
+          <p className={`mt-1 inline-flex rounded-full px-2 py-1 text-xs font-semibold ${targetSummary.onSchedule ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+            {targetSummary.onSchedule ? "Op schema t.o.v. Minimum" : "Niet op schema t.o.v. Minimum"}
+          </p>
         </div>
       </div>
       <div className="mt-5">
-        <div className="relative h-5 overflow-hidden rounded-full bg-gray-200">
-          <div className={`h-full rounded-full transition-all ${targetSummary.onSchedule ? "bg-emerald-500" : "bg-[#b41f1f]"}`} style={{ width: `${targetSummary.progress}%` }} />
+        <div className="relative pt-7">
+          <div
+            className={`absolute top-0 rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 ring-1 ring-blue-200 ${targetSummary.scheduleMarker >= 95 ? "-translate-x-full" : targetSummary.scheduleMarker <= 5 ? "translate-x-0" : "-translate-x-1/2"}`}
+            style={{ left: `${targetSummary.scheduleMarker}%` }}
+          >
+            Vandaag: {formatPrice(targetSummary.scheduleTarget)}
+          </div>
+          <div className="relative h-5 rounded-full bg-gray-200">
+            <div className={`h-full rounded-full transition-all ${targetSummary.onSchedule ? "bg-emerald-500" : "bg-[#b41f1f]"}`} style={{ width: `${targetSummary.progress}%` }} />
           {[{ label: "Minimum", left: targetSummary.minimumMarker }, { label: "Reach", left: targetSummary.reachMarker }, { label: "Stretch", left: 100 }].map((marker) => (
             <div key={marker.label} className="absolute top-0 h-full w-0.5 bg-gray-900/70" style={{ left: `${marker.left}%` }} title={marker.label} />
           ))}
-          <div className="absolute -top-1 h-7 w-0.5 bg-emerald-700" style={{ left: `${targetSummary.scheduleMarker}%` }} title={`On schedule: ${formatPrice(targetSummary.scheduleTarget)}`} />
+            <div className="absolute -top-1 h-7 w-1 rounded-full bg-blue-600 shadow-sm ring-2 ring-white" style={{ left: `${targetSummary.scheduleMarker}%` }} title={`Minimum on schedule: ${formatPrice(targetSummary.scheduleTarget)}`} />
+          </div>
         </div>
         <div className="relative mt-2 h-10 text-xs text-gray-600">
           {[{ label: "Minimum", value: targetSummary.minimum, left: targetSummary.minimumMarker }, { label: "Reach", value: targetSummary.reach, left: targetSummary.reachMarker }, { label: "Stretch", value: targetSummary.stretch, left: 100 }].map((marker) => {
@@ -338,13 +352,13 @@ export default function UpsellsPage() {
             );
           })}
         </div>
-        <p className="mt-3 text-xs text-gray-500">The green schedule line marks where expected revenue should be today ({formatPrice(targetSummary.scheduleTarget)}).</p>
+        <p className="mt-3 text-xs text-gray-500">De blauwe lijn toont hoeveel expected revenue vandaag nodig is om op schema te zitten t.o.v. Minimum ({formatPrice(targetSummary.scheduleTarget)}).</p>
         <p className="mt-3 text-xs text-gray-500">Expected occupancy in selection: {targetSummary.expectedOccupancy} rooms.</p>
       </div>
     </div>
   );
 
-  const RankingCard = ({ id, title, description, rows, emptyMessage }) => {
+  const RankingCard = ({ id, title, description, rows, emptyMessage, onRowSelect, selectedLabel }) => {
     const isExpanded = Boolean(expandedRankings[id]);
     const visibleRows = isExpanded ? rows : rows.slice(0, 5);
 
@@ -356,17 +370,31 @@ export default function UpsellsPage() {
         </div>
         <div className="divide-y divide-gray-100">
           {visibleRows.length ? (
-            visibleRows.map((row, index) => (
-              <div key={row.label} className="flex items-center justify-between gap-4 px-4 py-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-semibold text-gray-600">
-                    {index + 1}
-                  </span>
-                  <span className="truncate text-sm font-medium text-gray-800">{row.label}</span>
+            visibleRows.map((row, index) => {
+              const rowIsSelected = selectedLabel === row.label;
+              const rowClassName = `flex w-full items-center justify-between gap-4 px-4 py-3 text-left ${onRowSelect ? "cursor-pointer hover:bg-gray-50" : ""} ${rowIsSelected ? "bg-blue-50" : ""}`;
+              const content = (
+                <>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${rowIsSelected ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-600"}`}>
+                      {index + 1}
+                    </span>
+                    <span className="truncate text-sm font-medium text-gray-800">{row.label}</span>
+                  </div>
+                  <span className="shrink-0 text-sm font-semibold text-gray-800">{formatPrice(row.revenue)}</span>
+                </>
+              );
+
+              return onRowSelect ? (
+                <button key={row.label} type="button" onClick={() => onRowSelect(row.label)} className={rowClassName}>
+                  {content}
+                </button>
+              ) : (
+                <div key={row.label} className={rowClassName}>
+                  {content}
                 </div>
-                <span className="shrink-0 text-sm font-semibold text-gray-800">{formatPrice(row.revenue)}</span>
-              </div>
-            ))
+              );
+            })
           ) : (
             <div className="p-4 text-sm text-gray-500">{emptyMessage}</div>
           )}
@@ -383,6 +411,23 @@ export default function UpsellsPage() {
       </div>
     );
   };
+
+  const selectedUserAuditUpsells = useMemo(() => {
+    if (!selectedRankingUser) return [];
+    return auditUpsells.filter((record) => getOperaUserLabel(record.operaUser) === selectedRankingUser);
+  }, [auditUpsells, operaUserMappings, selectedRankingUser]);
+
+  const selectedUserColumns = [
+    { key: "logDate", label: "Log Date", sortValue: (row) => row.logDate || row.dateKey },
+    { key: "packageCode", label: "Package Code" },
+    { key: "arrivalDate", label: "Arrival Date" },
+    { key: "departureDate", label: "Departure Date" },
+    { key: "price", label: "Price", render: (row) => formatPrice(row.price) },
+    { key: "nights", label: "Nights", render: getNights, sortValue: getNights },
+    { key: "expectedRevenue", label: "Expected Revenue", render: (row) => formatPrice(getExpectedRevenue(row)), sortValue: getExpectedRevenue },
+    { key: "status", label: "Status" },
+    { key: "confirmationNumber", label: "Confirmation Number" },
+  ];
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -442,6 +487,8 @@ export default function UpsellsPage() {
               description="All audit upsell statuses are included."
               rows={revenueRankings.expected}
               emptyMessage="No expected revenue found for this period."
+              selectedLabel={selectedRankingUser}
+              onRowSelect={setSelectedRankingUser}
             />
             <RankingCard
               id="effective"
@@ -449,6 +496,8 @@ export default function UpsellsPage() {
               description='Only audit upsells with status "Validated" are included.'
               rows={revenueRankings.effective}
               emptyMessage="No validated revenue found for this period."
+              selectedLabel={selectedRankingUser}
+              onRowSelect={setSelectedRankingUser}
             />
             <RankingCard
               id="categories"
@@ -458,6 +507,26 @@ export default function UpsellsPage() {
               emptyMessage="No package category revenue found for this period."
             />
           </div>
+        )}
+
+        {!loading && selectedRankingUser && (
+          <section className="space-y-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Audit upsells for {selectedRankingUser}</h2>
+                <p className="mt-1 text-sm text-gray-500">All audit upsells in the selected period for the clicked ranking user.</p>
+              </div>
+              <button type="button" onClick={() => setSelectedRankingUser("")} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                Clear selection
+              </button>
+            </div>
+            <DataListTable
+              columns={selectedUserColumns}
+              rows={selectedUserAuditUpsells}
+              onRowClick={(row) => navigate(`/front-office/upselling/${row.dateKey}/${row.documentId}`)}
+              emptyMessage="No audit upsells found for this user."
+            />
+          </section>
         )}
       </PageContainer>
     </div>
