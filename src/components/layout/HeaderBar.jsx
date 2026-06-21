@@ -19,6 +19,8 @@ export default function HeaderBar({ today, onLogout }) {
   const canViewSettings = usePermission("settings", "read");
   const canViewLocations = usePermission("locations", "read");
   const canViewUsers = usePermission("users", "read");
+  const canReadAuditUpsells = usePermission("auditUpsells", "read");
+  const canManageAuditUpsells = usePermission("auditUpsells", "settings");
   const [hotels, setHotels] = useState([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
@@ -81,9 +83,9 @@ export default function HeaderBar({ today, onLogout }) {
   const frontOfficeMenuItems = [
     {
       label: "Upselling",
-      action: () => navigate("/front-office/upselling"),
+      action: () => navigate(canReadAuditUpsells ? "/front-office/upselling" : "/front-office/upselling/audit"),
       icon: Sparkles,
-      visible: true,
+      visible: canReadAuditUpsells || canManageAuditUpsells,
     },
   ].filter((item) => item.visible !== false);
 

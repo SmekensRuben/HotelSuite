@@ -7,6 +7,7 @@ import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getAuditUpsells, getUpsellDateKeys, getUpsellSettings } from "../../services/firebaseUpsells";
 import { getSettings } from "../../services/firebaseSettings";
+import { usePermission } from "../../hooks/usePermission";
 import UpsellDateRangeFilter, { getDateRangeForPreset } from "./UpsellDateRangeFilter";
 
 function toNumericPrice(value) {
@@ -115,6 +116,7 @@ function normalizeOperaUserMappings(rawMappings) {
 export default function UpsellsPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
+  const canManageAuditUpsells = usePermission("auditUpsells", "settings");
   const defaultDateRange = useMemo(() => getDateRangeForPreset("thisMonth"), []);
   const [dateRange, setDateRange] = useState(defaultDateRange);
   const [dateRangePreset, setDateRangePreset] = useState("thisMonth");
@@ -341,23 +343,27 @@ export default function UpsellsPage() {
               onDateRangeChange={setDateRange}
               compact
             />
-            <button
-              type="button"
-              onClick={() => navigate("/front-office/upselling/audit")}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
-              aria-label="Open Upsell Audit"
-              title="Open Upsell Audit"
-            >
-              <ListTodo className="h-5 w-5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate("/front-office/upselling/settings")}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
-              aria-label="Open upsell settings"
-            >
-              <Settings className="h-5 w-5" />
-            </button>
+            {canManageAuditUpsells && (
+              <button
+                type="button"
+                onClick={() => navigate("/front-office/upselling/audit")}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
+                aria-label="Open Upsell Audit"
+                title="Open Upsell Audit"
+              >
+                <ListTodo className="h-5 w-5" />
+              </button>
+            )}
+            {canManageAuditUpsells && (
+              <button
+                type="button"
+                onClick={() => navigate("/front-office/upselling/settings")}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
+                aria-label="Open upsell settings"
+              >
+                <Settings className="h-5 w-5" />
+              </button>
+            )}
           </div>
         </div>
 
