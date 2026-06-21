@@ -1,11 +1,12 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { createAuditUpsell } from "../../services/firebaseUpsells";
+import { createAuditUpsell, getUpsellSettings } from "../../services/firebaseUpsells";
+import { getSettings } from "../../services/firebaseSettings";
 
 const emptyPackage = () => ({
   packageCode: "",
@@ -39,6 +40,8 @@ export default function UpsellCreateAuditPage() {
     rateCode: "",
   });
   const [packages, setPackages] = useState([emptyPackage()]);
+  const [operaUserOptions, setOperaUserOptions] = useState([]);
+  const [packageCodeOptions, setPackageCodeOptions] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -51,6 +54,38 @@ export default function UpsellCreateAuditPage() {
       }),
     []
   );
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadOptions() {
+      if (!hotelUid) {
+        setOperaUserOptions([]);
+        setPackageCodeOptions([]);
+        return;
+      }
+
+      try {
+        const [settings, upsellSettings] = await Promise.all([
+          getSettings(hotelUid),
+          getUpsellSettings(hotelUid),
+        ]);
+        if (!active) return;
+
+        setOperaUserOptions(Object.keys(settings?.operaUserMappings || {}).sort((a, b) => a.localeCompare(b)));
+        setPackageCodeOptions((upsellSettings?.packageCodes || []).map((packageCode) => packageCode.packageCode).filter(Boolean));
+      } catch (err) {
+        console.error("Failed to load audit upsell form options", err);
+        if (active) setError("Opera users and packages could not be loaded.");
+      }
+    }
+
+    loadOptions();
+
+    return () => {
+      active = false;
+    };
+  }, [hotelUid]);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -154,7 +189,19 @@ export default function UpsellCreateAuditPage() {
                 <input type="time" value={form.logTime} onChange={(e) => updateForm("logTime", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" />
               </label>
               <label className="text-sm font-medium text-gray-700">Opera User
-                <input value={form.operaUser} onChange={(e) => updateForm("operaUser", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" required />
+                <input
+                  list="create-opera-user-options"
+                  value={form.operaUser}
+                  onChange={(e) => updateForm("operaUser", e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+                  placeholder="Search or select an Opera user"
+                  required
+                />
+                <datalist id="create-opera-user-options">
+                  {operaUserOptions.map((operaUser) => (
+                    <option key={operaUser} value={operaUser} />
+                  ))}
+                </datalist>
               </label>
               <label className="text-sm font-medium text-gray-700">Confirmation number
                 <input value={form.confirmationNumber} onChange={(e) => updateForm("confirmationNumber", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" />
@@ -204,7 +251,19 @@ export default function UpsellCreateAuditPage() {
                   </div>
                   <div className="grid gap-4 md:grid-cols-4">
                     <label className="text-sm font-medium text-gray-700">Package code
-                      <input value={packageRecord.packageCode} onChange={(e) => updatePackage(index, "packageCode", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" required />
+                      <input
+                        list={`create-package-code-options-${index}`}
+                        value={packageRecord.packageCode}
+                        onChange={(e) => updatePackage(index, "packageCode", e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+                        placeholder="Search or select a package"
+                        required
+                      />
+                      <datalist id={`create-package-code-options-${index}`}>
+                        {packageCodeOptions.map((packageCode) => (
+                          <option key={packageCode} value={packageCode} />
+                        ))}
+                      </datalist>
                     </label>
                     <label className="text-sm font-medium text-gray-700">Start date
                       <input type="date" value={packageRecord.startDate} onChange={(e) => updatePackage(index, "startDate", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" required />
