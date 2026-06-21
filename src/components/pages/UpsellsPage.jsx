@@ -96,12 +96,6 @@ function getClampedPercentage(value, target) {
   return Math.max(0, Math.min(100, Math.round((value / target) * 100)));
 }
 
-function getTargetStatus(expectedRevenue, minimumTarget, reachTarget, stretchTarget) {
-  if (stretchTarget > 0 && expectedRevenue >= stretchTarget) return "aboveStretch";
-  if (reachTarget > 0 && expectedRevenue >= reachTarget) return "betweenReachAndStretch";
-  if (minimumTarget > 0 && expectedRevenue >= minimumTarget) return "betweenMinimumAndReach";
-  return "belowMinimum";
-}
 
 function normalizeOperaUserMappings(rawMappings) {
   if (!rawMappings || typeof rawMappings !== "object") return {};
@@ -297,35 +291,20 @@ export default function UpsellsPage() {
     const progress = getProgressPercentage(expectedRevenue, totals.stretch);
     const minimumMarker = getProgressPercentage(totals.minimum, totals.stretch);
     const reachMarker = getProgressPercentage(totals.reach, totals.stretch);
-    const status = getTargetStatus(expectedRevenue, totals.minimum, totals.reach, totals.stretch);
-
-    return { expectedRevenue, expectedOccupancy: totals.expectedOccupancy, ...totals, progress, minimumMarker, reachMarker, scheduleMarker, scheduleTarget, onSchedule, status };
+    return { expectedRevenue, expectedOccupancy: totals.expectedOccupancy, ...totals, progress, minimumMarker, reachMarker, scheduleMarker, scheduleTarget, onSchedule };
   }, [auditUpsells, dailyExpectedOccupancy, dateRange.endDate, dateRange.startDate, revenueTargetRules]);
 
-  const statusLabels = {
-    belowMinimum: "Below Minimum",
-    betweenMinimumAndReach: "Between Minimum and Reach",
-    betweenReachAndStretch: "Between Reach and Stretch",
-    aboveStretch: "Above Stretch",
-  };
 
   const TargetSummaryCard = () => (
     <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900">Target revenue progress</h2>
-          <p className="mt-1 text-sm text-gray-500">One progress bar toward Stretch, with Minimum and Reach thresholds.</p>
-        </div>
+        <h2 className="text-lg font-semibold text-gray-900">Target revenue progress</h2>
         <div className="text-left sm:text-right">
           <p className="text-sm text-gray-500">Expected revenue</p>
           <p className="text-2xl font-semibold text-gray-900">{formatPrice(targetSummary.expectedRevenue)}</p>
-          <p className="text-xs font-medium text-gray-600">{statusLabels[targetSummary.status]} · {targetSummary.progress}% of Stretch</p>
-          <p className={`mt-1 inline-flex rounded-full px-2 py-1 text-xs font-semibold ${targetSummary.onSchedule ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
-            {targetSummary.onSchedule ? "On schedule vs Minimum" : "Behind schedule vs Minimum"}
-          </p>
         </div>
       </div>
-      <div className="mt-5">
+      <div className="mt-4">
         <div className="relative pt-7">
           <div
             className={`absolute top-0 rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 ring-1 ring-blue-200 ${targetSummary.scheduleMarker >= 95 ? "-translate-x-full" : targetSummary.scheduleMarker <= 5 ? "translate-x-0" : "-translate-x-1/2"}`}
@@ -335,7 +314,7 @@ export default function UpsellsPage() {
           </div>
           <div className="relative h-5 rounded-full bg-gray-200">
             <div className={`h-full rounded-full transition-all ${targetSummary.onSchedule ? "bg-emerald-500" : "bg-[#b41f1f]"}`} style={{ width: `${targetSummary.progress}%` }} />
-          {[{ label: "Minimum", left: targetSummary.minimumMarker }, { label: "Reach", left: targetSummary.reachMarker }, { label: "Stretch", left: 100 }].map((marker) => (
+          {[{ label: "Minimum", left: targetSummary.minimumMarker }, { label: "Reach", left: targetSummary.reachMarker }].map((marker) => (
             <div key={marker.label} className="absolute top-0 h-full w-0.5 bg-gray-900/70" style={{ left: `${marker.left}%` }} title={marker.label} />
           ))}
             <div className="absolute -top-1 h-7 w-1 rounded-full bg-blue-600 shadow-sm ring-2 ring-white" style={{ left: `${targetSummary.scheduleMarker}%` }} title={`Minimum on schedule: ${formatPrice(targetSummary.scheduleTarget)}`} />
@@ -352,8 +331,6 @@ export default function UpsellsPage() {
             );
           })}
         </div>
-        <p className="mt-3 text-xs text-gray-500">The blue line shows the expected revenue needed today to stay on schedule versus Minimum ({formatPrice(targetSummary.scheduleTarget)}).</p>
-        <p className="mt-3 text-xs text-gray-500">Expected occupancy in selection: {targetSummary.expectedOccupancy} rooms.</p>
       </div>
     </div>
   );
