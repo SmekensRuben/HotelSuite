@@ -9,7 +9,7 @@ function getComparableValue(row, column) {
   return raw;
 }
 
-export default function DataListTable({ columns, rows, onRowClick, emptyMessage, getRowProps }) {
+export default function DataListTable({ columns, rows, onRowClick, emptyMessage, getRowProps, pagination }) {
   const { t } = useTranslation("common");
   const resolvedEmptyMessage = emptyMessage || t("products.table.empty");
   const defaultSortColumn = columns.find((column) => column.sortable !== false);
@@ -32,6 +32,15 @@ export default function DataListTable({ columns, rows, onRowClick, emptyMessage,
     });
     return nextRows;
   }, [columns, rows, sortConfig]);
+
+  const paginatedRows = useMemo(() => {
+    if (!pagination) return sortedRows;
+
+    const pageSize = Math.max(1, pagination.pageSize || sortedRows.length || 1);
+    const currentPage = Math.max(1, Math.min(pagination.currentPage || 1, Math.ceil(sortedRows.length / pageSize) || 1));
+    const startIndex = (currentPage - 1) * pageSize;
+    return sortedRows.slice(startIndex, startIndex + pageSize);
+  }, [pagination, sortedRows]);
 
   const handleSort = (columnKey) => {
     setSortConfig((prev) => {
@@ -77,14 +86,14 @@ export default function DataListTable({ columns, rows, onRowClick, emptyMessage,
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 bg-white">
-            {sortedRows.length === 0 && (
+            {paginatedRows.length === 0 && (
               <tr>
                 <td className="px-4 py-6 text-sm text-gray-500" colSpan={columns.length}>
                   {resolvedEmptyMessage}
                 </td>
               </tr>
             )}
-            {sortedRows.map((row) => {
+            {paginatedRows.map((row) => {
               const rowProps = getRowProps ? getRowProps(row) : {};
               const { className: rowClassName = "", ...restRowProps } = rowProps;
               const defaultRowClassName = onRowClick ? "cursor-pointer hover:bg-gray-50 transition-colors" : "";
