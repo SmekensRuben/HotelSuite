@@ -206,6 +206,7 @@ export default function UpsellDetailPage() {
   const { hotelUid } = useHotelContext();
   const [auditUpsell, setAuditUpsell] = useState(null);
   const [operaUserMappings, setOperaUserMappings] = useState({});
+  const [operaUserOptions, setOperaUserOptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [savingAction, setSavingAction] = useState("");
   const [validationModalAction, setValidationModalAction] = useState("");
@@ -247,6 +248,7 @@ export default function UpsellDetailPage() {
         if (!active) return;
         setAuditUpsell(record);
         setOperaUserMappings(normalizeOperaUserMappings(settings?.operaUserMappings));
+        setOperaUserOptions(Object.keys(settings?.operaUserMappings || {}).sort((a, b) => a.localeCompare(b)));
       } catch (err) {
         console.error("Failed to load audit upsell detail", err);
         if (!active) return;
@@ -587,11 +589,19 @@ export default function UpsellDetailPage() {
                 Opera User
                 <input
                   type="text"
+                  list="validation-opera-user-options"
                   value={validationOperaUserInput}
                   onChange={(event) => setValidationOperaUserInput(event.target.value)}
                   className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium normal-case tracking-normal text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="Opera user"
+                  placeholder="Search or select an Opera user"
                 />
+                <datalist id="validation-opera-user-options">
+                  {operaUserOptions.map((operaUser) => (
+                    <option key={operaUser} value={operaUser}>
+                      {operaUserMappings[operaUser] || operaUser}
+                    </option>
+                  ))}
+                </datalist>
               </label>
             </div>
           )}

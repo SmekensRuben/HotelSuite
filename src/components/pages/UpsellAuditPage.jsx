@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Download } from "lucide-react";
+import { ArrowLeft, Download, Plus } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import * as XLSX from "xlsx";
 import HeaderBar from "../layout/HeaderBar";
@@ -158,6 +158,7 @@ export default function UpsellAuditPage() {
   const [operaUserDropdownOpen, setOperaUserDropdownOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   const today = useMemo(
     () =>
@@ -254,6 +255,8 @@ export default function UpsellAuditPage() {
     return Array.from(operaUsers).sort((a, b) => a.localeCompare(b));
   }, [auditUpsells]);
 
+  const pageSize = 25;
+
   const filteredAuditUpsells = useMemo(() => {
     if (!selectedStatuses.length) return [];
     return auditUpsells.filter((record) => {
@@ -262,6 +265,15 @@ export default function UpsellAuditPage() {
         && (!selectedOperaUsers.length || selectedOperaUsers.includes(operaUser));
     });
   }, [auditUpsells, selectedOperaUsers, selectedStatuses]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredAuditUpsells.length / pageSize));
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [dateRange.endDate, dateRange.startDate, selectedOperaUsers, selectedStatuses]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
 
   const handleOperaUserToggle = (operaUser) => {
     setSelectedOperaUsers((currentOperaUsers) =>
@@ -380,6 +392,15 @@ export default function UpsellAuditPage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={() => navigate("/front-office/upselling/audit/create")}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#981b1b]"
+              aria-label="Create Audit Upsell"
+              title="Create Audit Upsell"
+            >
+              <Plus className="h-4 w-4" /> Create
+            </button>
+            <button
+              type="button"
               onClick={handleExport}
               disabled={!auditUpsells.length}
               className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#981b1b] disabled:cursor-not-allowed disabled:opacity-60"
@@ -469,16 +490,43 @@ export default function UpsellAuditPage() {
             Loading audit upsells...
           </div>
         ) : (
-          <DataListTable
-            columns={columns}
-            rows={filteredAuditUpsells}
-            onRowClick={(row) =>
-              navigate(`/front-office/upselling/${row.dateKey}/${row.documentId}`, {
-                state: { fromUpsellAudit: true, auditSearch: location.search },
-              })
-            }
-            emptyMessage="No audit upsells found for the selected date range and status filters."
-          />
+          <>
+            <DataListTable
+              columns={columns}
+              rows={filteredAuditUpsells}
+              onRowClick={(row) =>
+                navigate(`/front-office/upselling/${row.dateKey}/${row.documentId}`, {
+                  state: { fromUpsellAudit: true, auditSearch: location.search },
+                })
+              }
+              emptyMessage="No audit upsells found for the selected date range and status filters."
+              pagination={{ currentPage, pageSize }}
+            />
+            <div className="flex flex-col items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700 shadow-sm sm:flex-row">
+              <span>
+                Showing {filteredAuditUpsells.length ? (currentPage - 1) * pageSize + 1 : 0} - {Math.min(currentPage * pageSize, filteredAuditUpsells.length)} of {filteredAuditUpsells.length} audit upsells
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                  disabled={currentPage === 1}
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-2 font-medium hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <span className="font-medium">Page {currentPage} of {totalPages}</span>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                  disabled={currentPage === totalPages}
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-2 font-medium hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </PageContainer>
     </div>

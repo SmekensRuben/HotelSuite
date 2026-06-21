@@ -138,6 +138,24 @@ function formatFirestoreValue(value) {
   return value ?? "";
 }
 
+function sanitizeDocumentId(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[\/#?%&{}<>*+$!'":@`|=]/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function normalizeAuditUpsellPackage(packageRecord, index) {
+  return {
+    packageCode: normalizePackageCode(packageRecord?.packageCode),
+    startDate: normalizeDateKey(packageRecord?.startDate),
+    endDate: normalizeDateKey(packageRecord?.endDate),
+    price: String(packageRecord?.price ?? "").trim(),
+    source: "manual",
+    manualPackageIndex: index,
+  };
+}
+
 function getAuditUpsellPackages(data) {
   return Array.isArray(data.packages) ? data.packages : [];
 }
@@ -258,6 +276,53 @@ export async function getAuditUpsells(hotelUid, startDate, endDate, options = {}
     const filterDate = getUpsellFilterDate(record);
     return filterDate >= startDate && filterDate <= endDate;
   });
+}
+
+export async function createAuditUpsell(hotelUid, auditUpsell) {
+  if (!hotelUid) throw new Error("Hotel uid is required.");
+
+  const dateKey = normalizeDateKey(auditUpsell?.logDate) || toDateKey(new Date());
+  if (!parseDateKey(dateKey)) throw new Error("A valid log date is required.");
+
+  const packages = Array.isArray(auditUpsell?.packages)
+    ? auditUpsell.packages.map(normalizeAuditUpsellPackage).filter((packageRecord) => (
+        packageRecord.packageCode
+        && parseDateKey(packageRecord.startDate)
+        && parseDateKey(packageRecord.endDate)
+        && packageRecord.startDate <= packageRecord.endDate
+      ))
+    : [];
+
+  if (!packages.length) throw new Error("At least one valid package is required.");
+
+  const confirmationNumber = String(auditUpsell?.confirmationNumber || "").trim();
+  const fallbackDocumentId = `manual-${Date.now()}`;
+  const documentId = sanitizeDocumentId(confirmationNumber) || fallbackDocumentId;
+  const auditUpsellRef = doc(db, `hotels/${hotelUid}/upselling/auditUpsell/${dateKey}/${documentId}`);
+
+  const packageCodes = Array.from(new Set(packages.map((packageRecord) => packageRecord.packageCode)));
+  const payload = {
+    logDate: dateKey,
+    logTime: String(auditUpsell?.logTime || "").trim(),
+    operaUser: String(auditUpsell?.operaUser || "").trim(),
+    confirmationNumber: confirmationNumber || documentId,
+    status: String(auditUpsell?.status || "Created").trim() || "Created",
+    fullName: String(auditUpsell?.fullName || "").trim(),
+    roomNumber: String(auditUpsell?.roomNumber || "").trim(),
+    arrivalDate: normalizeDateKey(auditUpsell?.arrivalDate),
+    departureDate: normalizeDateKey(auditUpsell?.departureDate),
+    rateCode: String(auditUpsell?.rateCode || "").trim(),
+    packages,
+    packageCodes,
+    source: "manual",
+    manuallyCreated: true,
+    createdAt: serverTimestamp(),
+    createdBy: auditUpsell?.createdBy || null,
+    updatedAt: serverTimestamp(),
+  };
+
+  await setDoc(auditUpsellRef, payload, { merge: true });
+  return { dateKey, documentId };
 }
 
 export async function getAuditUpsell(hotelUid, dateKey, auditUpsellId) {
