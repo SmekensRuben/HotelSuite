@@ -9,6 +9,7 @@ import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getAuditUpsells } from "../../services/firebaseUpsells";
 import { getSettings } from "../../services/firebaseSettings";
+import { usePermission } from "../../hooks/usePermission";
 import UpsellDateRangeFilter, { getDateRangeForPreset } from "./UpsellDateRangeFilter";
 
 function toNumericPrice(value) {
@@ -146,6 +147,7 @@ export default function UpsellAuditPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { hotelUid } = useHotelContext();
+  const canReadAuditUpsells = usePermission("auditUpsells", "read");
   const defaultDateRange = useMemo(() => getDateRangeForPreset("thisMonth"), []);
   const initialSearchParams = useMemo(() => new URLSearchParams(location.search), []);
   const [dateRange, setDateRange] = useState(() => getInitialDateRange(initialSearchParams, defaultDateRange));
@@ -407,13 +409,15 @@ export default function UpsellAuditPage() {
             >
               <Download className="h-4 w-4" /> Export
             </button>
-            <button
-              type="button"
-              onClick={() => navigate("/front-office/upselling")}
-              className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-            >
-              <ArrowLeft className="h-4 w-4" /> Back to Upselling
-            </button>
+            {canReadAuditUpsells && (
+              <button
+                type="button"
+                onClick={() => navigate("/front-office/upselling")}
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+              >
+                <ArrowLeft className="h-4 w-4" /> Back to Upselling
+              </button>
+            )}
           </div>
         </div>
 

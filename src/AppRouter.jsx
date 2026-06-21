@@ -380,7 +380,7 @@ export default function AppRouter() {
       <Route
         path="/front-office/upselling"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute feature="auditUpsells" action="read">
             <UpsellsPage />
           </ProtectedRoute>
         }
@@ -388,7 +388,7 @@ export default function AppRouter() {
       <Route
         path="/front-office/upselling/audit"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute feature="auditUpsells" action="settings">
             <UpsellAuditPage />
           </ProtectedRoute>
         }
@@ -396,7 +396,7 @@ export default function AppRouter() {
       <Route
         path="/front-office/upselling/audit/create"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute feature="auditUpsells" action="settings">
             <UpsellCreateAuditPage />
           </ProtectedRoute>
         }
@@ -404,7 +404,7 @@ export default function AppRouter() {
       <Route
         path="/front-office/upselling/:date/:auditUpsellId"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute feature="auditUpsells" action="settings">
             <UpsellDetailPage />
           </ProtectedRoute>
         }
@@ -412,7 +412,7 @@ export default function AppRouter() {
       <Route
         path="/front-office/upselling/settings"
         element={
-          <ProtectedRoute feature="settings" action="read">
+          <ProtectedRoute feature="auditUpsells" action="settings">
             <UpsellSettingsPage />
           </ProtectedRoute>
         }
