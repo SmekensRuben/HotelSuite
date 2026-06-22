@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ListTodo, Settings } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
+import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getAuditUpsells, getUpsellDateKeys, getUpsellSettings } from "../../services/firebaseUpsells";
@@ -90,12 +91,11 @@ function getTargetRuleForDate(dateKey, rules) {
   return rules.find((rule) => rule.startDate <= dateKey && dateKey <= rule.endDate) || null;
 }
 
-function getTargetStatus(expectedRevenue, minimumTarget, reachTarget, stretchTarget) {
-  if (stretchTarget > 0 && expectedRevenue >= stretchTarget) return "aboveStretch";
-  if (reachTarget > 0 && expectedRevenue >= reachTarget) return "betweenReachAndStretch";
-  if (minimumTarget > 0 && expectedRevenue >= minimumTarget) return "betweenMinimumAndReach";
-  return "belowMinimum";
+function getClampedPercentage(value, target) {
+  if (!target || target <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((value / target) * 100)));
 }
+
 
 function normalizeOperaUserMappings(rawMappings) {
   if (!rawMappings || typeof rawMappings !== "object") return {};
@@ -124,6 +124,9 @@ export default function UpsellsPage() {
   const [operaUserMappings, setOperaUserMappings] = useState({});
   const [dailyExpectedOccupancy, setDailyExpectedOccupancy] = useState({});
   const [revenueTargetRules, setRevenueTargetRules] = useState([]);
+  const [packageCodes, setPackageCodes] = useState([]);
+  const [expandedRankings, setExpandedRankings] = useState({});
+  const [selectedRankingUser, setSelectedRankingUser] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -146,6 +149,8 @@ export default function UpsellsPage() {
         setOperaUserMappings({});
         setDailyExpectedOccupancy({});
         setRevenueTargetRules([]);
+        setPackageCodes([]);
+        setSelectedRankingUser("");
         setLoading(false);
         return;
       }
@@ -171,6 +176,7 @@ export default function UpsellsPage() {
         setOperaUserMappings(normalizeOperaUserMappings(settings?.operaUserMappings));
         setDailyExpectedOccupancy(upsellSettings?.dailyExpectedOccupancy || {});
         setRevenueTargetRules(upsellSettings?.revenueTargetRules || []);
+        setPackageCodes(upsellSettings?.packageCodes || []);
       } catch (err) {
         console.error("Failed to load audit upsells", err);
         if (!active) return;
@@ -198,9 +204,18 @@ export default function UpsellsPage() {
     return operaUserMappings[operaUser] || operaUserMappings[operaUser.toLowerCase()] || operaUser || "Unknown";
   };
 
+  const packageCategoryByCode = useMemo(() => {
+    return packageCodes.reduce((categories, packageCode) => {
+      const code = String(packageCode?.packageCode || packageCode?.id || "").trim().toUpperCase();
+      if (code) categories[code] = String(packageCode?.category || "Uncategorized").trim() || "Uncategorized";
+      return categories;
+    }, {});
+  }, [packageCodes]);
+
   const revenueRankings = useMemo(() => {
     const expectedRevenueByUser = new Map();
     const effectiveRevenueByUser = new Map();
+    const expectedRevenueByCategory = new Map();
 
     auditUpsells.forEach((record) => {
       const userLabel = getOperaUserLabel(record.operaUser);
@@ -208,6 +223,19 @@ export default function UpsellsPage() {
       if (expectedRevenue !== "") {
         expectedRevenueByUser.set(userLabel, (expectedRevenueByUser.get(userLabel) || 0) + expectedRevenue);
       }
+
+      const packages = Array.isArray(record.packages) && record.packages.length
+        ? record.packages
+        : [{ packageCode: record.packageCode, startDate: record.startDate, endDate: record.endDate, price: record.price }];
+
+      packages.forEach((packageRecord) => {
+        const packageRevenue = getExpectedRevenue(packageRecord);
+        if (packageRevenue === "") return;
+
+        const code = String(packageRecord?.packageCode || "").trim().toUpperCase();
+        const category = packageCategoryByCode[code] || "Uncategorized";
+        expectedRevenueByCategory.set(category, (expectedRevenueByCategory.get(category) || 0) + packageRevenue);
+      });
 
       if (String(record.status || "").toLowerCase() === "validated") {
         const effectiveRevenue = toNumericPrice(record.effectiveRevenue) ?? expectedRevenue;
@@ -219,14 +247,15 @@ export default function UpsellsPage() {
 
     const toSortedRanking = (revenueMap) =>
       Array.from(revenueMap.entries())
-        .map(([operaUser, revenue]) => ({ operaUser, revenue }))
+        .map(([label, revenue]) => ({ label, revenue }))
         .sort((a, b) => b.revenue - a.revenue);
 
     return {
       expected: toSortedRanking(expectedRevenueByUser),
       effective: toSortedRanking(effectiveRevenueByUser),
+      categories: toSortedRanking(expectedRevenueByCategory),
     };
-  }, [auditUpsells, operaUserMappings]);
+  }, [auditUpsells, operaUserMappings, packageCategoryByCode]);
 
 
   const targetSummary = useMemo(() => {
@@ -252,76 +281,130 @@ export default function UpsellsPage() {
       { expectedOccupancy: 0, minimum: 0, reach: 0, stretch: 0 }
     );
 
+    const dateKeys = getUpsellDateKeys(dateRange.startDate, dateRange.endDate);
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const elapsedDays = dateKeys.filter((dateKey) => dateKey <= todayKey).length;
+    const scheduleTarget = dateKeys.length ? totals.minimum * (Math.min(elapsedDays, dateKeys.length) / dateKeys.length) : 0;
+    const scheduleMarker = getClampedPercentage(scheduleTarget, totals.stretch);
+    const onSchedule = expectedRevenue >= scheduleTarget;
+
     const progress = getProgressPercentage(expectedRevenue, totals.stretch);
     const minimumMarker = getProgressPercentage(totals.minimum, totals.stretch);
     const reachMarker = getProgressPercentage(totals.reach, totals.stretch);
-    const status = getTargetStatus(expectedRevenue, totals.minimum, totals.reach, totals.stretch);
-
-    return { expectedRevenue, expectedOccupancy: totals.expectedOccupancy, ...totals, progress, minimumMarker, reachMarker, status };
+    return { expectedRevenue, expectedOccupancy: totals.expectedOccupancy, ...totals, progress, minimumMarker, reachMarker, scheduleMarker, scheduleTarget, onSchedule };
   }, [auditUpsells, dailyExpectedOccupancy, dateRange.endDate, dateRange.startDate, revenueTargetRules]);
 
-  const statusLabels = {
-    belowMinimum: "Below Minimum",
-    betweenMinimumAndReach: "Between Minimum and Reach",
-    betweenReachAndStretch: "Between Reach and Stretch",
-    aboveStretch: "Above Stretch",
-  };
 
   const TargetSummaryCard = () => (
     <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900">Target revenue progress</h2>
-          <p className="mt-1 text-sm text-gray-500">One progress bar toward Stretch, with Minimum and Reach thresholds.</p>
-        </div>
+        <h2 className="text-lg font-semibold text-gray-900">Target revenue progress</h2>
         <div className="text-left sm:text-right">
           <p className="text-sm text-gray-500">Expected revenue</p>
           <p className="text-2xl font-semibold text-gray-900">{formatPrice(targetSummary.expectedRevenue)}</p>
-          <p className="text-xs font-medium text-gray-600">{statusLabels[targetSummary.status]} · {targetSummary.progress}% of Stretch</p>
         </div>
       </div>
-      <div className="mt-5">
-        <div className="relative h-5 overflow-hidden rounded-full bg-gray-200">
-          <div className="h-full rounded-full bg-[#b41f1f] transition-all" style={{ width: `${targetSummary.progress}%` }} />
-          {[{ label: "Minimum", left: targetSummary.minimumMarker }, { label: "Reach", left: targetSummary.reachMarker }, { label: "Stretch", left: 100 }].map((marker) => (
+      <div className="mt-4">
+        <div className="relative pt-7">
+          <div
+            className={`absolute top-0 rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 ring-1 ring-blue-200 ${targetSummary.scheduleMarker >= 95 ? "-translate-x-full" : targetSummary.scheduleMarker <= 5 ? "translate-x-0" : "-translate-x-1/2"}`}
+            style={{ left: `${targetSummary.scheduleMarker}%` }}
+          >
+            Today: {formatPrice(targetSummary.scheduleTarget)}
+          </div>
+          <div className="relative h-5 rounded-full bg-gray-200">
+            <div className={`h-full rounded-full transition-all ${targetSummary.onSchedule ? "bg-emerald-500" : "bg-[#b41f1f]"}`} style={{ width: `${targetSummary.progress}%` }} />
+          {[{ label: "Minimum", left: targetSummary.minimumMarker }, { label: "Reach", left: targetSummary.reachMarker }].map((marker) => (
             <div key={marker.label} className="absolute top-0 h-full w-0.5 bg-gray-900/70" style={{ left: `${marker.left}%` }} title={marker.label} />
           ))}
+            <div className="absolute -top-1 h-7 w-1 rounded-full bg-blue-600 shadow-sm ring-2 ring-white" style={{ left: `${targetSummary.scheduleMarker}%` }} title={`Minimum on schedule: ${formatPrice(targetSummary.scheduleTarget)}`} />
+          </div>
         </div>
-        <div className="mt-2 flex justify-between gap-3 text-xs text-gray-600">
-          <span>Minimum {formatPrice(targetSummary.minimum)}</span>
-          <span>Reach {formatPrice(targetSummary.reach)}</span>
-          <span>Stretch {formatPrice(targetSummary.stretch)}</span>
+        <div className="relative mt-2 h-10 text-xs text-gray-600">
+          {[{ label: "Minimum", value: targetSummary.minimum, left: targetSummary.minimumMarker }, { label: "Reach", value: targetSummary.reach, left: targetSummary.reachMarker }, { label: "Stretch", value: targetSummary.stretch, left: 100 }].map((marker) => {
+            const alignmentClass = marker.left >= 95 ? "-translate-x-full" : marker.left <= 5 ? "translate-x-0" : "-translate-x-1/2";
+
+            return (
+              <span key={marker.label} className={`absolute whitespace-nowrap ${alignmentClass}`} style={{ left: `${marker.left}%` }}>
+                {marker.label} {formatPrice(marker.value)}
+              </span>
+            );
+          })}
         </div>
-        <p className="mt-3 text-xs text-gray-500">Expected occupancy in selection: {targetSummary.expectedOccupancy} rooms.</p>
       </div>
     </div>
   );
 
-  const RankingCard = ({ title, description, rows, emptyMessage }) => (
-    <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-      <div className="border-b border-gray-100 p-4">
-        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
-        <p className="mt-1 text-sm text-gray-500">{description}</p>
-      </div>
-      <div className="divide-y divide-gray-100">
-        {rows.length ? (
-          rows.map((row, index) => (
-            <div key={row.operaUser} className="flex items-center justify-between gap-4 p-4">
-              <div className="flex min-w-0 items-center gap-3">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-50 text-sm font-semibold text-blue-700">
-                  {index + 1}
-                </span>
-                <span className="truncate font-medium text-gray-900">{row.operaUser}</span>
-              </div>
-              <span className="shrink-0 font-semibold text-gray-900">{formatPrice(row.revenue)}</span>
-            </div>
-          ))
-        ) : (
-          <div className="p-4 text-sm text-gray-500">{emptyMessage}</div>
+  const RankingCard = ({ id, title, description, rows, emptyMessage, onRowSelect, selectedLabel }) => {
+    const isExpanded = Boolean(expandedRankings[id]);
+    const visibleRows = isExpanded ? rows : rows.slice(0, 5);
+
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="border-b border-gray-100 p-4">
+          <h2 className="text-base font-semibold text-gray-900">{title}</h2>
+          <p className="mt-1 text-sm text-gray-500">{description}</p>
+        </div>
+        <div className="divide-y divide-gray-100">
+          {visibleRows.length ? (
+            visibleRows.map((row, index) => {
+              const rowIsSelected = selectedLabel === row.label;
+              const rowClassName = `flex w-full items-center justify-between gap-4 px-4 py-3 text-left ${onRowSelect ? "cursor-pointer hover:bg-gray-50" : ""} ${rowIsSelected ? "bg-blue-50" : ""}`;
+              const content = (
+                <>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${rowIsSelected ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-600"}`}>
+                      {index + 1}
+                    </span>
+                    <span className="truncate text-sm font-medium text-gray-800">{row.label}</span>
+                  </div>
+                  <span className="shrink-0 text-sm font-semibold text-gray-800">{formatPrice(row.revenue)}</span>
+                </>
+              );
+
+              return onRowSelect ? (
+                <button key={row.label} type="button" onClick={() => onRowSelect(row.label)} className={rowClassName}>
+                  {content}
+                </button>
+              ) : (
+                <div key={row.label} className={rowClassName}>
+                  {content}
+                </div>
+              );
+            })
+          ) : (
+            <div className="p-4 text-sm text-gray-500">{emptyMessage}</div>
+          )}
+        </div>
+        {rows.length > 5 && (
+          <button
+            type="button"
+            onClick={() => setExpandedRankings((current) => ({ ...current, [id]: !current[id] }))}
+            className="w-full border-t border-gray-100 px-4 py-3 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+          >
+            {isExpanded ? "Show top 5" : `Show all ${rows.length}`}
+          </button>
         )}
       </div>
-    </div>
-  );
+    );
+  };
+
+  const selectedUserAuditUpsells = useMemo(() => {
+    if (!selectedRankingUser) return [];
+    return auditUpsells.filter((record) => getOperaUserLabel(record.operaUser) === selectedRankingUser);
+  }, [auditUpsells, operaUserMappings, selectedRankingUser]);
+
+  const selectedUserColumns = [
+    { key: "logDate", label: "Log Date", sortValue: (row) => row.logDate || row.dateKey },
+    { key: "packageCode", label: "Package Code" },
+    { key: "arrivalDate", label: "Arrival Date" },
+    { key: "departureDate", label: "Departure Date" },
+    { key: "price", label: "Price", render: (row) => formatPrice(row.price) },
+    { key: "nights", label: "Nights", render: getNights, sortValue: getNights },
+    { key: "expectedRevenue", label: "Expected Revenue", render: (row) => formatPrice(getExpectedRevenue(row)), sortValue: getExpectedRevenue },
+    { key: "status", label: "Status" },
+    { key: "confirmationNumber", label: "Confirmation Number" },
+  ];
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -374,20 +457,53 @@ export default function UpsellsPage() {
             Loading upsell dashboard...
           </div>
         ) : (
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-3">
             <RankingCard
+              id="expected"
               title="Expected revenue ranking"
               description="All audit upsell statuses are included."
               rows={revenueRankings.expected}
               emptyMessage="No expected revenue found for this period."
+              selectedLabel={selectedRankingUser}
+              onRowSelect={setSelectedRankingUser}
             />
             <RankingCard
+              id="effective"
               title="Effective revenue ranking"
               description='Only audit upsells with status "Validated" are included.'
               rows={revenueRankings.effective}
               emptyMessage="No validated revenue found for this period."
+              selectedLabel={selectedRankingUser}
+              onRowSelect={setSelectedRankingUser}
+            />
+            <RankingCard
+              id="categories"
+              title="Package category ranking"
+              description="Expected revenue grouped by configured package category."
+              rows={revenueRankings.categories}
+              emptyMessage="No package category revenue found for this period."
             />
           </div>
+        )}
+
+        {!loading && selectedRankingUser && (
+          <section className="space-y-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Audit upsells for {selectedRankingUser}</h2>
+                <p className="mt-1 text-sm text-gray-500">All audit upsells in the selected period for the clicked ranking user.</p>
+              </div>
+              <button type="button" onClick={() => setSelectedRankingUser("")} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                Clear selection
+              </button>
+            </div>
+            <DataListTable
+              columns={selectedUserColumns}
+              rows={selectedUserAuditUpsells}
+              onRowClick={(row) => navigate(`/front-office/upselling/${row.dateKey}/${row.documentId}`)}
+              emptyMessage="No audit upsells found for this user."
+            />
+          </section>
         )}
       </PageContainer>
     </div>

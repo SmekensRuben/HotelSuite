@@ -404,7 +404,7 @@ export default function AppRouter() {
       <Route
         path="/front-office/upselling/:date/:auditUpsellId"
         element={
-          <ProtectedRoute feature="auditUpsells" action="settings">
+          <ProtectedRoute anyOf={[{ feature: "auditUpsells", action: "read" }, { feature: "auditUpsells", action: "settings" }]}>
             <UpsellDetailPage />
           </ProtectedRoute>
         }

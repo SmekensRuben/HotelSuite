@@ -8,6 +8,7 @@ import { useHotelContext } from "../../contexts/HotelContext";
 import { getAuditUpsell, updateAuditUpsellValidation } from "../../services/firebaseUpsells";
 import { getSettings } from "../../services/firebaseSettings";
 import Modal from "../shared/Modal";
+import { usePermission } from "../../hooks/usePermission";
 
 function toNumericPrice(value) {
   if (value === "" || value === null || value === undefined) return null;
@@ -204,6 +205,7 @@ export default function UpsellDetailPage() {
   const location = useLocation();
   const { date, auditUpsellId } = useParams();
   const { hotelUid } = useHotelContext();
+  const canManageAuditUpsells = usePermission("auditUpsells", "settings");
   const [auditUpsell, setAuditUpsell] = useState(null);
   const [operaUserMappings, setOperaUserMappings] = useState({});
   const [operaUserOptions, setOperaUserOptions] = useState([]);
@@ -272,7 +274,7 @@ export default function UpsellDetailPage() {
   };
 
   const openValidationModal = (validationStatus) => {
-    if (isValidationFinalStatus(auditUpsell?.validationStatus)) return;
+    if (!canManageAuditUpsells || isValidationFinalStatus(auditUpsell?.validationStatus)) return;
 
     setValidationModalAction(validationStatus);
     setValidationComment("");
@@ -294,6 +296,11 @@ export default function UpsellDetailPage() {
 
   const handleValidationSubmit = async (event) => {
     event.preventDefault();
+
+    if (!canManageAuditUpsells) {
+      setError("You do not have permission to validate or reject upsells.");
+      return;
+    }
 
     const cleanedComment = validationComment.trim();
     if (!cleanedComment) {
@@ -404,26 +411,28 @@ export default function UpsellDetailPage() {
                     </Badge>
                   </div>
                 </div>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <button
-                    type="button"
-                    onClick={() => openValidationModal("approved")}
-                    disabled={Boolean(savingAction) || isValidationLocked}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <CheckCircle2 className="h-4 w-4" />
-                    {savingAction === "approved" ? "Validating..." : "Validate Upsell"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openValidationModal("rejected")}
-                    disabled={Boolean(savingAction) || isValidationLocked}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <XCircle className="h-4 w-4" />
-                    {savingAction === "rejected" ? "Rejecting..." : "Reject Upsell"}
-                  </button>
-                </div>
+                {canManageAuditUpsells && (
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <button
+                      type="button"
+                      onClick={() => openValidationModal("approved")}
+                      disabled={Boolean(savingAction) || isValidationLocked}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      {savingAction === "approved" ? "Validating..." : "Validate Upsell"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openValidationModal("rejected")}
+                      disabled={Boolean(savingAction) || isValidationLocked}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <XCircle className="h-4 w-4" />
+                      {savingAction === "rejected" ? "Rejecting..." : "Reject Upsell"}
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -563,7 +572,7 @@ export default function UpsellDetailPage() {
         )}
       </PageContainer>
       <Modal
-        open={Boolean(validationModalAction)}
+        open={canManageAuditUpsells && Boolean(validationModalAction)}
         onClose={closeValidationModal}
         title={validationModalAction === "approved" ? "Validate Upsell" : "Reject Upsell"}
       >
