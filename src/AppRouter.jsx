@@ -59,6 +59,8 @@ import UpsellCreateAuditPage from "./components/pages/UpsellCreateAuditPage.jsx"
 import UpsellDetailPage from "./components/pages/UpsellDetailPage.jsx";
 import UpsellSettingsPage from "./components/pages/UpsellSettingsPage.jsx";
 import OperaSettingsPage from "./components/pages/OperaSettingsPage.jsx";
+import GroupsPage from "./components/pages/GroupsPage.jsx";
+import CreateBlockPage from "./components/pages/CreateBlockPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -414,6 +416,22 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="auditUpsells" action="settings">
             <UpsellSettingsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/me/groups"
+        element={
+          <ProtectedRoute feature="groups" action="read">
+            <GroupsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/me/groups/new"
+        element={
+          <ProtectedRoute feature="groups" action="create">
+            <CreateBlockPage />
           </ProtectedRoute>
         }
       />
