@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, UsersRound } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
@@ -6,36 +6,8 @@ import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { usePermission } from "../../hooks/usePermission";
-
-const groups = [
-  {
-    id: "grp-summit-2026",
-    groupName: "European Sales Summit",
-    blockCode: "ESS26",
-    arrival: "2026-09-14",
-    roomingListDeadline: "2026-08-24",
-    blockedRooms: 42,
-    meOfficer: "Maya Jacobs",
-  },
-  {
-    id: "grp-medtech-2026",
-    groupName: "MedTech Leadership Forum",
-    blockCode: "MTLF26",
-    arrival: "2026-10-03",
-    roomingListDeadline: "2026-09-12",
-    blockedRooms: 28,
-    meOfficer: "Liam Peters",
-  },
-  {
-    id: "grp-design-week",
-    groupName: "Design Week Delegation",
-    blockCode: "DWD26",
-    arrival: "2026-11-08",
-    roomingListDeadline: "2026-10-18",
-    blockedRooms: 35,
-    meOfficer: "Sofia Martinez",
-  },
-];
+import { useHotelContext } from "../../contexts/HotelContext";
+import { getGroups } from "../../services/firebaseGroups";
 
 function formatDate(value) {
   if (!value) return "—";
@@ -48,7 +20,10 @@ function formatDate(value) {
 
 export default function GroupsPage() {
   const navigate = useNavigate();
+  const { hotelUid } = useHotelContext();
   const canCreateGroups = usePermission("groups", "create");
+  const [groups, setGroups] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const today = useMemo(
     () =>
@@ -65,6 +40,18 @@ export default function GroupsPage() {
     sessionStorage.clear();
     window.location.href = "/login";
   };
+
+  useEffect(() => {
+    const loadGroups = async () => {
+      if (!hotelUid) return;
+      setLoading(true);
+      const result = await getGroups(hotelUid);
+      setGroups(result);
+      setLoading(false);
+    };
+
+    loadGroups();
+  }, [hotelUid]);
 
   const columns = [
     { key: "groupName", label: "Group Name" },
@@ -117,7 +104,11 @@ export default function GroupsPage() {
             </span>
             <span>Use this overview to follow group block status before the rooming list deadline.</span>
           </div>
-          <DataListTable columns={columns} rows={groups} emptyMessage="No groups found." />
+          {loading ? (
+            <p className="text-gray-600">Loading groups...</p>
+          ) : (
+            <DataListTable columns={columns} rows={groups} emptyMessage="No groups found." />
+          )}
         </div>
       </PageContainer>
     </div>
