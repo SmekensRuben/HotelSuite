@@ -10,6 +10,7 @@ export default function GeneralSettingsPage() {
   const { hotelUid } = useHotelContext();
   const [hotelRooms, setHotelRooms] = useState("");
   const [lastSavedHotelRooms, setLastSavedHotelRooms] = useState("");
+  const [roomTypes, setRoomTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -31,6 +32,7 @@ export default function GeneralSettingsPage() {
       if (!hotelUid) {
         setHotelRooms("");
         setLastSavedHotelRooms("");
+        setRoomTypes([]);
         setLoading(false);
         return;
       }
@@ -45,6 +47,12 @@ export default function GeneralSettingsPage() {
         const nextHotelRooms = settings?.hotelRooms != null ? String(settings.hotelRooms) : "";
         setHotelRooms(nextHotelRooms);
         setLastSavedHotelRooms(nextHotelRooms);
+        setRoomTypes(Array.isArray(settings?.roomTypes) ? settings.roomTypes.map((roomType, index) => ({
+          id: roomType?.id || `${roomType?.code || "room-type"}-${index}`,
+          code: String(roomType?.code || ""),
+          description: String(roomType?.description || ""),
+          amount: roomType?.amount != null ? String(roomType.amount) : "",
+        })) : []);
       } catch (err) {
         console.error("Fout bij laden van general settings:", err);
         if (!active) return;
@@ -111,9 +119,89 @@ export default function GeneralSettingsPage() {
     }
   };
 
+  const normalizeRoomTypes = () =>
+    roomTypes
+      .map((roomType) => {
+        const code = String(roomType.code || "").trim();
+        const description = String(roomType.description || "").trim();
+        const amountValue = String(roomType.amount ?? "").trim();
+        const amount = Number(amountValue);
+        return {
+          id: String(roomType.id || code || crypto.randomUUID()).trim(),
+          code,
+          description,
+          amount: amountValue !== "" && Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : NaN,
+        };
+      })
+      .filter((roomType) => roomType.code || roomType.description || Number.isFinite(roomType.amount));
+
+  const persistGeneralSettings = async () => {
+    setError("");
+    setMessage("");
+
+    const normalizedHotelRooms = String(hotelRooms).trim();
+    const parsedHotelRooms = Number(normalizedHotelRooms);
+    const normalizedRoomTypes = normalizeRoomTypes();
+
+    if (!Number.isFinite(parsedHotelRooms) || parsedHotelRooms < 0) {
+      setError("Hotel Rooms moet een geldig positief getal zijn.");
+      return false;
+    }
+
+    const invalidRoomType = normalizedRoomTypes.find((roomType) => !roomType.code || !roomType.description || !Number.isFinite(roomType.amount));
+    if (invalidRoomType) {
+      setError("Elke Room Type moet een code, description en geldig positief amount hebben.");
+      return false;
+    }
+
+    if (!hotelUid) {
+      setError("Geen hotel geselecteerd om General Settings op te slaan.");
+      return false;
+    }
+
+    setSaving(true);
+
+    try {
+      await setSettings(hotelUid, { hotelRooms: parsedHotelRooms, roomTypes: normalizedRoomTypes });
+      const refreshedSettings = await getSettings(hotelUid);
+      const persistedHotelRooms =
+        refreshedSettings?.hotelRooms != null ? String(refreshedSettings.hotelRooms) : "";
+      setHotelRooms(persistedHotelRooms);
+      setLastSavedHotelRooms(persistedHotelRooms);
+      setRoomTypes(Array.isArray(refreshedSettings?.roomTypes) ? refreshedSettings.roomTypes.map((roomType, index) => ({
+        id: roomType?.id || `${roomType?.code || "room-type"}-${index}`,
+        code: String(roomType?.code || ""),
+        description: String(roomType?.description || ""),
+        amount: roomType?.amount != null ? String(roomType.amount) : "",
+      })) : []);
+      setMessage("General settings opgeslagen in Firebase.");
+      return true;
+    } catch (err) {
+      console.error("Fout bij opslaan van general settings:", err);
+      setError("De general settings konden niet opgeslagen worden in Firebase.");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addRoomType = () => {
+    setRoomTypes((current) => [...current, { id: `${Date.now()}`, code: "", description: "", amount: "" }]);
+  };
+
+  const updateRoomType = (id, field, value) => {
+    setRoomTypes((current) =>
+      current.map((roomType) => (roomType.id === id ? { ...roomType, [field]: value } : roomType))
+    );
+  };
+
+  const removeRoomType = (id) => {
+    setRoomTypes((current) => current.filter((roomType) => roomType.id !== id));
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
-    await persistHotelRooms();
+    await persistGeneralSettings();
   };
 
   const handleHotelRoomsBlur = async () => {
@@ -173,6 +261,32 @@ export default function GeneralSettingsPage() {
                   Wordt gebruikt om occupancy op de Pick-Up pagina te berekenen en wordt meteen in
                   Firebase bewaard zodra je het veld verlaat of op opslaan klikt.
                 </p>
+              </div>
+
+              <div className="space-y-3 rounded-xl border border-gray-200 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-gray-900">Room Types</h3>
+                    <p className="text-xs text-gray-500">Deze types worden gebruikt op de Create Group pagina.</p>
+                  </div>
+                  <button type="button" onClick={addRoomType} className="rounded-lg border border-blue-600 px-3 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50">
+                    Add Room Type
+                  </button>
+                </div>
+                {roomTypes.length === 0 ? (
+                  <p className="text-sm text-gray-500">Nog geen Room Types toegevoegd.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {roomTypes.map((roomType) => (
+                      <div key={roomType.id} className="grid gap-2 sm:grid-cols-[8rem_1fr_7rem_auto]">
+                        <input aria-label="Room type code" value={roomType.code} onChange={(event) => updateRoomType(roomType.id, "code", event.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Code" />
+                        <input aria-label="Room type description" value={roomType.description} onChange={(event) => updateRoomType(roomType.id, "description", event.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Description" />
+                        <input aria-label="Room type amount" type="number" min="0" step="1" value={roomType.amount} onChange={(event) => updateRoomType(roomType.id, "amount", event.target.value)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Amount" />
+                        <button type="button" onClick={() => removeRoomType(roomType.id)} className="rounded-lg px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div>

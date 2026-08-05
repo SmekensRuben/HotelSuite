@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, BedDouble, Plus, Trash2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
@@ -7,8 +7,8 @@ import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { calculateBlockedRooms, createGroup } from "../../services/firebaseGroups";
+import { getSettings } from "../../services/firebaseSettings";
 
-const defaultRoomTypes = ["Standard Room", "Deluxe Room"];
 const emptyForm = {
   groupName: "",
   blockCode: "",
@@ -43,9 +43,7 @@ function createRoomTypeDays(arrival, departure, existingDays) {
     const existingDay = existingByDate.get(date);
     return {
       date,
-      roomTypes: existingDay?.roomTypes?.length
-        ? existingDay.roomTypes
-        : defaultRoomTypes.map((name) => ({ id: `${date}-${name}`, name, quantity: 0 })),
+      roomTypes: existingDay?.roomTypes?.length ? existingDay.roomTypes : [],
     };
   });
 }
@@ -64,6 +62,8 @@ export default function CreateBlockPage() {
   const { hotelUid } = useHotelContext();
   const [form, setForm] = useState(emptyForm);
   const [roomTypeDays, setRoomTypeDays] = useState([]);
+  const [configuredRoomTypes, setConfiguredRoomTypes] = useState([]);
+  const [loadingRoomTypes, setLoadingRoomTypes] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -78,6 +78,51 @@ export default function CreateBlockPage() {
   );
 
   const blockedRooms = useMemo(() => calculateBlockedRooms(roomTypeDays), [roomTypeDays]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadRoomTypes() {
+      if (!hotelUid) {
+        setConfiguredRoomTypes([]);
+        setLoadingRoomTypes(false);
+        return;
+      }
+
+      setLoadingRoomTypes(true);
+      try {
+        const settings = await getSettings(hotelUid);
+        if (!active) return;
+        const roomTypes = Array.isArray(settings?.roomTypes)
+          ? settings.roomTypes
+              .map((roomType, index) => {
+                const code = String(roomType?.code || "").trim();
+                const description = String(roomType?.description || "").trim();
+                const amount = Number(roomType?.amount);
+                return {
+                  id: String(roomType?.id || code || `room-type-${index}`),
+                  code,
+                  description,
+                  amount: Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0,
+                };
+              })
+              .filter((roomType) => roomType.code && roomType.description)
+          : [];
+        setConfiguredRoomTypes(roomTypes);
+      } catch (err) {
+        console.error("Fout bij laden van Room Types:", err);
+        if (active) setError("Room Types konden niet geladen worden uit General Settings.");
+      } finally {
+        if (active) setLoadingRoomTypes(false);
+      }
+    }
+
+    loadRoomTypes();
+
+    return () => {
+      active = false;
+    };
+  }, [hotelUid]);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -101,7 +146,7 @@ export default function CreateBlockPage() {
         day.date === date
           ? {
               ...day,
-              roomTypes: [...day.roomTypes, { id: `${date}-${Date.now()}`, name: "", quantity: 0 }],
+              roomTypes: [...day.roomTypes, { id: `${date}-${Date.now()}`, code: "", name: "", quantity: 0, maxQuantity: 0 }],
             }
           : day
       )
@@ -109,13 +154,28 @@ export default function CreateBlockPage() {
   };
 
   const updateRoomType = (date, roomTypeId, field, value) => {
+    const selectedRoomType = field === "configuredRoomTypeId"
+      ? configuredRoomTypes.find((roomType) => roomType.id === value)
+      : null;
+
     setRoomTypeDays((days) =>
       days.map((day) =>
         day.date === date
           ? {
               ...day,
               roomTypes: day.roomTypes.map((roomType) =>
-                roomType.id === roomTypeId ? { ...roomType, [field]: value } : roomType
+                roomType.id === roomTypeId
+                  ? selectedRoomType
+                    ? {
+                        ...roomType,
+                        configuredRoomTypeId: selectedRoomType.id,
+                        code: selectedRoomType.code,
+                        name: selectedRoomType.description,
+                        quantity: Math.min(Number(roomType.quantity) || 0, selectedRoomType.amount),
+                        maxQuantity: selectedRoomType.amount,
+                      }
+                    : { ...roomType, [field]: value }
+                  : roomType
               ),
             }
           : day
@@ -133,9 +193,27 @@ export default function CreateBlockPage() {
     );
   };
 
+  const hasInvalidRoomQuantity = () =>
+    roomTypeDays.some((day) =>
+      day.roomTypes.some((roomType) => {
+        const quantity = Number(roomType.quantity);
+        const maxQuantity = Number(roomType.maxQuantity);
+        return (
+          !Number.isFinite(quantity) ||
+          quantity < 0 ||
+          (Number.isFinite(maxQuantity) && maxQuantity >= 0 && quantity > maxQuantity)
+        );
+      })
+    );
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (!hotelUid || saving) return;
+
+    if (hasInvalidRoomQuantity()) {
+      setError("Quantity mag niet hoger zijn dan de Amount uit General Settings.");
+      return;
+    }
 
     setSaving(true);
     setError("");
@@ -201,7 +279,8 @@ export default function CreateBlockPage() {
             <div>
               <h2 className="text-lg font-semibold">Allowed Room Types</h2>
               <p className="mt-1 text-sm text-gray-600">
-                Enter the allowed room types and quantities for each night. Blocked Rooms is calculated automatically.
+                Select the allowed Room Types from General Settings. Quantity can be set per group up to the
+                configured maximum amount.
               </p>
             </div>
             <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-[#b41f1f]">
@@ -235,14 +314,19 @@ export default function CreateBlockPage() {
                         <div key={roomType.id} className="grid grid-cols-[1fr_7rem_auto] items-end gap-2">
                           <label className="block text-sm font-medium text-gray-700">
                             Room Type
-                            <input
-                              type="text"
-                              value={roomType.name}
-                              onChange={(event) => updateRoomType(day.date, roomType.id, "name", event.target.value)}
+                            <select
+                              value={roomType.configuredRoomTypeId || ""}
+                              onChange={(event) => updateRoomType(day.date, roomType.id, "configuredRoomTypeId", event.target.value)}
                               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
-                              placeholder="e.g. Standard Room"
                               required
-                            />
+                            >
+                              <option value="">Select Room Type</option>
+                              {configuredRoomTypes.map((configuredRoomType) => (
+                                <option key={configuredRoomType.id} value={configuredRoomType.id}>
+                                  {configuredRoomType.code} - {configuredRoomType.description} ({configuredRoomType.amount})
+                                </option>
+                              ))}
+                            </select>
                           </label>
                           <label className="block text-sm font-medium text-gray-700">
                             Quantity
@@ -250,10 +334,12 @@ export default function CreateBlockPage() {
                               type="number"
                               min="0"
                               value={roomType.quantity}
+                              max={roomType.maxQuantity ?? undefined}
                               onChange={(event) => updateRoomType(day.date, roomType.id, "quantity", event.target.value)}
                               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
                               required
                             />
+                            <span className="mt-1 block text-xs text-gray-500">Max {roomType.maxQuantity ?? 0}</span>
                           </label>
                           <button
                             type="button"
@@ -284,9 +370,9 @@ export default function CreateBlockPage() {
             </button>
             <button
               type="submit"
-              disabled={saving || roomTypeDays.length === 0}
+              disabled={saving || roomTypeDays.length === 0 || loadingRoomTypes || configuredRoomTypes.length === 0}
               className={`rounded-lg px-4 py-2 text-sm font-semibold text-white shadow ${
-                saving || roomTypeDays.length === 0
+                saving || roomTypeDays.length === 0 || loadingRoomTypes || configuredRoomTypes.length === 0
                   ? "bg-gray-300 cursor-not-allowed"
                   : "bg-[#b41f1f] hover:bg-[#961919]"
               }`}
