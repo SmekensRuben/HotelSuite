@@ -16,21 +16,37 @@ const emptyReservation = {
   comment: "",
 };
 
+function parseDateParts(value) {
+  const [year, month, day] = String(value || "").split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return { year, month, day };
+}
+
+function formatDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function getDateRange(startDate, endDate) {
-  if (!startDate || !endDate || endDate < startDate) return [];
+  const startParts = parseDateParts(startDate);
+  const endParts = parseDateParts(endDate);
+  if (!startParts || !endParts || endDate <= startDate) return [];
   const dates = [];
-  const cursor = new Date(`${startDate}T00:00:00`);
-  const end = new Date(`${endDate}T00:00:00`);
+  const cursor = new Date(startParts.year, startParts.month - 1, startParts.day);
+  const end = new Date(endParts.year, endParts.month - 1, endParts.day);
   while (cursor < end) {
-    dates.push(cursor.toISOString().slice(0, 10));
+    dates.push(formatDateKey(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
   return dates;
 }
 
 function formatDate(value) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(`${value}T00:00:00`));
+  const parts = parseDateParts(value);
+  if (!parts) return "—";
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(parts.year, parts.month - 1, parts.day));
 }
 
 function buildAvailability(roomingList, reservations) {
@@ -40,14 +56,27 @@ function buildAvailability(roomingList, reservations) {
       ? roomingList.group.roomTypeDays
       : [];
   return days.map((day) => {
-    const capacity = (day.roomTypes || []).reduce((total, roomType) => total + Number(roomType.quantity || 0), 0);
-    const used = reservations.filter((reservation) => {
-      const dates = getDateRange(reservation.arrivalDate, reservation.departureDate);
-      return dates.includes(day.date);
-    }).length;
+    const roomTypes = (day.roomTypes || []).map((roomType) => {
+      const capacity = Number(roomType.quantity || 0);
+      const used = reservations.filter((reservation) => {
+        const dates = getDateRange(reservation.arrivalDate, reservation.departureDate);
+        return dates.includes(day.date) && reservation.roomType === roomType.code;
+      }).length;
+
+      return {
+        code: roomType.code,
+        name: roomType.name,
+        capacity,
+        used,
+        remaining: Math.max(0, capacity - used),
+      };
+    });
+    const capacity = roomTypes.reduce((total, roomType) => total + roomType.capacity, 0);
+    const used = roomTypes.reduce((total, roomType) => total + roomType.used, 0);
 
     return {
       date: day.date,
+      roomTypes,
       capacity,
       used,
       remaining: Math.max(0, capacity - used),
@@ -108,8 +137,8 @@ export default function RoomingListPage() {
     });
     return Array.from(unique, ([code, label]) => ({ code, label }));
   }, [roomingList?.group?.roomTypeDays, roomingList?.roomTypeDays, roomingList?.roomTypes]);
-  const filledRooms = reservations.length;
-  const totalRooms = availability.reduce((max, day) => Math.max(max, day.capacity), 0);
+  const filledRoomNights = availability.reduce((total, day) => total + day.used, 0);
+  const totalRoomNights = availability.reduce((total, day) => total + day.capacity, 0);
 
   const updateForm = (field, value) => setForm((current) => ({ ...current, [field]: value }));
 
@@ -142,7 +171,7 @@ export default function RoomingListPage() {
             <BedDouble className="h-3.5 w-3.5" /> Rooming list
           </p>
           <h1 className="mt-2 text-3xl font-semibold">{roomingList?.groupName || roomingList?.group?.groupName || "Rooming List"}</h1>
-          <p className="mt-1 text-sm text-red-100">Status: {roomingList?.status || "Not Started"}</p>
+          <p className="mt-4 inline-flex rounded-full bg-white/15 px-4 py-2 text-lg font-semibold text-white">Status: {roomingList?.status || "Not Started"}</p>
         </Card>
 
         {loading ? <p className="text-gray-600">Loading rooming list...</p> : error ? <p className="text-sm font-semibold text-red-600">{error}</p> : null}
@@ -153,7 +182,7 @@ export default function RoomingListPage() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold">Overview</h2>
-                  <p className="mt-1 text-sm text-gray-600">{filledRooms} of {totalRooms} rooms have been filled in.</p>
+                  <p className="mt-1 text-sm text-gray-600">{filledRoomNights} of {totalRoomNights} room nights have been filled in.</p>
                 </div>
               </div>
               <div className="mt-4 overflow-x-auto pb-2">
@@ -164,6 +193,14 @@ export default function RoomingListPage() {
                       <p className="mt-2 text-xs text-gray-500">Filled: {day.used}</p>
                       <p className="text-xs text-gray-500">Available: {day.remaining}</p>
                       <p className="text-xs text-gray-500">Total: {day.capacity}</p>
+                      <div className="mt-3 space-y-2">
+                        {day.roomTypes.map((roomType) => (
+                          <div key={`${day.date}-${roomType.code}`} className="rounded-lg bg-white px-2 py-1.5 text-xs shadow-sm">
+                            <p className="font-semibold text-gray-800">{roomType.code} - {roomType.name}</p>
+                            <p className="text-gray-500">{roomType.used} filled / {roomType.remaining} available</p>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>

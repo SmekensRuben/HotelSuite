@@ -21,15 +21,30 @@ const emptyForm = {
   organiserPhone: "",
 };
 
+function parseDateParts(value) {
+  const [year, month, day] = String(value || "").split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return { year, month, day };
+}
+
+function formatDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function getDateRange(startDate, endDate) {
-  if (!startDate || !endDate || endDate < startDate) return [];
+  const startParts = parseDateParts(startDate);
+  const endParts = parseDateParts(endDate);
+  if (!startParts || !endParts || endDate <= startDate) return [];
 
   const dates = [];
-  const cursor = new Date(`${startDate}T00:00:00`);
-  const end = new Date(`${endDate}T00:00:00`);
+  const cursor = new Date(startParts.year, startParts.month - 1, startParts.day);
+  const end = new Date(endParts.year, endParts.month - 1, endParts.day);
 
   while (cursor < end) {
-    dates.push(cursor.toISOString().slice(0, 10));
+    dates.push(formatDateKey(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
 
@@ -58,12 +73,13 @@ function createRoomTypeDays(arrival, departure, existingDays) {
 }
 
 function formatDate(value) {
-  if (!value) return "";
+  const parts = parseDateParts(value);
+  if (!parts) return "";
   return new Intl.DateTimeFormat(undefined, {
     weekday: "short",
     month: "short",
     day: "numeric",
-  }).format(new Date(`${value}T00:00:00`));
+  }).format(new Date(parts.year, parts.month - 1, parts.day));
 }
 
 export default function CreateBlockPage({ mode = "create" }) {
