@@ -8,7 +8,7 @@ import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { usePermission } from "../../hooks/usePermission";
 import { getGroup } from "../../services/firebaseGroups";
-import { createRoomingListForGroup } from "../../services/firebaseRoomingLists";
+import { createRoomingListForGroup, getRoomingListByToken } from "../../services/firebaseRoomingLists";
 
 function formatDate(value) {
   if (!value) return "—";
@@ -41,6 +41,7 @@ export default function GroupDetailPage() {
   const [error, setError] = useState("");
   const [creatingRoomingList, setCreatingRoomingList] = useState(false);
   const [copyMessage, setCopyMessage] = useState("");
+  const [roomingList, setRoomingList] = useState(null);
 
   const today = useMemo(
     () =>
@@ -63,6 +64,12 @@ export default function GroupDetailPage() {
         const result = await getGroup(hotelUid, groupId);
         if (!active) return;
         setGroup(result);
+        if (result?.roomingListToken) {
+          const list = await getRoomingListByToken(result.roomingListToken);
+          if (active) setRoomingList(list);
+        } else if (active) {
+          setRoomingList(null);
+        }
         if (!result) setError("Group not found.");
       } catch (err) {
         console.error("Unable to load group:", err);
@@ -86,6 +93,16 @@ export default function GroupDetailPage() {
 
   const roomTypeDays = Array.isArray(group?.roomTypeDays) ? group.roomTypeDays : [];
 
+  const reservations = Array.isArray(roomingList?.reservations) ? roomingList.reservations : [];
+  const pickedUpRooms = reservations.length;
+
+  const getPickedUpRoomsForDayAndType = (date, roomTypeCode) =>
+    reservations.filter((reservation) => {
+      if (reservation.roomType !== roomTypeCode) return false;
+      if (!reservation.arrivalDate || !reservation.departureDate) return false;
+      return reservation.arrivalDate <= date && date < reservation.departureDate;
+    }).length;
+
   const handleCreateRoomingList = async () => {
     if (!hotelUid || !group || creatingRoomingList) return;
 
@@ -99,6 +116,7 @@ export default function GroupDetailPage() {
         roomingListLink: result.link,
         roomingListStatus: current?.roomingListStatus || "Not Started",
       }));
+      setRoomingList(await getRoomingListByToken(result.token));
     } catch (err) {
       console.error("Unable to create rooming list:", err);
       setError(err?.message || "Unable to create rooming list.");
@@ -163,6 +181,7 @@ export default function GroupDetailPage() {
               <DetailItem icon={CalendarDays} label="Departure" value={formatDate(group.departure)} />
               <DetailItem icon={CalendarDays} label="Rooming List Deadline" value={formatDate(group.roomingListDeadline)} />
               <DetailItem icon={BedDouble} label="Blocked Rooms" value={group.blockedRooms ?? 0} />
+              <DetailItem icon={BedDouble} label="Picked Up Rooms" value={pickedUpRooms} />
               <DetailItem label="Block Code" value={group.blockCode} />
               <DetailItem icon={UserRound} label="M&E Officer" value={group.meOfficer} />
               <DetailItem icon={UserRound} label="Organiser" value={group.organiserName} />
@@ -201,6 +220,7 @@ export default function GroupDetailPage() {
                             <div key={`${day.date}-${roomType.code || index}`} className="rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
                               <p className="font-semibold text-gray-900">{roomType.code} - {roomType.name}</p>
                               <p className="text-gray-600">Quantity: {roomType.quantity || 0}</p>
+                              <p className="text-xs font-semibold text-[#b41f1f]">Picked up: {getPickedUpRoomsForDayAndType(day.date, roomType.code)}</p>
                             </div>
                           ))}
                         </div>

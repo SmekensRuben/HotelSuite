@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { BedDouble, ChevronDown, Plus, Send } from "lucide-react";
+import { BedDouble, ChevronDown, Pencil, Plus, Send, Trash2, X } from "lucide-react";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
-import { addRoomingListReservation, getRoomingListByToken, submitRoomingList } from "../../services/firebaseRoomingLists";
+import { addRoomingListReservation, deleteRoomingListReservation, getRoomingListByToken, submitRoomingList, updateRoomingListReservation } from "../../services/firebaseRoomingLists";
 
 const emptyReservation = {
   firstName: "",
@@ -109,6 +109,8 @@ export default function RoomingListPage() {
   const [isReservationFormOpen, setIsReservationFormOpen] = useState(false);
   const [availabilityModalMessage, setAvailabilityModalMessage] = useState("");
   const [showSubmitConfirmModal, setShowSubmitConfirmModal] = useState(false);
+  const [reservationToDelete, setReservationToDelete] = useState(null);
+  const [editingReservationId, setEditingReservationId] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -179,13 +181,18 @@ export default function RoomingListPage() {
     setSaving(true);
     setError("");
     try {
-      const reservation = await addRoomingListReservation(token, form);
+      const reservation = editingReservationId
+        ? await updateRoomingListReservation(token, editingReservationId, form)
+        : await addRoomingListReservation(token, form);
       setRoomingList((current) => ({
         ...current,
         status: "Concept",
-        reservations: [...(current?.reservations || []), reservation],
+        reservations: editingReservationId
+          ? (current?.reservations || []).map((item) => (item.id === editingReservationId ? reservation : item))
+          : [...(current?.reservations || []), reservation],
       }));
       setForm(emptyReservation);
+      setEditingReservationId("");
       setIsReservationFormOpen(false);
       setShowSubmitConfirmModal(false);
     } catch (err) {
@@ -197,6 +204,45 @@ export default function RoomingListPage() {
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleEditReservation = (reservation) => {
+    setEditingReservationId(reservation.id);
+    setForm({
+      firstName: reservation.firstName || "",
+      lastName: reservation.lastName || "",
+      arrivalDate: reservation.arrivalDate || "",
+      departureDate: reservation.departureDate || "",
+      roomType: reservation.roomType || "",
+      numberOfAdults: reservation.numberOfAdults ?? 1,
+      numberOfChildren: reservation.numberOfChildren ?? 0,
+      comment: reservation.comment || "",
+    });
+    setIsReservationFormOpen(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEditReservation = () => {
+    setEditingReservationId("");
+    setForm(emptyReservation);
+    setIsReservationFormOpen(false);
+  };
+
+  const handleDeleteReservation = async () => {
+    if (!reservationToDelete) return;
+
+    try {
+      await deleteRoomingListReservation(token, reservationToDelete.id);
+      setRoomingList((current) => ({
+        ...current,
+        status: "Concept",
+        reservations: (current?.reservations || []).filter((item) => item.id !== reservationToDelete.id),
+      }));
+      if (editingReservationId === reservationToDelete.id) cancelEditReservation();
+      setReservationToDelete(null);
+    } catch (err) {
+      setError(err?.message || "Unable to delete reservation.");
     }
   };
 
@@ -287,9 +333,9 @@ export default function RoomingListPage() {
                 className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-50"
               >
                 <div>
-                  <h2 className="text-lg font-semibold">Add Reservation</h2>
+                  <h2 className="text-lg font-semibold">{editingReservationId ? "Edit Reservation" : "Add Reservation"}</h2>
                   <p className="mt-1 text-sm text-gray-600">
-                    {roomingList.status === "Submitted" ? "This rooming list has been submitted and can no longer be changed." : "Open the form to add another reservation to this rooming list."}
+                    {editingReservationId ? "Update the selected reservation details." : roomingList.status === "Submitted" ? "This rooming list has been submitted and can no longer be changed." : "Open the form to add another reservation to this rooming list."}
                   </p>
                 </div>
                 <ChevronDown className={`h-5 w-5 text-gray-500 transition-transform ${isReservationFormOpen ? "rotate-180" : ""}`} />
@@ -321,9 +367,14 @@ export default function RoomingListPage() {
                       <textarea value={form.comment} onChange={(event) => updateForm("comment", event.target.value)} className="mt-1 min-h-[4.5rem] w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20" />
                     </label>
                   </div>
-                  <div className="mt-5 flex justify-end">
+                  <div className="mt-5 flex justify-end gap-3">
+                    {editingReservationId && (
+                      <button type="button" onClick={cancelEditReservation} className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100">
+                        <X className="h-4 w-4" /> Cancel Edit
+                      </button>
+                    )}
                     <button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:cursor-not-allowed disabled:bg-gray-300">
-                      <Plus className="h-4 w-4" /> {saving ? "Adding..." : "Add Reservation"}
+                      <Plus className="h-4 w-4" /> {saving ? (editingReservationId ? "Saving..." : "Adding...") : editingReservationId ? "Save Reservation" : "Add Reservation"}
                     </button>
                   </div>
                 </form>
@@ -343,11 +394,12 @@ export default function RoomingListPage() {
                       <th className="px-3 py-2">Adults</th>
                       <th className="px-3 py-2">Children</th>
                       <th className="px-3 py-2">Comment</th>
+                      <th className="px-3 py-2 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white">
                     {reservations.length === 0 ? (
-                      <tr><td className="px-3 py-4 text-gray-500" colSpan="7">No reservations have been added yet.</td></tr>
+                      <tr><td className="px-3 py-4 text-gray-500" colSpan="8">No reservations have been added yet.</td></tr>
                     ) : reservations.map((reservation) => (
                       <tr key={reservation.id}>
                         <td className="px-3 py-2 font-medium text-gray-900">{reservation.firstName} {reservation.lastName}</td>
@@ -357,6 +409,16 @@ export default function RoomingListPage() {
                         <td className="px-3 py-2 text-gray-700">{reservation.numberOfAdults}</td>
                         <td className="px-3 py-2 text-gray-700">{reservation.numberOfChildren}</td>
                         <td className="px-3 py-2 text-gray-700">{reservation.comment || "—"}</td>
+                        <td className="px-3 py-2 text-right">
+                          <div className="inline-flex gap-2">
+                            <button type="button" onClick={() => handleEditReservation(reservation)} className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-[#b41f1f]" aria-label={`Edit reservation for ${reservation.firstName} ${reservation.lastName}`}>
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            <button type="button" onClick={() => setReservationToDelete(reservation)} className="rounded-lg p-2 text-gray-500 hover:bg-red-50 hover:text-[#b41f1f]" aria-label={`Delete reservation for ${reservation.firstName} ${reservation.lastName}`}>
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -372,6 +434,17 @@ export default function RoomingListPage() {
           message={availabilityModalMessage}
           confirmLabel="OK"
           onConfirm={() => setAvailabilityModalMessage("")}
+        />
+
+        <MessageModal
+          open={Boolean(reservationToDelete)}
+          title="Delete Reservation"
+          message={reservationToDelete ? `Delete reservation for ${reservationToDelete.firstName} ${reservationToDelete.lastName}? This cannot be undone.` : ""}
+          confirmLabel="Delete Reservation"
+          cancelLabel="Cancel"
+          onCancel={() => setReservationToDelete(null)}
+          onConfirm={handleDeleteReservation}
+          danger
         />
 
         <MessageModal

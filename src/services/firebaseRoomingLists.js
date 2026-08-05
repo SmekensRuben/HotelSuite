@@ -70,7 +70,7 @@ function getRoomTypeDays(roomingList) {
       : [];
 }
 
-function assertReservationAvailability(roomingList, reservation, existingReservations) {
+function assertReservationAvailability(roomingList, reservation, existingReservations, ignoredReservationId = "") {
   const requestedDates = getDateRange(reservation.arrivalDate, reservation.departureDate);
   if (requestedDates.length === 0) throw new Error("Select a valid arrival and departure date.");
 
@@ -82,6 +82,7 @@ function assertReservationAvailability(roomingList, reservation, existingReserva
     const dayRoomType = day?.roomTypes?.find((item) => item.code === roomType);
     const capacity = Number(dayRoomType?.quantity || 0);
     const used = existingReservations.filter((existingReservation) => {
+      if (ignoredReservationId && existingReservation.id === ignoredReservationId) return false;
       const existingDates = getDateRange(existingReservation.arrivalDate, existingReservation.departureDate);
       return existingDates.includes(date) && existingReservation.roomType === roomType;
     }).length;
@@ -95,6 +96,31 @@ function assertReservationAvailability(roomingList, reservation, existingReserva
 function buildPublicLink(token) {
   const origin = typeof window !== "undefined" && window.location?.origin ? window.location.origin : "";
   return `${origin}/rooming-list/${token}`;
+}
+
+function sanitizeReservation(reservation, id = createAccessToken().slice(0, 16)) {
+  return {
+    id,
+    firstName: String(reservation.firstName || "").trim(),
+    lastName: String(reservation.lastName || "").trim(),
+    arrivalDate: String(reservation.arrivalDate || "").trim(),
+    departureDate: String(reservation.departureDate || "").trim(),
+    roomType: String(reservation.roomType || "").trim(),
+    numberOfAdults: Math.max(0, Number(reservation.numberOfAdults || 0)),
+    numberOfChildren: Math.max(0, Number(reservation.numberOfChildren || 0)),
+    comment: String(reservation.comment || "").trim(),
+    createdAt: reservation.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function markRoomingListConcept(roomingList) {
+  if (roomingList.hotelUid && roomingList.groupId) {
+    await updateDoc(doc(db, `hotels/${roomingList.hotelUid}/groups/${roomingList.groupId}`), {
+      roomingListStatus: "Concept",
+      updatedAt: serverTimestamp(),
+    });
+  }
 }
 
 export function buildRoomingListLink(token) {
@@ -169,18 +195,7 @@ export async function addRoomingListReservation(token, reservation) {
   const reservations = Array.isArray(roomingList.reservations) ? roomingList.reservations : [];
   if (roomingList.status === "Submitted") throw new Error("This rooming list has already been submitted.");
 
-  const nextReservation = {
-    id: createAccessToken().slice(0, 16),
-    firstName: String(reservation.firstName || "").trim(),
-    lastName: String(reservation.lastName || "").trim(),
-    arrivalDate: String(reservation.arrivalDate || "").trim(),
-    departureDate: String(reservation.departureDate || "").trim(),
-    roomType: String(reservation.roomType || "").trim(),
-    numberOfAdults: Math.max(0, Number(reservation.numberOfAdults || 0)),
-    numberOfChildren: Math.max(0, Number(reservation.numberOfChildren || 0)),
-    comment: String(reservation.comment || "").trim(),
-    createdAt: new Date().toISOString(),
-  };
+  const nextReservation = sanitizeReservation(reservation);
   assertReservationAvailability(roomingList, nextReservation, reservations);
   const nextReservations = [...reservations, nextReservation];
 
@@ -190,12 +205,7 @@ export async function addRoomingListReservation(token, reservation) {
     updatedAt: serverTimestamp(),
   });
 
-  if (roomingList.hotelUid && roomingList.groupId) {
-    await updateDoc(doc(db, `hotels/${roomingList.hotelUid}/groups/${roomingList.groupId}`), {
-      roomingListStatus: "Concept",
-      updatedAt: serverTimestamp(),
-    });
-  }
+  await markRoomingListConcept(roomingList);
 
   return nextReservation;
 }
@@ -218,4 +228,46 @@ export async function submitRoomingList(token) {
       updatedAt: serverTimestamp(),
     });
   }
+}
+
+
+export async function updateRoomingListReservation(token, reservationId, reservation) {
+  if (!token) throw new Error("token is required");
+  if (!reservationId) throw new Error("reservationId is required");
+  const roomingList = await getRoomingListByToken(token);
+  if (!roomingList) throw new Error("Rooming list not found.");
+
+  const reservations = Array.isArray(roomingList.reservations) ? roomingList.reservations : [];
+  const currentReservation = reservations.find((item) => item.id === reservationId);
+  if (!currentReservation) throw new Error("Reservation not found.");
+
+  const nextReservation = sanitizeReservation({ ...currentReservation, ...reservation }, reservationId);
+  assertReservationAvailability(roomingList, nextReservation, reservations, reservationId);
+  const nextReservations = reservations.map((item) => (item.id === reservationId ? nextReservation : item));
+
+  await updateDoc(doc(db, `roomingListLinks/${token}`), {
+    reservations: nextReservations,
+    status: "Concept",
+    updatedAt: serverTimestamp(),
+  });
+  await markRoomingListConcept(roomingList);
+  return nextReservation;
+}
+
+export async function deleteRoomingListReservation(token, reservationId) {
+  if (!token) throw new Error("token is required");
+  if (!reservationId) throw new Error("reservationId is required");
+  const roomingList = await getRoomingListByToken(token);
+  if (!roomingList) throw new Error("Rooming list not found.");
+
+  const reservations = Array.isArray(roomingList.reservations) ? roomingList.reservations : [];
+  const nextReservations = reservations.filter((item) => item.id !== reservationId);
+  if (nextReservations.length === reservations.length) throw new Error("Reservation not found.");
+
+  await updateDoc(doc(db, `roomingListLinks/${token}`), {
+    reservations: nextReservations,
+    status: "Concept",
+    updatedAt: serverTimestamp(),
+  });
+  await markRoomingListConcept(roomingList);
 }
