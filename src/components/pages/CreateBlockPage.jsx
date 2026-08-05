@@ -146,7 +146,7 @@ export default function CreateBlockPage() {
         day.date === date
           ? {
               ...day,
-              roomTypes: [...day.roomTypes, { id: `${date}-${Date.now()}`, code: "", name: "", quantity: 0 }],
+              roomTypes: [...day.roomTypes, { id: `${date}-${Date.now()}`, code: "", name: "", quantity: 0, maxQuantity: 0 }],
             }
           : day
       )
@@ -171,7 +171,8 @@ export default function CreateBlockPage() {
                         configuredRoomTypeId: selectedRoomType.id,
                         code: selectedRoomType.code,
                         name: selectedRoomType.description,
-                        quantity: selectedRoomType.amount,
+                        quantity: Math.min(Number(roomType.quantity) || 0, selectedRoomType.amount),
+                        maxQuantity: selectedRoomType.amount,
                       }
                     : { ...roomType, [field]: value }
                   : roomType
@@ -192,9 +193,27 @@ export default function CreateBlockPage() {
     );
   };
 
+  const hasInvalidRoomQuantity = () =>
+    roomTypeDays.some((day) =>
+      day.roomTypes.some((roomType) => {
+        const quantity = Number(roomType.quantity);
+        const maxQuantity = Number(roomType.maxQuantity);
+        return (
+          !Number.isFinite(quantity) ||
+          quantity < 0 ||
+          (Number.isFinite(maxQuantity) && maxQuantity >= 0 && quantity > maxQuantity)
+        );
+      })
+    );
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (!hotelUid || saving) return;
+
+    if (hasInvalidRoomQuantity()) {
+      setError("Quantity mag niet hoger zijn dan de Amount uit General Settings.");
+      return;
+    }
 
     setSaving(true);
     setError("");
@@ -260,8 +279,8 @@ export default function CreateBlockPage() {
             <div>
               <h2 className="text-lg font-semibold">Allowed Room Types</h2>
               <p className="mt-1 text-sm text-gray-600">
-                Select the allowed Room Types from General Settings. Quantity is filled from the configured amount
-                automatically.
+                Select the allowed Room Types from General Settings. Quantity can be set per group up to the
+                configured maximum amount.
               </p>
             </div>
             <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-[#b41f1f]">
@@ -315,10 +334,12 @@ export default function CreateBlockPage() {
                               type="number"
                               min="0"
                               value={roomType.quantity}
-                              readOnly
-                              className="mt-1 w-full rounded-lg border border-gray-300 bg-gray-100 px-3 py-2 text-sm text-gray-700 focus:outline-none"
+                              max={roomType.maxQuantity ?? undefined}
+                              onChange={(event) => updateRoomType(day.date, roomType.id, "quantity", event.target.value)}
+                              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
                               required
                             />
+                            <span className="mt-1 block text-xs text-gray-500">Max {roomType.maxQuantity ?? 0}</span>
                           </label>
                           <button
                             type="button"
