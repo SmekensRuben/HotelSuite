@@ -107,6 +107,8 @@ export default function RoomingListPage() {
   const [saving, setSaving] = useState(false);
   const [submittingRoomingList, setSubmittingRoomingList] = useState(false);
   const [isReservationFormOpen, setIsReservationFormOpen] = useState(false);
+  const [availabilityModalMessage, setAvailabilityModalMessage] = useState("");
+  const [showSubmitConfirmModal, setShowSubmitConfirmModal] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -170,7 +172,7 @@ export default function RoomingListPage() {
 
     const availabilityConflict = findAvailabilityConflict(availability, form);
     if (availabilityConflict) {
-      setError(availabilityConflict);
+      setAvailabilityModalMessage(availabilityConflict);
       return;
     }
 
@@ -185,8 +187,14 @@ export default function RoomingListPage() {
       }));
       setForm(emptyReservation);
       setIsReservationFormOpen(false);
+      setShowSubmitConfirmModal(false);
     } catch (err) {
-      setError(err?.message || "Unable to add reservation.");
+      const message = err?.message || "Unable to add reservation.";
+      if (message.toLowerCase().includes("available")) {
+        setAvailabilityModalMessage(message);
+      } else {
+        setError(message);
+      }
     } finally {
       setSaving(false);
     }
@@ -205,6 +213,7 @@ export default function RoomingListPage() {
         status: "Submitted",
       }));
       setIsReservationFormOpen(false);
+      setShowSubmitConfirmModal(false);
     } catch (err) {
       setError(err?.message || "Unable to submit rooming list.");
     } finally {
@@ -227,7 +236,7 @@ export default function RoomingListPage() {
             {roomingList && (
               <button
                 type="button"
-                onClick={handleSubmitRoomingList}
+                onClick={() => setShowSubmitConfirmModal(true)}
                 disabled={submittingRoomingList || roomingList.status === "Submitted"}
                 className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-[#b41f1f] shadow hover:bg-red-50 disabled:cursor-not-allowed disabled:bg-white/40 disabled:text-white/70"
               >
@@ -356,7 +365,58 @@ export default function RoomingListPage() {
             </Card>
           </>
         )}
+
+        <MessageModal
+          open={Boolean(availabilityModalMessage)}
+          title="Room type unavailable"
+          message={availabilityModalMessage}
+          confirmLabel="OK"
+          onConfirm={() => setAvailabilityModalMessage("")}
+        />
+
+        <MessageModal
+          open={showSubmitConfirmModal}
+          title="Submit Rooming List"
+          message="Are you sure you want to submit this rooming list? After submitting, no more reservations can be added from this page."
+          confirmLabel={submittingRoomingList ? "Submitting..." : "Submit Rooming List"}
+          cancelLabel="Cancel"
+          onCancel={() => setShowSubmitConfirmModal(false)}
+          onConfirm={handleSubmitRoomingList}
+          danger
+        />
       </PageContainer>
+    </div>
+  );
+}
+
+function MessageModal({ open, title, message, confirmLabel, cancelLabel, onConfirm, onCancel, danger = false }) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel || onConfirm} aria-hidden="true" />
+      <div className="relative z-[80] w-full max-w-md rounded-2xl bg-white p-6 text-center shadow-xl">
+        <h2 className="text-xl font-semibold text-gray-900">{title}</h2>
+        <p className="mt-3 text-sm leading-6 text-gray-600">{message}</p>
+        <div className="mt-6 flex justify-center gap-3">
+          {cancelLabel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-200"
+            >
+              {cancelLabel}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onConfirm}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${danger ? "bg-[#b41f1f] hover:bg-[#961919]" : "bg-gray-900 hover:bg-gray-800"}`}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
