@@ -33,8 +33,12 @@ function formatDate(value) {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(`${value}T00:00:00`));
 }
 
-function buildAvailability(group, reservations) {
-  const days = Array.isArray(group?.roomTypeDays) ? group.roomTypeDays : [];
+function buildAvailability(roomingList, reservations) {
+  const days = Array.isArray(roomingList?.roomTypeDays) && roomingList.roomTypeDays.length > 0
+    ? roomingList.roomTypeDays
+    : Array.isArray(roomingList?.group?.roomTypeDays)
+      ? roomingList.group.roomTypeDays
+      : [];
   return days.map((day) => {
     const capacity = (day.roomTypes || []).reduce((total, roomType) => total + Number(roomType.quantity || 0), 0);
     const used = reservations.filter((reservation) => {
@@ -85,16 +89,25 @@ export default function RoomingListPage() {
   }, [token]);
 
   const reservations = Array.isArray(roomingList?.reservations) ? roomingList.reservations : [];
-  const availability = useMemo(() => buildAvailability(roomingList?.group, reservations), [roomingList?.group, reservations]);
+  const availability = useMemo(() => buildAvailability(roomingList, reservations), [roomingList, reservations]);
   const roomTypes = useMemo(() => {
     const unique = new Map();
-    (roomingList?.group?.roomTypeDays || []).forEach((day) => {
+    const publicRoomTypes = Array.isArray(roomingList?.roomTypes) ? roomingList.roomTypes : [];
+    publicRoomTypes.forEach((roomType) => {
+      if (roomType.code) unique.set(roomType.code, `${roomType.code} - ${roomType.name}`);
+    });
+
+    const roomTypeDays = Array.isArray(roomingList?.roomTypeDays) && roomingList.roomTypeDays.length > 0
+      ? roomingList.roomTypeDays
+      : roomingList?.group?.roomTypeDays || [];
+
+    roomTypeDays.forEach((day) => {
       (day.roomTypes || []).forEach((roomType) => {
         if (roomType.code) unique.set(roomType.code, `${roomType.code} - ${roomType.name}`);
       });
     });
     return Array.from(unique, ([code, label]) => ({ code, label }));
-  }, [roomingList?.group?.roomTypeDays]);
+  }, [roomingList?.group?.roomTypeDays, roomingList?.roomTypeDays, roomingList?.roomTypes]);
   const filledRooms = reservations.length;
   const totalRooms = availability.reduce((max, day) => Math.max(max, day.capacity), 0);
 
@@ -163,15 +176,20 @@ export default function RoomingListPage() {
                 <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   <Field label="First Name" value={form.firstName} onChange={(value) => updateForm("firstName", value)} required />
                   <Field label="Last Name" value={form.lastName} onChange={(value) => updateForm("lastName", value)} required />
-                  <Field label="Arrival Date" type="date" value={form.arrivalDate} min={roomingList.group?.arrival || undefined} max={roomingList.group?.departure || undefined} onChange={(value) => updateForm("arrivalDate", value)} required />
-                  <Field label="Departure Date" type="date" value={form.departureDate} min={form.arrivalDate || roomingList.group?.arrival || undefined} max={roomingList.group?.departure || undefined} onChange={(value) => updateForm("departureDate", value)} required />
-                  <label className="block text-sm font-medium text-gray-700">
-                    Room Type
-                    <select value={form.roomType} onChange={(event) => updateForm("roomType", event.target.value)} className="mt-1 w-44 max-w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20" required>
+                  <Field label="Arrival Date" type="date" value={form.arrivalDate} min={roomingList.arrival || roomingList.group?.arrival || undefined} max={roomingList.departure || roomingList.group?.departure || undefined} onChange={(value) => updateForm("arrivalDate", value)} required />
+                  <Field label="Departure Date" type="date" value={form.departureDate} min={form.arrivalDate || roomingList.arrival || roomingList.group?.arrival || undefined} max={roomingList.departure || roomingList.group?.departure || undefined} onChange={(value) => updateForm("departureDate", value)} required />
+                  <div className="pt-6">
+                    <select
+                      value={form.roomType}
+                      onChange={(event) => updateForm("roomType", event.target.value)}
+                      className="w-44 max-w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                      aria-label="Room Type"
+                      required
+                    >
                       <option value="">Select Room Type</option>
                       {roomTypes.map((roomType) => <option key={roomType.code} value={roomType.code}>{roomType.label}</option>)}
                     </select>
-                  </label>
+                  </div>
                   <Field label="Number of Adults" type="number" min="0" value={form.numberOfAdults} onChange={(value) => updateForm("numberOfAdults", value)} required />
                   <Field label="Number of Children" type="number" min="0" value={form.numberOfChildren} onChange={(value) => updateForm("numberOfChildren", value)} required />
                   <label className="block text-sm font-medium text-gray-700 lg:col-span-2">

@@ -13,6 +13,27 @@ function createAccessToken() {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function getRoomTypeSnapshot(group) {
+  const roomTypeDays = Array.isArray(group?.roomTypeDays) ? group.roomTypeDays : [];
+  const roomTypeMap = new Map();
+
+  roomTypeDays.forEach((day) => {
+    (day.roomTypes || []).forEach((roomType) => {
+      const code = String(roomType?.code || "").trim();
+      if (!code) return;
+      roomTypeMap.set(code, {
+        code,
+        name: String(roomType?.name || "").trim(),
+      });
+    });
+  });
+
+  return {
+    roomTypeDays,
+    roomTypes: Array.from(roomTypeMap.values()),
+  };
+}
+
 function buildPublicLink(token) {
   const origin = typeof window !== "undefined" && window.location?.origin ? window.location.origin : "";
   return `${origin}/rooming-list/${token}`;
@@ -30,6 +51,7 @@ export async function createRoomingListForGroup(hotelUid, group, actor) {
   const token = existingToken || createAccessToken();
   const link = buildPublicLink(token);
   const roomingListRef = doc(db, `roomingListLinks/${token}`);
+  const roomTypeSnapshot = getRoomTypeSnapshot(group);
 
   if (!existingToken) {
     await setDoc(roomingListRef, {
@@ -37,6 +59,10 @@ export async function createRoomingListForGroup(hotelUid, group, actor) {
       hotelUid,
       groupId: group.id,
       groupName: group.groupName || "",
+      arrival: group.arrival || "",
+      departure: group.departure || "",
+      roomTypeDays: roomTypeSnapshot.roomTypeDays,
+      roomTypes: roomTypeSnapshot.roomTypes,
       status: "Not Started",
       reservations: [],
       createdAt: serverTimestamp(),
@@ -62,10 +88,18 @@ export async function getRoomingListByToken(token) {
   const snap = await getDoc(doc(db, `roomingListLinks/${token}`));
   if (!snap.exists()) return null;
   const roomingList = { id: snap.id, ...snap.data() };
-  const groupSnap = await getDoc(doc(db, `hotels/${roomingList.hotelUid}/groups/${roomingList.groupId}`));
+  let group = null;
+
+  try {
+    const groupSnap = await getDoc(doc(db, `hotels/${roomingList.hotelUid}/groups/${roomingList.groupId}`));
+    group = groupSnap.exists() ? { id: groupSnap.id, ...groupSnap.data() } : null;
+  } catch (err) {
+    console.warn("Unable to load linked group for public rooming list:", err);
+  }
+
   return {
     ...roomingList,
-    group: groupSnap.exists() ? { id: groupSnap.id, ...groupSnap.data() } : null,
+    group,
   };
 }
 
