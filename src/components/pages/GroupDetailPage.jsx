@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, BedDouble, CalendarDays, Mail, Pencil, Phone, UserRound } from "lucide-react";
+import { ArrowLeft, BedDouble, CalendarDays, Copy, Link, Mail, Pencil, Phone, UserRound } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
@@ -8,6 +8,7 @@ import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { usePermission } from "../../hooks/usePermission";
 import { getGroup } from "../../services/firebaseGroups";
+import { createRoomingListForGroup } from "../../services/firebaseRoomingLists";
 
 function formatDate(value) {
   if (!value) return "—";
@@ -38,6 +39,8 @@ export default function GroupDetailPage() {
   const [group, setGroup] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [creatingRoomingList, setCreatingRoomingList] = useState(false);
+  const [copyMessage, setCopyMessage] = useState("");
 
   const today = useMemo(
     () =>
@@ -82,6 +85,38 @@ export default function GroupDetailPage() {
   };
 
   const roomTypeDays = Array.isArray(group?.roomTypeDays) ? group.roomTypeDays : [];
+
+  const handleCreateRoomingList = async () => {
+    if (!hotelUid || !group || creatingRoomingList) return;
+
+    setCreatingRoomingList(true);
+    setError("");
+    try {
+      const result = await createRoomingListForGroup(hotelUid, group, auth.currentUser?.uid || "unknown");
+      setGroup((current) => ({
+        ...current,
+        roomingListToken: result.token,
+        roomingListLink: result.link,
+        roomingListStatus: current?.roomingListStatus || "Not Started",
+      }));
+    } catch (err) {
+      console.error("Unable to create rooming list:", err);
+      setError(err?.message || "Unable to create rooming list.");
+    } finally {
+      setCreatingRoomingList(false);
+    }
+  };
+
+  const handleCopyRoomingListLink = async () => {
+    if (!group?.roomingListLink) return;
+    try {
+      await navigator.clipboard.writeText(group.roomingListLink);
+      setCopyMessage("Copied to clipboard.");
+    } catch (err) {
+      console.error("Unable to copy rooming list link:", err);
+      setCopyMessage("Copy the link manually.");
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-gray-100 text-gray-900">
@@ -136,33 +171,78 @@ export default function GroupDetailPage() {
             </div>
 
             <Card className="border border-gray-100 bg-white/95 shadow-sm">
-              <h2 className="text-lg font-semibold">Daily Room Type Allowances</h2>
-              <div className="mt-4 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">Daily Room Type Allowances</h2>
+                  <p className="mt-1 text-sm text-gray-600">Scroll horizontally to review availability per day.</p>
+                </div>
+                <span className="rounded-full bg-red-50 px-3 py-1 text-sm font-semibold text-[#b41f1f]">
+                  Rooming List Status: {group.roomingListStatus || "Not Started"}
+                </span>
+              </div>
+              <div className="mt-4 overflow-x-auto pb-2">
                 {roomTypeDays.length === 0 ? (
                   <p className="text-sm text-gray-600">No room type allowances have been added.</p>
                 ) : (
-                  roomTypeDays.map((day) => (
-                    <div key={day.date} className="rounded-xl border border-gray-200 p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <h3 className="font-semibold text-gray-900">{formatDate(day.date)}</h3>
-                          <p className="text-xs text-gray-500">{day.date}</p>
-                        </div>
-                        <span className="rounded-full bg-red-50 px-3 py-1 text-sm font-semibold text-[#b41f1f]">
-                          {(day.roomTypes || []).reduce((total, roomType) => total + Number(roomType.quantity || 0), 0)} rooms
-                        </span>
-                      </div>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                        {(day.roomTypes || []).map((roomType, index) => (
-                          <div key={`${day.date}-${roomType.code || index}`} className="rounded-lg bg-gray-50 px-3 py-2 text-sm">
-                            <p className="font-semibold text-gray-900">{roomType.code} - {roomType.name}</p>
-                            <p className="text-gray-600">Quantity: {roomType.quantity || 0}</p>
+                  <div className="grid auto-cols-[minmax(15rem,1fr)] grid-flow-col gap-4">
+                    {roomTypeDays.map((day) => (
+                      <div key={day.date} className="rounded-xl border border-gray-200 bg-gray-50/60 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="font-semibold text-gray-900">{formatDate(day.date)}</h3>
+                            <p className="text-xs text-gray-500">{day.date}</p>
                           </div>
-                        ))}
+                          <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-[#b41f1f]">
+                            {(day.roomTypes || []).reduce((total, roomType) => total + Number(roomType.quantity || 0), 0)} rooms
+                          </span>
+                        </div>
+                        <div className="mt-3 space-y-2">
+                          {(day.roomTypes || []).map((roomType, index) => (
+                            <div key={`${day.date}-${roomType.code || index}`} className="rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
+                              <p className="font-semibold text-gray-900">{roomType.code} - {roomType.name}</p>
+                              <p className="text-gray-600">Quantity: {roomType.quantity || 0}</p>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    ))}
+                  </div>
                 )}
+              </div>
+            </Card>
+
+            <Card className="border border-gray-100 bg-white/95 shadow-sm">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div className="flex-1">
+                  <h2 className="text-lg font-semibold">Rooming List Link</h2>
+                  <p className="mt-1 text-sm text-gray-600">Create a secure public link that can be opened without signing in.</p>
+                  {group.roomingListLink && (
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      <input
+                        value={group.roomingListLink}
+                        readOnly
+                        className="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-700"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleCopyRoomingListLink}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"
+                      >
+                        <Copy className="h-4 w-4" /> Copy Link
+                      </button>
+                    </div>
+                  )}
+                  {copyMessage && <p className="mt-2 text-sm font-semibold text-green-700">{copyMessage}</p>}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCreateRoomingList}
+                  disabled={creatingRoomingList || Boolean(group.roomingListLink)}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:cursor-not-allowed disabled:bg-gray-300"
+                >
+                  <Link className="h-4 w-4" />
+                  {group.roomingListLink ? "Rooming List Created" : creatingRoomingList ? "Creating..." : "Create Rooming List & Link"}
+                </button>
               </div>
             </Card>
           </>

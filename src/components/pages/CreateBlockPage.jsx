@@ -376,71 +376,82 @@ export default function CreateBlockPage({ mode = "create" }) {
           </Card>
 
           <Card className="border border-gray-100 bg-white/95 shadow-sm lg:col-span-3">
-            <div className="space-y-5">
+            <div className="space-y-4">
+              <div>
+                <h2 className="text-lg font-semibold">Daily Room Type Allowances</h2>
+                <p className="mt-1 text-sm text-gray-600">Scroll horizontally to review each day in the group block.</p>
+              </div>
               {roomTypeDays.length === 0 ? (
                 <p className="text-sm text-gray-600">Select an arrival and departure date to add daily room type allowances.</p>
               ) : (
-                roomTypeDays.map((day) => (
-                  <div key={day.date} className="rounded-xl border border-gray-200 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h3 className="font-semibold text-gray-900">{formatDate(day.date)}</h3>
-                        <p className="text-xs text-gray-500">{day.date}</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => addRoomType(day.date)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-[#b41f1f] px-3 py-2 text-sm font-semibold text-[#b41f1f] hover:bg-red-50"
-                      >
-                        <Plus className="h-4 w-4" /> Add Room Type
-                      </button>
-                    </div>
+                <div className="overflow-x-auto pb-2">
+                  <div className="grid auto-cols-[minmax(17rem,1fr)] grid-flow-col gap-4">
+                    {roomTypeDays.map((day) => (
+                      <div key={day.date} className="rounded-xl border border-gray-200 bg-gray-50/60 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="font-semibold text-gray-900">{formatDate(day.date)}</h3>
+                            <p className="text-xs text-gray-500">{day.date}</p>
+                          </div>
+                          <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-[#b41f1f]">
+                            {day.roomTypes.reduce((total, roomType) => total + Number(roomType.quantity || 0), 0)} rooms
+                          </span>
+                        </div>
 
-                    <div className="mt-4 space-y-3">
-                      {day.roomTypes.map((roomType) => (
-                        <div key={roomType.id} className="grid grid-cols-[1fr_7rem_auto] items-end gap-2">
-                          <label className="block text-sm font-medium text-gray-700">
-                            Room Type
-                            <select
-                              value={roomType.configuredRoomTypeId || ""}
-                              onChange={(event) => updateRoomType(day.date, roomType.id, "configuredRoomTypeId", event.target.value)}
-                              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
-                              required
-                            >
-                              <option value="">Select Room Type</option>
-                              {configuredRoomTypes.map((configuredRoomType) => (
-                                <option key={configuredRoomType.id} value={configuredRoomType.id}>
-                                  {configuredRoomType.code} - {configuredRoomType.description} ({configuredRoomType.amount})
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="block text-sm font-medium text-gray-700">
-                            Quantity
-                            <input
-                              type="number"
-                              min="0"
-                              value={roomType.quantity}
-                              max={roomType.maxQuantity ?? undefined}
-                              onChange={(event) => updateRoomType(day.date, roomType.id, "quantity", event.target.value)}
-                              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
-                              required
-                            />
-                            <span className="mt-1 block text-xs text-gray-500">Max {roomType.maxQuantity ?? 0}</span>
-                          </label>
+                        <div className="mt-4 space-y-3">
+                          {day.roomTypes.map((roomType) => (
+                            <div key={roomType.id} className="rounded-lg border border-gray-200 bg-white p-3">
+                              <label className="block text-sm font-medium text-gray-700">
+                                Room Type
+                                <select
+                                  value={roomType.configuredRoomTypeId || ""}
+                                  onChange={(event) => updateRoomType(day.date, roomType.id, "configuredRoomTypeId", event.target.value)}
+                                  className="mt-1 w-44 max-w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                                  required
+                                >
+                                  <option value="">Select Room Type</option>
+                                  {configuredRoomTypes.map((configuredRoomType) => (
+                                    <option key={configuredRoomType.id} value={configuredRoomType.id}>
+                                      {configuredRoomType.code} - {configuredRoomType.description} ({configuredRoomType.amount})
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label className="mt-3 block text-sm font-medium text-gray-700">
+                                Quantity
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={roomType.quantity}
+                                  max={roomType.maxQuantity ?? undefined}
+                                  onChange={(event) => updateRoomType(day.date, roomType.id, "quantity", event.target.value)}
+                                  className="mt-1 w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                                  required
+                                />
+                                <span className="ml-2 text-xs text-gray-500">Max {roomType.maxQuantity ?? 0}</span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => removeRoomType(day.date, roomType.id)}
+                                className="mt-3 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-[#b41f1f]"
+                                aria-label={`Remove ${roomType.name || "room type"}`}
+                              >
+                                <Trash2 className="h-4 w-4" /> Remove
+                              </button>
+                            </div>
+                          ))}
                           <button
                             type="button"
-                            onClick={() => removeRoomType(day.date, roomType.id)}
-                            className="mb-0.5 rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-[#b41f1f]"
-                            aria-label={`Remove ${roomType.name || "room type"}`}
+                            onClick={() => addRoomType(day.date)}
+                            className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-[#b41f1f] px-3 py-2 text-sm font-semibold text-[#b41f1f] hover:bg-red-50"
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Plus className="h-4 w-4" /> Add Room Type
                           </button>
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    ))}
                   </div>
-                ))
+                </div>
               )}
             </div>
           </Card>

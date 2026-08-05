@@ -62,12 +62,14 @@ import OperaSettingsPage from "./components/pages/OperaSettingsPage.jsx";
 import GroupsPage from "./components/pages/GroupsPage.jsx";
 import GroupDetailPage from "./components/pages/GroupDetailPage.jsx";
 import CreateBlockPage from "./components/pages/CreateBlockPage.jsx";
+import RoomingListPage from "./components/pages/RoomingListPage.jsx";
 
 export default function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/rooming-list/:token" element={<RoomingListPage />} />
       <Route
         path="/dashboard"
         element={
