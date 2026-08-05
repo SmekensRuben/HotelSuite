@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { BedDouble, Plus } from "lucide-react";
+import { BedDouble, ChevronDown, Plus, Send } from "lucide-react";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
-import { addRoomingListReservation, getRoomingListByToken } from "../../services/firebaseRoomingLists";
+import { addRoomingListReservation, getRoomingListByToken, submitRoomingList } from "../../services/firebaseRoomingLists";
 
 const emptyReservation = {
   firstName: "",
@@ -84,12 +84,29 @@ function buildAvailability(roomingList, reservations) {
   });
 }
 
+function findAvailabilityConflict(availability, reservation) {
+  const dates = getDateRange(reservation.arrivalDate, reservation.departureDate);
+  if (dates.length === 0) return "Select a valid arrival and departure date.";
+
+  for (const date of dates) {
+    const day = availability.find((item) => item.date === date);
+    const roomType = day?.roomTypes.find((item) => item.code === reservation.roomType);
+    if (!roomType || roomType.remaining <= 0) {
+      return `No ${reservation.roomType || "selected room type"} rooms are available on ${date}.`;
+    }
+  }
+
+  return "";
+}
+
 export default function RoomingListPage() {
   const { token } = useParams();
   const [roomingList, setRoomingList] = useState(null);
   const [form, setForm] = useState(emptyReservation);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [submittingRoomingList, setSubmittingRoomingList] = useState(false);
+  const [isReservationFormOpen, setIsReservationFormOpen] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -146,6 +163,17 @@ export default function RoomingListPage() {
     event.preventDefault();
     if (saving) return;
 
+    if (roomingList?.status === "Submitted") {
+      setError("This rooming list has already been submitted.");
+      return;
+    }
+
+    const availabilityConflict = findAvailabilityConflict(availability, form);
+    if (availabilityConflict) {
+      setError(availabilityConflict);
+      return;
+    }
+
     setSaving(true);
     setError("");
     try {
@@ -156,10 +184,31 @@ export default function RoomingListPage() {
         reservations: [...(current?.reservations || []), reservation],
       }));
       setForm(emptyReservation);
+      setIsReservationFormOpen(false);
     } catch (err) {
       setError(err?.message || "Unable to add reservation.");
     } finally {
       setSaving(false);
+    }
+  };
+
+
+  const handleSubmitRoomingList = async () => {
+    if (submittingRoomingList || roomingList?.status === "Submitted") return;
+
+    setSubmittingRoomingList(true);
+    setError("");
+    try {
+      await submitRoomingList(token);
+      setRoomingList((current) => ({
+        ...current,
+        status: "Submitted",
+      }));
+      setIsReservationFormOpen(false);
+    } catch (err) {
+      setError(err?.message || "Unable to submit rooming list.");
+    } finally {
+      setSubmittingRoomingList(false);
     }
   };
 
@@ -170,8 +219,22 @@ export default function RoomingListPage() {
           <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-red-100">
             <BedDouble className="h-3.5 w-3.5" /> Rooming list
           </p>
-          <h1 className="mt-2 text-3xl font-semibold">{roomingList?.groupName || roomingList?.group?.groupName || "Rooming List"}</h1>
-          <p className="mt-4 inline-flex rounded-full bg-white/15 px-4 py-2 text-lg font-semibold text-white">Status: {roomingList?.status || "Not Started"}</p>
+          <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-semibold">{roomingList?.groupName || roomingList?.group?.groupName || "Rooming List"}</h1>
+              <p className="mt-4 inline-flex rounded-full bg-white/15 px-4 py-2 text-lg font-semibold text-white">Status: {roomingList?.status || "Not Started"}</p>
+            </div>
+            {roomingList && (
+              <button
+                type="button"
+                onClick={handleSubmitRoomingList}
+                disabled={submittingRoomingList || roomingList.status === "Submitted"}
+                className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-[#b41f1f] shadow hover:bg-red-50 disabled:cursor-not-allowed disabled:bg-white/40 disabled:text-white/70"
+              >
+                <Send className="h-4 w-4" /> {submittingRoomingList ? "Submitting..." : roomingList.status === "Submitted" ? "Submitted" : "Submit Rooming List"}
+              </button>
+            )}
+          </div>
         </Card>
 
         {loading ? <p className="text-gray-600">Loading rooming list...</p> : error ? <p className="text-sm font-semibold text-red-600">{error}</p> : null}
@@ -207,40 +270,56 @@ export default function RoomingListPage() {
               </div>
             </Card>
 
-            <form onSubmit={handleSubmit} className="grid gap-4 lg:grid-cols-3">
-              <Card className="border border-gray-100 bg-white/95 shadow-sm lg:col-span-3">
-                <h2 className="text-lg font-semibold">Add Reservation</h2>
-                <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <Field label="First Name" value={form.firstName} onChange={(value) => updateForm("firstName", value)} required />
-                  <Field label="Last Name" value={form.lastName} onChange={(value) => updateForm("lastName", value)} required />
-                  <Field label="Arrival Date" type="date" value={form.arrivalDate} min={roomingList.arrival || roomingList.group?.arrival || undefined} max={roomingList.departure || roomingList.group?.departure || undefined} onChange={(value) => updateForm("arrivalDate", value)} required />
-                  <Field label="Departure Date" type="date" value={form.departureDate} min={form.arrivalDate || roomingList.arrival || roomingList.group?.arrival || undefined} max={roomingList.departure || roomingList.group?.departure || undefined} onChange={(value) => updateForm("departureDate", value)} required />
-                  <div className="pt-6">
-                    <select
-                      value={form.roomType}
-                      onChange={(event) => updateForm("roomType", event.target.value)}
-                      className="w-44 max-w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
-                      aria-label="Room Type"
-                      required
-                    >
-                      <option value="">Select Room Type</option>
-                      {roomTypes.map((roomType) => <option key={roomType.code} value={roomType.code}>{roomType.label}</option>)}
-                    </select>
+            <Card className="overflow-hidden border border-gray-100 bg-white/95 p-0 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setIsReservationFormOpen((current) => !current)}
+                disabled={roomingList.status === "Submitted"}
+                className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+              >
+                <div>
+                  <h2 className="text-lg font-semibold">Add Reservation</h2>
+                  <p className="mt-1 text-sm text-gray-600">
+                    {roomingList.status === "Submitted" ? "This rooming list has been submitted and can no longer be changed." : "Open the form to add another reservation to this rooming list."}
+                  </p>
+                </div>
+                <ChevronDown className={`h-5 w-5 text-gray-500 transition-transform ${isReservationFormOpen ? "rotate-180" : ""}`} />
+              </button>
+
+              {isReservationFormOpen && roomingList.status !== "Submitted" && (
+                <form onSubmit={handleSubmit} className="border-t border-gray-100 bg-gradient-to-b from-white to-gray-50 px-5 py-5">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <Field label="First Name" value={form.firstName} onChange={(value) => updateForm("firstName", value)} required />
+                    <Field label="Last Name" value={form.lastName} onChange={(value) => updateForm("lastName", value)} required />
+                    <Field label="Arrival Date" type="date" value={form.arrivalDate} min={roomingList.arrival || roomingList.group?.arrival || undefined} max={roomingList.departure || roomingList.group?.departure || undefined} onChange={(value) => updateForm("arrivalDate", value)} required />
+                    <Field label="Departure Date" type="date" value={form.departureDate} min={form.arrivalDate || roomingList.arrival || roomingList.group?.arrival || undefined} max={roomingList.departure || roomingList.group?.departure || undefined} onChange={(value) => updateForm("departureDate", value)} required />
+                    <div className="pt-6">
+                      <select
+                        value={form.roomType}
+                        onChange={(event) => updateForm("roomType", event.target.value)}
+                        className="w-44 max-w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                        aria-label="Room Type"
+                        required
+                      >
+                        <option value="">Select Room Type</option>
+                        {roomTypes.map((roomType) => <option key={roomType.code} value={roomType.code}>{roomType.label}</option>)}
+                      </select>
+                    </div>
+                    <Field label="Number of Adults" type="number" min="0" value={form.numberOfAdults} onChange={(value) => updateForm("numberOfAdults", value)} required />
+                    <Field label="Number of Children" type="number" min="0" value={form.numberOfChildren} onChange={(value) => updateForm("numberOfChildren", value)} required />
+                    <label className="block text-sm font-medium text-gray-700 lg:col-span-2">
+                      Comment
+                      <textarea value={form.comment} onChange={(event) => updateForm("comment", event.target.value)} className="mt-1 min-h-[4.5rem] w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20" />
+                    </label>
                   </div>
-                  <Field label="Number of Adults" type="number" min="0" value={form.numberOfAdults} onChange={(value) => updateForm("numberOfAdults", value)} required />
-                  <Field label="Number of Children" type="number" min="0" value={form.numberOfChildren} onChange={(value) => updateForm("numberOfChildren", value)} required />
-                  <label className="block text-sm font-medium text-gray-700 lg:col-span-2">
-                    Comment
-                    <textarea value={form.comment} onChange={(event) => updateForm("comment", event.target.value)} className="mt-1 min-h-[2.6rem] w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20" />
-                  </label>
-                </div>
-                <div className="mt-4 flex justify-end">
-                  <button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:cursor-not-allowed disabled:bg-gray-300">
-                    <Plus className="h-4 w-4" /> {saving ? "Adding..." : "Add Reservation"}
-                  </button>
-                </div>
-              </Card>
-            </form>
+                  <div className="mt-5 flex justify-end">
+                    <button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:cursor-not-allowed disabled:bg-gray-300">
+                      <Plus className="h-4 w-4" /> {saving ? "Adding..." : "Add Reservation"}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </Card>
 
             <Card className="border border-gray-100 bg-white/95 shadow-sm">
               <h2 className="text-lg font-semibold">Reservations</h2>

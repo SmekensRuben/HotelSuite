@@ -34,6 +34,64 @@ function getRoomTypeSnapshot(group) {
   };
 }
 
+function parseDateParts(value) {
+  const [year, month, day] = String(value || "").split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return { year, month, day };
+}
+
+function formatDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getDateRange(startDate, endDate) {
+  const startParts = parseDateParts(startDate);
+  const endParts = parseDateParts(endDate);
+  if (!startParts || !endParts || endDate <= startDate) return [];
+
+  const dates = [];
+  const cursor = new Date(startParts.year, startParts.month - 1, startParts.day);
+  const end = new Date(endParts.year, endParts.month - 1, endParts.day);
+  while (cursor < end) {
+    dates.push(formatDateKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+
+function getRoomTypeDays(roomingList) {
+  return Array.isArray(roomingList?.roomTypeDays) && roomingList.roomTypeDays.length > 0
+    ? roomingList.roomTypeDays
+    : Array.isArray(roomingList?.group?.roomTypeDays)
+      ? roomingList.group.roomTypeDays
+      : [];
+}
+
+function assertReservationAvailability(roomingList, reservation, existingReservations) {
+  const requestedDates = getDateRange(reservation.arrivalDate, reservation.departureDate);
+  if (requestedDates.length === 0) throw new Error("Select a valid arrival and departure date.");
+
+  const roomType = String(reservation.roomType || "").trim();
+  const roomTypeDays = getRoomTypeDays(roomingList);
+
+  requestedDates.forEach((date) => {
+    const day = roomTypeDays.find((item) => item.date === date);
+    const dayRoomType = day?.roomTypes?.find((item) => item.code === roomType);
+    const capacity = Number(dayRoomType?.quantity || 0);
+    const used = existingReservations.filter((existingReservation) => {
+      const existingDates = getDateRange(existingReservation.arrivalDate, existingReservation.departureDate);
+      return existingDates.includes(date) && existingReservation.roomType === roomType;
+    }).length;
+
+    if (used + 1 > capacity) {
+      throw new Error(`No ${roomType} rooms are available on ${date}.`);
+    }
+  });
+}
+
 function buildPublicLink(token) {
   const origin = typeof window !== "undefined" && window.location?.origin ? window.location.origin : "";
   return `${origin}/rooming-list/${token}`;
@@ -109,6 +167,8 @@ export async function addRoomingListReservation(token, reservation) {
   if (!roomingList) throw new Error("Rooming list not found.");
 
   const reservations = Array.isArray(roomingList.reservations) ? roomingList.reservations : [];
+  if (roomingList.status === "Submitted") throw new Error("This rooming list has already been submitted.");
+
   const nextReservation = {
     id: createAccessToken().slice(0, 16),
     firstName: String(reservation.firstName || "").trim(),
@@ -121,6 +181,7 @@ export async function addRoomingListReservation(token, reservation) {
     comment: String(reservation.comment || "").trim(),
     createdAt: new Date().toISOString(),
   };
+  assertReservationAvailability(roomingList, nextReservation, reservations);
   const nextReservations = [...reservations, nextReservation];
 
   await updateDoc(doc(db, `roomingListLinks/${token}`), {
@@ -137,4 +198,24 @@ export async function addRoomingListReservation(token, reservation) {
   }
 
   return nextReservation;
+}
+
+
+export async function submitRoomingList(token) {
+  if (!token) throw new Error("token is required");
+  const roomingList = await getRoomingListByToken(token);
+  if (!roomingList) throw new Error("Rooming list not found.");
+
+  await updateDoc(doc(db, `roomingListLinks/${token}`), {
+    status: "Submitted",
+    submittedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  if (roomingList.hotelUid && roomingList.groupId) {
+    await updateDoc(doc(db, `hotels/${roomingList.hotelUid}/groups/${roomingList.groupId}`), {
+      roomingListStatus: "Submitted",
+      updatedAt: serverTimestamp(),
+    });
+  }
 }
