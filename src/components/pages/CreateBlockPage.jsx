@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, BedDouble, Plus, Trash2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { calculateBlockedRooms, createGroup } from "../../services/firebaseGroups";
+import { calculateBlockedRooms, createGroup, getGroup, updateGroup } from "../../services/firebaseGroups";
 import { getSettings } from "../../services/firebaseSettings";
 
 const emptyForm = {
@@ -43,7 +43,16 @@ function createRoomTypeDays(arrival, departure, existingDays) {
     const existingDay = existingByDate.get(date);
     return {
       date,
-      roomTypes: existingDay?.roomTypes?.length ? existingDay.roomTypes : [],
+      roomTypes: existingDay?.roomTypes?.length
+        ? existingDay.roomTypes.map((roomType, index) => ({
+            id: roomType.id || `${date}-${roomType.code || "room-type"}-${index}`,
+            configuredRoomTypeId: roomType.configuredRoomTypeId || roomType.code || "",
+            code: roomType.code || "",
+            name: roomType.name || "",
+            quantity: roomType.quantity || 0,
+            maxQuantity: roomType.maxQuantity ?? roomType.quantity ?? 0,
+          }))
+        : [],
     };
   });
 }
@@ -57,13 +66,15 @@ function formatDate(value) {
   }).format(new Date(`${value}T00:00:00`));
 }
 
-export default function CreateBlockPage() {
+export default function CreateBlockPage({ mode = "create" }) {
   const navigate = useNavigate();
+  const { groupId } = useParams();
   const { hotelUid } = useHotelContext();
   const [form, setForm] = useState(emptyForm);
   const [roomTypeDays, setRoomTypeDays] = useState([]);
   const [configuredRoomTypes, setConfiguredRoomTypes] = useState([]);
   const [loadingRoomTypes, setLoadingRoomTypes] = useState(true);
+  const [loadingGroup, setLoadingGroup] = useState(mode === "edit");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -77,6 +88,7 @@ export default function CreateBlockPage() {
     []
   );
 
+  const isEditMode = mode === "edit";
   const blockedRooms = useMemo(() => calculateBlockedRooms(roomTypeDays), [roomTypeDays]);
 
   useEffect(() => {
@@ -110,8 +122,8 @@ export default function CreateBlockPage() {
           : [];
         setConfiguredRoomTypes(roomTypes);
       } catch (err) {
-        console.error("Fout bij laden van Room Types:", err);
-        if (active) setError("Room Types konden niet geladen worden uit General Settings.");
+        console.error("Unable to load Room Types:", err);
+        if (active) setError("Room Types could not be loaded from General Settings.");
       } finally {
         if (active) setLoadingRoomTypes(false);
       }
@@ -123,6 +135,78 @@ export default function CreateBlockPage() {
       active = false;
     };
   }, [hotelUid]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadGroup() {
+      if (!isEditMode) {
+        setLoadingGroup(false);
+        return;
+      }
+
+      if (!hotelUid || !groupId) return;
+
+      setLoadingGroup(true);
+      try {
+        const group = await getGroup(hotelUid, groupId);
+        if (!active) return;
+        if (!group) {
+          setError("Group not found.");
+          return;
+        }
+
+        setForm({
+          groupName: group.groupName || "",
+          blockCode: group.blockCode || "",
+          arrival: group.arrival || "",
+          departure: group.departure || "",
+          roomingListDeadline: group.roomingListDeadline || "",
+          meOfficer: group.meOfficer || "",
+          organiserName: group.organiserName || "",
+          organiserEmail: group.organiserEmail || "",
+          organiserPhone: group.organiserPhone || "",
+        });
+        setRoomTypeDays(createRoomTypeDays(group.arrival || "", group.departure || "", group.roomTypeDays || []));
+      } catch (err) {
+        console.error("Unable to load group:", err);
+        if (active) setError(err?.message || "Unable to load group.");
+      } finally {
+        if (active) setLoadingGroup(false);
+      }
+    }
+
+    loadGroup();
+
+    return () => {
+      active = false;
+    };
+  }, [groupId, hotelUid, isEditMode]);
+
+  useEffect(() => {
+    if (configuredRoomTypes.length === 0) return;
+
+    setRoomTypeDays((days) =>
+      days.map((day) => ({
+        ...day,
+        roomTypes: day.roomTypes.map((roomType) => {
+          const configuredRoomType = configuredRoomTypes.find(
+            (item) => item.id === roomType.configuredRoomTypeId || item.code === roomType.code
+          );
+
+          if (!configuredRoomType) return roomType;
+
+          return {
+            ...roomType,
+            configuredRoomTypeId: configuredRoomType.id,
+            code: configuredRoomType.code,
+            name: configuredRoomType.description,
+            maxQuantity: configuredRoomType.amount,
+          };
+        }),
+      }))
+    );
+  }, [configuredRoomTypes]);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -211,24 +295,27 @@ export default function CreateBlockPage() {
     if (!hotelUid || saving) return;
 
     if (hasInvalidRoomQuantity()) {
-      setError("Quantity mag niet hoger zijn dan de Amount uit General Settings.");
+      setError("Quantity cannot be higher than the Amount in General Settings.");
       return;
     }
 
     setSaving(true);
     setError("");
     try {
-      await createGroup(
-        hotelUid,
-        {
-          ...form,
-          roomTypeDays,
-        },
-        auth.currentUser?.uid || "unknown"
-      );
-      navigate("/me/groups");
+      const payload = {
+        ...form,
+        roomTypeDays,
+      };
+
+      if (isEditMode) {
+        await updateGroup(hotelUid, groupId, payload, auth.currentUser?.uid || "unknown");
+        navigate(`/me/groups/${groupId}`);
+      } else {
+        await createGroup(hotelUid, payload, auth.currentUser?.uid || "unknown");
+        navigate("/me/groups");
+      }
     } catch (err) {
-      setError(err?.message || "Unable to create group.");
+      setError(err?.message || (isEditMode ? "Unable to update group." : "Unable to create group."));
     } finally {
       setSaving(false);
     }
@@ -244,14 +331,14 @@ export default function CreateBlockPage() {
               <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-red-100">
                 <BedDouble className="h-3.5 w-3.5" /> M&amp;E block management
               </p>
-              <h1 className="text-3xl font-semibold">Create Group</h1>
+              <h1 className="text-3xl font-semibold">{isEditMode ? "Edit Group" : "Create Group"}</h1>
               <p className="max-w-2xl text-sm text-red-100">
-                Create a group block with daily room type allowances and organiser contacts.
+                {isEditMode ? "Update a group block with daily room type allowances and organiser contacts." : "Create a group block with daily room type allowances and organiser contacts."}
               </p>
             </div>
             <button
               type="button"
-              onClick={() => navigate("/me/groups")}
+              onClick={() => navigate(isEditMode ? `/me/groups/${groupId}` : "/me/groups")}
               className="inline-flex items-center gap-2 rounded-lg border border-white/30 bg-white/10 px-4 py-2 text-sm font-medium text-white hover:bg-white/20"
             >
               <ArrowLeft className="h-4 w-4" /> Back to Groups
@@ -370,14 +457,14 @@ export default function CreateBlockPage() {
             </button>
             <button
               type="submit"
-              disabled={saving || roomTypeDays.length === 0 || loadingRoomTypes || configuredRoomTypes.length === 0}
+              disabled={saving || loadingGroup || roomTypeDays.length === 0 || loadingRoomTypes || configuredRoomTypes.length === 0}
               className={`rounded-lg px-4 py-2 text-sm font-semibold text-white shadow ${
-                saving || roomTypeDays.length === 0 || loadingRoomTypes || configuredRoomTypes.length === 0
+                saving || loadingGroup || roomTypeDays.length === 0 || loadingRoomTypes || configuredRoomTypes.length === 0
                   ? "bg-gray-300 cursor-not-allowed"
                   : "bg-[#b41f1f] hover:bg-[#961919]"
               }`}
             >
-              {saving ? "Creating Group..." : "Create Group"}
+              {saving ? (isEditMode ? "Saving Group..." : "Creating Group...") : (isEditMode ? "Save Group" : "Create Group")}
             </button>
           </div>
         </form>

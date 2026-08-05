@@ -107,7 +107,7 @@ export default function GroupsPage() {
           {loading ? (
             <p className="text-gray-600">Loading groups...</p>
           ) : (
-            <DataListTable columns={columns} rows={groups} emptyMessage="No groups found." />
+            <DataListTable columns={columns} rows={groups} onRowClick={(group) => navigate(`/me/groups/${group.id}`)} emptyMessage="No groups found." />
           )}
         </div>
       </PageContainer>

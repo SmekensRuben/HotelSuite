@@ -2,8 +2,10 @@ import {
   db,
   collection,
   doc,
+  getDoc,
   getDocs,
   setDoc,
+  updateDoc,
   serverTimestamp,
 } from "../firebaseConfig";
 
@@ -87,4 +89,21 @@ export async function createGroup(hotelUid, groupData, actor) {
 
   await setDoc(groupDocRef, payload);
   return groupDocRef.id;
+}
+
+
+export async function getGroup(hotelUid, groupId) {
+  if (!hotelUid || !groupId) return null;
+  const groupRef = doc(db, `hotels/${hotelUid}/groups/${groupId}`);
+  const snap = await getDoc(groupRef);
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...snap.data() };
+}
+
+export async function updateGroup(hotelUid, groupId, groupData, actor) {
+  if (!hotelUid) throw new Error("hotelUid is required");
+  if (!groupId) throw new Error("groupId is required");
+
+  const groupRef = doc(db, `hotels/${hotelUid}/groups/${groupId}`);
+  await updateDoc(groupRef, buildGroupPayload(groupData, actor));
 }
