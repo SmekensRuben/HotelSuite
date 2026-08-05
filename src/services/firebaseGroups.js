@@ -27,11 +27,12 @@ function sanitizeRoomTypeDays(value) {
             .map((roomType) => {
               const quantity = Number(roomType?.quantity);
               return {
+                code: String(roomType?.code || "").trim(),
                 name: String(roomType?.name || "").trim(),
                 quantity: Number.isFinite(quantity) ? Math.max(0, Math.floor(quantity)) : 0,
               };
             })
-            .filter((roomType) => roomType.name || roomType.quantity > 0)
+            .filter((roomType) => roomType.code || roomType.name || roomType.quantity > 0)
         : [];
 
       return { date, roomTypes };
