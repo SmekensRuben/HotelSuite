@@ -1,15 +1,23 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, BedDouble, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, BedDouble, ChevronDown, Plus, Trash2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { calculateBlockedRooms, createGroup, getGroup, updateGroup } from "../../services/firebaseGroups";
+import {
+  calculateBlockedRooms,
+  createGroup,
+  getGroup,
+  updateGroup,
+} from "../../services/firebaseGroups";
 import { getSettings } from "../../services/firebaseSettings";
 import { normalizeNotificationSelections } from "../../constants/groupNotifications";
-import { getGroupNotificationDefaults, getNotificationLists } from "../../services/firebaseNotificationLists";
+import {
+  getGroupNotificationDefaults,
+  getNotificationLists,
+} from "../../services/firebaseNotificationLists";
 import NotificationListSelector from "./NotificationListSelector";
 import { getRoomingListDeadlineDays } from "../../utils/groupDeadline";
 
@@ -26,7 +34,9 @@ const emptyForm = {
 };
 
 function parseDateParts(value) {
-  const [year, month, day] = String(value || "").split("-").map(Number);
+  const [year, month, day] = String(value || "")
+    .split("-")
+    .map(Number);
   if (!year || !month || !day) return null;
   return { year, month, day };
 }
@@ -44,7 +54,11 @@ function getDateRange(startDate, endDate) {
   if (!startParts || !endParts || endDate <= startDate) return [];
 
   const dates = [];
-  const cursor = new Date(startParts.year, startParts.month - 1, startParts.day);
+  const cursor = new Date(
+    startParts.year,
+    startParts.month - 1,
+    startParts.day,
+  );
   const end = new Date(endParts.year, endParts.month - 1, endParts.day);
 
   while (cursor < end) {
@@ -64,8 +78,10 @@ function createRoomTypeDays(arrival, departure, existingDays) {
       date,
       roomTypes: existingDay?.roomTypes?.length
         ? existingDay.roomTypes.map((roomType, index) => ({
-            id: roomType.id || `${date}-${roomType.code || "room-type"}-${index}`,
-            configuredRoomTypeId: roomType.configuredRoomTypeId || roomType.code || "",
+            id:
+              roomType.id || `${date}-${roomType.code || "room-type"}-${index}`,
+            configuredRoomTypeId:
+              roomType.configuredRoomTypeId || roomType.code || "",
             code: roomType.code || "",
             name: roomType.name || "",
             quantity: roomType.quantity || 0,
@@ -98,7 +114,10 @@ export default function CreateBlockPage({ mode = "create" }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notificationLists, setNotificationLists] = useState([]);
-  const [notifications, setNotifications] = useState(normalizeNotificationSelections);
+  const [notifications, setNotifications] = useState(
+    normalizeNotificationSelections,
+  );
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   const today = useMemo(
     () =>
@@ -107,19 +126,37 @@ export default function CreateBlockPage({ mode = "create" }) {
         month: "long",
         day: "numeric",
       }),
-    []
+    [],
   );
 
   const isEditMode = mode === "edit";
-  const blockedRooms = useMemo(() => calculateBlockedRooms(roomTypeDays), [roomTypeDays]);
+  const blockedRooms = useMemo(
+    () => calculateBlockedRooms(roomTypeDays),
+    [roomTypeDays],
+  );
 
   useEffect(() => {
     let active = true;
     if (!hotelUid) return;
-    Promise.all([getNotificationLists(hotelUid), isEditMode ? Promise.resolve(null) : getGroupNotificationDefaults(hotelUid)])
-      .then(([lists, defaults]) => { if (active) { setNotificationLists(lists); if (defaults) setNotifications(defaults); } })
-      .catch((err) => { console.error("Unable to load notification settings:", err); if (active) setError("Notification Lists could not be loaded."); });
-    return () => { active = false; };
+    Promise.all([
+      getNotificationLists(hotelUid),
+      isEditMode
+        ? Promise.resolve(null)
+        : getGroupNotificationDefaults(hotelUid),
+    ])
+      .then(([lists, defaults]) => {
+        if (active) {
+          setNotificationLists(lists);
+          if (defaults) setNotifications(defaults);
+        }
+      })
+      .catch((err) => {
+        console.error("Unable to load notification settings:", err);
+        if (active) setError("Notification Lists could not be loaded.");
+      });
+    return () => {
+      active = false;
+    };
   }, [hotelUid, isEditMode]);
 
   useEffect(() => {
@@ -146,7 +183,9 @@ export default function CreateBlockPage({ mode = "create" }) {
                   id: String(roomType?.id || code || `room-type-${index}`),
                   code,
                   description,
-                  amount: Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0,
+                  amount: Number.isFinite(amount)
+                    ? Math.max(0, Math.floor(amount))
+                    : 0,
                 };
               })
               .filter((roomType) => roomType.code && roomType.description)
@@ -154,7 +193,8 @@ export default function CreateBlockPage({ mode = "create" }) {
         setConfiguredRoomTypes(roomTypes);
       } catch (err) {
         console.error("Unable to load Room Types:", err);
-        if (active) setError("Room Types could not be loaded from General Settings.");
+        if (active)
+          setError("Room Types could not be loaded from General Settings.");
       } finally {
         if (active) setLoadingRoomTypes(false);
       }
@@ -198,7 +238,13 @@ export default function CreateBlockPage({ mode = "create" }) {
           organiserEmail: group.organiserEmail || "",
           organiserPhone: group.organiserPhone || "",
         });
-        setRoomTypeDays(createRoomTypeDays(group.arrival || "", group.departure || "", group.roomTypeDays || []));
+        setRoomTypeDays(
+          createRoomTypeDays(
+            group.arrival || "",
+            group.departure || "",
+            group.roomTypeDays || [],
+          ),
+        );
         setNotifications(normalizeNotificationSelections(group.notifications));
       } catch (err) {
         console.error("Unable to load group:", err);
@@ -223,7 +269,9 @@ export default function CreateBlockPage({ mode = "create" }) {
         ...day,
         roomTypes: day.roomTypes.map((roomType) => {
           const configuredRoomType = configuredRoomTypes.find(
-            (item) => item.id === roomType.configuredRoomTypeId || item.code === roomType.code
+            (item) =>
+              item.id === roomType.configuredRoomTypeId ||
+              item.code === roomType.code,
           );
 
           if (!configuredRoomType) return roomType;
@@ -236,7 +284,7 @@ export default function CreateBlockPage({ mode = "create" }) {
             maxQuantity: configuredRoomType.amount,
           };
         }),
-      }))
+      })),
     );
   }, [configuredRoomTypes]);
 
@@ -250,7 +298,9 @@ export default function CreateBlockPage({ mode = "create" }) {
     setForm((current) => {
       const next = { ...current, [field]: value };
       if (field === "arrival" || field === "departure") {
-        setRoomTypeDays((days) => createRoomTypeDays(next.arrival, next.departure, days));
+        setRoomTypeDays((days) =>
+          createRoomTypeDays(next.arrival, next.departure, days),
+        );
       }
       return next;
     });
@@ -262,17 +312,27 @@ export default function CreateBlockPage({ mode = "create" }) {
         day.date === date
           ? {
               ...day,
-              roomTypes: [...day.roomTypes, { id: `${date}-${Date.now()}`, code: "", name: "", quantity: 0, maxQuantity: 0 }],
+              roomTypes: [
+                ...day.roomTypes,
+                {
+                  id: `${date}-${Date.now()}`,
+                  code: "",
+                  name: "",
+                  quantity: 0,
+                  maxQuantity: 0,
+                },
+              ],
             }
-          : day
-      )
+          : day,
+      ),
     );
   };
 
   const updateRoomType = (date, roomTypeId, field, value) => {
-    const selectedRoomType = field === "configuredRoomTypeId"
-      ? configuredRoomTypes.find((roomType) => roomType.id === value)
-      : null;
+    const selectedRoomType =
+      field === "configuredRoomTypeId"
+        ? configuredRoomTypes.find((roomType) => roomType.id === value)
+        : null;
 
     setRoomTypeDays((days) =>
       days.map((day) =>
@@ -287,15 +347,18 @@ export default function CreateBlockPage({ mode = "create" }) {
                         configuredRoomTypeId: selectedRoomType.id,
                         code: selectedRoomType.code,
                         name: selectedRoomType.description,
-                        quantity: Math.min(Number(roomType.quantity) || 0, selectedRoomType.amount),
+                        quantity: Math.min(
+                          Number(roomType.quantity) || 0,
+                          selectedRoomType.amount,
+                        ),
                         maxQuantity: selectedRoomType.amount,
                       }
                     : { ...roomType, [field]: value }
-                  : roomType
+                  : roomType,
               ),
             }
-          : day
-      )
+          : day,
+      ),
     );
   };
 
@@ -303,9 +366,14 @@ export default function CreateBlockPage({ mode = "create" }) {
     setRoomTypeDays((days) =>
       days.map((day) =>
         day.date === date
-          ? { ...day, roomTypes: day.roomTypes.filter((roomType) => roomType.id !== roomTypeId) }
-          : day
-      )
+          ? {
+              ...day,
+              roomTypes: day.roomTypes.filter(
+                (roomType) => roomType.id !== roomTypeId,
+              ),
+            }
+          : day,
+      ),
     );
   };
 
@@ -317,9 +385,11 @@ export default function CreateBlockPage({ mode = "create" }) {
         return (
           !Number.isFinite(quantity) ||
           quantity < 0 ||
-          (Number.isFinite(maxQuantity) && maxQuantity >= 0 && quantity > maxQuantity)
+          (Number.isFinite(maxQuantity) &&
+            maxQuantity >= 0 &&
+            quantity > maxQuantity)
         );
-      })
+      }),
     );
 
   const handleSubmit = async (event) => {
@@ -327,7 +397,9 @@ export default function CreateBlockPage({ mode = "create" }) {
     if (!hotelUid || saving) return;
 
     if (hasInvalidRoomQuantity()) {
-      setError("Quantity cannot be higher than the Amount in General Settings.");
+      setError(
+        "Quantity cannot be higher than the Amount in General Settings.",
+      );
       return;
     }
 
@@ -341,14 +413,26 @@ export default function CreateBlockPage({ mode = "create" }) {
       };
 
       if (isEditMode) {
-        await updateGroup(hotelUid, groupId, payload, auth.currentUser?.uid || "unknown");
+        await updateGroup(
+          hotelUid,
+          groupId,
+          payload,
+          auth.currentUser?.uid || "unknown",
+        );
         navigate(`/me/groups/${groupId}`);
       } else {
-        await createGroup(hotelUid, payload, auth.currentUser?.uid || "unknown");
+        await createGroup(
+          hotelUid,
+          payload,
+          auth.currentUser?.uid || "unknown",
+        );
         navigate("/me/groups");
       }
     } catch (err) {
-      setError(err?.message || (isEditMode ? "Unable to update group." : "Unable to create group."));
+      setError(
+        err?.message ||
+          (isEditMode ? "Unable to update group." : "Unable to create group."),
+      );
     } finally {
       setSaving(false);
     }
@@ -364,14 +448,20 @@ export default function CreateBlockPage({ mode = "create" }) {
               <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-red-100">
                 <BedDouble className="h-3.5 w-3.5" /> M&amp;E block management
               </p>
-              <h1 className="text-3xl font-semibold">{isEditMode ? "Edit Group" : "Create Group"}</h1>
+              <h1 className="text-3xl font-semibold">
+                {isEditMode ? "Edit Group" : "Create Group"}
+              </h1>
               <p className="max-w-2xl text-sm text-red-100">
-                {isEditMode ? "Update a group block with daily room type allowances and organiser contacts." : "Create a group block with daily room type allowances and organiser contacts."}
+                {isEditMode
+                  ? "Update a group block with daily room type allowances and organiser contacts."
+                  : "Create a group block with daily room type allowances and organiser contacts."}
               </p>
             </div>
             <button
               type="button"
-              onClick={() => navigate(isEditMode ? `/me/groups/${groupId}` : "/me/groups")}
+              onClick={() =>
+                navigate(isEditMode ? `/me/groups/${groupId}` : "/me/groups")
+              }
               className="inline-flex items-center gap-2 rounded-lg border border-white/30 bg-white/10 px-4 py-2 text-sm font-medium text-white hover:bg-white/20"
             >
               <ArrowLeft className="h-4 w-4" /> Back to Groups
@@ -382,15 +472,68 @@ export default function CreateBlockPage({ mode = "create" }) {
         <form onSubmit={handleSubmit} className="grid gap-4 lg:grid-cols-3">
           <Card className="border border-gray-100 bg-white/95 shadow-sm lg:col-span-2">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Group Name" value={form.groupName} onChange={(value) => updateFormField("groupName", value)} required />
-              <Field label="Block Code" value={form.blockCode} onChange={(value) => updateFormField("blockCode", value)} required />
-              <Field label="Arrival" type="date" value={form.arrival} onChange={(value) => updateFormField("arrival", value)} required />
-              <Field label="Departure" type="date" value={form.departure} onChange={(value) => updateFormField("departure", value)} min={form.arrival || undefined} required />
-              <Field label="Rooming List Deadline (days before arrival)" type="number" min="0" step="1" value={form.roomingListDeadlineDays} onChange={(value) => updateFormField("roomingListDeadlineDays", value)} required />
-              <Field label="Block Owner" value={form.meOfficer} onChange={(value) => updateFormField("meOfficer", value)} required />
-              <Field label="Organiser Contact Person" value={form.organiserName} onChange={(value) => updateFormField("organiserName", value)} required />
-              <Field label="Organiser Email" type="email" value={form.organiserEmail} onChange={(value) => updateFormField("organiserEmail", value)} required />
-              <Field label="Organiser Phone" value={form.organiserPhone} onChange={(value) => updateFormField("organiserPhone", value)} />
+              <Field
+                label="Group Name"
+                value={form.groupName}
+                onChange={(value) => updateFormField("groupName", value)}
+                required
+              />
+              <Field
+                label="Block Code"
+                value={form.blockCode}
+                onChange={(value) => updateFormField("blockCode", value)}
+                required
+              />
+              <Field
+                label="Arrival"
+                type="date"
+                value={form.arrival}
+                onChange={(value) => updateFormField("arrival", value)}
+                required
+              />
+              <Field
+                label="Departure"
+                type="date"
+                value={form.departure}
+                onChange={(value) => updateFormField("departure", value)}
+                min={form.arrival || undefined}
+                required
+              />
+              <Field
+                label="Rooming List Deadline (days before arrival)"
+                type="number"
+                min="0"
+                step="1"
+                value={form.roomingListDeadlineDays}
+                onChange={(value) =>
+                  updateFormField("roomingListDeadlineDays", value)
+                }
+                required
+              />
+              <Field
+                label="Block Owner"
+                value={form.meOfficer}
+                onChange={(value) => updateFormField("meOfficer", value)}
+                required
+              />
+              <Field
+                label="Organiser Contact Person"
+                value={form.organiserName}
+                onChange={(value) => updateFormField("organiserName", value)}
+                required
+              />
+              <Field
+                label="Organiser Email"
+                type="email"
+                value={form.organiserEmail}
+                onChange={(value) => updateFormField("organiserEmail", value)}
+                required
+              />
+              <Field
+                label="Organiser Phone"
+                value={form.organiserPhone}
+                onChange={(value) => updateFormField("organiserPhone", value)}
+              />
             </div>
           </Card>
 
@@ -398,8 +541,8 @@ export default function CreateBlockPage({ mode = "create" }) {
             <div>
               <h2 className="text-lg font-semibold">Allowed Room Types</h2>
               <p className="mt-1 text-sm text-gray-600">
-                Select the allowed Room Types from General Settings. Quantity can be set per group up to the
-                configured maximum amount.
+                Select the allowed Room Types from General Settings. Quantity
+                can be set per group up to the configured maximum amount.
               </p>
             </div>
             <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-[#b41f1f]">
@@ -410,61 +553,115 @@ export default function CreateBlockPage({ mode = "create" }) {
           <Card className="border border-gray-100 bg-white/95 shadow-sm lg:col-span-3">
             <div className="space-y-4">
               <div>
-                <h2 className="text-lg font-semibold">Daily Room Type Allowances</h2>
-                <p className="mt-1 text-sm text-gray-600">Scroll horizontally to review each day in the group block.</p>
+                <h2 className="text-lg font-semibold">
+                  Daily Room Type Allowances
+                </h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  Scroll horizontally to review each day in the group block.
+                </p>
               </div>
               {roomTypeDays.length === 0 ? (
-                <p className="text-sm text-gray-600">Select an arrival and departure date to add daily room type allowances.</p>
+                <p className="text-sm text-gray-600">
+                  Select an arrival and departure date to add daily room type
+                  allowances.
+                </p>
               ) : (
                 <div className="overflow-x-auto pb-2">
                   <div className="grid auto-cols-[minmax(17rem,1fr)] grid-flow-col gap-4">
                     {roomTypeDays.map((day) => (
-                      <div key={day.date} className="rounded-xl border border-gray-200 bg-gray-50/60 p-4">
+                      <div
+                        key={day.date}
+                        className="rounded-xl border border-gray-200 bg-gray-50/60 p-4"
+                      >
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <h3 className="font-semibold text-gray-900">{formatDate(day.date)}</h3>
+                            <h3 className="font-semibold text-gray-900">
+                              {formatDate(day.date)}
+                            </h3>
                             <p className="text-xs text-gray-500">{day.date}</p>
                           </div>
                           <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-[#b41f1f]">
-                            {day.roomTypes.reduce((total, roomType) => total + Number(roomType.quantity || 0), 0)} rooms
+                            {day.roomTypes.reduce(
+                              (total, roomType) =>
+                                total + Number(roomType.quantity || 0),
+                              0,
+                            )}{" "}
+                            rooms
                           </span>
                         </div>
 
                         <div className="mt-4 space-y-3">
                           {day.roomTypes.map((roomType) => (
-                            <div key={roomType.id} className="rounded-lg border border-gray-200 bg-white p-3">
+                            <div
+                              key={roomType.id}
+                              className="rounded-lg border border-gray-200 bg-white p-3"
+                            >
                               <label className="block text-sm font-medium text-gray-700">
                                 Room Type
                                 <select
                                   value={roomType.configuredRoomTypeId || ""}
-                                  onChange={(event) => updateRoomType(day.date, roomType.id, "configuredRoomTypeId", event.target.value)}
+                                  onChange={(event) => {
+                                    updateRoomType(
+                                      day.date,
+                                      roomType.id,
+                                      "configuredRoomTypeId",
+                                      event.target.value,
+                                    );
+                                    if (event.target.value)
+                                      requestAnimationFrame(() =>
+                                        document
+                                          .getElementById(
+                                            `quantity-${roomType.id}`,
+                                          )
+                                          ?.focus(),
+                                      );
+                                  }}
                                   className="mt-1 w-44 max-w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
                                   required
                                 >
                                   <option value="">Select Room Type</option>
-                                  {configuredRoomTypes.map((configuredRoomType) => (
-                                    <option key={configuredRoomType.id} value={configuredRoomType.id}>
-                                      {configuredRoomType.code} - {configuredRoomType.description} ({configuredRoomType.amount})
-                                    </option>
-                                  ))}
+                                  {configuredRoomTypes.map(
+                                    (configuredRoomType) => (
+                                      <option
+                                        key={configuredRoomType.id}
+                                        value={configuredRoomType.id}
+                                      >
+                                        {configuredRoomType.code} -{" "}
+                                        {configuredRoomType.description} (
+                                        {configuredRoomType.amount})
+                                      </option>
+                                    ),
+                                  )}
                                 </select>
                               </label>
                               <label className="mt-3 block text-sm font-medium text-gray-700">
                                 Quantity
                                 <input
+                                  id={`quantity-${roomType.id}`}
                                   type="number"
                                   min="0"
                                   value={roomType.quantity}
                                   max={roomType.maxQuantity ?? undefined}
-                                  onChange={(event) => updateRoomType(day.date, roomType.id, "quantity", event.target.value)}
+                                  onChange={(event) =>
+                                    updateRoomType(
+                                      day.date,
+                                      roomType.id,
+                                      "quantity",
+                                      event.target.value,
+                                    )
+                                  }
                                   className="mt-1 w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
                                   required
                                 />
-                                <span className="ml-2 text-xs text-gray-500">Max {roomType.maxQuantity ?? 0}</span>
+                                <span className="ml-2 text-xs text-gray-500">
+                                  Max {roomType.maxQuantity ?? 0}
+                                </span>
                               </label>
                               <button
                                 type="button"
-                                onClick={() => removeRoomType(day.date, roomType.id)}
+                                onClick={() =>
+                                  removeRoomType(day.date, roomType.id)
+                                }
                                 className="mt-3 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-[#b41f1f]"
                                 aria-label={`Remove ${roomType.name || "room type"}`}
                               >
@@ -488,15 +685,41 @@ export default function CreateBlockPage({ mode = "create" }) {
             </div>
           </Card>
 
-          <Card className="border border-gray-100 bg-white/95 shadow-sm lg:col-span-3">
-            <div className="mb-5">
-              <h2 className="text-lg font-semibold">Notifications</h2>
-              <p className="mt-1 text-sm text-gray-600">Select the Notification Lists that should receive each Group notification. Notification delivery will be enabled in a future update.</p>
-            </div>
-            <NotificationListSelector lists={notificationLists} value={notifications} onChange={setNotifications} disabled={saving} />
+          <Card className="overflow-hidden border border-gray-100 bg-white/95 p-0 shadow-sm lg:col-span-3">
+            <button
+              type="button"
+              onClick={() => setNotificationsOpen((current) => !current)}
+              className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
+              aria-expanded={notificationsOpen}
+            >
+              <div>
+                <h2 className="text-lg font-semibold">Notifications</h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  Select the Notification Lists that should receive each Group
+                  notification.
+                </p>
+              </div>
+              <ChevronDown
+                className={`h-5 w-5 text-gray-500 transition-transform ${notificationsOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            {notificationsOpen && (
+              <div className="border-t border-gray-100 px-5 py-5">
+                <NotificationListSelector
+                  lists={notificationLists}
+                  value={notifications}
+                  onChange={setNotifications}
+                  disabled={saving}
+                />
+              </div>
+            )}
           </Card>
 
-          {error && <p className="text-sm font-semibold text-red-600 lg:col-span-3">{error}</p>}
+          {error && (
+            <p className="text-sm font-semibold text-red-600 lg:col-span-3">
+              {error}
+            </p>
+          )}
 
           <div className="flex justify-end gap-3 lg:col-span-3">
             <button
@@ -508,14 +731,30 @@ export default function CreateBlockPage({ mode = "create" }) {
             </button>
             <button
               type="submit"
-              disabled={saving || loadingGroup || roomTypeDays.length === 0 || loadingRoomTypes || configuredRoomTypes.length === 0}
+              disabled={
+                saving ||
+                loadingGroup ||
+                roomTypeDays.length === 0 ||
+                loadingRoomTypes ||
+                configuredRoomTypes.length === 0
+              }
               className={`rounded-lg px-4 py-2 text-sm font-semibold text-white shadow ${
-                saving || loadingGroup || roomTypeDays.length === 0 || loadingRoomTypes || configuredRoomTypes.length === 0
+                saving ||
+                loadingGroup ||
+                roomTypeDays.length === 0 ||
+                loadingRoomTypes ||
+                configuredRoomTypes.length === 0
                   ? "bg-gray-300 cursor-not-allowed"
                   : "bg-[#b41f1f] hover:bg-[#961919]"
               }`}
             >
-              {saving ? (isEditMode ? "Saving Group..." : "Creating Group...") : (isEditMode ? "Save Group" : "Create Group")}
+              {saving
+                ? isEditMode
+                  ? "Saving Group..."
+                  : "Creating Group..."
+                : isEditMode
+                  ? "Save Group"
+                  : "Create Group"}
             </button>
           </div>
         </form>
@@ -524,7 +763,14 @@ export default function CreateBlockPage({ mode = "create" }) {
   );
 }
 
-function Field({ label, type = "text", value, onChange, readOnly = false, ...props }) {
+function Field({
+  label,
+  type = "text",
+  value,
+  onChange,
+  readOnly = false,
+  ...props
+}) {
   return (
     <label className="block text-sm font-medium text-gray-700">
       {label}

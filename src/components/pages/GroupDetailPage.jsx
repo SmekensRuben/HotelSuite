@@ -1,6 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, BedDouble, CalendarDays, ChevronDown, Copy, Link, Mail, Pencil, Phone, Trash2, UserRound } from "lucide-react";
+import {
+  ArrowLeft,
+  BedDouble,
+  CalendarDays,
+  ChevronDown,
+  Copy,
+  Link,
+  Mail,
+  Pencil,
+  Phone,
+  Trash2,
+  UserRound,
+} from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
@@ -8,14 +20,22 @@ import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { usePermission } from "../../hooks/usePermission";
 import { deleteGroup, getGroup } from "../../services/firebaseGroups";
-import { createRoomingListForGroup, getRoomingListByToken } from "../../services/firebaseRoomingLists";
+import {
+  createRoomingListForGroup,
+  getRoomingListByToken,
+} from "../../services/firebaseRoomingLists";
 import { getNotificationLists } from "../../services/firebaseNotificationLists";
 import NotificationListSelector from "./NotificationListSelector";
 import { normalizeNotificationSelections } from "../../constants/groupNotifications";
-import { calculateRoomingListDeadline, getRoomingListDeadlineDays } from "../../utils/groupDeadline";
+import {
+  calculateRoomingListDeadline,
+  getRoomingListDeadlineDays,
+} from "../../utils/groupDeadline";
 
 function parseDateParts(value) {
-  const [year, month, day] = String(value || "").split("-").map(Number);
+  const [year, month, day] = String(value || "")
+    .split("-")
+    .map(Number);
   if (!year || !month || !day) return null;
   return { year, month, day };
 }
@@ -33,7 +53,11 @@ function getDateRange(startDate, endDate) {
   if (!startParts || !endParts || endDate <= startDate) return [];
 
   const dates = [];
-  const cursor = new Date(startParts.year, startParts.month - 1, startParts.day);
+  const cursor = new Date(
+    startParts.year,
+    startParts.month - 1,
+    startParts.day,
+  );
   const end = new Date(endParts.year, endParts.month - 1, endParts.day);
   while (cursor < end) {
     dates.push(formatDateKey(cursor));
@@ -87,7 +111,7 @@ export default function GroupDetailPage() {
         month: "long",
         day: "numeric",
       }),
-    []
+    [],
   );
 
   useEffect(() => {
@@ -132,20 +156,30 @@ export default function GroupDetailPage() {
     window.location.href = "/login";
   };
 
-  const roomTypeDays = Array.isArray(group?.roomTypeDays) ? group.roomTypeDays : [];
+  const roomTypeDays = Array.isArray(group?.roomTypeDays)
+    ? group.roomTypeDays
+    : [];
 
-  const reservations = Array.isArray(roomingList?.reservations) ? roomingList.reservations : [];
-  const pendingChangeRequest = (roomingList?.changeRequests || []).find((request) => request.status === "Pending Approval");
+  const reservations = Array.isArray(roomingList?.reservations)
+    ? roomingList.reservations
+    : [];
+  const pendingChangeRequest = (roomingList?.changeRequests || []).find(
+    (request) => request.status === "Pending Approval",
+  );
   const pickedUpRooms = reservations.reduce(
-    (total, reservation) => total + getDateRange(reservation.arrivalDate, reservation.departureDate).length,
-    0
+    (total, reservation) =>
+      total +
+      getDateRange(reservation.arrivalDate, reservation.departureDate).length,
+    0,
   );
 
   const getPickedUpRoomsForDayAndType = (date, roomTypeCode) =>
     reservations.filter((reservation) => {
       if (reservation.roomType !== roomTypeCode) return false;
       if (!reservation.arrivalDate || !reservation.departureDate) return false;
-      return reservation.arrivalDate <= date && date < reservation.departureDate;
+      return (
+        reservation.arrivalDate <= date && date < reservation.departureDate
+      );
     }).length;
 
   const handleCreateRoomingList = async () => {
@@ -154,7 +188,11 @@ export default function GroupDetailPage() {
     setCreatingRoomingList(true);
     setError("");
     try {
-      const result = await createRoomingListForGroup(hotelUid, group, auth.currentUser?.uid || "unknown");
+      const result = await createRoomingListForGroup(
+        hotelUid,
+        group,
+        auth.currentUser?.uid || "unknown",
+      );
       setGroup((current) => ({
         ...current,
         roomingListToken: result.token,
@@ -207,9 +245,12 @@ export default function GroupDetailPage() {
               <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-red-100">
                 <BedDouble className="h-3.5 w-3.5" /> M&amp;E block management
               </p>
-              <h1 className="text-3xl font-semibold">{group?.groupName || "Group Details"}</h1>
+              <h1 className="text-3xl font-semibold">
+                {group?.groupName || "Group Details"}
+              </h1>
               <p className="max-w-2xl text-sm text-red-100">
-                View group block details, organiser contacts, and daily room type allowances.
+                View group block details, organiser contacts, and daily room
+                type allowances.
               </p>
             </div>
             <div className="flex gap-2">
@@ -242,55 +283,140 @@ export default function GroupDetailPage() {
           </div>
         </Card>
 
-        {loading ? <p className="text-gray-600">Loading group...</p> : error ? <p className="text-sm font-semibold text-red-600">{error}</p> : null}
+        {loading ? (
+          <p className="text-gray-600">Loading group...</p>
+        ) : error ? (
+          <p className="text-sm font-semibold text-red-600">{error}</p>
+        ) : null}
 
         {group && (
           <>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <DetailItem icon={CalendarDays} label="Arrival" value={formatDate(group.arrival)} />
-              <DetailItem icon={CalendarDays} label="Departure" value={formatDate(group.departure)} />
-              <DetailItem icon={CalendarDays} label="Rooming List Deadline" value={formatDate(calculateRoomingListDeadline(group.arrival, getRoomingListDeadlineDays(group)))} />
-              <DetailItem icon={BedDouble} label="Blocked Rooms" value={group.blockedRooms ?? 0} />
-              <DetailItem icon={BedDouble} label="Picked Up Rooms" value={pickedUpRooms} />
-              <DetailItem label="Block Code" value={group.blockCode} />
-              <DetailItem icon={UserRound} label="Block Owner" value={group.meOfficer} />
-              <DetailItem icon={UserRound} label="Organiser Contact Person" value={group.organiserName} />
-              <DetailItem icon={Mail} label="Organiser Email" value={group.organiserEmail} />
-              <DetailItem icon={Phone} label="Organiser Phone" value={group.organiserPhone} />
+            <div className="grid gap-4 xl:grid-cols-3">
+              <Card className="border border-gray-100 bg-white/95 shadow-sm xl:col-span-2">
+                <h2 className="text-lg font-semibold">Block Details</h2>
+                <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  <DetailItem
+                    icon={CalendarDays}
+                    label="Arrival"
+                    value={formatDate(group.arrival)}
+                  />
+                  <DetailItem
+                    icon={CalendarDays}
+                    label="Departure"
+                    value={formatDate(group.departure)}
+                  />
+                  <DetailItem
+                    icon={CalendarDays}
+                    label="Rooming List Deadline"
+                    value={formatDate(
+                      calculateRoomingListDeadline(
+                        group.arrival,
+                        getRoomingListDeadlineDays(group),
+                      ),
+                    )}
+                  />
+                  <DetailItem label="Block Code" value={group.blockCode} />
+                  <DetailItem
+                    icon={BedDouble}
+                    label="Blocked Rooms"
+                    value={group.blockedRooms ?? 0}
+                  />
+                  <DetailItem
+                    icon={BedDouble}
+                    label="Picked Up Rooms"
+                    value={pickedUpRooms}
+                  />
+                </div>
+              </Card>
+              <Card className="border border-gray-100 bg-white/95 shadow-sm">
+                <h2 className="text-lg font-semibold">Contacts</h2>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+                  <DetailItem
+                    icon={UserRound}
+                    label="Block Owner"
+                    value={group.meOfficer}
+                  />
+                  <DetailItem
+                    icon={UserRound}
+                    label="Organiser Contact Person"
+                    value={group.organiserName}
+                  />
+                  <DetailItem
+                    icon={Mail}
+                    label="Organiser Email"
+                    value={group.organiserEmail}
+                  />
+                  <DetailItem
+                    icon={Phone}
+                    label="Organiser Phone"
+                    value={group.organiserPhone}
+                  />
+                </div>
+              </Card>
             </div>
 
             <Card className="border border-gray-100 bg-white/95 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold">Daily Room Type Allowances</h2>
-                  <p className="mt-1 text-sm text-gray-600">Scroll horizontally to review availability per day.</p>
+                  <h2 className="text-lg font-semibold">
+                    Daily Room Type Allowances
+                  </h2>
+                  <p className="mt-1 text-sm text-gray-600">
+                    Scroll horizontally to review availability per day.
+                  </p>
                 </div>
                 <span className="rounded-full bg-red-50 px-3 py-1 text-sm font-semibold text-[#b41f1f]">
-                  Rooming List Status: {group.roomingListStatus || "Not Started"}
+                  Rooming List Status:{" "}
+                  {group.roomingListStatus || "Not Started"}
                 </span>
               </div>
               <div className="mt-4 overflow-x-auto pb-2">
                 {roomTypeDays.length === 0 ? (
-                  <p className="text-sm text-gray-600">No room type allowances have been added.</p>
+                  <p className="text-sm text-gray-600">
+                    No room type allowances have been added.
+                  </p>
                 ) : (
                   <div className="grid auto-cols-[minmax(15rem,1fr)] grid-flow-col gap-4">
                     {roomTypeDays.map((day) => (
-                      <div key={day.date} className="rounded-xl border border-gray-200 bg-gray-50/60 p-4">
+                      <div
+                        key={day.date}
+                        className="rounded-xl border border-gray-200 bg-gray-50/60 p-4"
+                      >
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <h3 className="font-semibold text-gray-900">{formatDate(day.date)}</h3>
+                            <h3 className="font-semibold text-gray-900">
+                              {formatDate(day.date)}
+                            </h3>
                             <p className="text-xs text-gray-500">{day.date}</p>
                           </div>
                           <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-[#b41f1f]">
-                            {(day.roomTypes || []).reduce((total, roomType) => total + Number(roomType.quantity || 0), 0)} rooms
+                            {(day.roomTypes || []).reduce(
+                              (total, roomType) =>
+                                total + Number(roomType.quantity || 0),
+                              0,
+                            )}{" "}
+                            rooms
                           </span>
                         </div>
                         <div className="mt-3 space-y-2">
                           {(day.roomTypes || []).map((roomType, index) => (
-                            <div key={`${day.date}-${roomType.code || index}`} className="rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
-                              <p className="font-semibold text-gray-900">{roomType.code} - {roomType.name}</p>
-                              <p className="text-gray-600">Quantity: {roomType.quantity || 0}</p>
-                              <p className="text-xs font-semibold text-[#b41f1f]">Picked up: {getPickedUpRoomsForDayAndType(day.date, roomType.code)}</p>
+                            <div
+                              key={`${day.date}-${roomType.code || index}`}
+                              className="rounded-lg bg-white px-3 py-2 text-sm shadow-sm"
+                            >
+                              <p className="font-semibold text-gray-900">
+                                {roomType.code} - {roomType.name}
+                              </p>
+                              <p className="text-gray-600">
+                                Quantity: {roomType.quantity || 0}
+                              </p>
+                              <p className="text-xs font-semibold text-[#b41f1f]">
+                                Picked up:{" "}
+                                {getPickedUpRoomsForDayAndType(
+                                  day.date,
+                                  roomType.code,
+                                )}
+                              </p>
                             </div>
                           ))}
                         </div>
@@ -301,7 +427,33 @@ export default function GroupDetailPage() {
               </div>
             </Card>
 
-            {pendingChangeRequest && <Card className="border border-amber-300 bg-amber-50 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-amber-950">Rooming List Change Request Pending</h2><p className="mt-1 text-sm text-amber-800">Request {pendingChangeRequest.number}, based on Version {pendingChangeRequest.baseVersionNumber}, is awaiting review.</p></div><button type="button" onClick={() => navigate(`/me/groups/${groupId}/rooming-list-change-request/${group.roomingListToken}`)} className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white">Review Change Request</button></div></Card>}
+            {pendingChangeRequest && (
+              <Card className="border border-amber-300 bg-amber-50 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-semibold text-amber-950">
+                      Rooming List Change Request Pending
+                    </h2>
+                    <p className="mt-1 text-sm text-amber-800">
+                      Request {pendingChangeRequest.number}, based on Version{" "}
+                      {pendingChangeRequest.baseVersionNumber}, is awaiting
+                      review.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigate(
+                        `/me/groups/${groupId}/rooming-list-change-request/${group.roomingListToken}`,
+                      )
+                    }
+                    className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white"
+                  >
+                    Review Change Request
+                  </button>
+                </div>
+              </Card>
+            )}
 
             <Card className="border border-gray-100 bg-white/95 shadow-sm">
               <button
@@ -313,12 +465,19 @@ export default function GroupDetailPage() {
               >
                 <div>
                   <h2 className="text-lg font-semibold">Notifications</h2>
-                  <p className="mt-1 text-sm text-gray-600">Notification Lists added to this Group.</p>
+                  <p className="mt-1 text-sm text-gray-600">
+                    Notification Lists added to this Group.
+                  </p>
                 </div>
-                <ChevronDown className={`h-5 w-5 shrink-0 text-gray-500 transition-transform ${notificationsOpen ? "rotate-180" : ""}`} />
+                <ChevronDown
+                  className={`h-5 w-5 shrink-0 text-gray-500 transition-transform ${notificationsOpen ? "rotate-180" : ""}`}
+                />
               </button>
               {notificationsOpen && (
-                <div id="group-notifications-content" className="mt-5 border-t border-gray-100 pt-5">
+                <div
+                  id="group-notifications-content"
+                  className="mt-5 border-t border-gray-100 pt-5"
+                >
                   <NotificationListSelector
                     lists={notificationLists}
                     value={normalizeNotificationSelections(group.notifications)}
@@ -332,7 +491,10 @@ export default function GroupDetailPage() {
               <div className="flex flex-wrap items-end justify-between gap-4">
                 <div className="flex-1">
                   <h2 className="text-lg font-semibold">Rooming List Link</h2>
-                  <p className="mt-1 text-sm text-gray-600">Create a secure public link that can be opened without signing in.</p>
+                  <p className="mt-1 text-sm text-gray-600">
+                    Create a secure public link that can be opened without
+                    signing in.
+                  </p>
                   {group.roomingListLink && (
                     <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                       <input
@@ -349,16 +511,26 @@ export default function GroupDetailPage() {
                       </button>
                     </div>
                   )}
-                  {copyMessage && <p className="mt-2 text-sm font-semibold text-green-700">{copyMessage}</p>}
+                  {copyMessage && (
+                    <p className="mt-2 text-sm font-semibold text-green-700">
+                      {copyMessage}
+                    </p>
+                  )}
                 </div>
                 <button
                   type="button"
                   onClick={handleCreateRoomingList}
-                  disabled={creatingRoomingList || Boolean(group.roomingListLink)}
+                  disabled={
+                    creatingRoomingList || Boolean(group.roomingListLink)
+                  }
                   className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:cursor-not-allowed disabled:bg-gray-300"
                 >
                   <Link className="h-4 w-4" />
-                  {group.roomingListLink ? "Rooming List Created" : creatingRoomingList ? "Creating..." : "Create Rooming List & Link"}
+                  {group.roomingListLink
+                    ? "Rooming List Created"
+                    : creatingRoomingList
+                      ? "Creating..."
+                      : "Create Rooming List & Link"}
                 </button>
               </div>
             </Card>
@@ -366,7 +538,12 @@ export default function GroupDetailPage() {
         )}
 
         {showDeleteModal && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="delete-group-title">
+          <div
+            className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-group-title"
+          >
             <button
               type="button"
               className="absolute inset-0 bg-black/50 backdrop-blur-sm"
@@ -374,9 +551,16 @@ export default function GroupDetailPage() {
               aria-label="Close delete group confirmation"
             />
             <div className="relative z-[80] w-full max-w-md rounded-2xl bg-white p-6 text-center shadow-xl">
-              <h2 id="delete-group-title" className="text-xl font-semibold text-gray-900">Delete Group</h2>
+              <h2
+                id="delete-group-title"
+                className="text-xl font-semibold text-gray-900"
+              >
+                Delete Group
+              </h2>
               <p className="mt-3 text-sm leading-6 text-gray-600">
-                Are you sure you want to delete {group?.groupName || "this group"}? This action cannot be undone.
+                Are you sure you want to delete{" "}
+                {group?.groupName || "this group"}? This action cannot be
+                undone.
               </p>
               <div className="mt-6 flex justify-center gap-3">
                 <button
