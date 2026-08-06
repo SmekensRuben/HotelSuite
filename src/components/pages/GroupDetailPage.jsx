@@ -12,6 +12,7 @@ import { createRoomingListForGroup, getRoomingListByToken } from "../../services
 import { getNotificationLists } from "../../services/firebaseNotificationLists";
 import NotificationListSelector from "./NotificationListSelector";
 import { normalizeNotificationSelections } from "../../constants/groupNotifications";
+import { calculateRoomingListDeadline, getRoomingListDeadlineDays } from "../../utils/groupDeadline";
 
 function parseDateParts(value) {
   const [year, month, day] = String(value || "").split("-").map(Number);
@@ -248,12 +249,12 @@ export default function GroupDetailPage() {
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <DetailItem icon={CalendarDays} label="Arrival" value={formatDate(group.arrival)} />
               <DetailItem icon={CalendarDays} label="Departure" value={formatDate(group.departure)} />
-              <DetailItem icon={CalendarDays} label="Rooming List Deadline" value={formatDate(group.roomingListDeadline)} />
+              <DetailItem icon={CalendarDays} label="Rooming List Deadline" value={formatDate(calculateRoomingListDeadline(group.arrival, getRoomingListDeadlineDays(group)))} />
               <DetailItem icon={BedDouble} label="Blocked Rooms" value={group.blockedRooms ?? 0} />
               <DetailItem icon={BedDouble} label="Picked Up Rooms" value={pickedUpRooms} />
               <DetailItem label="Block Code" value={group.blockCode} />
-              <DetailItem icon={UserRound} label="M&E Officer" value={group.meOfficer} />
-              <DetailItem icon={UserRound} label="Organiser" value={group.organiserName} />
+              <DetailItem icon={UserRound} label="Block Owner" value={group.meOfficer} />
+              <DetailItem icon={UserRound} label="Organiser Contact Person" value={group.organiserName} />
               <DetailItem icon={Mail} label="Organiser Email" value={group.organiserEmail} />
               <DetailItem icon={Phone} label="Organiser Phone" value={group.organiserPhone} />
             </div>

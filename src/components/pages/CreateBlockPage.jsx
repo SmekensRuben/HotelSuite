@@ -11,13 +11,14 @@ import { getSettings } from "../../services/firebaseSettings";
 import { normalizeNotificationSelections } from "../../constants/groupNotifications";
 import { getGroupNotificationDefaults, getNotificationLists } from "../../services/firebaseNotificationLists";
 import NotificationListSelector from "./NotificationListSelector";
+import { getRoomingListDeadlineDays } from "../../utils/groupDeadline";
 
 const emptyForm = {
   groupName: "",
   blockCode: "",
   arrival: "",
   departure: "",
-  roomingListDeadline: "",
+  roomingListDeadlineDays: "",
   meOfficer: "",
   organiserName: "",
   organiserEmail: "",
@@ -191,7 +192,7 @@ export default function CreateBlockPage({ mode = "create" }) {
           blockCode: group.blockCode || "",
           arrival: group.arrival || "",
           departure: group.departure || "",
-          roomingListDeadline: group.roomingListDeadline || "",
+          roomingListDeadlineDays: getRoomingListDeadlineDays(group),
           meOfficer: group.meOfficer || "",
           organiserName: group.organiserName || "",
           organiserEmail: group.organiserEmail || "",
@@ -385,10 +386,9 @@ export default function CreateBlockPage({ mode = "create" }) {
               <Field label="Block Code" value={form.blockCode} onChange={(value) => updateFormField("blockCode", value)} required />
               <Field label="Arrival" type="date" value={form.arrival} onChange={(value) => updateFormField("arrival", value)} required />
               <Field label="Departure" type="date" value={form.departure} onChange={(value) => updateFormField("departure", value)} min={form.arrival || undefined} required />
-              <Field label="Rooming List Deadline" type="date" value={form.roomingListDeadline} onChange={(value) => updateFormField("roomingListDeadline", value)} required />
-              <Field label="Blocked Rooms" type="number" value={blockedRooms} readOnly />
-              <Field label="M&E Officer" value={form.meOfficer} onChange={(value) => updateFormField("meOfficer", value)} required />
-              <Field label="Organiser Name" value={form.organiserName} onChange={(value) => updateFormField("organiserName", value)} required />
+              <Field label="Rooming List Deadline (days before arrival)" type="number" min="0" step="1" value={form.roomingListDeadlineDays} onChange={(value) => updateFormField("roomingListDeadlineDays", value)} required />
+              <Field label="Block Owner" value={form.meOfficer} onChange={(value) => updateFormField("meOfficer", value)} required />
+              <Field label="Organiser Contact Person" value={form.organiserName} onChange={(value) => updateFormField("organiserName", value)} required />
               <Field label="Organiser Email" type="email" value={form.organiserEmail} onChange={(value) => updateFormField("organiserEmail", value)} required />
               <Field label="Organiser Phone" value={form.organiserPhone} onChange={(value) => updateFormField("organiserPhone", value)} />
             </div>
