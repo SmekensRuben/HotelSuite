@@ -10,6 +10,34 @@ import { usePermission } from "../../hooks/usePermission";
 import { getGroup } from "../../services/firebaseGroups";
 import { createRoomingListForGroup, getRoomingListByToken } from "../../services/firebaseRoomingLists";
 
+function parseDateParts(value) {
+  const [year, month, day] = String(value || "").split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return { year, month, day };
+}
+
+function formatDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getDateRange(startDate, endDate) {
+  const startParts = parseDateParts(startDate);
+  const endParts = parseDateParts(endDate);
+  if (!startParts || !endParts || endDate <= startDate) return [];
+
+  const dates = [];
+  const cursor = new Date(startParts.year, startParts.month - 1, startParts.day);
+  const end = new Date(endParts.year, endParts.month - 1, endParts.day);
+  while (cursor < end) {
+    dates.push(formatDateKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+
 function formatDate(value) {
   if (!value) return "—";
   return new Intl.DateTimeFormat(undefined, {
@@ -94,7 +122,10 @@ export default function GroupDetailPage() {
   const roomTypeDays = Array.isArray(group?.roomTypeDays) ? group.roomTypeDays : [];
 
   const reservations = Array.isArray(roomingList?.reservations) ? roomingList.reservations : [];
-  const pickedUpRooms = reservations.length;
+  const pickedUpRooms = reservations.reduce(
+    (total, reservation) => total + getDateRange(reservation.arrivalDate, reservation.departureDate).length,
+    0
+  );
 
   const getPickedUpRoomsForDayAndType = (date, roomTypeCode) =>
     reservations.filter((reservation) => {
