@@ -56,6 +56,9 @@ export default function RoomingListChangeRequestPage() {
   const changedReservationIds = new Set(
     changes.changed.map((reservation) => reservation.id),
   );
+  const changedReservationsById = new Map(
+    changes.changed.map((change) => [change.id, change]),
+  );
   const removedReservationIds = new Set(
     changes.removed.map((reservation) => reservation.id),
   );
@@ -182,6 +185,9 @@ export default function RoomingListChangeRequestPage() {
                   </thead>
                   <tbody>
                     {requestedReservations.map((reservation) => {
+                      const changedReservation = changedReservationsById.get(
+                        reservation.id,
+                      );
                       const status = removedReservationIds.has(reservation.id)
                         ? "Deleted"
                         : addedReservationIds.has(reservation.id)
@@ -195,16 +201,66 @@ export default function RoomingListChangeRequestPage() {
                           className={`border-b border-gray-100 ${status === "Deleted" ? "text-gray-500 [&>td:not(:last-child)]:line-through" : ""}`}
                         >
                           <td className="p-2 font-medium">
-                            {guestName(reservation)}
+                            <ChangedValue
+                              value={guestName(reservation)}
+                              previousValue={
+                                changedReservation &&
+                                (changedReservation.fields.some(
+                                  ({ field }) => field === "firstName",
+                                ) ||
+                                  changedReservation.fields.some(
+                                    ({ field }) => field === "lastName",
+                                  ))
+                                  ? guestName(changedReservation.before)
+                                  : undefined
+                              }
+                            />
                           </td>
-                          <td className="p-2">{reservation.arrivalDate}</td>
-                          <td className="p-2">{reservation.departureDate}</td>
-                          <td className="p-2">{reservation.roomType}</td>
                           <td className="p-2">
-                            {reservation.numberOfAdults} /{" "}
-                            {reservation.numberOfChildren}
+                            <ChangedReservationField
+                              reservation={reservation}
+                              change={changedReservation}
+                              field="arrivalDate"
+                            />
                           </td>
-                          <td className="p-2">{reservation.comment || "—"}</td>
+                          <td className="p-2">
+                            <ChangedReservationField
+                              reservation={reservation}
+                              change={changedReservation}
+                              field="departureDate"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <ChangedReservationField
+                              reservation={reservation}
+                              change={changedReservation}
+                              field="roomType"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <ChangedValue
+                              value={`${reservation.numberOfAdults} / ${reservation.numberOfChildren}`}
+                              previousValue={
+                                changedReservation &&
+                                changedReservation.fields.some(({ field }) =>
+                                  [
+                                    "numberOfAdults",
+                                    "numberOfChildren",
+                                  ].includes(field),
+                                )
+                                  ? `${changedReservation.before.numberOfAdults} / ${changedReservation.before.numberOfChildren}`
+                                  : undefined
+                              }
+                            />
+                          </td>
+                          <td className="p-2">
+                            <ChangedReservationField
+                              reservation={reservation}
+                              change={changedReservation}
+                              field="comment"
+                              fallback="—"
+                            />
+                          </td>
                           <td className="p-2 text-right no-underline">
                             {status && <StatusBadge status={status} />}
                           </td>
@@ -251,9 +307,8 @@ export default function RoomingListChangeRequestPage() {
 }
 
 function RoomTypePickupOverview({ summary }) {
-  const [selectedDate, setSelectedDate] = useState(summary.days[0]?.date || "");
-  const selectedDay =
-    summary.days.find((day) => day.date === selectedDate) || summary.days[0];
+  const [selectedDate, setSelectedDate] = useState("");
+  const selectedDay = summary.days.find((day) => day.date === selectedDate);
   const pickupChange =
     summary.totals.requestedPickedUp - summary.totals.officialPickedUp;
   return (
@@ -393,6 +448,34 @@ function StatusBadge({ status }) {
     >
       {status}
     </span>
+  );
+}
+
+function ChangedReservationField({
+  reservation,
+  change,
+  field,
+  fallback = "—",
+}) {
+  const changedField = change?.fields.find((item) => item.field === field);
+  return (
+    <ChangedValue
+      value={reservation[field] || fallback}
+      previousValue={changedField ? changedField.from || fallback : undefined}
+    />
+  );
+}
+
+function ChangedValue({ value, previousValue }) {
+  return (
+    <div>
+      <span>{value}</span>
+      {previousValue !== undefined && previousValue !== value && (
+        <span className="mt-0.5 block text-xs font-medium text-amber-700 no-underline">
+          Changed from <span className="line-through">{previousValue}</span>
+        </span>
+      )}
+    </div>
   );
 }
 
