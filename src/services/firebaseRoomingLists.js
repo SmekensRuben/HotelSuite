@@ -1,4 +1,4 @@
-import { db, doc, getDoc, setDoc, updateDoc, serverTimestamp } from "../firebaseConfig";
+import { collection, db, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp } from "../firebaseConfig";
 
 function createAccessToken() {
   const bytes = new Uint8Array(24);
@@ -187,8 +187,20 @@ export function calculateRoomTypePickupSummary(roomTypeDays = [], officialReserv
   };
 }
 
-function updateRequest(roomingList, requestId, changes) {
-  return (roomingList.changeRequests || []).map((request) => request.id === requestId ? { ...request, ...changes } : request);
+function roomingListRef(token) {
+  return doc(db, `roomingListLinks/${token}`);
+}
+
+function versionRef(token, versionNumber) {
+  return doc(db, `roomingListLinks/${token}/versions/${versionNumber}`);
+}
+
+function changeRequestRef(token, requestId) {
+  return doc(db, `roomingListLinks/${token}/changeRequests/${requestId}`);
+}
+
+async function updateDraftRequest(token, request, changes) {
+  await updateDoc(changeRequestRef(token, request.id), { ...changes, updatedAt: new Date().toISOString() });
 }
 
 async function markRoomingListConcept(roomingList) {
@@ -211,11 +223,11 @@ export async function createRoomingListForGroup(hotelUid, group, actor) {
   const existingToken = group.roomingListToken || "";
   const token = existingToken || createAccessToken();
   const link = buildPublicLink(token);
-  const roomingListRef = doc(db, `roomingListLinks/${token}`);
+  const rootRef = roomingListRef(token);
   const roomTypeSnapshot = getRoomTypeSnapshot(group);
 
   if (!existingToken) {
-    await setDoc(roomingListRef, {
+    await setDoc(rootRef, {
       token,
       hotelUid,
       groupId: group.id,
@@ -226,8 +238,6 @@ export async function createRoomingListForGroup(hotelUid, group, actor) {
       roomTypes: roomTypeSnapshot.roomTypes,
       status: "Not Started",
       reservations: [],
-      versions: [],
-      changeRequests: [],
       currentVersionNumber: 0,
       createdAt: serverTimestamp(),
       createdBy: actor || "unknown",
@@ -249,10 +259,21 @@ export async function createRoomingListForGroup(hotelUid, group, actor) {
 
 export async function getRoomingListByToken(token) {
   if (!token) return null;
-  const snap = await getDoc(doc(db, `roomingListLinks/${token}`));
+  const snap = await getDoc(roomingListRef(token));
   if (!snap.exists()) return null;
   const roomingList = { id: snap.id, ...snap.data() };
   let group = null;
+
+  const [versionsSnap, changeRequestsSnap] = await Promise.all([
+    getDocs(collection(db, `roomingListLinks/${token}/versions`)),
+    getDocs(collection(db, `roomingListLinks/${token}/changeRequests`)),
+  ]);
+  const versions = versionsSnap.docs
+    .map((versionDoc) => ({ id: versionDoc.id, ...versionDoc.data() }))
+    .sort((left, right) => Number(left.number || 0) - Number(right.number || 0));
+  const changeRequests = changeRequestsSnap.docs
+    .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
+    .sort((left, right) => Number(left.number || 0) - Number(right.number || 0));
 
   try {
     const groupSnap = await getDoc(doc(db, `hotels/${roomingList.hotelUid}/groups/${roomingList.groupId}`));
@@ -263,6 +284,8 @@ export async function getRoomingListByToken(token) {
 
   return {
     ...roomingList,
+    versions,
+    changeRequests,
     group,
   };
 }
@@ -280,10 +303,11 @@ export async function addRoomingListReservation(token, reservation) {
   assertReservationAvailability(roomingList, nextReservation, reservations);
   const nextReservations = [...reservations, nextReservation];
 
-  const changes = activeRequest
-    ? { changeRequests: updateRequest(roomingList, activeRequest.id, { reservations: nextReservations, updatedAt: new Date().toISOString() }) }
-    : { reservations: nextReservations, status: "Concept" };
-  await updateDoc(doc(db, `roomingListLinks/${token}`), { ...changes, updatedAt: serverTimestamp() });
+  if (activeRequest) {
+    await updateDraftRequest(token, activeRequest, { reservations: nextReservations });
+  } else {
+    await updateDoc(roomingListRef(token), { reservations: nextReservations, status: "Concept", updatedAt: serverTimestamp() });
+  }
 
   if (!activeRequest) await markRoomingListConcept(roomingList);
 
@@ -299,9 +323,9 @@ export async function submitRoomingList(token) {
   if (roomingList.status === "Submitted") throw new Error("This rooming list has already been submitted.");
   const reservations = copyReservations(roomingList.reservations);
   const version = { number: 1, status: "Official", reservations, createdAt: new Date().toISOString() };
-  await updateDoc(doc(db, `roomingListLinks/${token}`), {
+  await setDoc(versionRef(token, version.number), version);
+  await updateDoc(roomingListRef(token), {
     status: "Submitted",
-    versions: [version],
     currentVersionNumber: 1,
     reservations,
     submittedAt: serverTimestamp(),
@@ -333,10 +357,11 @@ export async function updateRoomingListReservation(token, reservationId, reserva
   assertReservationAvailability(roomingList, nextReservation, reservations, reservationId);
   const nextReservations = reservations.map((item) => (item.id === reservationId ? nextReservation : item));
 
-  const changes = activeRequest
-    ? { changeRequests: updateRequest(roomingList, activeRequest.id, { reservations: nextReservations, updatedAt: new Date().toISOString() }) }
-    : { reservations: nextReservations, status: "Concept" };
-  await updateDoc(doc(db, `roomingListLinks/${token}`), { ...changes, updatedAt: serverTimestamp() });
+  if (activeRequest) {
+    await updateDraftRequest(token, activeRequest, { reservations: nextReservations });
+  } else {
+    await updateDoc(roomingListRef(token), { reservations: nextReservations, status: "Concept", updatedAt: serverTimestamp() });
+  }
   if (!activeRequest) await markRoomingListConcept(roomingList);
   return nextReservation;
 }
@@ -352,10 +377,11 @@ export async function deleteRoomingListReservation(token, reservationId) {
   const nextReservations = reservations.filter((item) => item.id !== reservationId);
   if (nextReservations.length === reservations.length) throw new Error("Reservation not found.");
 
-  const changes = activeRequest
-    ? { changeRequests: updateRequest(roomingList, activeRequest.id, { reservations: nextReservations, updatedAt: new Date().toISOString() }) }
-    : { reservations: nextReservations, status: "Concept" };
-  await updateDoc(doc(db, `roomingListLinks/${token}`), { ...changes, updatedAt: serverTimestamp() });
+  if (activeRequest) {
+    await updateDraftRequest(token, activeRequest, { reservations: nextReservations });
+  } else {
+    await updateDoc(roomingListRef(token), { reservations: nextReservations, status: "Concept", updatedAt: serverTimestamp() });
+  }
   if (!activeRequest) await markRoomingListConcept(roomingList);
 }
 
@@ -369,7 +395,8 @@ export async function createRoomingListChangeRequest(token) {
     baseVersionNumber: roomingList.currentVersionNumber || 1,
     reservations: copyReservations(roomingList.reservations), createdAt: new Date().toISOString(),
   };
-  await updateDoc(doc(db, `roomingListLinks/${token}`), { changeRequests: [...(roomingList.changeRequests || []), request], updatedAt: serverTimestamp() });
+  await setDoc(changeRequestRef(token, request.id), request);
+  await updateDoc(roomingListRef(token), { updatedAt: serverTimestamp() });
   return request;
 }
 
@@ -377,7 +404,8 @@ export async function cancelRoomingListChangeRequest(token) {
   const roomingList = await getRoomingListByToken(token);
   const request = getActiveRequest(roomingList || {});
   if (!request || request.status !== "Draft") throw new Error("No draft change request found.");
-  await updateDoc(doc(db, `roomingListLinks/${token}`), { changeRequests: updateRequest(roomingList, request.id, { status: "Cancelled", cancelledAt: new Date().toISOString() }), updatedAt: serverTimestamp() });
+  await updateDraftRequest(token, request, { status: "Cancelled", cancelledAt: new Date().toISOString() });
+  await updateDoc(roomingListRef(token), { updatedAt: serverTimestamp() });
 }
 
 export async function submitRoomingListChangeRequest(token) {
@@ -387,8 +415,8 @@ export async function submitRoomingListChangeRequest(token) {
   request.reservations.forEach((reservation) => assertReservationAvailability(roomingList, reservation, request.reservations, reservation.id));
   const base = (roomingList.versions || []).find((version) => version.number === request.baseVersionNumber)?.reservations || roomingList.reservations;
   const submittedAt = new Date().toISOString();
-  const updatedRequests = updateRequest(roomingList, request.id, { status: "Pending Approval", submittedAt, changes: calculateRoomingListChanges(base, request.reservations) });
-  await updateDoc(doc(db, `roomingListLinks/${token}`), { changeRequests: updatedRequests, updatedAt: serverTimestamp() });
+  await updateDraftRequest(token, request, { status: "Pending Approval", submittedAt, changes: calculateRoomingListChanges(base, request.reservations) });
+  await updateDoc(roomingListRef(token), { updatedAt: serverTimestamp() });
   await updateDoc(doc(db, `hotels/${roomingList.hotelUid}/groups/${roomingList.groupId}`), { roomingListChangeRequestStatus: "Pending Approval", updatedAt: serverTimestamp() });
 }
 
@@ -399,12 +427,14 @@ export async function reviewRoomingListChangeRequest(token, requestId, decision,
   if (decision === "approve") {
     const number = Number(roomingList.currentVersionNumber || 0) + 1;
     const version = { number, status: "Official", reservations: copyReservations(request.reservations), createdAt: new Date().toISOString(), sourceRequestId: request.id };
-    await updateDoc(doc(db, `roomingListLinks/${token}`), {
-      versions: [...(roomingList.versions || []), version], currentVersionNumber: number, reservations: version.reservations,
-      changeRequests: updateRequest(roomingList, request.id, { status: "Approved", approvedAt: new Date().toISOString(), approvedVersionNumber: number }), updatedAt: serverTimestamp(),
+    await setDoc(versionRef(token, number), version);
+    await updateDoc(roomingListRef(token), {
+      currentVersionNumber: number, reservations: version.reservations, updatedAt: serverTimestamp(),
     });
+    await updateDraftRequest(token, request, { status: "Approved", approvedAt: new Date().toISOString(), approvedVersionNumber: number });
   } else if (decision === "reject") {
-    await updateDoc(doc(db, `roomingListLinks/${token}`), { changeRequests: updateRequest(roomingList, request.id, { status: "Rejected", rejectedAt: new Date().toISOString(), rejectionReason: String(rejectionReason || "").trim() }), updatedAt: serverTimestamp() });
+    await updateDraftRequest(token, request, { status: "Rejected", rejectedAt: new Date().toISOString(), rejectionReason: String(rejectionReason || "").trim() });
+    await updateDoc(roomingListRef(token), { updatedAt: serverTimestamp() });
   } else throw new Error("Unknown review decision.");
   await updateDoc(doc(db, `hotels/${roomingList.hotelUid}/groups/${roomingList.groupId}`), { roomingListChangeRequestStatus: decision === "approve" ? "Approved" : "Rejected", updatedAt: serverTimestamp() });
 }

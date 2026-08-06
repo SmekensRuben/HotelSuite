@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, BedDouble, CalendarDays, Copy, Link, Mail, Pencil, Phone, Trash2, UserRound } from "lucide-react";
+import { ArrowLeft, BedDouble, CalendarDays, ChevronDown, Copy, Link, Mail, Pencil, Phone, Trash2, UserRound } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
@@ -77,6 +77,7 @@ export default function GroupDetailPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deletingGroup, setDeletingGroup] = useState(false);
   const [notificationLists, setNotificationLists] = useState([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   const today = useMemo(
     () =>
@@ -302,15 +303,28 @@ export default function GroupDetailPage() {
             {pendingChangeRequest && <Card className="border border-amber-300 bg-amber-50 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-amber-950">Rooming List Change Request Pending</h2><p className="mt-1 text-sm text-amber-800">Request {pendingChangeRequest.number}, based on Version {pendingChangeRequest.baseVersionNumber}, is awaiting review.</p></div><button type="button" onClick={() => navigate(`/me/groups/${groupId}/rooming-list-change-request/${group.roomingListToken}`)} className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white">Review Change Request</button></div></Card>}
 
             <Card className="border border-gray-100 bg-white/95 shadow-sm">
-              <div className="mb-5">
-                <h2 className="text-lg font-semibold">Notifications</h2>
-                <p className="mt-1 text-sm text-gray-600">Notification Lists added to this Group.</p>
-              </div>
-              <NotificationListSelector
-                lists={notificationLists}
-                value={normalizeNotificationSelections(group.notifications)}
-                readOnly
-              />
+              <button
+                type="button"
+                onClick={() => setNotificationsOpen((current) => !current)}
+                className="flex w-full items-center justify-between gap-4 text-left"
+                aria-expanded={notificationsOpen}
+                aria-controls="group-notifications-content"
+              >
+                <div>
+                  <h2 className="text-lg font-semibold">Notifications</h2>
+                  <p className="mt-1 text-sm text-gray-600">Notification Lists added to this Group.</p>
+                </div>
+                <ChevronDown className={`h-5 w-5 shrink-0 text-gray-500 transition-transform ${notificationsOpen ? "rotate-180" : ""}`} />
+              </button>
+              {notificationsOpen && (
+                <div id="group-notifications-content" className="mt-5 border-t border-gray-100 pt-5">
+                  <NotificationListSelector
+                    lists={notificationLists}
+                    value={normalizeNotificationSelections(group.notifications)}
+                    readOnly
+                  />
+                </div>
+              )}
             </Card>
 
             <Card className="border border-gray-100 bg-white/95 shadow-sm">

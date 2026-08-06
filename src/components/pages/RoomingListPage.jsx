@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { BedDouble, ChevronDown, Pencil, Plus, Send, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, BedDouble, ChevronDown, Pencil, Plus, Search, Send, Trash2, X } from "lucide-react";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import { addRoomingListReservation, cancelRoomingListChangeRequest, createRoomingListChangeRequest, deleteRoomingListReservation, getRoomingListByToken, submitRoomingList, submitRoomingListChangeRequest, updateRoomingListReservation } from "../../services/firebaseRoomingLists";
@@ -112,6 +112,8 @@ export default function RoomingListPage() {
   const [reservationToDelete, setReservationToDelete] = useState(null);
   const [editingReservationId, setEditingReservationId] = useState("");
   const [error, setError] = useState("");
+  const [reservationSearch, setReservationSearch] = useState("");
+  const [reservationSort, setReservationSort] = useState({ key: "guest", direction: "asc" });
 
   useEffect(() => {
     let active = true;
@@ -141,6 +143,24 @@ export default function RoomingListPage() {
   const activeRequest = (roomingList?.changeRequests || []).find((request) => ["Draft", "Pending Approval"].includes(request.status));
   const isEditable = roomingList?.status !== "Submitted" || activeRequest?.status === "Draft";
   const reservations = Array.isArray(activeRequest?.reservations) ? activeRequest.reservations : Array.isArray(roomingList?.reservations) ? roomingList.reservations : [];
+  const visibleReservations = useMemo(() => {
+    const normalizedSearch = reservationSearch.trim().toLocaleLowerCase();
+    const filtered = normalizedSearch
+      ? reservations.filter((reservation) => `${reservation.firstName || ""} ${reservation.lastName || ""}`.toLocaleLowerCase().includes(normalizedSearch))
+      : reservations;
+    const getSortValue = (reservation) => reservationSort.key === "guest"
+      ? `${reservation.lastName || ""} ${reservation.firstName || ""}`
+      : reservation[reservationSort.key] ?? "";
+
+    return [...filtered].sort((left, right) => {
+      const leftValue = getSortValue(left);
+      const rightValue = getSortValue(right);
+      const comparison = typeof leftValue === "number" && typeof rightValue === "number"
+        ? leftValue - rightValue
+        : String(leftValue).localeCompare(String(rightValue), undefined, { numeric: true, sensitivity: "base" });
+      return reservationSort.direction === "asc" ? comparison : -comparison;
+    });
+  }, [reservationSearch, reservationSort, reservations]);
   const availability = useMemo(() => buildAvailability(roomingList, reservations), [roomingList, reservations]);
   const roomTypes = useMemo(() => {
     const unique = new Map();
@@ -164,6 +184,26 @@ export default function RoomingListPage() {
   const totalRoomNights = availability.reduce((total, day) => total + day.capacity, 0);
 
   const updateForm = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+
+  const toggleReservationSort = (key) => {
+    setReservationSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+    }));
+  };
+
+  const SortableHeader = ({ column, children }) => {
+    const active = reservationSort.key === column;
+    const SortIcon = active ? (reservationSort.direction === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
+    return (
+      <th className="px-3 py-2" aria-sort={active ? (reservationSort.direction === "asc" ? "ascending" : "descending") : "none"}>
+        <button type="button" onClick={() => toggleReservationSort(column)} className="inline-flex items-center gap-1.5 hover:text-gray-800">
+          {children}
+          <SortIcon className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      </th>
+    );
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -408,25 +448,41 @@ export default function RoomingListPage() {
             </Card>
 
             <Card className="border border-gray-100 bg-white/95 shadow-sm">
-              <h2 className="text-lg font-semibold">Reservations</h2>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold">Reservations</h2>
+                  <p className="mt-1 text-sm text-gray-600">Search by guest name or sort the list by any column.</p>
+                </div>
+                <label className="relative block w-full sm:w-72">
+                  <span className="sr-only">Search reservations by guest name</span>
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" aria-hidden="true" />
+                  <input
+                    type="search"
+                    value={reservationSearch}
+                    onChange={(event) => setReservationSearch(event.target.value)}
+                    placeholder="Search by guest name..."
+                    className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                  />
+                </label>
+              </div>
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200 text-sm">
                   <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                     <tr>
-                      <th className="px-3 py-2">Guest</th>
-                      <th className="px-3 py-2">Arrival</th>
-                      <th className="px-3 py-2">Departure</th>
-                      <th className="px-3 py-2">Room Type</th>
-                      <th className="px-3 py-2">Adults</th>
-                      <th className="px-3 py-2">Children</th>
-                      <th className="px-3 py-2">Comment</th>
+                      <SortableHeader column="guest">Guest</SortableHeader>
+                      <SortableHeader column="arrivalDate">Arrival</SortableHeader>
+                      <SortableHeader column="departureDate">Departure</SortableHeader>
+                      <SortableHeader column="roomType">Room Type</SortableHeader>
+                      <SortableHeader column="numberOfAdults">Adults</SortableHeader>
+                      <SortableHeader column="numberOfChildren">Children</SortableHeader>
+                      <SortableHeader column="comment">Comment</SortableHeader>
                       <th className="px-3 py-2 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white">
-                    {reservations.length === 0 ? (
-                      <tr><td className="px-3 py-4 text-gray-500" colSpan="8">No reservations have been added yet.</td></tr>
-                    ) : reservations.map((reservation) => (
+                    {visibleReservations.length === 0 ? (
+                      <tr><td className="px-3 py-4 text-gray-500" colSpan="8">{reservations.length === 0 ? "No reservations have been added yet." : "No reservations match your search."}</td></tr>
+                    ) : visibleReservations.map((reservation) => (
                       <tr key={reservation.id}>
                         <td className="px-3 py-2 font-medium text-gray-900">{reservation.firstName} {reservation.lastName}</td>
                         <td className="px-3 py-2 text-gray-700">{reservation.arrivalDate}</td>
@@ -480,7 +536,7 @@ export default function RoomingListPage() {
         <MessageModal
           open={showSubmitConfirmModal}
           title="Submit Rooming List"
-          message="Are you sure you want to submit this rooming list? After submitting, no more reservations can be added from this page."
+          message="Are you sure you want to submit this rooming list? After submission, it becomes the official rooming list. Any further additions, edits, or deletions must be made through a new change request."
           confirmLabel={submittingRoomingList ? "Submitting..." : "Submit Rooming List"}
           cancelLabel="Cancel"
           onCancel={() => setShowSubmitConfirmModal(false)}
