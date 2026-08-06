@@ -208,6 +208,7 @@ export default function RoomingListPage() {
   };
 
   const handleEditReservation = (reservation) => {
+    if (roomingList?.status === "Submitted") return;
     setEditingReservationId(reservation.id);
     setForm({
       firstName: reservation.firstName || "",
@@ -411,13 +412,15 @@ export default function RoomingListPage() {
                         <td className="px-3 py-2 text-gray-700">{reservation.comment || "—"}</td>
                         <td className="px-3 py-2 text-right">
                           <div className="inline-flex gap-2">
-                            <button type="button" onClick={() => handleEditReservation(reservation)} className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-[#b41f1f]" aria-label={`Edit reservation for ${reservation.firstName} ${reservation.lastName}`}>
-                              <Pencil className="h-4 w-4" />
-                            </button>
                             {roomingList.status !== "Submitted" && (
-                              <button type="button" onClick={() => setReservationToDelete(reservation)} className="rounded-lg p-2 text-gray-500 hover:bg-red-50 hover:text-[#b41f1f]" aria-label={`Delete reservation for ${reservation.firstName} ${reservation.lastName}`}>
-                                <Trash2 className="h-4 w-4" />
-                              </button>
+                              <>
+                                <button type="button" onClick={() => handleEditReservation(reservation)} className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-[#b41f1f]" aria-label={`Edit reservation for ${reservation.firstName} ${reservation.lastName}`}>
+                                  <Pencil className="h-4 w-4" />
+                                </button>
+                                <button type="button" onClick={() => setReservationToDelete(reservation)} className="rounded-lg p-2 text-gray-500 hover:bg-red-50 hover:text-[#b41f1f]" aria-label={`Delete reservation for ${reservation.firstName} ${reservation.lastName}`}>
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </>
                             )}
                           </div>
                         </td>
