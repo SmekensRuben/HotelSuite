@@ -18,6 +18,21 @@ function formatDate(value) {
   }).format(new Date(`${value}T00:00:00`));
 }
 
+function RoomingListStatus({ value }) {
+  const status = value || "Not Started";
+  const styles = {
+    "Not Started": "bg-gray-100 text-gray-700",
+    Concept: "bg-amber-100 text-amber-800",
+    Submitted: "bg-green-100 text-green-800",
+  };
+
+  return (
+    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${styles[status] || styles["Not Started"]}`}>
+      {status}
+    </span>
+  );
+}
+
 export default function GroupsPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
@@ -71,6 +86,12 @@ export default function GroupsPage() {
       label: "Blocked Rooms",
       sortValue: (row) => Number(row.blockedRooms || 0),
     },
+    {
+      key: "roomingListStatus",
+      label: "Rooming List Status",
+      render: (row) => <RoomingListStatus value={row.roomingListStatus} />,
+      sortValue: (row) => row.roomingListStatus || "Not Started",
+    },
     { key: "meOfficer", label: "M&E Officer" },
   ];
 
@@ -107,7 +128,7 @@ export default function GroupsPage() {
           {loading ? (
             <p className="text-gray-600">Loading groups...</p>
           ) : (
-            <DataListTable columns={columns} rows={groups} emptyMessage="No groups found." />
+            <DataListTable columns={columns} rows={groups} onRowClick={(group) => navigate(`/me/groups/${group.id}`)} emptyMessage="No groups found." />
           )}
         </div>
       </PageContainer>
