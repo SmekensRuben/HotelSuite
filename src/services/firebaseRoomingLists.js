@@ -149,6 +149,44 @@ export function calculateRoomingListChanges(baseReservations = [], requestedRese
   return { added, removed, changed };
 }
 
+export function calculateRoomTypePickupSummary(roomTypeDays = [], officialReservations = [], requestedReservations = []) {
+  const isPickedUp = (reservation, date, roomType) => reservation.roomType === roomType
+    && reservation.arrivalDate <= date && date < reservation.departureDate;
+  const days = (Array.isArray(roomTypeDays) ? roomTypeDays : []).map((day) => {
+    const roomTypes = (day.roomTypes || []).map((roomType) => {
+      const blocked = Math.max(0, Number(roomType.quantity || 0));
+      const officialPickedUp = officialReservations.filter((reservation) => isPickedUp(reservation, day.date, roomType.code)).length;
+      const requestedPickedUp = requestedReservations.filter((reservation) => isPickedUp(reservation, day.date, roomType.code)).length;
+      return {
+        code: roomType.code,
+        name: roomType.name || "",
+        blocked,
+        officialPickedUp,
+        requestedPickedUp,
+        pickupChange: requestedPickedUp - officialPickedUp,
+        remaining: Math.max(0, blocked - requestedPickedUp),
+      };
+    });
+    return {
+      date: day.date,
+      roomTypes,
+      blocked: roomTypes.reduce((total, roomType) => total + roomType.blocked, 0),
+      officialPickedUp: roomTypes.reduce((total, roomType) => total + roomType.officialPickedUp, 0),
+      requestedPickedUp: roomTypes.reduce((total, roomType) => total + roomType.requestedPickedUp, 0),
+      remaining: roomTypes.reduce((total, roomType) => total + roomType.remaining, 0),
+    };
+  });
+  return {
+    days,
+    totals: {
+      blocked: days.reduce((total, day) => total + day.blocked, 0),
+      officialPickedUp: days.reduce((total, day) => total + day.officialPickedUp, 0),
+      requestedPickedUp: days.reduce((total, day) => total + day.requestedPickedUp, 0),
+      remaining: days.reduce((total, day) => total + day.remaining, 0),
+    },
+  };
+}
+
 function updateRequest(roomingList, requestId, changes) {
   return (roomingList.changeRequests || []).map((request) => request.id === requestId ? { ...request, ...changes } : request);
 }
