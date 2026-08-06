@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, UsersRound } from "lucide-react";
+import { Plus, Settings, UsersRound } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
@@ -105,7 +105,12 @@ export default function GroupsPage() {
             <h1 className="text-3xl font-semibold">Groups</h1>
             <p className="mt-1 text-gray-600">Review upcoming group blocks and rooming list deadlines.</p>
           </div>
-          <button
+          <div className="flex gap-2"><button
+            onClick={() => navigate("/me/groups/settings")}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold shadow hover:bg-gray-100"
+          >
+            <Settings className="h-4 w-4" /> Settings
+          </button><button
             onClick={() => navigate("/me/groups/new")}
             disabled={!canCreateGroups}
             className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow ${
@@ -115,7 +120,7 @@ export default function GroupsPage() {
             }`}
           >
             <Plus className="h-4 w-4" /> Create Group
-          </button>
+          </button></div>
         </div>
 
         <div className="rounded-xl border border-red-100 bg-white p-4 shadow-sm">

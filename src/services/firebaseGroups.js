@@ -9,6 +9,7 @@ import {
   updateDoc,
   serverTimestamp,
 } from "../firebaseConfig";
+import { normalizeNotificationSelections } from "../constants/groupNotifications";
 
 function normalizeDateInput(value) {
   const raw = String(value || "").trim();
@@ -64,6 +65,7 @@ function buildGroupPayload(groupData, actor) {
     organiserName: String(groupData.organiserName || "").trim(),
     organiserEmail: String(groupData.organiserEmail || "").trim(),
     organiserPhone: String(groupData.organiserPhone || "").trim(),
+    notifications: normalizeNotificationSelections(groupData.notifications),
     roomTypeDays,
     updatedAt: serverTimestamp(),
     updatedBy: actor || "unknown",
