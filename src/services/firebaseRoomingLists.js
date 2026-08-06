@@ -259,6 +259,9 @@ export async function deleteRoomingListReservation(token, reservationId) {
   if (!reservationId) throw new Error("reservationId is required");
   const roomingList = await getRoomingListByToken(token);
   if (!roomingList) throw new Error("Rooming list not found.");
+  if (roomingList.status === "Submitted") {
+    throw new Error("Reservations cannot be deleted after the rooming list has been submitted.");
+  }
 
   const reservations = Array.isArray(roomingList.reservations) ? roomingList.reservations : [];
   const nextReservations = reservations.filter((item) => item.id !== reservationId);

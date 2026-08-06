@@ -1,6 +1,7 @@
 import {
   db,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -106,4 +107,11 @@ export async function updateGroup(hotelUid, groupId, groupData, actor) {
 
   const groupRef = doc(db, `hotels/${hotelUid}/groups/${groupId}`);
   await updateDoc(groupRef, buildGroupPayload(groupData, actor));
+}
+
+export async function deleteGroup(hotelUid, groupId) {
+  if (!hotelUid) throw new Error("hotelUid is required");
+  if (!groupId) throw new Error("groupId is required");
+
+  await deleteDoc(doc(db, `hotels/${hotelUid}/groups/${groupId}`));
 }

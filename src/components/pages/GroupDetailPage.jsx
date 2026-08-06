@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, BedDouble, CalendarDays, Copy, Link, Mail, Pencil, Phone, UserRound } from "lucide-react";
+import { ArrowLeft, BedDouble, CalendarDays, Copy, Link, Mail, Pencil, Phone, Trash2, UserRound } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { usePermission } from "../../hooks/usePermission";
-import { getGroup } from "../../services/firebaseGroups";
+import { deleteGroup, getGroup } from "../../services/firebaseGroups";
 import { createRoomingListForGroup, getRoomingListByToken } from "../../services/firebaseRoomingLists";
 
 function parseDateParts(value) {
@@ -64,12 +64,15 @@ export default function GroupDetailPage() {
   const { groupId } = useParams();
   const { hotelUid } = useHotelContext();
   const canEditGroups = usePermission("groups", "update");
+  const canDeleteGroups = usePermission("groups", "delete");
   const [group, setGroup] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [creatingRoomingList, setCreatingRoomingList] = useState(false);
   const [copyMessage, setCopyMessage] = useState("");
   const [roomingList, setRoomingList] = useState(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletingGroup, setDeletingGroup] = useState(false);
 
   const today = useMemo(
     () =>
@@ -167,6 +170,22 @@ export default function GroupDetailPage() {
     }
   };
 
+  const handleDeleteGroup = async () => {
+    if (!hotelUid || !groupId || !canDeleteGroups || deletingGroup) return;
+
+    setDeletingGroup(true);
+    setError("");
+    try {
+      await deleteGroup(hotelUid, groupId);
+      navigate("/me/groups");
+    } catch (err) {
+      console.error("Unable to delete group:", err);
+      setError(err?.message || "Unable to delete group.");
+      setShowDeleteModal(false);
+      setDeletingGroup(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-gray-100 text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
@@ -198,6 +217,15 @@ export default function GroupDetailPage() {
                 aria-label="Edit group"
               >
                 <Pencil className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                disabled={!canDeleteGroups || !group || deletingGroup}
+                className="inline-flex items-center justify-center rounded-lg border border-white/30 bg-white px-3 py-2 text-[#b41f1f] shadow hover:bg-red-50 disabled:cursor-not-allowed disabled:bg-white/40 disabled:text-white/70"
+                aria-label="Delete group"
+              >
+                <Trash2 className="h-4 w-4" />
               </button>
             </div>
           </div>
@@ -297,6 +325,41 @@ export default function GroupDetailPage() {
               </div>
             </Card>
           </>
+        )}
+
+        {showDeleteModal && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="delete-group-title">
+            <button
+              type="button"
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+              onClick={() => !deletingGroup && setShowDeleteModal(false)}
+              aria-label="Close delete group confirmation"
+            />
+            <div className="relative z-[80] w-full max-w-md rounded-2xl bg-white p-6 text-center shadow-xl">
+              <h2 id="delete-group-title" className="text-xl font-semibold text-gray-900">Delete Group</h2>
+              <p className="mt-3 text-sm leading-6 text-gray-600">
+                Are you sure you want to delete {group?.groupName || "this group"}? This action cannot be undone.
+              </p>
+              <div className="mt-6 flex justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteModal(false)}
+                  disabled={deletingGroup}
+                  className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteGroup}
+                  disabled={deletingGroup}
+                  className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white hover:bg-[#961919] disabled:cursor-not-allowed disabled:bg-gray-300"
+                >
+                  {deletingGroup ? "Deleting..." : "Delete Group"}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </PageContainer>
     </div>

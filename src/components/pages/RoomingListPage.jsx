@@ -414,9 +414,11 @@ export default function RoomingListPage() {
                             <button type="button" onClick={() => handleEditReservation(reservation)} className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-[#b41f1f]" aria-label={`Edit reservation for ${reservation.firstName} ${reservation.lastName}`}>
                               <Pencil className="h-4 w-4" />
                             </button>
-                            <button type="button" onClick={() => setReservationToDelete(reservation)} className="rounded-lg p-2 text-gray-500 hover:bg-red-50 hover:text-[#b41f1f]" aria-label={`Delete reservation for ${reservation.firstName} ${reservation.lastName}`}>
-                              <Trash2 className="h-4 w-4" />
-                            </button>
+                            {roomingList.status !== "Submitted" && (
+                              <button type="button" onClick={() => setReservationToDelete(reservation)} className="rounded-lg p-2 text-gray-500 hover:bg-red-50 hover:text-[#b41f1f]" aria-label={`Delete reservation for ${reservation.firstName} ${reservation.lastName}`}>
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
