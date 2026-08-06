@@ -9,6 +9,9 @@ import { useHotelContext } from "../../contexts/HotelContext";
 import { usePermission } from "../../hooks/usePermission";
 import { deleteGroup, getGroup } from "../../services/firebaseGroups";
 import { createRoomingListForGroup, getRoomingListByToken } from "../../services/firebaseRoomingLists";
+import { getNotificationLists } from "../../services/firebaseNotificationLists";
+import NotificationListSelector from "./NotificationListSelector";
+import { normalizeNotificationSelections } from "../../constants/groupNotifications";
 
 function parseDateParts(value) {
   const [year, month, day] = String(value || "").split("-").map(Number);
@@ -73,6 +76,7 @@ export default function GroupDetailPage() {
   const [roomingList, setRoomingList] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deletingGroup, setDeletingGroup] = useState(false);
+  const [notificationLists, setNotificationLists] = useState([]);
 
   const today = useMemo(
     () =>
@@ -92,9 +96,13 @@ export default function GroupDetailPage() {
       setLoading(true);
       setError("");
       try {
-        const result = await getGroup(hotelUid, groupId);
+        const [result, lists] = await Promise.all([
+          getGroup(hotelUid, groupId),
+          getNotificationLists(hotelUid),
+        ]);
         if (!active) return;
         setGroup(result);
+        setNotificationLists(lists);
         if (result?.roomingListToken) {
           const list = await getRoomingListByToken(result.roomingListToken);
           if (active) setRoomingList(list);
@@ -288,6 +296,18 @@ export default function GroupDetailPage() {
                   </div>
                 )}
               </div>
+            </Card>
+
+            <Card className="border border-gray-100 bg-white/95 shadow-sm">
+              <div className="mb-5">
+                <h2 className="text-lg font-semibold">Notifications</h2>
+                <p className="mt-1 text-sm text-gray-600">Notification Lists added to this Group.</p>
+              </div>
+              <NotificationListSelector
+                lists={notificationLists}
+                value={normalizeNotificationSelections(group.notifications)}
+                readOnly
+              />
             </Card>
 
             <Card className="border border-gray-100 bg-white/95 shadow-sm">

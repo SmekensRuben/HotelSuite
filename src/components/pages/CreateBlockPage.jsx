@@ -8,6 +8,9 @@ import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { calculateBlockedRooms, createGroup, getGroup, updateGroup } from "../../services/firebaseGroups";
 import { getSettings } from "../../services/firebaseSettings";
+import { normalizeNotificationSelections } from "../../constants/groupNotifications";
+import { getGroupNotificationDefaults, getNotificationLists } from "../../services/firebaseNotificationLists";
+import NotificationListSelector from "./NotificationListSelector";
 
 const emptyForm = {
   groupName: "",
@@ -93,6 +96,8 @@ export default function CreateBlockPage({ mode = "create" }) {
   const [loadingGroup, setLoadingGroup] = useState(mode === "edit");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [notificationLists, setNotificationLists] = useState([]);
+  const [notifications, setNotifications] = useState(normalizeNotificationSelections);
 
   const today = useMemo(
     () =>
@@ -106,6 +111,15 @@ export default function CreateBlockPage({ mode = "create" }) {
 
   const isEditMode = mode === "edit";
   const blockedRooms = useMemo(() => calculateBlockedRooms(roomTypeDays), [roomTypeDays]);
+
+  useEffect(() => {
+    let active = true;
+    if (!hotelUid) return;
+    Promise.all([getNotificationLists(hotelUid), isEditMode ? Promise.resolve(null) : getGroupNotificationDefaults(hotelUid)])
+      .then(([lists, defaults]) => { if (active) { setNotificationLists(lists); if (defaults) setNotifications(defaults); } })
+      .catch((err) => { console.error("Unable to load notification settings:", err); if (active) setError("Notification Lists could not be loaded."); });
+    return () => { active = false; };
+  }, [hotelUid, isEditMode]);
 
   useEffect(() => {
     let active = true;
@@ -184,6 +198,7 @@ export default function CreateBlockPage({ mode = "create" }) {
           organiserPhone: group.organiserPhone || "",
         });
         setRoomTypeDays(createRoomTypeDays(group.arrival || "", group.departure || "", group.roomTypeDays || []));
+        setNotifications(normalizeNotificationSelections(group.notifications));
       } catch (err) {
         console.error("Unable to load group:", err);
         if (active) setError(err?.message || "Unable to load group.");
@@ -321,6 +336,7 @@ export default function CreateBlockPage({ mode = "create" }) {
       const payload = {
         ...form,
         roomTypeDays,
+        notifications,
       };
 
       if (isEditMode) {
@@ -470,6 +486,14 @@ export default function CreateBlockPage({ mode = "create" }) {
                 </div>
               )}
             </div>
+          </Card>
+
+          <Card className="border border-gray-100 bg-white/95 shadow-sm lg:col-span-3">
+            <div className="mb-5">
+              <h2 className="text-lg font-semibold">Notifications</h2>
+              <p className="mt-1 text-sm text-gray-600">Select the Notification Lists that should receive each Group notification. Notification delivery will be enabled in a future update.</p>
+            </div>
+            <NotificationListSelector lists={notificationLists} value={notifications} onChange={setNotifications} disabled={saving} />
           </Card>
 
           {error && <p className="text-sm font-semibold text-red-600 lg:col-span-3">{error}</p>}

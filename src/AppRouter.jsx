@@ -63,6 +63,8 @@ import GroupsPage from "./components/pages/GroupsPage.jsx";
 import GroupDetailPage from "./components/pages/GroupDetailPage.jsx";
 import CreateBlockPage from "./components/pages/CreateBlockPage.jsx";
 import RoomingListPage from "./components/pages/RoomingListPage.jsx";
+import NotificationListsPage from "./components/pages/NotificationListsPage.jsx";
+import GroupSettingsPage from "./components/pages/GroupSettingsPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -423,6 +425,10 @@ export default function AppRouter() {
         }
       />
       <Route
+        path="/settings/notification-lists"
+        element={<ProtectedRoute feature="settings" action="read"><NotificationListsPage /></ProtectedRoute>}
+      />
+      <Route
         path="/me/groups"
         element={
           <ProtectedRoute feature="groups" action="read">
@@ -437,6 +443,10 @@ export default function AppRouter() {
             <CreateBlockPage />
           </ProtectedRoute>
         }
+      />
+      <Route
+        path="/me/groups/settings"
+        element={<ProtectedRoute feature="groups" action="update"><GroupSettingsPage /></ProtectedRoute>}
       />
       <Route
         path="/me/groups/:groupId"
