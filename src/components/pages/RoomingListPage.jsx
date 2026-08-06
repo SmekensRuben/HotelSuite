@@ -5,7 +5,6 @@ import {
   ArrowUp,
   ArrowUpDown,
   BedDouble,
-  ChevronDown,
   Pencil,
   Plus,
   Search,
@@ -357,8 +356,8 @@ export default function RoomingListPage() {
           : [...(current?.reservations || []), reservation],
       }));
       setForm(emptyReservation);
+      if (editingReservationId) setIsReservationFormOpen(false);
       setEditingReservationId("");
-      setIsReservationFormOpen(false);
       setShowSubmitConfirmModal(false);
     } catch (err) {
       const message = err?.message || "Unable to add reservation.";
@@ -630,12 +629,7 @@ export default function RoomingListPage() {
             </Card>
 
             <Card className="overflow-hidden border border-gray-100 bg-white/95 p-0 shadow-sm">
-              <button
-                type="button"
-                onClick={() => setIsReservationFormOpen((current) => !current)}
-                disabled={!isEditable}
-                className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-50"
-              >
+              <div className="flex w-full items-center justify-between gap-4 px-5 py-4">
                 <div>
                   <h2 className="text-lg font-semibold">
                     {editingReservationId
@@ -650,10 +644,18 @@ export default function RoomingListPage() {
                         : "Open the form to add another reservation to this rooming list."}
                   </p>
                 </div>
-                <ChevronDown
-                  className={`h-5 w-5 text-gray-500 transition-transform ${isReservationFormOpen ? "rotate-180" : ""}`}
-                />
-              </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setIsReservationFormOpen((current) => !current)
+                  }
+                  disabled={!isEditable}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:cursor-not-allowed disabled:bg-gray-300"
+                >
+                  <Plus className="h-4 w-4" />
+                  {isReservationFormOpen ? "Close" : "Add Reservation"}
+                </button>
+              </div>
 
               {isReservationFormOpen && isEditable && (
                 <form

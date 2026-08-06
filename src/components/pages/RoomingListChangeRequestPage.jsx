@@ -33,6 +33,7 @@ export default function RoomingListChangeRequestPage() {
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [confirmDecision, setConfirmDecision] = useState("");
 
   useEffect(() => {
     getRoomingListByToken(requestId)
@@ -284,14 +285,14 @@ export default function RoomingListChangeRequestPage() {
                 <div className="mt-4 flex justify-end gap-3">
                   <button
                     disabled={saving}
-                    onClick={() => review("reject")}
+                    onClick={() => setConfirmDecision("reject")}
                     className="inline-flex items-center gap-2 rounded-lg border border-red-300 px-4 py-2 font-semibold text-red-700"
                   >
                     <X className="h-4 w-4" /> Reject Change Request
                   </button>
                   <button
                     disabled={saving}
-                    onClick={() => review("approve")}
+                    onClick={() => setConfirmDecision("approve")}
                     className="inline-flex items-center gap-2 rounded-lg bg-green-700 px-4 py-2 font-semibold text-white"
                   >
                     <Check className="h-4 w-4" /> Approve Change Request
@@ -299,9 +300,68 @@ export default function RoomingListChangeRequestPage() {
                 </div>
               </Card>
             )}
+            <ConfirmationModal
+              decision={confirmDecision}
+              saving={saving}
+              onCancel={() => setConfirmDecision("")}
+              onConfirm={() => {
+                const decision = confirmDecision;
+                setConfirmDecision("");
+                review(decision);
+              }}
+            />
           </>
         )}
       </PageContainer>
+    </div>
+  );
+}
+
+function ConfirmationModal({ decision, saving, onCancel, onConfirm }) {
+  if (!decision) return null;
+  const approving = decision === "approve";
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        onClick={onCancel}
+        aria-hidden="true"
+      />
+      <div
+        className="relative z-[80] w-full max-w-md rounded-2xl bg-white p-6 text-center shadow-xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="change-request-confirmation-title"
+      >
+        <h2
+          id="change-request-confirmation-title"
+          className="text-xl font-semibold text-gray-900"
+        >
+          {approving ? "Approve Change Request" : "Reject Change Request"}
+        </h2>
+        <p className="mt-3 text-sm leading-6 text-gray-600">
+          Are you sure you want to {approving ? "approve" : "reject"} this
+          change request? This decision will be communicated to the organiser.
+        </p>
+        <div className="mt-6 flex justify-center gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={saving}
+            className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-200"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={saving}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-60 ${approving ? "bg-green-700 hover:bg-green-800" : "bg-[#b41f1f] hover:bg-[#961919]"}`}
+          >
+            {approving ? "Approve" : "Reject"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
