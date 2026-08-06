@@ -63,6 +63,7 @@ import GroupsPage from "./components/pages/GroupsPage.jsx";
 import GroupDetailPage from "./components/pages/GroupDetailPage.jsx";
 import CreateBlockPage from "./components/pages/CreateBlockPage.jsx";
 import RoomingListPage from "./components/pages/RoomingListPage.jsx";
+import RoomingListChangeRequestPage from "./components/pages/RoomingListChangeRequestPage.jsx";
 import NotificationListsPage from "./components/pages/NotificationListsPage.jsx";
 import GroupSettingsPage from "./components/pages/GroupSettingsPage.jsx";
 
@@ -456,6 +457,7 @@ export default function AppRouter() {
           </ProtectedRoute>
         }
       />
+      <Route path="/me/groups/:groupId/rooming-list-change-request/:requestId" element={<ProtectedRoute feature="groups" action="read"><RoomingListChangeRequestPage /></ProtectedRoute>} />
       <Route
         path="/me/groups/:groupId/edit"
         element={

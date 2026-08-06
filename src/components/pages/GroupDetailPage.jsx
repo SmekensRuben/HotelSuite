@@ -133,6 +133,7 @@ export default function GroupDetailPage() {
   const roomTypeDays = Array.isArray(group?.roomTypeDays) ? group.roomTypeDays : [];
 
   const reservations = Array.isArray(roomingList?.reservations) ? roomingList.reservations : [];
+  const pendingChangeRequest = (roomingList?.changeRequests || []).find((request) => request.status === "Pending Approval");
   const pickedUpRooms = reservations.reduce(
     (total, reservation) => total + getDateRange(reservation.arrivalDate, reservation.departureDate).length,
     0
@@ -297,6 +298,8 @@ export default function GroupDetailPage() {
                 )}
               </div>
             </Card>
+
+            {pendingChangeRequest && <Card className="border border-amber-300 bg-amber-50 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-amber-950">Rooming List Change Request Pending</h2><p className="mt-1 text-sm text-amber-800">Request {pendingChangeRequest.number}, based on Version {pendingChangeRequest.baseVersionNumber}, is awaiting review.</p></div><button type="button" onClick={() => navigate(`/me/groups/${groupId}/rooming-list-change-request/${group.roomingListToken}`)} className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white">Review Change Request</button></div></Card>}
 
             <Card className="border border-gray-100 bg-white/95 shadow-sm">
               <div className="mb-5">

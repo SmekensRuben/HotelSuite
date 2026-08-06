@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { BedDouble, ChevronDown, Pencil, Plus, Send, Trash2, X } from "lucide-react";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
-import { addRoomingListReservation, deleteRoomingListReservation, getRoomingListByToken, submitRoomingList, updateRoomingListReservation } from "../../services/firebaseRoomingLists";
+import { addRoomingListReservation, cancelRoomingListChangeRequest, createRoomingListChangeRequest, deleteRoomingListReservation, getRoomingListByToken, submitRoomingList, submitRoomingListChangeRequest, updateRoomingListReservation } from "../../services/firebaseRoomingLists";
 
 const emptyReservation = {
   firstName: "",
@@ -138,7 +138,9 @@ export default function RoomingListPage() {
     };
   }, [token]);
 
-  const reservations = Array.isArray(roomingList?.reservations) ? roomingList.reservations : [];
+  const activeRequest = (roomingList?.changeRequests || []).find((request) => ["Draft", "Pending Approval"].includes(request.status));
+  const isEditable = roomingList?.status !== "Submitted" || activeRequest?.status === "Draft";
+  const reservations = Array.isArray(activeRequest?.reservations) ? activeRequest.reservations : Array.isArray(roomingList?.reservations) ? roomingList.reservations : [];
   const availability = useMemo(() => buildAvailability(roomingList, reservations), [roomingList, reservations]);
   const roomTypes = useMemo(() => {
     const unique = new Map();
@@ -167,8 +169,8 @@ export default function RoomingListPage() {
     event.preventDefault();
     if (saving) return;
 
-    if (roomingList?.status === "Submitted") {
-      setError("This rooming list has already been submitted.");
+    if (!isEditable) {
+      setError("The current official rooming list is read-only.");
       return;
     }
 
@@ -186,7 +188,8 @@ export default function RoomingListPage() {
         : await addRoomingListReservation(token, form);
       setRoomingList((current) => ({
         ...current,
-        status: "Concept",
+        status: current.status === "Submitted" ? "Submitted" : "Concept",
+        changeRequests: activeRequest ? current.changeRequests.map((request) => request.id === activeRequest.id ? { ...request, reservations: editingReservationId ? request.reservations.map((item) => item.id === editingReservationId ? reservation : item) : [...request.reservations, reservation] } : request) : current.changeRequests,
         reservations: editingReservationId
           ? (current?.reservations || []).map((item) => (item.id === editingReservationId ? reservation : item))
           : [...(current?.reservations || []), reservation],
@@ -208,7 +211,7 @@ export default function RoomingListPage() {
   };
 
   const handleEditReservation = (reservation) => {
-    if (roomingList?.status === "Submitted") return;
+    if (!isEditable) return;
     setEditingReservationId(reservation.id);
     setForm({
       firstName: reservation.firstName || "",
@@ -237,7 +240,8 @@ export default function RoomingListPage() {
       await deleteRoomingListReservation(token, reservationToDelete.id);
       setRoomingList((current) => ({
         ...current,
-        status: "Concept",
+        status: current.status === "Submitted" ? "Submitted" : "Concept",
+        changeRequests: activeRequest ? current.changeRequests.map((request) => request.id === activeRequest.id ? { ...request, reservations: request.reservations.filter((item) => item.id !== reservationToDelete.id) } : request) : current.changeRequests,
         reservations: (current?.reservations || []).filter((item) => item.id !== reservationToDelete.id),
       }));
       if (editingReservationId === reservationToDelete.id) cancelEditReservation();
@@ -245,6 +249,25 @@ export default function RoomingListPage() {
     } catch (err) {
       setError(err?.message || "Unable to delete reservation.");
     }
+  };
+
+  const reload = async () => setRoomingList(await getRoomingListByToken(token));
+
+  const handleMakeChangeRequest = async () => {
+    setSaving(true); setError("");
+    try { await createRoomingListChangeRequest(token); await reload(); }
+    catch (err) { setError(err?.message || "Unable to create change request."); }
+    finally { setSaving(false); }
+  };
+
+  const handleChangeRequestAction = async (action) => {
+    setSubmittingRoomingList(true); setError("");
+    try {
+      if (action === "send") await submitRoomingListChangeRequest(token);
+      else await cancelRoomingListChangeRequest(token);
+      await reload(); setIsReservationFormOpen(false);
+    } catch (err) { setError(err?.message || "Unable to update change request."); }
+    finally { setSubmittingRoomingList(false); }
   };
 
 
@@ -279,9 +302,10 @@ export default function RoomingListPage() {
             <div>
               <h1 className="text-3xl font-semibold">{roomingList?.groupName || roomingList?.group?.groupName || "Rooming List"}</h1>
               <p className="mt-4 inline-flex rounded-full bg-white/15 px-4 py-2 text-lg font-semibold text-white">Status: {roomingList?.status || "Not Started"}</p>
+              {roomingList?.status === "Submitted" && <div className="mt-3 space-y-1 text-sm text-red-50"><p>Current Official Version: Version {roomingList.currentVersionNumber || 1}</p>{activeRequest && <><p>Change Request: Request {activeRequest.number}</p><p>Change Request Status: {activeRequest.status}</p></>}</div>}
             </div>
             {roomingList && (
-              <button
+              roomingList.status === "Submitted" ? (!activeRequest ? <button type="button" onClick={handleMakeChangeRequest} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-[#b41f1f] shadow hover:bg-red-50 disabled:opacity-60"><Pencil className="h-4 w-4" /> Make Change Request</button> : activeRequest.status === "Draft" ? <div className="flex gap-2"><button type="button" onClick={() => handleChangeRequestAction("cancel")} className="rounded-lg border border-white/40 px-4 py-2 text-sm font-semibold">Cancel Request</button><button type="button" onClick={() => handleChangeRequestAction("send")} className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-[#b41f1f]"><Send className="h-4 w-4" /> Send Change Request</button></div> : null) : <button
                 type="button"
                 onClick={() => setShowSubmitConfirmModal(true)}
                 disabled={submittingRoomingList || roomingList.status === "Submitted"}
@@ -297,6 +321,7 @@ export default function RoomingListPage() {
 
         {roomingList && (
           <>
+            {activeRequest?.status === "Pending Approval" && <Card className="border border-amber-200 bg-amber-50 text-amber-900"><p className="font-semibold">Your change request has been submitted and is awaiting approval from the hotel.</p><p className="mt-1 text-sm">The current official rooming list remains unchanged until the request has been approved.</p></Card>}
             <Card className="border border-gray-100 bg-white/95 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -330,19 +355,19 @@ export default function RoomingListPage() {
               <button
                 type="button"
                 onClick={() => setIsReservationFormOpen((current) => !current)}
-                disabled={roomingList.status === "Submitted"}
+                disabled={!isEditable}
                 className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-50"
               >
                 <div>
                   <h2 className="text-lg font-semibold">{editingReservationId ? "Edit Reservation" : "Add Reservation"}</h2>
                   <p className="mt-1 text-sm text-gray-600">
-                    {editingReservationId ? "Update the selected reservation details." : roomingList.status === "Submitted" ? "This rooming list has been submitted and can no longer be changed." : "Open the form to add another reservation to this rooming list."}
+                    {editingReservationId ? "Update the selected reservation details." : !isEditable ? "The official rooming list and submitted requests are read-only." : "Open the form to add another reservation to this rooming list."}
                   </p>
                 </div>
                 <ChevronDown className={`h-5 w-5 text-gray-500 transition-transform ${isReservationFormOpen ? "rotate-180" : ""}`} />
               </button>
 
-              {isReservationFormOpen && roomingList.status !== "Submitted" && (
+              {isReservationFormOpen && isEditable && (
                 <form onSubmit={handleSubmit} className="border-t border-gray-100 bg-gradient-to-b from-white to-gray-50 px-5 py-5">
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     <Field label="First Name" value={form.firstName} onChange={(value) => updateForm("firstName", value)} required />
@@ -412,7 +437,7 @@ export default function RoomingListPage() {
                         <td className="px-3 py-2 text-gray-700">{reservation.comment || "—"}</td>
                         <td className="px-3 py-2 text-right">
                           <div className="inline-flex gap-2">
-                            {roomingList.status !== "Submitted" && (
+                            {isEditable && (
                               <>
                                 <button type="button" onClick={() => handleEditReservation(reservation)} className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-[#b41f1f]" aria-label={`Edit reservation for ${reservation.firstName} ${reservation.lastName}`}>
                                   <Pencil className="h-4 w-4" />
