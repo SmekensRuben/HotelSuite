@@ -10,6 +10,7 @@ import {
   serverTimestamp,
 } from "../firebaseConfig";
 import { normalizeNotificationSelections } from "../constants/groupNotifications";
+import { calculateRoomingListDeadline } from "../utils/groupDeadline";
 
 function normalizeDateInput(value) {
   const raw = String(value || "").trim();
@@ -53,13 +54,18 @@ export function calculateBlockedRooms(roomTypeDays) {
 
 function buildGroupPayload(groupData, actor) {
   const roomTypeDays = sanitizeRoomTypeDays(groupData.roomTypeDays);
+  const roomingListDeadlineDays = Number(groupData.roomingListDeadlineDays);
+  const normalizedDeadlineDays = Number.isInteger(roomingListDeadlineDays) && roomingListDeadlineDays >= 0
+    ? roomingListDeadlineDays
+    : null;
 
   return {
     groupName: String(groupData.groupName || "").trim(),
     blockCode: String(groupData.blockCode || "").trim(),
     arrival: normalizeDateInput(groupData.arrival),
     departure: normalizeDateInput(groupData.departure),
-    roomingListDeadline: normalizeDateInput(groupData.roomingListDeadline),
+    roomingListDeadlineDays: normalizedDeadlineDays,
+    roomingListDeadline: calculateRoomingListDeadline(groupData.arrival, normalizedDeadlineDays),
     blockedRooms: calculateBlockedRooms(roomTypeDays),
     meOfficer: String(groupData.meOfficer || "").trim(),
     organiserName: String(groupData.organiserName || "").trim(),
