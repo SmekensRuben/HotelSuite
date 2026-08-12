@@ -9,13 +9,23 @@ import YesNoToggle from "../ui/YesNoToggle";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { addRateCode, deleteRateCode, subscribeRateCodes, updateRateCode } from "../../services/firebaseRateCodes";
+import { subscribeRoomTypes } from "../../services/firebaseRoomTypes";
 
-const createEmptyForm = () => ({ prefix: "", code: "", description: "", marketSegment: "", breakfastIncluded: false });
+const createEmptyForm = () => ({
+  prefix: "",
+  code: "",
+  description: "",
+  marketSegment: "",
+  priceSetting: "",
+  roomType: "",
+  breakfastIncluded: false,
+});
 
 export default function RateCodesPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
   const [rateCodes, setRateCodes] = useState([]);
+  const [roomTypes, setRoomTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -36,6 +46,17 @@ export default function RateCodesPage() {
     return unsubscribe;
   }, [hotelUid]);
 
+  React.useEffect(() => {
+    return subscribeRoomTypes(
+      hotelUid,
+      setRoomTypes,
+      (err) => {
+        console.error("Unable to load Room Types for Rate Codes:", err);
+        setError("The Room Types could not be loaded from Firebase.");
+      }
+    );
+  }, [hotelUid]);
+
   const resetForm = () => { setShowForm(false); setEditingId(null); setForm(createEmptyForm()); setError(""); };
   const save = async (event) => {
     event.preventDefault();
@@ -44,10 +65,12 @@ export default function RateCodesPage() {
       code: form.code.trim(),
       description: form.description.trim(),
       marketSegment: form.marketSegment.trim(),
+      priceSetting: form.priceSetting.trim(),
+      roomType: form.roomType,
       breakfastIncluded: Boolean(form.breakfastIncluded),
     };
-    if (!payload.prefix || !payload.code || !payload.description || !payload.marketSegment) {
-      setError("Enter a prefix, code, description and market segment.");
+    if (!payload.prefix || !payload.code || !payload.description || !payload.marketSegment || !payload.priceSetting || !payload.roomType) {
+      setError("Enter all Rate Code fields and select a Room Type.");
       return;
     }
     if (payload.prefix.includes("/") || payload.code.includes("/")) {
@@ -73,6 +96,8 @@ export default function RateCodesPage() {
       code: rateCode.code || "",
       description: rateCode.description || "",
       marketSegment: rateCode.marketSegment || "",
+      priceSetting: rateCode.priceSetting || "",
+      roomType: rateCode.roomType || "",
       breakfastIncluded: Boolean(rateCode.breakfastIncluded),
     });
     setShowForm(true);
@@ -84,6 +109,8 @@ export default function RateCodesPage() {
     { key: "code", label: "Code", render: (item) => <span className="font-mono font-semibold">{item.code}</span> },
     { key: "description", label: "Description" },
     { key: "marketSegment", label: "Market Segment" },
+    { key: "priceSetting", label: "Price Setting" },
+    { key: "roomType", label: "Room Type" },
     { key: "breakfastIncluded", label: "Breakfast Included", render: (item) => item.breakfastIncluded ? "Yes" : "No" },
     { key: "actions", label: "Actions", sortable: false, render: (item) => <div className="flex gap-2">
       <button aria-label={`Edit ${item.id}`} onClick={() => edit(item)} className="rounded-lg border p-2 text-blue-700 hover:bg-blue-50"><Pencil className="h-4 w-4" /></button>
@@ -105,11 +132,17 @@ export default function RateCodesPage() {
 
       {showForm && <Card>
         <div className="flex justify-between"><h2 className="text-lg font-semibold">{editingId ? "Edit Rate Code" : "New Rate Code"}</h2><button aria-label="Close form" onClick={resetForm}><X className="h-5 w-5" /></button></div>
-        <form onSubmit={save} className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-[8rem_9rem_1fr_1fr_auto_auto] xl:items-end">
+        <form onSubmit={save} className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4 xl:items-end">
           <label className="text-sm font-semibold">Prefix<input required aria-label="Rate code prefix" value={form.prefix} onChange={(event) => setForm({ ...form, prefix: event.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 font-normal" /></label>
           <label className="text-sm font-semibold">Code<input required aria-label="Rate code code" value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 font-normal" /></label>
           <label className="text-sm font-semibold">Description<input required aria-label="Rate code description" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 font-normal" /></label>
           <label className="text-sm font-semibold">Market Segment<input required aria-label="Rate code market segment" value={form.marketSegment} onChange={(event) => setForm({ ...form, marketSegment: event.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 font-normal" /></label>
+          <label className="text-sm font-semibold">Price Setting<input required aria-label="Rate code price setting" value={form.priceSetting} onChange={(event) => setForm({ ...form, priceSetting: event.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 font-normal" /></label>
+          <label className="text-sm font-semibold">Room Type<select required aria-label="Rate code room type" value={form.roomType} onChange={(event) => setForm({ ...form, roomType: event.target.value })} className="mt-1 w-full rounded-lg border bg-white px-3 py-2 font-normal">
+            <option value="">Select a Room Type</option>
+            {form.roomType && !roomTypes.some((roomType) => roomType.code === form.roomType) && <option value={form.roomType}>{form.roomType} (unavailable)</option>}
+            {roomTypes.map((roomType) => <option key={roomType.id} value={roomType.code}>{roomType.code} — {roomType.description}</option>)}
+          </select></label>
           <div><span className="mb-2 block text-sm font-semibold">Breakfast Included</span><YesNoToggle value={form.breakfastIncluded} onChange={(value) => setForm({ ...form, breakfastIncluded: value })} /></div>
           <button disabled={saving} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Saving..." : "Save"}</button>
         </form>
