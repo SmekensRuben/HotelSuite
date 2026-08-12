@@ -6,30 +6,35 @@ import {
   doc,
   getDoc,
   onSnapshot,
-  orderBy,
-  query,
   serverTimestamp,
   updateDoc,
 } from "../firebaseConfig";
 
-const roomTypesPath = (hotelUid) => `hotels/${hotelUid}/roomTypes`;
+const roomTypesPath = (hotelUid) =>
+  `hotels/${hotelUid}/settings/propertySettings/roomTypes`;
 
 const withId = (docSnap) => ({ id: docSnap.id, ...docSnap.data() });
 
-export const subscribeRoomTypes = (hotelUid, callback) => {
+export const subscribeRoomTypes = (hotelUid, callback, onError) => {
   if (!hotelUid) return () => {};
   const ref = collection(db, roomTypesPath(hotelUid));
-  const q = query(ref, orderBy("name", "asc"));
-  return onSnapshot(q, (snapshot) => callback(snapshot.docs.map(withId)));
+  return onSnapshot(
+    ref,
+    (snapshot) => callback(snapshot.docs.map(withId).sort((a, b) =>
+      String(a.code || "").localeCompare(String(b.code || ""), undefined, { sensitivity: "base", numeric: true })
+    )),
+    onError
+  );
 };
 
 export const addRoomType = async (hotelUid, roomType) => {
   if (!hotelUid) throw new Error("Hotel ontbreekt");
-  await addDoc(collection(db, roomTypesPath(hotelUid)), {
+  const ref = await addDoc(collection(db, roomTypesPath(hotelUid)), {
     ...roomType,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  return ref.id;
 };
 
 export const getRoomType = async (hotelUid, roomTypeId) => {

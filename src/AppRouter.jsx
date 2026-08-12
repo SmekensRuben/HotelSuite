@@ -5,6 +5,7 @@ import LoginPage from "./components/pages/LoginPage.jsx";
 import DashboardPage from "./components/pages/DashboardPage.jsx";
 import ProtectedRoute from "./components/shared/ProtectedRoute.jsx";
 import GeneralSettingsPage from "./components/pages/GeneralSettingsPage.jsx";
+import RoomTypesPage from "./components/pages/RoomTypesPage.jsx";
 import ProductsPage from "./components/pages/ProductsPage.jsx";
 import ProductCreatePage from "./components/pages/ProductCreatePage.jsx";
 import ProductDetailPage from "./components/pages/ProductDetailPage.jsx";
@@ -89,6 +90,8 @@ export default function AppRouter() {
           </ProtectedRoute>
         }
       />
+      <Route path="/settings/property" element={<ProtectedRoute feature="settings" action="read"><GeneralSettingsPage /></ProtectedRoute>} />
+      <Route path="/settings/property/room-types" element={<ProtectedRoute feature="settings" action="read"><RoomTypesPage /></ProtectedRoute>} />
       <Route
         path="/catalog/products"
         element={

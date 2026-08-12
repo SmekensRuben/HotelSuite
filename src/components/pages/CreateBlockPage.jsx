@@ -12,7 +12,7 @@ import {
   getGroup,
   updateGroup,
 } from "../../services/firebaseGroups";
-import { getSettings } from "../../services/firebaseSettings";
+import { subscribeRoomTypes } from "../../services/firebaseRoomTypes";
 import { normalizeNotificationSelections } from "../../constants/groupNotifications";
 import {
   getGroupNotificationDefaults,
@@ -160,51 +160,30 @@ export default function CreateBlockPage({ mode = "create" }) {
   }, [hotelUid, isEditMode]);
 
   useEffect(() => {
-    let active = true;
-
-    async function loadRoomTypes() {
-      if (!hotelUid) {
-        setConfiguredRoomTypes([]);
-        setLoadingRoomTypes(false);
-        return;
-      }
-
-      setLoadingRoomTypes(true);
-      try {
-        const settings = await getSettings(hotelUid);
-        if (!active) return;
-        const roomTypes = Array.isArray(settings?.roomTypes)
-          ? settings.roomTypes
-              .map((roomType, index) => {
-                const code = String(roomType?.code || "").trim();
-                const description = String(roomType?.description || "").trim();
-                const amount = Number(roomType?.amount);
-                return {
-                  id: String(roomType?.id || code || `room-type-${index}`),
-                  code,
-                  description,
-                  amount: Number.isFinite(amount)
-                    ? Math.max(0, Math.floor(amount))
-                    : 0,
-                };
-              })
-              .filter((roomType) => roomType.code && roomType.description)
-          : [];
-        setConfiguredRoomTypes(roomTypes);
-      } catch (err) {
-        console.error("Unable to load Room Types:", err);
-        if (active)
-          setError("Room Types could not be loaded from General Settings.");
-      } finally {
-        if (active) setLoadingRoomTypes(false);
-      }
-    }
-
-    loadRoomTypes();
-
-    return () => {
-      active = false;
-    };
+    setLoadingRoomTypes(true);
+    const unsubscribe = subscribeRoomTypes(hotelUid, (items) => {
+      const roomTypes = items
+        .map((roomType) => {
+          const code = String(roomType?.code || "").trim();
+          const description = String(roomType?.description || "").trim();
+          const amount = Number(roomType?.amount);
+          return {
+            id: String(roomType?.id || code),
+            code,
+            description,
+            amount: Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0,
+          };
+        })
+        .filter((roomType) => roomType.code && roomType.description);
+      setConfiguredRoomTypes(roomTypes);
+      setLoadingRoomTypes(false);
+    }, (err) => {
+      console.error("Unable to load Room Types:", err);
+      setError("Room Types could not be loaded from Property Settings.");
+      setLoadingRoomTypes(false);
+    });
+    if (!hotelUid) setLoadingRoomTypes(false);
+    return unsubscribe;
   }, [hotelUid]);
 
   useEffect(() => {
