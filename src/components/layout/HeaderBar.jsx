@@ -34,8 +34,8 @@ export default function HeaderBar({ today, onLogout }) {
 
   const settingsMenuItems = [
     {
-      label: "General Settings",
-      action: () => navigate("/settings/general"),
+      label: "Property Settings",
+      action: () => navigate("/settings/property"),
       icon: Settings2,
       visible: canViewSettings,
     },
