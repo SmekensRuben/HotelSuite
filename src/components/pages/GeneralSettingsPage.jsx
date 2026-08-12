@@ -8,7 +8,7 @@ import { auth, signOut } from "../../firebaseConfig";
 
 const options = [
   { title: "Room Types", description: "Create, view, edit and delete the room types for this property.", icon: BedDouble, path: "/settings/property/room-types", available: true },
-  { title: "Rate Codes", description: "Manage the rate codes available for this property.", icon: BadgeDollarSign },
+  { title: "Rate Codes", description: "Manage the rate codes available for this property.", icon: BadgeDollarSign, path: "/settings/property/rate-codes", available: true },
   { title: "Option X", description: "Additional property configuration will be available here.", icon: SlidersHorizontal },
   { title: "Option Y", description: "Additional property configuration will be available here.", icon: SlidersHorizontal },
 ];
