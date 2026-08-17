@@ -1,15 +1,130 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CalendarRange, Plus } from "lucide-react";
+import { CalendarRange, Download, Plus } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import DataListTable from "../shared/DataListTable";
+import * as XLSX from "xlsx";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getOrders, listOrderStatuses } from "../../services/firebaseOrders";
 import { getSuppliers } from "../../services/firebaseSuppliers";
 import { getUserDisplayName } from "../../services/firebaseUserManagement";
+
+const ORDERED_EXPORT_STATUSES = new Set(["Ordered", "Received", "Finalized"]);
+
+function sanitizeFileName(value) {
+  return String(value || "orders")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .toLowerCase() || "orders";
+}
+
+function formatContent(item) {
+  const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
+  const unit = String(item?.baseUnit || "").trim();
+  if (!(amount > 0) || !unit) return "";
+  return `${amount} ${unit}`;
+}
+
+function getOrderSortValue(order) {
+  const deliveryDate = String(order?.deliveryDate || "").trim();
+  if (deliveryDate) return deliveryDate;
+  if (order?.createdAtDate instanceof Date && !Number.isNaN(order.createdAtDate.getTime())) {
+    return order.createdAtDate.toISOString();
+  }
+  return String(order?.createdAt || "");
+}
+
+function buildSupplierProductExportRows(orders, supplierNameMap) {
+  const aggregatedRows = new Map();
+
+  (orders || [])
+    .filter((order) => ORDERED_EXPORT_STATUSES.has(String(order.status || "").trim()))
+    .forEach((order) => {
+      const outletId = String(order.outletId || "").trim();
+      const outletName = String(order.outletName || outletId || "Onbekend").trim();
+      const supplierId = String(order.supplierId || "").trim();
+      const supplierName = String(
+        order.supplierName || supplierNameMap[supplierId] || supplierId || "Onbekend"
+      ).trim();
+      const orderedAt = getOrderSortValue(order);
+
+      (Array.isArray(order.products) ? order.products : []).forEach((item) => {
+        const supplierProductId = String(item?.supplierProductId || "").trim();
+        if (!supplierProductId) return;
+
+        const key = `${outletId || "unknown-outlet"}__${supplierProductId}`;
+        const qty = Number(item.qtyPurchaseUnits || 0);
+        const price = Number(item.pricePerPurchaseUnit || 0);
+        const current = aggregatedRows.get(key);
+        const itemSupplierId = String(item.supplierId || supplierId || "").trim();
+        const rowData = {
+          Outlet: outletName || outletId || "Onbekend",
+          "Outlet ID": outletId,
+          Supplier: supplierName || supplierNameMap[itemSupplierId] || itemSupplierId || "Onbekend",
+          "Supplier ID": itemSupplierId,
+          "Supplier Product": item.supplierProductName || supplierProductId,
+          "Supplier Product ID": supplierProductId,
+          SKU: item.supplierSku || "",
+          "Purchase Unit": item.purchaseUnit || "",
+          Content: formatContent(item),
+          "Price per Purchase Unit": price,
+          Currency: item.currency || order.currency || "EUR",
+        };
+
+        if (!current) {
+          aggregatedRows.set(key, {
+            ...rowData,
+            "Total Ordered Quantity": qty,
+            "Total Ordered Value": price * qty,
+            "Order Count": 1,
+            "First Ordered Date": order.deliveryDate || "",
+            "Last Ordered Date": order.deliveryDate || "",
+            "Last Order ID": order.id || "",
+            lastSortValue: orderedAt,
+            firstSortValue: orderedAt,
+            orderIdSet: new Set([order.id || `${key}__${orderedAt}`]),
+          });
+          return;
+        }
+
+        current["Total Ordered Quantity"] += qty;
+        current["Total Ordered Value"] += price * qty;
+
+        const orderCountKey = order.id || `${key}__${orderedAt}`;
+        if (!current.orderIdSet.has(orderCountKey)) {
+          current.orderIdSet.add(orderCountKey);
+          current["Order Count"] += 1;
+        }
+
+        if (orderedAt && (!current.firstSortValue || orderedAt < current.firstSortValue)) {
+          current.firstSortValue = orderedAt;
+          current["First Ordered Date"] = order.deliveryDate || "";
+        }
+
+        if (orderedAt && (!current.lastSortValue || orderedAt >= current.lastSortValue)) {
+          Object.assign(current, rowData, {
+            "Last Ordered Date": order.deliveryDate || "",
+            "Last Order ID": order.id || "",
+            lastSortValue: orderedAt,
+          });
+        }
+      });
+    });
+
+  return Array.from(aggregatedRows.values())
+    .map(({ firstSortValue, lastSortValue, orderIdSet, ...row }) => row)
+    .sort((a, b) => {
+      const outletCompare = String(a.Outlet || "").localeCompare(String(b.Outlet || ""));
+      if (outletCompare) return outletCompare;
+      const supplierCompare = String(a.Supplier || "").localeCompare(String(b.Supplier || ""));
+      if (supplierCompare) return supplierCompare;
+      return String(a["Supplier Product"] || "").localeCompare(String(b["Supplier Product"] || ""));
+    });
+}
 
 function toDateValue(value) {
   if (!value) return "";
@@ -202,6 +317,23 @@ export default function OrdersPage() {
     supplierNameMap,
   ]);
 
+  const supplierProductExportRows = useMemo(
+    () => buildSupplierProductExportRows(orders, supplierNameMap),
+    [orders, supplierNameMap]
+  );
+
+  const handleExportSupplierProductsPerOutlet = () => {
+    if (!supplierProductExportRows.length) return;
+
+    const worksheet = XLSX.utils.json_to_sheet(supplierProductExportRows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Ordered Products");
+    XLSX.writeFile(
+      workbook,
+      `${sanitizeFileName(`supplier-products-per-outlet-${new Date().toISOString().slice(0, 10)}`)}.xlsx`
+    );
+  };
+
   const columns = [
     { key: "status", label: "Status" },
     { key: "supplier", label: "Supplier" },
@@ -222,14 +354,30 @@ export default function OrdersPage() {
             <h1 className="text-3xl font-semibold">Orders</h1>
             <p className="text-sm text-gray-500 mt-1">Overzicht van orders.</p>
           </div>
-          <button
-            type="button"
-            onClick={() => navigate("/orders/new")}
-            className="inline-flex items-center gap-2 bg-blue-600 text-white rounded px-4 py-2 font-semibold hover:bg-blue-700"
-          >
-            <Plus className="w-4 h-4" />
-            Nieuwe order
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={handleExportSupplierProductsPerOutlet}
+              disabled={loading || !supplierProductExportRows.length}
+              className="inline-flex items-center gap-2 rounded border border-gray-300 px-4 py-2 font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+              title={
+                supplierProductExportRows.length
+                  ? "Export supplier product per outlet"
+                  : "Geen ordered supplier products om te exporteren"
+              }
+            >
+              <Download className="w-4 h-4" />
+              Export supplier product per outlet
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate("/orders/new")}
+              className="inline-flex items-center gap-2 bg-blue-600 text-white rounded px-4 py-2 font-semibold hover:bg-blue-700"
+            >
+              <Plus className="w-4 h-4" />
+              Nieuwe order
+            </button>
+          </div>
         </div>
 
         <Card>
