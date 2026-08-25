@@ -373,11 +373,15 @@ function mapXmlObject(recordNode, mappings) {
     const resolvedValue = resolveXmlSourceValue(recordNode, mapping, flattenedRecord);
 
     if (mapping.targetType === "list") {
-      const sourceItems = Array.isArray(resolvedValue)
+      const resolvedItems = Array.isArray(resolvedValue)
         ? resolvedValue
         : resolvedValue === undefined || resolvedValue === null
           ? []
           : [resolvedValue];
+      // Empty XML elements are represented as empty strings (or empty objects
+      // when using the streaming parser). They mean that the list has no
+      // items, not that it contains one invalid item.
+      const sourceItems = resolvedItems.filter((item) => hasMappedValue(item));
 
       const childItems = [];
       for (const item of sourceItems) {
@@ -1407,4 +1411,5 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
 
 module.exports = {
   processImportedFileToFirestore,
+  parseXmlDocuments,
 };

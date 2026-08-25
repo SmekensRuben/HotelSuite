@@ -2,6 +2,7 @@
   "name": "functions",
   "description": "Cloud Functions for Firebase",
   "scripts": {
+    "test": "FIREBASE_CONFIG='{\"projectId\":\"hotel-suite-test\",\"storageBucket\":\"hotel-suite-test.appspot.com\"}' node --test src/*.node-test.js",
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",
     "start": "npm run shell",
