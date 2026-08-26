@@ -9,33 +9,49 @@ process.env.FIREBASE_CONFIG = JSON.stringify({
 const { parseXmlDocuments } = require("./fileImportTypes");
 
 const fileImportType = {
-  recordNodeName: "reservation",
+  recordNodeName: "G_RESERVATION",
   columnMappings: [
     {
-      sourceField: "id",
-      databaseField: "id",
+      sourceField: "EXTERNAL_REFERENCE",
+      databaseField: "externalReference",
       targetType: "string",
     },
     {
-      sourceField: "items.item",
-      databaseField: "items",
+      sourceField: "UPDATE_DATE",
+      databaseField: "lastUpdateDate",
+      targetType: "date",
+      importFormat: "dd-MMM-yy",
+      targetFormat: "yyyy-MM-dd",
+    },
+    {
+      sourceField: "LIST_G_DEPT_ID",
+      databaseField: "traces",
       targetType: "list",
       childMappings: [
         {
-          sourceField: "date",
-          databaseField: "date",
+          sourceField: "GTV_TRACE_ON",
+          databaseField: "traceDate",
           targetType: "date",
-          importFormat: "yyyy-MM-dd",
+          importFormat: "dd.MM.yy",
           targetFormat: "yyyy-MM-dd",
+        },
+        {
+          sourceField: "DEPT_ID",
+          databaseField: "traceDepartment",
+          targetType: "string",
         },
       ],
     },
   ],
 };
 
-test("keeps an XML record when its mapped list element is empty", () => {
+test("keeps an Opera reservation when LIST_G_DEPT_ID contains only whitespace", () => {
   const documents = parseXmlDocuments(
-    "<reservations><reservation><id>123</id><items><item /></items></reservation></reservations>",
+    `<G_RESERVATION>
+      <EXTERNAL_REFERENCE>71371920</EXTERNAL_REFERENCE>
+      <UPDATE_DATE>25-AUG-26</UPDATE_DATE>
+      <LIST_G_DEPT_ID> </LIST_G_DEPT_ID>
+    </G_RESERVATION>`,
     fileImportType
   );
 
@@ -43,8 +59,9 @@ test("keeps an XML record when its mapped list element is empty", () => {
     {
       rowIndex: 0,
       mappedDocument: {
-        id: "123",
-        items: [],
+        externalReference: "71371920",
+        lastUpdateDate: "2026-08-25",
+        traces: [],
       },
     },
   ]);
@@ -52,9 +69,23 @@ test("keeps an XML record when its mapped list element is empty", () => {
 
 test("still maps populated XML list elements", () => {
   const documents = parseXmlDocuments(
-    "<reservations><reservation><id>123</id><items><item><date>2026-08-25</date></item></items></reservation></reservations>",
+    `<G_RESERVATION>
+      <EXTERNAL_REFERENCE>71371920</EXTERNAL_REFERENCE>
+      <UPDATE_DATE>25-AUG-26</UPDATE_DATE>
+      <LIST_G_DEPT_ID>
+        <G_DEPT_ID>
+          <GTV_TRACE_ON>26.08.26</GTV_TRACE_ON>
+          <DEPT_ID>FO</DEPT_ID>
+        </G_DEPT_ID>
+      </LIST_G_DEPT_ID>
+    </G_RESERVATION>`,
     fileImportType
   );
 
-  assert.equal(documents[0].mappedDocument.items[0].date, "2026-08-25");
+  assert.deepEqual(documents[0].mappedDocument.traces, [
+    {
+      traceDate: "2026-08-26",
+      traceDepartment: "FO",
+    },
+  ]);
 });
