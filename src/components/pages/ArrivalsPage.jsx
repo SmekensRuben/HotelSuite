@@ -4,7 +4,7 @@ import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getArrivalDates, getArrivals } from "../../services/firebaseArrivals";
+import { getArrivalDates, getArrivals, getLatestRateCodeDescriptions } from "../../services/firebaseArrivals";
 import { calculateNights } from "../../utils/arrivalDates";
 
 function getMembershipLevel(record) {
@@ -22,6 +22,7 @@ const columns = [
   { key: "roomNumber", label: "Room" },
   { key: "roomCategoryLabel", label: "Room Type" },
   { key: "rateCode", label: "Rate Code" },
+  { key: "description", label: "Description" },
   { key: "membership", label: "Membership", sortValue: getMembershipLevel, render: getMembershipLevel },
 ];
 
@@ -63,8 +64,14 @@ export default function ArrivalsPage() {
     setLoadingArrivals(true);
     setError("");
     setArrivals([]);
-    getArrivals(hotelUid, selectedDate)
-      .then((records) => active && setArrivals(records))
+    Promise.all([
+      getArrivals(hotelUid, selectedDate),
+      getLatestRateCodeDescriptions(hotelUid),
+    ])
+      .then(([records, descriptions]) => active && setArrivals(records.map((record) => ({
+        ...record,
+        description: descriptions[String(record.rateCode || "").trim()] || "",
+      }))))
       .catch(() => {
         if (active) {
           setArrivals([]);
