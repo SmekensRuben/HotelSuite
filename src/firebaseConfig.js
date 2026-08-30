@@ -31,6 +31,7 @@ import {
   signOut,
   signInWithEmailAndPassword
 } from 'firebase/auth';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import {
   getStorage,
@@ -66,6 +67,7 @@ enableIndexedDbPersistence(db).catch(err => {
   console.warn('Offline persistence could not be enabled', err);
 });
 const auth = getAuth(app);
+const functions = getFunctions(app);
 const storage = getStorage(app);
 
 // Firestore exports
@@ -96,6 +98,8 @@ export {
   getDownloadURL,
   deleteObject,
   auth,
+  functions,
+  httpsCallable,
   signOut,
   signInWithEmailAndPassword
 };
