@@ -27,7 +27,6 @@ const columns = [
 
 export default function ArrivalsPage() {
   const { hotelUid } = useHotelContext();
-  const [availableDates, setAvailableDates] = useState([]);
   const [selectedDate, setSelectedDate] = useState("");
   const [arrivals, setArrivals] = useState([]);
   const [loadingDates, setLoadingDates] = useState(true);
@@ -39,7 +38,6 @@ export default function ArrivalsPage() {
     let active = true;
     setLoadingDates(true);
     setError("");
-    setAvailableDates([]);
     setSelectedDate("");
     setArrivals([]);
 
@@ -51,7 +49,6 @@ export default function ArrivalsPage() {
     getArrivalDates(hotelUid)
       .then((dates) => {
         if (!active) return;
-        setAvailableDates(dates);
         setSelectedDate(dates[0] || "");
       })
       .catch(() => active && setError("The available arrival dates could not be loaded."))
@@ -65,6 +62,7 @@ export default function ArrivalsPage() {
     if (!hotelUid || !selectedDate) return () => { active = false; };
     setLoadingArrivals(true);
     setError("");
+    setArrivals([]);
     getArrivals(hotelUid, selectedDate)
       .then((records) => active && setArrivals(records))
       .catch(() => {
@@ -95,14 +93,18 @@ export default function ArrivalsPage() {
 
         <div className="w-full sm:w-64">
           <label htmlFor="arrival-date" className="mb-1 block text-sm font-medium text-gray-700">Arrival date</label>
-          <select id="arrival-date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} disabled={loadingDates || !availableDates.length} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:bg-gray-100">
-            {!availableDates.length && <option value="">No dates available</option>}
-            {availableDates.map((date) => <option key={date} value={date}>{date}</option>)}
-          </select>
+          <input
+            id="arrival-date"
+            type="date"
+            value={selectedDate}
+            onChange={(event) => setSelectedDate(event.target.value)}
+            disabled={loadingDates || !hotelUid}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:bg-gray-100"
+          />
         </div>
 
         {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
-        {(loadingDates || loadingArrivals) ? <p className="text-sm text-gray-600">Loading arrivals...</p> : <DataListTable columns={columns} rows={arrivals} emptyMessage={selectedDate ? "No arrivals found for this date." : "No arrival dates found."} />}
+        {(loadingDates || loadingArrivals) ? <p className="text-sm text-gray-600">Loading arrivals...</p> : <DataListTable columns={columns} rows={arrivals} emptyMessage={selectedDate ? "No arrivals found for this date." : "Select an arrival date."} />}
       </PageContainer>
     </div>
   );
