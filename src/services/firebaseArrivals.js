@@ -31,3 +31,15 @@ export async function getArrivals(hotelUid, arrivalDate) {
     documentId: record.id,
   }));
 }
+
+export async function getLatestRateCodeDescriptions(hotelUid) {
+  if (!hotelUid) return {};
+
+  const getDescriptions = httpsCallable(functions, "getLatestRateCodeDescriptions");
+  const result = await getDescriptions({ hotelUid });
+  const descriptions = result.data?.descriptions;
+
+  return descriptions && typeof descriptions === "object" && !Array.isArray(descriptions)
+    ? descriptions
+    : {};
+}

@@ -8,7 +8,7 @@ const { processImportedFileToFirestore } = require("./src/fileImportTypes");
 const { sendScheduledOccupancyMail, runScheduledOccupancyMailNow } = require("./src/occupancyMail");
 const { sendScheduledBlockPickupReport } = require("./src/blockPickupMail");
 const { processScheduledAuditUpsells } = require("./src/auditUpsell");
-const { listArrivalDates } = require("./src/arrivals");
+const { getLatestRateCodeDescriptions, listArrivalDates } = require("./src/arrivals");
 
 exports.syncCatalogProductsToMeili = syncCatalogProductsToMeili;
 exports.syncSupplierProductsToMeili = syncSupplierProductsToMeili;
@@ -29,3 +29,4 @@ exports.runScheduledOccupancyMailNow = runScheduledOccupancyMailNow;
 exports.sendScheduledBlockPickupReport = sendScheduledBlockPickupReport;
 exports.processScheduledAuditUpsells = processScheduledAuditUpsells;
 exports.listArrivalDates = listArrivalDates;
+exports.getLatestRateCodeDescriptions = getLatestRateCodeDescriptions;
