@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useHotelContext } from "contexts/HotelContext";
 import { db, doc, getDoc } from "../../firebaseConfig";
-import { BellRing, BriefcaseBusiness, ClipboardList, FileText, Package, Settings2, ShoppingBasket, Sparkles, Truck, Users } from "lucide-react";
+import { BedDouble, BellRing, BriefcaseBusiness, ClipboardList, FileText, Package, Settings2, ShoppingBasket, Sparkles, Truck, Users } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
 
 export default function HeaderBar({ today, onLogout }) {
@@ -99,6 +99,12 @@ export default function HeaderBar({ today, onLogout }) {
   ].filter((item) => item.visible !== false);
 
   const frontOfficeMenuItems = [
+    {
+      label: "Arrivals",
+      action: () => navigate("/front-office/arrivals"),
+      icon: BedDouble,
+      visible: true,
+    },
     {
       label: "Upselling",
       action: () => navigate(canReadAuditUpsells ? "/front-office/upselling" : "/front-office/upselling/audit"),

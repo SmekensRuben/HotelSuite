@@ -68,6 +68,7 @@ import RoomingListPage from "./components/pages/RoomingListPage.jsx";
 import RoomingListChangeRequestPage from "./components/pages/RoomingListChangeRequestPage.jsx";
 import NotificationListsPage from "./components/pages/NotificationListsPage.jsx";
 import GroupSettingsPage from "./components/pages/GroupSettingsPage.jsx";
+import ArrivalsPage from "./components/pages/ArrivalsPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -389,6 +390,10 @@ export default function AppRouter() {
             <OperaSettingsPage />
           </ProtectedRoute>
         }
+      />
+      <Route
+        path="/front-office/arrivals"
+        element={<ProtectedRoute><ArrivalsPage /></ProtectedRoute>}
       />
       <Route
         path="/front-office/upselling"
