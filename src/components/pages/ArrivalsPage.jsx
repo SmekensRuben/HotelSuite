@@ -4,7 +4,7 @@ import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getArrivalDates, getArrivals, getLatestRateCodeDescriptions } from "../../services/firebaseArrivals";
+import { getArrivalDates, getArrivals } from "../../services/firebaseArrivals";
 import { calculateNights } from "../../utils/arrivalDates";
 import { filterArrivals, getMembershipLevels } from "../../utils/arrivalFilters";
 
@@ -83,14 +83,8 @@ export default function ArrivalsPage() {
     setLoadingArrivals(true);
     setError("");
     setArrivals([]);
-    Promise.all([
-      getArrivals(hotelUid, selectedDate),
-      getLatestRateCodeDescriptions(hotelUid),
-    ])
-      .then(([records, descriptions]) => active && setArrivals(records.map((record) => ({
-        ...record,
-        description: descriptions[String(record.rateCode || "").trim()] || "",
-      }))))
+    getArrivals(hotelUid, selectedDate)
+      .then((records) => active && setArrivals(records))
       .catch(() => {
         if (active) {
           setArrivals([]);
