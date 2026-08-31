@@ -1,5 +1,7 @@
 const { getFirestore } = require("firebase-admin/firestore");
 const { HttpsError, onCall } = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const logger = require("firebase-functions/logger");
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const RATE_CODE_REPORT_PATH = "ratecodeheader";
@@ -37,35 +39,72 @@ exports.listArrivalDates = onCall(async (request) => {
   return { dates };
 });
 
-exports.getLatestRateCodeDescriptions = onCall(async (request) => {
-  if (!request.auth?.uid) {
-    throw new HttpsError("unauthenticated", "Authentication is required.");
-  }
-
-  const hotelUid = String(request.data?.hotelUid || "").trim();
-  if (!hotelUid) {
-    throw new HttpsError("invalid-argument", "hotelUid is required.");
-  }
-  if (!(await userCanAccessHotel(request.auth.uid, hotelUid))) {
-    throw new HttpsError("permission-denied", "You do not have access to this hotel.");
-  }
-
-  const reportReference = getFirestore().doc(
-    `hotels/${hotelUid}/reports/${RATE_CODE_REPORT_PATH}`
-  );
+async function getLatestDateCollection(reportReference) {
   const dateCollections = await reportReference.listCollections();
-  const latestDateCollection = dateCollections
+  return dateCollections
     .filter((dateCollection) => DATE_KEY_PATTERN.test(dateCollection.id))
     .sort((a, b) => b.id.localeCompare(a.id))[0];
+}
 
-  if (!latestDateCollection) return { reportDate: null, descriptions: {} };
+function getDescriptionUpdates(arrivalRecords, descriptions) {
+  return arrivalRecords.flatMap((record) => {
+    const data = record.data();
+    const description = descriptions[String(data?.rateCode || "").trim()] || "";
+    return data?.description === description ? [] : [{ record, description }];
+  });
+}
 
-  const recordsSnapshot = await latestDateCollection.get();
+async function linkLatestArrivalDescriptionsForHotel(hotelUid, db = getFirestore()) {
+  const rateCodeReport = db.doc(`hotels/${hotelUid}/reports/${RATE_CODE_REPORT_PATH}`);
+  const arrivalsReport = db.doc(`hotels/${hotelUid}/reports/arrivalsdetailed`);
+  const [latestRateCodes, latestArrivals] = await Promise.all([
+    getLatestDateCollection(rateCodeReport),
+    getLatestDateCollection(arrivalsReport),
+  ]);
+
+  if (!latestArrivals) return { arrivalDate: null, updated: 0 };
+
+  const [rateCodesSnapshot, arrivalsSnapshot] = await Promise.all([
+    latestRateCodes ? latestRateCodes.get() : Promise.resolve({ docs: [] }),
+    latestArrivals.get(),
+  ]);
+
   const descriptions = {};
-  recordsSnapshot.docs.forEach((record) => {
+  rateCodesSnapshot.docs.forEach((record) => {
     const description = record.data()?.description;
-    if (typeof description === "string") descriptions[record.id] = description;
+    if (typeof description === "string") descriptions[record.id.trim()] = description;
   });
 
-  return { reportDate: latestDateCollection.id, descriptions };
-});
+  const bulkWriter = db.bulkWriter();
+  const updates = getDescriptionUpdates(arrivalsSnapshot.docs, descriptions);
+  updates.forEach(({ record, description }) => {
+    bulkWriter.update(record.ref, { description });
+  });
+  await bulkWriter.close();
+
+  return { arrivalDate: latestArrivals.id, updated: updates.length };
+}
+
+async function linkLatestArrivalDescriptions() {
+  const db = getFirestore();
+  const hotelsSnapshot = await db.collection("hotels").get();
+  let updated = 0;
+
+  for (const hotel of hotelsSnapshot.docs) {
+    const result = await linkLatestArrivalDescriptionsForHotel(hotel.id, db);
+    updated += result.updated;
+    logger.info("Arrival descriptions linked", { hotelUid: hotel.id, ...result });
+  }
+
+  logger.info("Arrival description linking completed", {
+    hotels: hotelsSnapshot.size,
+    updated,
+  });
+}
+
+exports.linkLatestArrivalDescriptions = onSchedule(
+  { schedule: "0 2 * * *", timeZone: "Europe/Brussels", timeoutSeconds: 540 },
+  linkLatestArrivalDescriptions
+);
+exports.linkLatestArrivalDescriptionsForHotel = linkLatestArrivalDescriptionsForHotel;
+exports.getDescriptionUpdates = getDescriptionUpdates;
