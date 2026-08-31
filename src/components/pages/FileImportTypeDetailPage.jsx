@@ -1,14 +1,19 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Pencil, Trash2 } from "lucide-react";
+import { Download, Pencil, Trash2, Upload } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { deleteFileImportType, getFileImportTypeById } from "../../services/firebaseSettings";
+import { deleteFileImportType, getFileImportTypeById, updateFileImportType } from "../../services/firebaseSettings";
 import { usePermission } from "../../hooks/usePermission";
+import {
+  createFileImportTypeExport,
+  getFileImportTypeExportFilename,
+  parseFileImportTypeImport,
+} from "../../utils/fileImportTypeTransfer";
 
 function DetailField({ label, value }) {
   return (
@@ -68,6 +73,9 @@ export default function FileImportTypeDetailPage() {
   const [fileImportType, setFileImportType] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [transferMessage, setTransferMessage] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const importInputRef = useRef(null);
 
   const today = useMemo(
     () =>
@@ -104,6 +112,47 @@ export default function FileImportTypeDetailPage() {
     navigate("/settings/file-import-types");
   };
 
+  const handleExport = () => {
+    if (!fileImportType) return;
+
+    const blob = new Blob([JSON.stringify(createFileImportTypeExport(fileImportType), null, 2)], {
+      type: "application/json",
+    });
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = getFileImportTypeExportFilename(fileImportType);
+    link.click();
+    URL.revokeObjectURL(downloadUrl);
+    setTransferMessage({ type: "success", text: "File Import Type exported." });
+  };
+
+  const handleImport = async (event) => {
+    const [file] = event.target.files || [];
+    event.target.value = "";
+    if (!file || !hotelUid || !fileImportTypeId || !canUpdateSettings) return;
+
+    setImporting(true);
+    setTransferMessage(null);
+    try {
+      const importedConfiguration = parseFileImportTypeImport(await file.text());
+      await updateFileImportType(hotelUid, fileImportTypeId, {
+        ...importedConfiguration,
+        updatedBy: auth.currentUser?.uid || "unknown",
+      });
+      const updated = await getFileImportTypeById(hotelUid, fileImportTypeId);
+      setFileImportType(updated);
+      setTransferMessage({ type: "success", text: "File Import Type imported successfully." });
+    } catch (error) {
+      setTransferMessage({
+        type: "error",
+        text: error?.message || "The File Import Type could not be imported.",
+      });
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
@@ -114,6 +163,34 @@ export default function FileImportTypeDetailPage() {
             <h1 className="text-3xl font-semibold">File Import Type Detail</h1>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={!fileImportType || loading}
+              className="inline-flex items-center justify-center rounded border border-gray-200 p-2 text-gray-500 hover:border-gray-300 hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40"
+              title="Export file import type"
+              aria-label="Export file import type"
+            >
+              <Download className="h-4 w-4" />
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json,.json"
+              onChange={handleImport}
+              className="hidden"
+              aria-label="Import file import type JSON"
+            />
+            <button
+              type="button"
+              onClick={() => importInputRef.current?.click()}
+              disabled={!fileImportType || !canUpdateSettings || importing}
+              className="inline-flex items-center justify-center rounded border border-gray-200 p-2 text-gray-500 hover:border-gray-300 hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40"
+              title={canUpdateSettings ? "Import file import type" : "No permission to import file import types"}
+              aria-label="Import file import type"
+            >
+              <Upload className="h-4 w-4" />
+            </button>
             <button
               type="button"
               onClick={() => navigate(`/settings/file-import-types/${fileImportTypeId}/edit`)}
@@ -142,6 +219,19 @@ export default function FileImportTypeDetailPage() {
             </button>
           </div>
         </div>
+
+        {transferMessage ? (
+          <p
+            role={transferMessage.type === "error" ? "alert" : "status"}
+            className={`rounded-lg border px-3 py-2 text-sm ${
+              transferMessage.type === "error"
+                ? "border-red-200 bg-red-50 text-red-700"
+                : "border-emerald-200 bg-emerald-50 text-emerald-700"
+            }`}
+          >
+            {transferMessage.text}
+          </p>
+        ) : null}
 
         {loading ? (
           <p className="text-gray-600">Loading file import type...</p>
