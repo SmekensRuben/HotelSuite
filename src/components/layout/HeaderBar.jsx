@@ -106,6 +106,12 @@ export default function HeaderBar({ today, onLogout }) {
       visible: true,
     },
     {
+      label: "Made Reservations",
+      action: () => navigate("/front-office/made-reservations"),
+      icon: ClipboardList,
+      visible: true,
+    },
+    {
       label: "Upselling",
       action: () => navigate(canReadAuditUpsells ? "/front-office/upselling" : "/front-office/upselling/audit"),
       icon: Sparkles,

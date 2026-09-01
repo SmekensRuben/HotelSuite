@@ -5,6 +5,7 @@ const logger = require("firebase-functions/logger");
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const RATE_CODE_REPORT_PATH = "ratecodeheader";
+const ARRIVAL_REPORT_PATHS = new Set(["arrivalsdetailed", "arrivalsmadeyesterday"]);
 
 async function userCanAccessHotel(userUid, hotelUid) {
   const userSnapshot = await getFirestore().doc(`users/${userUid}`).get();
@@ -27,9 +28,14 @@ exports.listArrivalDates = onCall(async (request) => {
     throw new HttpsError("permission-denied", "You do not have access to this hotel.");
   }
 
+  const requestedReport = String(request.data?.report || "arrivalsdetailed").trim();
+  if (!ARRIVAL_REPORT_PATHS.has(requestedReport)) {
+    throw new HttpsError("invalid-argument", "Unsupported arrival report.");
+  }
+
   // Arrival dates are collection IDs below this document. Collection IDs cannot
   // be enumerated by the browser Firestore SDK, so this lookup must run as Admin.
-  const reportReference = getFirestore().doc(`hotels/${hotelUid}/reports/arrivalsdetailed`);
+  const reportReference = getFirestore().doc(`hotels/${hotelUid}/reports/${requestedReport}`);
   const dateCollections = await reportReference.listCollections();
   const dates = dateCollections
     .map((dateCollection) => dateCollection.id)

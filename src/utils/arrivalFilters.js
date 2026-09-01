@@ -21,3 +21,15 @@ export function filterArrivals(records, rateCodeSearch, selectedMemberships) {
     return matchesRateCode && matchesMembership;
   });
 }
+
+export function filterMadeReservations(records, rateCodeSearch, includePms) {
+  const normalizedRateCodeSearch = rateCodeSearch.trim().toLocaleLowerCase();
+
+  return records.filter((record) => {
+    const matchesRateCode = !normalizedRateCodeSearch
+      || String(record.rateCode || "").toLocaleLowerCase().includes(normalizedRateCodeSearch);
+    const isPmRoom = ["PR", "PM"].includes(String(record.roomCategoryLabel || "").trim().toUpperCase());
+
+    return matchesRateCode && (includePms || !isPmRoom);
+  });
+}
