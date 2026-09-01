@@ -5,32 +5,29 @@ import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getMadeReservationDates, getMadeReservations } from "../../services/firebaseArrivals";
+import { getSettings } from "../../services/firebaseSettings";
 import { calculateNights } from "../../utils/arrivalDates";
 import { filterMadeReservations } from "../../utils/arrivalFilters";
 
-const columns = [
-  { key: "fullName", label: "Guest Name" },
-  { key: "arrivalDate", label: "Arrival" },
-  { key: "nights", label: "Nights", sortValue: (record) => calculateNights(record.arrivalDate, record.departureDate), render: (record) => calculateNights(record.arrivalDate, record.departureDate) },
-  { key: "roomNumber", label: "Room" },
-  { key: "roomCategoryLabel", label: "Room Type" },
-  { key: "rateCode", label: "Rate Code" },
-  {
-    key: "description",
-    label: "Description",
-    render: (record) => (
-      <div className="max-w-64 truncate" title={record.description || ""}>
-        {record.description}
-      </div>
-    ),
-  },
-  { key: "insertUser", label: "Created By" },
-];
+function normalizeOperaUserMappings(rawMappings) {
+  if (!rawMappings || typeof rawMappings !== "object") return {};
+
+  return Object.entries(rawMappings).reduce((mappings, [operaUser, employeeName]) => {
+    const cleanedOperaUser = String(operaUser || "").trim();
+    const cleanedEmployeeName = String(employeeName || "").trim();
+    if (cleanedOperaUser && cleanedEmployeeName) {
+      mappings[cleanedOperaUser] = cleanedEmployeeName;
+      mappings[cleanedOperaUser.toLowerCase()] = cleanedEmployeeName;
+    }
+    return mappings;
+  }, {});
+}
 
 export default function MadeReservationsPage() {
   const { hotelUid } = useHotelContext();
   const [selectedDate, setSelectedDate] = useState("");
   const [reservations, setReservations] = useState([]);
+  const [operaUserMappings, setOperaUserMappings] = useState({});
   const [rateCodeSearch, setRateCodeSearch] = useState("");
   const [includePms, setIncludePms] = useState(false);
   const [loadingDates, setLoadingDates] = useState(true);
@@ -41,6 +38,30 @@ export default function MadeReservationsPage() {
     () => filterMadeReservations(reservations, rateCodeSearch, includePms),
     [reservations, rateCodeSearch, includePms]
   );
+  const columns = useMemo(() => [
+    { key: "fullName", label: "Guest Name" },
+    { key: "arrivalDate", label: "Arrival" },
+    { key: "nights", label: "Nights", sortValue: (record) => calculateNights(record.arrivalDate, record.departureDate), render: (record) => calculateNights(record.arrivalDate, record.departureDate) },
+    { key: "roomCategoryLabel", label: "Room Type" },
+    { key: "rateCode", label: "Rate Code" },
+    {
+      key: "description",
+      label: "Description",
+      render: (record) => (
+        <div className="max-w-64 truncate" title={record.description || ""}>
+          {record.description}
+        </div>
+      ),
+    },
+    {
+      key: "insertUser",
+      label: "Created By",
+      render: (record) => {
+        const operaUser = String(record.insertUser || "").trim();
+        return operaUserMappings[operaUser] || operaUserMappings[operaUser.toLowerCase()] || operaUser || "Unknown";
+      },
+    },
+  ], [operaUserMappings]);
 
   useEffect(() => {
     let active = true;
@@ -48,18 +69,20 @@ export default function MadeReservationsPage() {
     setError("");
     setSelectedDate("");
     setReservations([]);
+    setOperaUserMappings({});
 
     if (!hotelUid) {
       setLoadingDates(false);
       return () => { active = false; };
     }
 
-    getMadeReservationDates(hotelUid)
-      .then((dates) => {
+    Promise.all([getMadeReservationDates(hotelUid), getSettings(hotelUid)])
+      .then(([dates, settings]) => {
         if (!active) return;
         setSelectedDate(dates[0] || "");
+        setOperaUserMappings(normalizeOperaUserMappings(settings?.operaUserMappings));
       })
-      .catch(() => active && setError("The available reservation made dates could not be loaded."))
+      .catch(() => active && setError("The reservation dates and OPERA user mappings could not be loaded."))
       .finally(() => active && setLoadingDates(false));
 
     return () => { active = false; };
