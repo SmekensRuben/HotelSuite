@@ -24,6 +24,7 @@ const columns = [
       </div>
     ),
   },
+  { key: "insertUser", label: "Created By" },
 ];
 
 export default function MadeReservationsPage() {
