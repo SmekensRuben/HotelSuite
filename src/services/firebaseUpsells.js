@@ -332,6 +332,9 @@ export async function getAuditUpsell(hotelUid, dateKey, auditUpsellId) {
     db,
     `hotels/${hotelUid}/upselling/auditUpsell/${dateKey}/${auditUpsellId}`
   );
+
+  console.info(`[UpsellDetail] Loading audit upsell from Firebase path: ${auditUpsellRef.path}`);
+
   const snapshot = await getDoc(auditUpsellRef);
 
   if (!snapshot.exists()) return null;
