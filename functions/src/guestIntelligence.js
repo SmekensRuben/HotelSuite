@@ -5,7 +5,7 @@ const logger = require("firebase-functions/logger");
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MINIMUM_NIGHTS = 4;
 const OPENAI_API_URL = "https://api.openai.com/v1/responses";
-const DEFAULT_MODEL = "gpt-4.1-mini";
+const DEFAULT_MODEL = "gpt-5.6-terra";
 const BATCH_SIZE = 10;
 
 function calculateNights(arrivalDate, departureDate) {
@@ -52,13 +52,16 @@ function analysisSchema() {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["reservationId", "employer", "jobTitle", "isVip", "vipReason", "confidence", "sources"],
+          required: ["reservationId", "employer", "jobTitle", "professionalProfile", "notableFacts", "isVip", "vipReason", "identityNotes", "confidence", "sources"],
           properties: {
             reservationId: { type: "string" },
             employer: { type: ["string", "null"] },
             jobTitle: { type: ["string", "null"] },
+            professionalProfile: { type: ["string", "null"] },
+            notableFacts: { type: "array", items: { type: "string" } },
             isVip: { type: ["boolean", "null"] },
             vipReason: { type: ["string", "null"] },
+            identityNotes: { type: ["string", "null"] },
             confidence: { type: "string", enum: ["low", "medium", "high"] },
             sources: {
               type: "array",
@@ -77,16 +80,18 @@ function analysisSchema() {
 }
 
 async function researchGuests(apiKey, model, guests, fetchImpl = fetch) {
+  const isReasoningModel = /^gpt-5(?:\.|$)/.test(model);
   const response = await fetchImpl(OPENAI_API_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
-      tools: [{ type: "web_search_preview", search_context_size: "medium" }],
+      tools: [{ type: "web_search", search_context_size: "high" }],
+      ...(isReasoningModel ? { reasoning: { effort: "high" } } : {}),
       input: [
         {
           role: "system",
-          content: "Research only publicly available professional information. Match names conservatively: never infer an employer or VIP status when identity is ambiguous. VIP means a publicly notable senior executive, elected official, royal, celebrity, elite athlete, or another person whose public prominence may warrant special hotel attention. Return null for isVip when there is insufficient evidence. Sources must be direct public URLs supporting the conclusion.",
+          content: "Conduct thorough, multi-step research using only publicly available professional information. Search for each person separately, consult multiple independent and recent sources where possible, and distinguish people with the same name using employer, title, location and other public context. Never infer an employer or VIP status when identity is ambiguous. Summarize the person's career and relevant notable facts, but do not include sensitive personal data. VIP means a publicly notable senior executive, elected official, royal, celebrity, elite athlete, or another person whose public prominence may warrant special hotel attention. Return null for isVip when evidence is insufficient, explain identity uncertainty in identityNotes, and include direct public source URLs supporting every material conclusion.",
         },
         {
           role: "user",
@@ -138,8 +143,11 @@ async function processGuestIntelligenceForHotel(hotelUid, { db = getFirestore(),
         ...candidate,
         employer: result.employer,
         jobTitle: result.jobTitle,
+        professionalProfile: result.professionalProfile,
+        notableFacts: result.notableFacts,
         isVip: result.isVip,
         vipReason: result.vipReason,
+        identityNotes: result.identityNotes,
         confidence: result.confidence,
         sources: result.sources,
         researchedAt: FieldValue.serverTimestamp(),

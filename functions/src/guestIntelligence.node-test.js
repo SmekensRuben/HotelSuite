@@ -29,10 +29,22 @@ test("researchGuests sends a web-enabled structured response request", async () 
     request = { url, options, body: JSON.parse(options.body) };
     return { ok: true, json: async () => ({ output_text: JSON.stringify({ guests: [{ reservationId: "r1" }] }) }) };
   };
-  const result = await researchGuests("secret", "test-model", [{ reservationId: "r1", fullName: "Test Guest" }], fetchImpl);
+  const result = await researchGuests("secret", "gpt-5.6-terra", [{ reservationId: "r1", fullName: "Test Guest" }], fetchImpl);
   assert.deepEqual(result, [{ reservationId: "r1" }]);
   assert.equal(request.url, "https://api.openai.com/v1/responses");
   assert.equal(request.options.headers.Authorization, "Bearer secret");
-  assert.equal(request.body.tools[0].type, "web_search_preview");
+  assert.equal(request.body.tools[0].type, "web_search");
+  assert.equal(request.body.tools[0].search_context_size, "high");
+  assert.equal(request.body.reasoning.effort, "high");
   assert.equal(request.body.text.format.type, "json_schema");
+});
+
+test("researchGuests omits reasoning for older non-reasoning models", async () => {
+  let body;
+  const fetchImpl = async (_url, options) => {
+    body = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ output_text: JSON.stringify({ guests: [] }) }) };
+  };
+  await researchGuests("secret", "gpt-4.1-mini", [], fetchImpl);
+  assert.equal(body.reasoning, undefined);
 });
