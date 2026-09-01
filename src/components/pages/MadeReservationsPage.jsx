@@ -7,7 +7,7 @@ import { useHotelContext } from "../../contexts/HotelContext";
 import { getMadeReservationDates, getMadeReservations } from "../../services/firebaseArrivals";
 import { getSettings } from "../../services/firebaseSettings";
 import { calculateNights } from "../../utils/arrivalDates";
-import { filterMadeReservations } from "../../utils/arrivalFilters";
+import { filterMadeReservations, getReservationCreator } from "../../utils/arrivalFilters";
 
 function normalizeOperaUserMappings(rawMappings) {
   if (!rawMappings || typeof rawMappings !== "object") return {};
@@ -30,13 +30,18 @@ export default function MadeReservationsPage() {
   const [operaUserMappings, setOperaUserMappings] = useState({});
   const [rateCodeSearch, setRateCodeSearch] = useState("");
   const [includePms, setIncludePms] = useState(false);
+  const [selectedCreators, setSelectedCreators] = useState([]);
   const [loadingDates, setLoadingDates] = useState(true);
   const [loadingReservations, setLoadingReservations] = useState(false);
   const [error, setError] = useState("");
   const today = useMemo(() => new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }), []);
+  const availableCreators = useMemo(() => (
+    [...new Set(reservations.map(getReservationCreator))]
+      .sort((first, second) => first.localeCompare(second))
+  ), [reservations]);
   const filteredReservations = useMemo(
-    () => filterMadeReservations(reservations, rateCodeSearch, includePms),
-    [reservations, rateCodeSearch, includePms]
+    () => filterMadeReservations(reservations, rateCodeSearch, includePms, selectedCreators),
+    [reservations, rateCodeSearch, includePms, selectedCreators]
   );
   const columns = useMemo(() => [
     { key: "fullName", label: "Guest Name" },
@@ -106,6 +111,25 @@ export default function MadeReservationsPage() {
     return () => { active = false; };
   }, [hotelUid, selectedDate]);
 
+  useEffect(() => {
+    setSelectedCreators(availableCreators);
+  }, [availableCreators]);
+
+  const toggleCreator = (creator) => {
+    setSelectedCreators((current) => (
+      current.includes(creator)
+        ? current.filter((item) => item !== creator)
+        : [...current, creator]
+    ));
+  };
+
+  const getCreatorLabel = (creator) => (
+    operaUserMappings[creator]
+    || operaUserMappings[creator.toLowerCase()]
+    || creator
+    || "Unknown"
+  );
+
   const handleLogout = async () => {
     await signOut(auth);
     sessionStorage.clear();
@@ -145,6 +169,35 @@ export default function MadeReservationsPage() {
               placeholder="Search Rate Code"
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
             />
+          </div>
+
+          <div className="w-full sm:w-64">
+            <span className="mb-1 block text-sm font-medium text-gray-700">Created By</span>
+            <details className="relative">
+              <summary className="flex cursor-pointer list-none items-center justify-between rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm marker:content-none">
+                <span className="truncate">
+                  {selectedCreators.length === availableCreators.length
+                    ? "All creators"
+                    : `${selectedCreators.length} selected`}
+                </span>
+                <span aria-hidden="true" className="ml-2 text-xs text-gray-500">▼</span>
+              </summary>
+              <div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+                {availableCreators.length === 0 ? (
+                  <p className="px-2 py-1 text-sm text-gray-500">No creators available</p>
+                ) : availableCreators.map((creator) => (
+                  <label key={creator || "unknown"} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50">
+                    <input
+                      type="checkbox"
+                      checked={selectedCreators.includes(creator)}
+                      onChange={() => toggleCreator(creator)}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                    />
+                    <span className="truncate" title={getCreatorLabel(creator)}>{getCreatorLabel(creator)}</span>
+                  </label>
+                ))}
+              </div>
+            </details>
           </div>
 
           <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm font-medium text-gray-700">
