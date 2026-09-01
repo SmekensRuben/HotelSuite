@@ -22,14 +22,20 @@ export function filterArrivals(records, rateCodeSearch, selectedMemberships) {
   });
 }
 
-export function filterMadeReservations(records, rateCodeSearch, includePms) {
+export function getReservationCreator(record) {
+  return String(record.insertUser || "").trim();
+}
+
+export function filterMadeReservations(records, rateCodeSearch, includePms, selectedCreators) {
   const normalizedRateCodeSearch = rateCodeSearch.trim().toLocaleLowerCase();
 
   return records.filter((record) => {
     const matchesRateCode = !normalizedRateCodeSearch
       || String(record.rateCode || "").toLocaleLowerCase().includes(normalizedRateCodeSearch);
     const isPmRoom = ["PR", "PM"].includes(String(record.roomCategoryLabel || "").trim().toUpperCase());
+    const matchesCreator = !Array.isArray(selectedCreators)
+      || selectedCreators.includes(getReservationCreator(record));
 
-    return matchesRateCode && (includePms || !isPmRoom);
+    return matchesRateCode && (includePms || !isPmRoom) && matchesCreator;
   });
 }
