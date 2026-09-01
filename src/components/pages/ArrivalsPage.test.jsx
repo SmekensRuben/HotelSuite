@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterArrivals, getMembershipLevels } from "../../utils/arrivalFilters";
+import { filterArrivals, filterMadeReservations, getMembershipLevels } from "../../utils/arrivalFilters";
 
 const arrivals = [
   { id: "1", rateCode: "BAR", memberships: [{ membershipLevel: "Gold" }] },
@@ -19,5 +19,21 @@ describe("arrival filters", () => {
 
   it("matches any of the selected memberships and combines both filters", () => {
     expect(filterArrivals(arrivals, "pkg", ["Silver", "Gold"]).map(({ id }) => id)).toEqual(["3"]);
+  });
+});
+
+describe("made reservation filters", () => {
+  const madeReservations = [
+    { id: "1", rateCode: "BAR", roomCategoryLabel: "DLX" },
+    { id: "2", rateCode: "CORP", roomCategoryLabel: "PM" },
+    { id: "3", rateCode: "BAR-PKG", roomCategoryLabel: "pr" },
+  ];
+
+  it("excludes PM and PR room categories by default", () => {
+    expect(filterMadeReservations(madeReservations, "", false).map(({ id }) => id)).toEqual(["1"]);
+  });
+
+  it("includes PM records when requested and combines the Rate Code filter", () => {
+    expect(filterMadeReservations(madeReservations, "bar", true).map(({ id }) => id)).toEqual(["1", "3"]);
   });
 });

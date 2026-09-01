@@ -69,6 +69,7 @@ import RoomingListChangeRequestPage from "./components/pages/RoomingListChangeRe
 import NotificationListsPage from "./components/pages/NotificationListsPage.jsx";
 import GroupSettingsPage from "./components/pages/GroupSettingsPage.jsx";
 import ArrivalsPage from "./components/pages/ArrivalsPage.jsx";
+import MadeReservationsPage from "./components/pages/MadeReservationsPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -394,6 +395,10 @@ export default function AppRouter() {
       <Route
         path="/front-office/arrivals"
         element={<ProtectedRoute><ArrivalsPage /></ProtectedRoute>}
+      />
+      <Route
+        path="/front-office/made-reservations"
+        element={<ProtectedRoute><MadeReservationsPage /></ProtectedRoute>}
       />
       <Route
         path="/front-office/upselling"

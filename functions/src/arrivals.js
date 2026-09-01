@@ -5,6 +5,22 @@ const logger = require("firebase-functions/logger");
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const RATE_CODE_REPORT_PATH = "ratecodeheader";
+const ARRIVAL_REPORT_PATHS = new Set(["arrivalsdetailed", "arrivalsmadeyesterday"]);
+
+async function getNonEmptyDateKeys(reportReference) {
+  const dateCollections = await reportReference.listCollections();
+  const dateCollectionsWithContent = await Promise.all(dateCollections
+    .filter((dateCollection) => DATE_KEY_PATTERN.test(dateCollection.id))
+    .map(async (dateCollection) => ({
+      id: dateCollection.id,
+      hasRecords: !(await dateCollection.limit(1).get()).empty,
+    })));
+
+  return dateCollectionsWithContent
+    .filter(({ hasRecords }) => hasRecords)
+    .map(({ id }) => id)
+    .sort((a, b) => b.localeCompare(a));
+}
 
 async function userCanAccessHotel(userUid, hotelUid) {
   const userSnapshot = await getFirestore().doc(`users/${userUid}`).get();
@@ -27,14 +43,15 @@ exports.listArrivalDates = onCall(async (request) => {
     throw new HttpsError("permission-denied", "You do not have access to this hotel.");
   }
 
+  const requestedReport = String(request.data?.report || "arrivalsdetailed").trim();
+  if (!ARRIVAL_REPORT_PATHS.has(requestedReport)) {
+    throw new HttpsError("invalid-argument", "Unsupported arrival report.");
+  }
+
   // Arrival dates are collection IDs below this document. Collection IDs cannot
   // be enumerated by the browser Firestore SDK, so this lookup must run as Admin.
-  const reportReference = getFirestore().doc(`hotels/${hotelUid}/reports/arrivalsdetailed`);
-  const dateCollections = await reportReference.listCollections();
-  const dates = dateCollections
-    .map((dateCollection) => dateCollection.id)
-    .filter((dateKey) => DATE_KEY_PATTERN.test(dateKey))
-    .sort((a, b) => b.localeCompare(a));
+  const reportReference = getFirestore().doc(`hotels/${hotelUid}/reports/${requestedReport}`);
+  const dates = await getNonEmptyDateKeys(reportReference);
 
   return { dates };
 });
@@ -56,17 +73,22 @@ function getDescriptionUpdates(arrivalRecords, descriptions) {
 
 async function linkLatestArrivalDescriptionsForHotel(hotelUid, db = getFirestore()) {
   const rateCodeReport = db.doc(`hotels/${hotelUid}/reports/${RATE_CODE_REPORT_PATH}`);
-  const arrivalsReport = db.doc(`hotels/${hotelUid}/reports/arrivalsdetailed`);
-  const [latestRateCodes, latestArrivals] = await Promise.all([
+  const detailedArrivalsReport = db.doc(`hotels/${hotelUid}/reports/arrivalsdetailed`);
+  const madeReservationsReport = db.doc(`hotels/${hotelUid}/reports/arrivalsmadeyesterday`);
+  const [latestRateCodes, latestArrivals, latestMadeReservations] = await Promise.all([
     getLatestDateCollection(rateCodeReport),
-    getLatestDateCollection(arrivalsReport),
+    getLatestDateCollection(detailedArrivalsReport),
+    getLatestDateCollection(madeReservationsReport),
   ]);
 
-  if (!latestArrivals) return { arrivalDate: null, updated: 0 };
+  if (!latestArrivals && !latestMadeReservations) {
+    return { arrivalDate: null, madeReservationDate: null, updated: 0 };
+  }
 
-  const [rateCodesSnapshot, arrivalsSnapshot] = await Promise.all([
+  const [rateCodesSnapshot, arrivalsSnapshot, madeReservationsSnapshot] = await Promise.all([
     latestRateCodes ? latestRateCodes.get() : Promise.resolve({ docs: [] }),
-    latestArrivals.get(),
+    latestArrivals ? latestArrivals.get() : Promise.resolve({ docs: [] }),
+    latestMadeReservations ? latestMadeReservations.get() : Promise.resolve({ docs: [] }),
   ]);
 
   const descriptions = {};
@@ -76,13 +98,20 @@ async function linkLatestArrivalDescriptionsForHotel(hotelUid, db = getFirestore
   });
 
   const bulkWriter = db.bulkWriter();
-  const updates = getDescriptionUpdates(arrivalsSnapshot.docs, descriptions);
+  const updates = getDescriptionUpdates(
+    [...arrivalsSnapshot.docs, ...madeReservationsSnapshot.docs],
+    descriptions
+  );
   updates.forEach(({ record, description }) => {
     bulkWriter.update(record.ref, { description });
   });
   await bulkWriter.close();
 
-  return { arrivalDate: latestArrivals.id, updated: updates.length };
+  return {
+    arrivalDate: latestArrivals?.id || null,
+    madeReservationDate: latestMadeReservations?.id || null,
+    updated: updates.length,
+  };
 }
 
 async function linkLatestArrivalDescriptions() {
@@ -108,3 +137,4 @@ exports.linkLatestArrivalDescriptions = onSchedule(
 );
 exports.linkLatestArrivalDescriptionsForHotel = linkLatestArrivalDescriptionsForHotel;
 exports.getDescriptionUpdates = getDescriptionUpdates;
+exports.getNonEmptyDateKeys = getNonEmptyDateKeys;
