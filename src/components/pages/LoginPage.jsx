@@ -28,6 +28,17 @@ const VERIFICATION_COOLDOWN_MS = 60_000;
 const verificationStorageKey = (user) =>
   `verificationEmailSentAt:${user?.uid || user?.email || "unknown"}`;
 
+// Firebase expects phone numbers in E.164 format. The form deliberately allows
+// readable separators, so strip those before sending the number to Firebase.
+const normalizePhoneNumber = (value) => value.trim().replace(/[\s().-]/g, "");
+
+const isRecaptchaError = (err) =>
+  /(?:re-?captcha|grecaptcha|captcha)/i.test(`${err?.name || ""} ${err?.message || ""}`);
+
+const isBrowserNetworkError = (err) =>
+  err?.name === "NetworkError"
+  || (err?.name === "TypeError" && /(?:fetch|network|load|blocked)/i.test(err?.message || ""));
+
 export default function LoginPage() {
   const { t } = useTranslation("auth");
   const [email, setEmail] = useState("");
@@ -112,7 +123,11 @@ export default function LoginPage() {
       case "auth/missing-multi-factor-session":
         return t("twoFactorInvalidSession");
       default:
-        return t("twoFactorSetupErrorWithCode", { code: err?.code || "unknown" });
+        if (isRecaptchaError(err)) return t("recaptchaError");
+        if (isBrowserNetworkError(err)) return t("twoFactorNetworkError");
+        return err?.code
+          ? t("twoFactorSetupErrorWithCode", { code: err.code })
+          : t("twoFactorUnexpectedError");
     }
   }, [t]);
 
@@ -268,7 +283,7 @@ export default function LoginPage() {
     try {
       const provider = new PhoneAuthProvider(auth);
       const verificationId = await provider.verifyPhoneNumber(
-        { phoneNumber: phoneNumber.trim(), session: enrollmentSession },
+        { phoneNumber: normalizePhoneNumber(phoneNumber), session: enrollmentSession },
         getRecaptchaVerifier(),
       );
       setPhoneVerificationId(verificationId);

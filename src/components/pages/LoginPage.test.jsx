@@ -108,6 +108,63 @@ describe("LoginPage authentication steps", () => {
     );
   });
 
+  it("normalizes a human-readable E.164 number before sending it to Firebase", async () => {
+    const user = {
+      email: "user@example.com",
+      emailVerified: true,
+      reload: vi.fn().mockResolvedValue(),
+      getIdToken: vi.fn().mockResolvedValue("fresh-token"),
+    };
+    authMocks.multiFactor.mockReturnValue({
+      enrolledFactors: [],
+      getSession: vi.fn().mockResolvedValue("mfa-session"),
+    });
+    authMocks.signIn.mockResolvedValue({ user });
+    authMocks.verifyPhoneNumber.mockResolvedValue("verification-id");
+
+    render(<LoginPage />);
+    submitCredentials();
+
+    await screen.findByText("enroll-2faTitle");
+    fireEvent.change(screen.getByLabelText("phoneNumber"), {
+      target: { value: "+32 497 15 27 43" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "sendSmsCode" }));
+
+    await screen.findByText("smsCodeSent");
+    expect(authMocks.verifyPhoneNumber).toHaveBeenCalledWith(
+      { phoneNumber: "+32497152743", session: "mfa-session" },
+      expect.anything(),
+    );
+  });
+
+  it("recognizes a browser reCAPTCHA failure without a Firebase error code", async () => {
+    const user = {
+      email: "user@example.com",
+      emailVerified: true,
+      reload: vi.fn().mockResolvedValue(),
+      getIdToken: vi.fn().mockResolvedValue("fresh-token"),
+    };
+    authMocks.multiFactor.mockReturnValue({
+      enrolledFactors: [],
+      getSession: vi.fn().mockResolvedValue("mfa-session"),
+    });
+    authMocks.signIn.mockResolvedValue({ user });
+    authMocks.verifyPhoneNumber.mockRejectedValue(new Error("reCAPTCHA script was blocked"));
+
+    render(<LoginPage />);
+    submitCredentials();
+
+    await screen.findByText("enroll-2faTitle");
+    fireEvent.change(screen.getByLabelText("phoneNumber"), {
+      target: { value: "+32497152743" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "sendSmsCode" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("recaptchaError");
+    expect(authMocks.recaptchaClear).toHaveBeenCalled();
+  });
+
   it("shows the actionable Firebase error when verification email requests are throttled", async () => {
     const user = { uid: "user-1", email: "user@example.com", emailVerified: false };
     authMocks.signIn.mockResolvedValue({ user });
