@@ -67,6 +67,27 @@ export default function LoginPage() {
     }
   }, [t]);
 
+  const enrollmentErrorMessage = useCallback((err) => {
+    switch (err?.code) {
+      case "auth/operation-not-allowed":
+      case "auth/admin-restricted-operation":
+        return t("twoFactorNotEnabled");
+      case "auth/requires-recent-login":
+      case "auth/user-token-expired":
+      case "auth/invalid-user-token":
+        return t("twoFactorLoginExpired");
+      case "auth/unsupported-first-factor":
+        return t("twoFactorUnsupportedFirstFactor");
+      case "auth/network-request-failed":
+        return t("twoFactorNetworkError");
+      case "auth/invalid-multi-factor-session":
+      case "auth/missing-multi-factor-session":
+        return t("twoFactorInvalidSession");
+      default:
+        return t("twoFactorSetupErrorWithCode", { code: err?.code || "unknown" });
+    }
+  }, [t]);
+
   const sendVerification = useCallback(async (user, { respectCooldown = true } = {}) => {
     if (!user) throw new Error("auth/no-current-user");
 
@@ -97,21 +118,27 @@ export default function LoginPage() {
   const startEnrollment = useCallback(async (user) => {
     setBusy(true);
     setError("");
+    setTotpSecret(null);
+    setQrCode("");
+    setScreen(SCREENS.ENROLL_2FA);
     try {
+      // Refresh the user and ID token so Firebase sees a newly verified email
+      // before creating the MFA enrollment session.
+      await user.reload();
+      await user.getIdToken(true);
       const session = await multiFactor(user).getSession();
       const secret = await TotpMultiFactorGenerator.generateSecret(session);
       const accountName = user.email || t("totpAccountFallback");
       const uri = secret.generateQrCodeUrl(accountName, "Hotel Toolkit");
       setTotpSecret(secret);
       setQrCode(await QRCode.toDataURL(uri, { width: 220, margin: 1 }));
-      setScreen(SCREENS.ENROLL_2FA);
     } catch (err) {
       console.error(err);
-      setError(t("twoFactorSetupError"));
+      setError(enrollmentErrorMessage(err));
     } finally {
       setBusy(false);
     }
-  }, [t]);
+  }, [enrollmentErrorMessage, t]);
 
   const continueAfterPrimaryLogin = useCallback(async (user, shouldSendVerification = true) => {
     if (!user.emailVerified) {
@@ -331,10 +358,20 @@ export default function LoginPage() {
 
           {screen === SCREENS.ENROLL_2FA && (
             <div>
-              {qrCode && <img src={qrCode} alt={t("qrCodeAlt")} className="mx-auto mb-4 h-[220px] w-[220px]" />}
-              <p className="mb-2 text-xs text-gray-500">{t("manualSetupKey")}</p>
-              <code className="mb-5 block break-all rounded bg-gray-100 p-3 text-center text-xs">{totpSecret?.secretKey}</code>
-              {codeForm(enrollSecondFactor, t("enableTwoFactor"))}
+              {busy && <p className="text-center text-sm text-gray-600">{t("preparingTwoFactor")}</p>}
+              {!busy && totpSecret && (
+                <>
+                  {qrCode && <img src={qrCode} alt={t("qrCodeAlt")} className="mx-auto mb-4 h-[220px] w-[220px]" />}
+                  <p className="mb-2 text-xs text-gray-500">{t("manualSetupKey")}</p>
+                  <code className="mb-5 block break-all rounded bg-gray-100 p-3 text-center text-xs">{totpSecret.secretKey}</code>
+                  {codeForm(enrollSecondFactor, t("enableTwoFactor"))}
+                </>
+              )}
+              {!busy && !totpSecret && (
+                <button onClick={() => startEnrollment(auth.currentUser)} className="w-full border border-[#b41f1f] text-[#b41f1f] py-2 rounded hover:bg-red-50">
+                  {t("retryTwoFactorSetup")}
+                </button>
+              )}
             </div>
           )}
 

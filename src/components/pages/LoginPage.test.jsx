@@ -60,7 +60,12 @@ describe("LoginPage authentication steps", () => {
   });
 
   it("starts TOTP enrollment for a verified user without a second factor", async () => {
-    const user = { email: "user@example.com", emailVerified: true };
+    const user = {
+      email: "user@example.com",
+      emailVerified: true,
+      reload: vi.fn().mockResolvedValue(),
+      getIdToken: vi.fn().mockResolvedValue("fresh-token"),
+    };
     const getSession = vi.fn().mockResolvedValue("mfa-session");
     authMocks.multiFactor.mockReturnValue({ enrolledFactors: [], getSession });
     authMocks.generateSecret.mockResolvedValue({
@@ -76,6 +81,7 @@ describe("LoginPage authentication steps", () => {
     expect(screen.getByText("MANUAL-SECRET")).toBeInTheDocument();
     await waitFor(() => expect(getSession).toHaveBeenCalled());
     expect(authMocks.generateSecret).toHaveBeenCalledWith("mfa-session");
+    expect(user.getIdToken).toHaveBeenCalledWith(true);
   });
 
   it("shows the actionable Firebase error when verification email requests are throttled", async () => {
@@ -101,5 +107,25 @@ describe("LoginPage authentication steps", () => {
     expect(await screen.findByText("verificationEmailAlreadySent")).toBeInTheDocument();
     expect(authMocks.sendEmailVerification).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: /resendVerificationCountdown/ })).toBeDisabled();
+  });
+
+  it("explains when TOTP is not enabled in the Firebase project", async () => {
+    const user = {
+      email: "user@example.com",
+      emailVerified: true,
+      reload: vi.fn().mockResolvedValue(),
+      getIdToken: vi.fn().mockResolvedValue("fresh-token"),
+    };
+    authMocks.multiFactor.mockReturnValue({
+      enrolledFactors: [],
+      getSession: vi.fn().mockRejectedValue({ code: "auth/operation-not-allowed" }),
+    });
+    authMocks.signIn.mockResolvedValue({ user });
+
+    render(<LoginPage />);
+    submitCredentials();
+
+    expect(await screen.findByText("twoFactorNotEnabled")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "retryTwoFactorSetup" })).toBeInTheDocument();
   });
 });
