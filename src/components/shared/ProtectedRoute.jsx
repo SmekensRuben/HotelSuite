@@ -1,6 +1,8 @@
 import { Navigate } from "react-router-dom";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { hasPermission } from "../../utils/permissions";
+import { auth } from "../../firebaseConfig";
+import { multiFactor } from "firebase/auth";
 
 export default function ProtectedRoute({ children, feature, action = "read", anyOf = [] }) {
   const { hotelUid, loading, permissionsLoading, permissions } = useHotelContext();
@@ -17,7 +19,12 @@ export default function ProtectedRoute({ children, feature, action = "read", any
     );
   }
 
-  if (!hotelUid) {
+  const user = auth.currentUser;
+  const authenticationComplete = Boolean(
+    user?.emailVerified && multiFactor(user).enrolledFactors.length,
+  );
+
+  if (!hotelUid || !authenticationComplete) {
     return <Navigate to="/login" replace />;
   }
 
