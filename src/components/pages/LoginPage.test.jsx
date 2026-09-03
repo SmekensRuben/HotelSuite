@@ -43,6 +43,7 @@ const submitCredentials = () => {
 describe("LoginPage authentication steps", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     authMocks.sendEmailVerification.mockResolvedValue();
   });
 
@@ -75,5 +76,30 @@ describe("LoginPage authentication steps", () => {
     expect(screen.getByText("MANUAL-SECRET")).toBeInTheDocument();
     await waitFor(() => expect(getSession).toHaveBeenCalled());
     expect(authMocks.generateSecret).toHaveBeenCalledWith("mfa-session");
+  });
+
+  it("shows the actionable Firebase error when verification email requests are throttled", async () => {
+    const user = { uid: "user-1", email: "user@example.com", emailVerified: false };
+    authMocks.signIn.mockResolvedValue({ user });
+    authMocks.sendEmailVerification.mockRejectedValue({ code: "auth/too-many-requests" });
+
+    render(<LoginPage />);
+    submitCredentials();
+
+    expect(await screen.findByText("verificationTooManyRequests")).toBeInTheDocument();
+    expect(screen.getByText("emailNotVerified")).toBeInTheDocument();
+  });
+
+  it("does not request another email during the resend cooldown", async () => {
+    const user = { uid: "user-1", email: "user@example.com", emailVerified: false };
+    authMocks.signIn.mockResolvedValue({ user });
+    localStorage.setItem("verificationEmailSentAt:user-1", String(Date.now()));
+
+    render(<LoginPage />);
+    submitCredentials();
+
+    expect(await screen.findByText("verificationEmailAlreadySent")).toBeInTheDocument();
+    expect(authMocks.sendEmailVerification).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /resendVerificationCountdown/ })).toBeDisabled();
   });
 });

@@ -21,6 +21,10 @@ const SCREENS = {
 };
 
 const hasSecondFactor = (user) => multiFactor(user).enrolledFactors.length > 0;
+const VERIFICATION_COOLDOWN_MS = 60_000;
+
+const verificationStorageKey = (user) =>
+  `verificationEmailSentAt:${user?.uid || user?.email || "unknown"}`;
 
 export default function LoginPage() {
   const { t } = useTranslation("auth");
@@ -35,8 +39,52 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
   const navigate = useNavigate();
   const { hotelUid, loading } = useHotelContext();
+
+  useEffect(() => {
+    if (!resendCooldown) return undefined;
+    const timer = window.setInterval(() => {
+      setResendCooldown((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [resendCooldown]);
+
+  const verificationErrorMessage = useCallback((err) => {
+    switch (err?.code) {
+      case "auth/too-many-requests":
+        return t("verificationTooManyRequests");
+      case "auth/network-request-failed":
+        return t("verificationNetworkError");
+      case "auth/user-token-expired":
+      case "auth/requires-recent-login":
+        return t("verificationLoginExpired");
+      case "auth/operation-not-allowed":
+        return t("verificationNotEnabled");
+      default:
+        return t("verificationSendErrorWithCode", { code: err?.code || "unknown" });
+    }
+  }, [t]);
+
+  const sendVerification = useCallback(async (user, { respectCooldown = true } = {}) => {
+    if (!user) throw new Error("auth/no-current-user");
+
+    const key = verificationStorageKey(user);
+    const lastSentAt = Number(localStorage.getItem(key)) || 0;
+    const remainingMs = VERIFICATION_COOLDOWN_MS - (Date.now() - lastSentAt);
+    if (respectCooldown && remainingMs > 0) {
+      setResendCooldown(Math.ceil(remainingMs / 1000));
+      setNotice(t("verificationEmailAlreadySent"));
+      return false;
+    }
+
+    await sendEmailVerification(user);
+    localStorage.setItem(key, String(Date.now()));
+    setResendCooldown(VERIFICATION_COOLDOWN_MS / 1000);
+    setNotice(t("verificationEmailSent"));
+    return true;
+  }, [t]);
 
   useEffect(() => {
     const savedEmail = localStorage.getItem("rememberEmail");
@@ -65,17 +113,16 @@ export default function LoginPage() {
     }
   }, [t]);
 
-  const continueAfterPrimaryLogin = useCallback(async (user, sendVerification = true) => {
+  const continueAfterPrimaryLogin = useCallback(async (user, shouldSendVerification = true) => {
     if (!user.emailVerified) {
       setScreen(SCREENS.VERIFY_EMAIL);
-      setNotice(t(sendVerification ? "verificationEmailSent" : "emailNotVerified"));
-      if (sendVerification) {
+      setNotice(t("emailNotVerified"));
+      if (shouldSendVerification) {
         try {
-          await sendEmailVerification(user);
+          await sendVerification(user);
         } catch (err) {
           console.error(err);
-          setNotice("");
-          setError(t("verificationSendError"));
+          setError(verificationErrorMessage(err));
         }
       }
       return;
@@ -87,7 +134,7 @@ export default function LoginPage() {
     }
 
     if (hotelUid && !loading) navigate("/dashboard");
-  }, [hotelUid, loading, navigate, startEnrollment, t]);
+  }, [hotelUid, loading, navigate, sendVerification, startEnrollment, t, verificationErrorMessage]);
 
   useEffect(() => {
     const user = auth.currentUser;
@@ -151,11 +198,10 @@ export default function LoginPage() {
     setBusy(true);
     setError("");
     try {
-      await sendEmailVerification(auth.currentUser);
-      setNotice(t("verificationEmailSent"));
+      await sendVerification(auth.currentUser);
     } catch (err) {
       console.error(err);
-      setError(t("verificationSendError"));
+      setError(verificationErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -275,7 +321,11 @@ export default function LoginPage() {
           {screen === SCREENS.VERIFY_EMAIL && (
             <div className="space-y-3">
               <button disabled={busy} onClick={checkEmailVerification} className="w-full bg-[#b41f1f] disabled:opacity-60 text-white py-2 rounded hover:bg-red-700">{t("checkVerification")}</button>
-              <button disabled={busy} onClick={resendVerification} className="w-full border border-[#b41f1f] text-[#b41f1f] py-2 rounded hover:bg-red-50">{t("resendVerification")}</button>
+              <button disabled={busy || resendCooldown > 0} onClick={resendVerification} className="w-full border border-[#b41f1f] disabled:cursor-not-allowed disabled:opacity-60 text-[#b41f1f] py-2 rounded hover:bg-red-50">
+                {resendCooldown > 0
+                  ? t("resendVerificationCountdown", { seconds: resendCooldown })
+                  : t("resendVerification")}
+              </button>
             </div>
           )}
 
