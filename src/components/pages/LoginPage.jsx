@@ -51,9 +51,9 @@ export default function LoginPage() {
   const getRecaptchaVerifier = useCallback(() => {
     if (!recaptchaVerifierRef.current) {
       recaptchaVerifierRef.current = new RecaptchaVerifier(
+        auth,
         "recaptcha-container",
         { size: "invisible" },
-        auth,
       );
     }
     return recaptchaVerifierRef.current;
