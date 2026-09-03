@@ -415,7 +415,6 @@ export default function LoginPage() {
       </header>
 
       <div className="flex-grow flex items-center justify-center px-6 py-12">
-        <div id="recaptcha-container" />
         <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }} className="bg-white shadow-lg rounded-lg max-w-md w-full p-8">
           <div className="flex flex-col items-center mb-6">
             <img src="/assets/breakfast_pilot_logo_black_circle.png" alt="Hotel Toolkit Logo" className="h-16 mb-2" />
@@ -425,6 +424,12 @@ export default function LoginPage() {
 
           {error && <p role="alert" className="mb-4 rounded bg-red-50 p-3 text-red-700 text-sm">{error}</p>}
           {notice && <p role="status" className="mb-4 rounded bg-blue-50 p-3 text-blue-800 text-sm">{notice}</p>}
+
+          <div
+            id="recaptcha-container"
+            className="mb-4 flex min-h-0 justify-center"
+            aria-label={t("smsSecurityCheck")}
+          />
 
           {screen === SCREENS.LOGIN && (
             <form onSubmit={handleLogin} className="space-y-4">
