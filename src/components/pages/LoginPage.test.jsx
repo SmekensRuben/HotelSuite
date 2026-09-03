@@ -102,9 +102,9 @@ describe("LoginPage authentication steps", () => {
       expect.anything(),
     );
     expect(authMocks.recaptchaConstructor).toHaveBeenCalledWith(
-      "recaptcha-container",
-      { size: "normal" },
       expect.anything(),
+      "recaptcha-container",
+      { size: "invisible" },
     );
   });
 

@@ -51,12 +51,9 @@ export default function LoginPage() {
   const getRecaptchaVerifier = useCallback(() => {
     if (!recaptchaVerifierRef.current) {
       recaptchaVerifierRef.current = new RecaptchaVerifier(
-        "recaptcha-container",
-        // Keep the challenge visible. Invisible reCAPTCHA is more likely to be
-        // rejected by browser tracking protection and privacy extensions,
-        // which made SMS MFA work on one computer but fail on another.
-        { size: "normal" },
         auth,
+        "recaptcha-container",
+        { size: "invisible" },
       );
     }
     return recaptchaVerifierRef.current;
