@@ -48,6 +48,7 @@ export default function MadeReservationsPage() {
     { key: "arrivalDate", label: "Arrival" },
     { key: "nights", label: "Nights", sortValue: (record) => calculateNights(record.arrivalDate, record.departureDate), render: (record) => calculateNights(record.arrivalDate, record.departureDate) },
     { key: "roomCategoryLabel", label: "Room Type" },
+    { key: "shareAmount", label: "Rate" },
     { key: "rateCode", label: "Rate Code" },
     {
       key: "description",
