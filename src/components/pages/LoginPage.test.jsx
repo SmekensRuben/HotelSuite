@@ -10,6 +10,7 @@ const authMocks = vi.hoisted(() => ({
   verifyPhoneNumber: vi.fn(),
   phoneCredential: vi.fn(),
   phoneAssertion: vi.fn(),
+  recaptchaConstructor: vi.fn(),
   recaptchaClear: vi.fn(),
   getMultiFactorResolver: vi.fn(),
 }));
@@ -33,6 +34,7 @@ vi.mock("firebase/auth", () => ({
     assertion: authMocks.phoneAssertion,
   },
   RecaptchaVerifier: class RecaptchaVerifier {
+    constructor(...args) { authMocks.recaptchaConstructor(...args); }
     clear() { authMocks.recaptchaClear(); }
   },
   TotpMultiFactorGenerator: {
@@ -97,6 +99,11 @@ describe("LoginPage authentication steps", () => {
     expect(await screen.findByText("smsCodeSent")).toBeInTheDocument();
     expect(authMocks.verifyPhoneNumber).toHaveBeenCalledWith(
       { phoneNumber: "+32497152743", session: "mfa-session" },
+      expect.anything(),
+    );
+    expect(authMocks.recaptchaConstructor).toHaveBeenCalledWith(
+      "recaptcha-container",
+      { size: "normal" },
       expect.anything(),
     );
   });
