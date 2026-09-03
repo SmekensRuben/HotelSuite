@@ -7,7 +7,11 @@ const authMocks = vi.hoisted(() => ({
   signIn: vi.fn(),
   sendEmailVerification: vi.fn(),
   multiFactor: vi.fn(),
-  generateSecret: vi.fn(),
+  verifyPhoneNumber: vi.fn(),
+  phoneCredential: vi.fn(),
+  phoneAssertion: vi.fn(),
+  recaptchaClear: vi.fn(),
+  getMultiFactorResolver: vi.fn(),
 }));
 
 vi.mock("../../firebaseConfig", () => ({
@@ -16,19 +20,27 @@ vi.mock("../../firebaseConfig", () => ({
 }));
 
 vi.mock("firebase/auth", () => ({
-  getMultiFactorResolver: vi.fn(),
+  getMultiFactorResolver: authMocks.getMultiFactorResolver,
   multiFactor: authMocks.multiFactor,
   sendEmailVerification: authMocks.sendEmailVerification,
   signOut: vi.fn(),
+  PhoneAuthProvider: class PhoneAuthProvider {
+    verifyPhoneNumber(...args) { return authMocks.verifyPhoneNumber(...args); }
+    static credential(...args) { return authMocks.phoneCredential(...args); }
+  },
+  PhoneMultiFactorGenerator: {
+    FACTOR_ID: "phone",
+    assertion: authMocks.phoneAssertion,
+  },
+  RecaptchaVerifier: class RecaptchaVerifier {
+    clear() { authMocks.recaptchaClear(); }
+  },
   TotpMultiFactorGenerator: {
     FACTOR_ID: "totp",
-    generateSecret: authMocks.generateSecret,
-    assertionForEnrollment: vi.fn(),
     assertionForSignIn: vi.fn(),
   },
 }));
 
-vi.mock("qrcode", () => ({ default: { toDataURL: vi.fn(() => "data:image/png;base64,qr") } }));
 vi.mock("framer-motion", () => ({ motion: { div: ({ children, ...props }) => <div {...props}>{children}</div> } }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: null, loading: false }) }));
@@ -59,7 +71,7 @@ describe("LoginPage authentication steps", () => {
     expect(authMocks.sendEmailVerification).toHaveBeenCalledWith(user);
   });
 
-  it("starts TOTP enrollment for a verified user without a second factor", async () => {
+  it("starts SMS enrollment for a verified user without a second factor", async () => {
     const user = {
       email: "user@example.com",
       emailVerified: true,
@@ -67,21 +79,26 @@ describe("LoginPage authentication steps", () => {
       getIdToken: vi.fn().mockResolvedValue("fresh-token"),
     };
     const getSession = vi.fn().mockResolvedValue("mfa-session");
-    authMocks.multiFactor.mockReturnValue({ enrolledFactors: [], getSession });
-    authMocks.generateSecret.mockResolvedValue({
-      secretKey: "MANUAL-SECRET",
-      generateQrCodeUrl: vi.fn(() => "otpauth://totp/example"),
-    });
+    const enroll = vi.fn().mockResolvedValue();
+    authMocks.multiFactor.mockReturnValue({ enrolledFactors: [], getSession, enroll });
+    authMocks.verifyPhoneNumber.mockResolvedValue("verification-id");
+    authMocks.phoneCredential.mockReturnValue("phone-credential");
+    authMocks.phoneAssertion.mockReturnValue("phone-assertion");
     authMocks.signIn.mockResolvedValue({ user });
 
     render(<LoginPage />);
     submitCredentials();
 
     expect(await screen.findByText("enroll-2faTitle")).toBeInTheDocument();
-    expect(screen.getByText("MANUAL-SECRET")).toBeInTheDocument();
     await waitFor(() => expect(getSession).toHaveBeenCalled());
-    expect(authMocks.generateSecret).toHaveBeenCalledWith("mfa-session");
     expect(user.getIdToken).toHaveBeenCalledWith(true);
+    fireEvent.change(screen.getByLabelText("phoneNumber"), { target: { value: "+32497152743" } });
+    fireEvent.click(screen.getByRole("button", { name: "sendSmsCode" }));
+    expect(await screen.findByText("smsCodeSent")).toBeInTheDocument();
+    expect(authMocks.verifyPhoneNumber).toHaveBeenCalledWith(
+      { phoneNumber: "+32497152743", session: "mfa-session" },
+      expect.anything(),
+    );
   });
 
   it("shows the actionable Firebase error when verification email requests are throttled", async () => {
@@ -109,7 +126,7 @@ describe("LoginPage authentication steps", () => {
     expect(screen.getByRole("button", { name: /resendVerificationCountdown/ })).toBeDisabled();
   });
 
-  it("explains when TOTP is not enabled in the Firebase project", async () => {
+  it("explains when MFA is not enabled in the Firebase project", async () => {
     const user = {
       email: "user@example.com",
       emailVerified: true,
@@ -127,5 +144,24 @@ describe("LoginPage authentication steps", () => {
 
     expect(await screen.findByText("twoFactorNotEnabled")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "retryTwoFactorSetup" })).toBeInTheDocument();
+  });
+
+  it("sends an SMS challenge for an existing Firebase phone factor", async () => {
+    const authError = { code: "auth/multi-factor-auth-required" };
+    const hint = { uid: "phone-factor", factorId: "phone", phoneNumber: "+32******743" };
+    const resolver = { hints: [hint], session: "sign-in-session", resolveSignIn: vi.fn() };
+    authMocks.signIn.mockRejectedValue(authError);
+    authMocks.getMultiFactorResolver.mockReturnValue(resolver);
+    authMocks.verifyPhoneNumber.mockResolvedValue("verification-id");
+
+    render(<LoginPage />);
+    submitCredentials();
+
+    expect(await screen.findByText("smsCodeSentMasked")).toBeInTheDocument();
+    expect(authMocks.verifyPhoneNumber).toHaveBeenCalledWith(
+      { multiFactorHint: hint, session: "sign-in-session" },
+      expect.anything(),
+    );
+    expect(screen.getByLabelText("twoFactorCode")).toBeInTheDocument();
   });
 });

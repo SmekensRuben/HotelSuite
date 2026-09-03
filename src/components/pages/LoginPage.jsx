@@ -1,10 +1,12 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import QRCode from "qrcode";
 import {
   getMultiFactorResolver,
   multiFactor,
+  PhoneAuthProvider,
+  PhoneMultiFactorGenerator,
+  RecaptchaVerifier,
   sendEmailVerification,
   signOut,
   TotpMultiFactorGenerator,
@@ -33,8 +35,9 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(false);
   const [screen, setScreen] = useState(SCREENS.LOGIN);
   const [verificationCode, setVerificationCode] = useState("");
-  const [totpSecret, setTotpSecret] = useState(null);
-  const [qrCode, setQrCode] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [phoneVerificationId, setPhoneVerificationId] = useState("");
+  const [enrollmentSession, setEnrollmentSession] = useState(null);
   const [mfaResolver, setMfaResolver] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -42,6 +45,21 @@ export default function LoginPage() {
   const [resendCooldown, setResendCooldown] = useState(0);
   const navigate = useNavigate();
   const { hotelUid, loading } = useHotelContext();
+  const recaptchaVerifierRef = useRef(null);
+  const phoneChallengeStartedRef = useRef(false);
+
+  const getRecaptchaVerifier = useCallback(() => {
+    if (!recaptchaVerifierRef.current) {
+      recaptchaVerifierRef.current = new RecaptchaVerifier(
+        "recaptcha-container",
+        { size: "invisible" },
+        auth,
+      );
+    }
+    return recaptchaVerifierRef.current;
+  }, []);
+
+  useEffect(() => () => recaptchaVerifierRef.current?.clear(), []);
 
   useEffect(() => {
     if (!resendCooldown) return undefined;
@@ -80,6 +98,16 @@ export default function LoginPage() {
         return t("twoFactorUnsupportedFirstFactor");
       case "auth/network-request-failed":
         return t("twoFactorNetworkError");
+      case "auth/invalid-phone-number":
+      case "auth/missing-phone-number":
+        return t("invalidPhoneNumber");
+      case "auth/captcha-check-failed":
+      case "auth/missing-app-credential":
+      case "auth/invalid-app-credential":
+        return t("recaptchaError");
+      case "auth/quota-exceeded":
+      case "auth/too-many-requests":
+        return t("smsTooManyRequests");
       case "auth/invalid-multi-factor-session":
       case "auth/missing-multi-factor-session":
         return t("twoFactorInvalidSession");
@@ -118,8 +146,8 @@ export default function LoginPage() {
   const startEnrollment = useCallback(async (user) => {
     setBusy(true);
     setError("");
-    setTotpSecret(null);
-    setQrCode("");
+    setPhoneVerificationId("");
+    setEnrollmentSession(null);
     setScreen(SCREENS.ENROLL_2FA);
     try {
       // Refresh the user and ID token so Firebase sees a newly verified email
@@ -127,11 +155,7 @@ export default function LoginPage() {
       await user.reload();
       await user.getIdToken(true);
       const session = await multiFactor(user).getSession();
-      const secret = await TotpMultiFactorGenerator.generateSecret(session);
-      const accountName = user.email || t("totpAccountFallback");
-      const uri = secret.generateQrCodeUrl(accountName, "Hotel Toolkit");
-      setTotpSecret(secret);
-      setQrCode(await QRCode.toDataURL(uri, { width: 220, margin: 1 }));
+      setEnrollmentSession(session);
     } catch (err) {
       console.error(err);
       setError(enrollmentErrorMessage(err));
@@ -183,13 +207,15 @@ export default function LoginPage() {
     } catch (err) {
       if (err.code === "auth/multi-factor-auth-required") {
         const resolver = getMultiFactorResolver(auth, err);
-        const totpHint = resolver.hints.find(
+        const supportedHint = resolver.hints.find(
+          (hint) => hint.factorId === PhoneMultiFactorGenerator.FACTOR_ID,
+        ) || resolver.hints.find(
           (hint) => hint.factorId === TotpMultiFactorGenerator.FACTOR_ID,
         );
-        if (!totpHint) {
+        if (!supportedHint) {
           setError(t("unsupportedSecondFactor"));
         } else {
-          setMfaResolver({ resolver, hint: totpHint });
+          setMfaResolver({ resolver, hint: supportedHint });
           setScreen(SCREENS.VERIFY_2FA);
         }
       } else {
@@ -234,17 +260,40 @@ export default function LoginPage() {
     }
   };
 
-  const enrollSecondFactor = async (event) => {
+  const sendEnrollmentCode = async (event) => {
     event.preventDefault();
-    if (!totpSecret) return;
+    if (!enrollmentSession) return;
     setBusy(true);
     setError("");
     try {
-      const assertion = TotpMultiFactorGenerator.assertionForEnrollment(
-        totpSecret,
+      const provider = new PhoneAuthProvider(auth);
+      const verificationId = await provider.verifyPhoneNumber(
+        { phoneNumber: phoneNumber.trim(), session: enrollmentSession },
+        getRecaptchaVerifier(),
+      );
+      setPhoneVerificationId(verificationId);
+      setNotice(t("smsCodeSent"));
+    } catch (err) {
+      console.error(err);
+      recaptchaVerifierRef.current?.clear();
+      recaptchaVerifierRef.current = null;
+      setError(enrollmentErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const enrollSecondFactor = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const credential = PhoneAuthProvider.credential(
+        phoneVerificationId,
         verificationCode.trim(),
       );
-      await multiFactor(auth.currentUser).enroll(assertion, t("totpDisplayName"));
+      const assertion = PhoneMultiFactorGenerator.assertion(credential);
+      await multiFactor(auth.currentUser).enroll(assertion, t("smsDisplayName"));
       setNotice(t("twoFactorEnabled"));
       navigate("/dashboard");
     } catch (err) {
@@ -255,15 +304,52 @@ export default function LoginPage() {
     }
   };
 
+  const sendPhoneSignInChallenge = useCallback(async () => {
+    if (!mfaResolver || phoneChallengeStartedRef.current) return;
+    phoneChallengeStartedRef.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      const provider = new PhoneAuthProvider(auth);
+      const verificationId = await provider.verifyPhoneNumber(
+        { multiFactorHint: mfaResolver.hint, session: mfaResolver.resolver.session },
+        getRecaptchaVerifier(),
+      );
+      setPhoneVerificationId(verificationId);
+      setNotice(t("smsCodeSentMasked", { phone: mfaResolver.hint.phoneNumber || "" }));
+    } catch (err) {
+      console.error(err);
+      phoneChallengeStartedRef.current = false;
+      recaptchaVerifierRef.current?.clear();
+      recaptchaVerifierRef.current = null;
+      setError(enrollmentErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [enrollmentErrorMessage, getRecaptchaVerifier, mfaResolver, t]);
+
+  useEffect(() => {
+    if (
+      screen === SCREENS.VERIFY_2FA &&
+      mfaResolver?.hint.factorId === PhoneMultiFactorGenerator.FACTOR_ID
+    ) {
+      sendPhoneSignInChallenge();
+    }
+  }, [mfaResolver, screen, sendPhoneSignInChallenge]);
+
   const resolveSecondFactor = async (event) => {
     event.preventDefault();
     setBusy(true);
     setError("");
     try {
-      const assertion = TotpMultiFactorGenerator.assertionForSignIn(
-        mfaResolver.hint.uid,
-        verificationCode.trim(),
-      );
+      const assertion = mfaResolver.hint.factorId === PhoneMultiFactorGenerator.FACTOR_ID
+        ? PhoneMultiFactorGenerator.assertion(
+          PhoneAuthProvider.credential(phoneVerificationId, verificationCode.trim()),
+        )
+        : TotpMultiFactorGenerator.assertionForSignIn(
+          mfaResolver.hint.uid,
+          verificationCode.trim(),
+        );
       const result = await mfaResolver.resolver.resolveSignIn(assertion);
       if (!result.user.emailVerified) {
         await continueAfterPrimaryLogin(result.user);
@@ -282,8 +368,11 @@ export default function LoginPage() {
     if (auth.currentUser) await signOut(auth);
     setScreen(SCREENS.LOGIN);
     setMfaResolver(null);
-    setTotpSecret(null);
-    setQrCode("");
+    setPhoneVerificationId("");
+    setEnrollmentSession(null);
+    phoneChallengeStartedRef.current = false;
+    recaptchaVerifierRef.current?.clear();
+    recaptchaVerifierRef.current = null;
     setVerificationCode("");
     setError("");
     setNotice("");
@@ -326,6 +415,7 @@ export default function LoginPage() {
       </header>
 
       <div className="flex-grow flex items-center justify-center px-6 py-12">
+        <div id="recaptcha-container" />
         <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }} className="bg-white shadow-lg rounded-lg max-w-md w-full p-8">
           <div className="flex flex-col items-center mb-6">
             <img src="/assets/breakfast_pilot_logo_black_circle.png" alt="Hotel Toolkit Logo" className="h-16 mb-2" />
@@ -359,15 +449,16 @@ export default function LoginPage() {
           {screen === SCREENS.ENROLL_2FA && (
             <div>
               {busy && <p className="text-center text-sm text-gray-600">{t("preparingTwoFactor")}</p>}
-              {!busy && totpSecret && (
-                <>
-                  {qrCode && <img src={qrCode} alt={t("qrCodeAlt")} className="mx-auto mb-4 h-[220px] w-[220px]" />}
-                  <p className="mb-2 text-xs text-gray-500">{t("manualSetupKey")}</p>
-                  <code className="mb-5 block break-all rounded bg-gray-100 p-3 text-center text-xs">{totpSecret.secretKey}</code>
-                  {codeForm(enrollSecondFactor, t("enableTwoFactor"))}
-                </>
+              {!busy && enrollmentSession && !phoneVerificationId && (
+                <form onSubmit={sendEnrollmentCode} className="space-y-4">
+                  <label htmlFor="phone-number" className="block text-sm font-medium text-gray-700">{t("phoneNumber")}</label>
+                  <input id="phone-number" type="tel" autoComplete="tel" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} placeholder="+32 470 00 00 00" required pattern="^[+][1-9][0-9 ]{7,20}$" className="w-full px-4 py-2 border border-gray-300 rounded focus:outline-none focus:ring focus:border-[#b41f1f]" />
+                  <p className="text-xs text-gray-500">{t("phoneNumberHelp")}</p>
+                  <button disabled={busy} type="submit" className="w-full bg-[#b41f1f] text-white py-2 rounded hover:bg-red-700">{t("sendSmsCode")}</button>
+                </form>
               )}
-              {!busy && !totpSecret && (
+              {!busy && enrollmentSession && phoneVerificationId && codeForm(enrollSecondFactor, t("enableTwoFactor"))}
+              {!busy && !enrollmentSession && (
                 <button onClick={() => startEnrollment(auth.currentUser)} className="w-full border border-[#b41f1f] text-[#b41f1f] py-2 rounded hover:bg-red-50">
                   {t("retryTwoFactorSetup")}
                 </button>
@@ -375,7 +466,15 @@ export default function LoginPage() {
             </div>
           )}
 
-          {screen === SCREENS.VERIFY_2FA && codeForm(resolveSecondFactor, t("verifyAndLogin"))}
+          {screen === SCREENS.VERIFY_2FA && (
+            <>
+              {busy && <p className="text-center text-sm text-gray-600">{t("sendingSmsCode")}</p>}
+              {!busy && (mfaResolver?.hint.factorId !== PhoneMultiFactorGenerator.FACTOR_ID || phoneVerificationId) && codeForm(resolveSecondFactor, t("verifyAndLogin"))}
+              {!busy && mfaResolver?.hint.factorId === PhoneMultiFactorGenerator.FACTOR_ID && !phoneVerificationId && (
+                <button onClick={sendPhoneSignInChallenge} className="w-full border border-[#b41f1f] text-[#b41f1f] py-2 rounded">{t("retrySmsCode")}</button>
+              )}
+            </>
+          )}
 
           {screen !== SCREENS.LOGIN && <button disabled={busy} onClick={resetLogin} className="mt-5 w-full text-sm text-gray-500 hover:text-[#b41f1f]">{t("useAnotherAccount")}</button>}
           <p className="text-xs text-center text-gray-400 mt-6">&copy; {new Date().getFullYear()} Hotel Toolkit</p>
