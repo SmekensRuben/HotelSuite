@@ -165,6 +165,36 @@ describe("LoginPage authentication steps", () => {
     expect(authMocks.recaptchaClear).toHaveBeenCalled();
   });
 
+  it("identifies a Firebase authorized-domain configuration error", async () => {
+    const user = {
+      email: "user@example.com",
+      emailVerified: true,
+      reload: vi.fn().mockResolvedValue(),
+      getIdToken: vi.fn().mockResolvedValue("fresh-token"),
+    };
+    authMocks.multiFactor.mockReturnValue({
+      enrolledFactors: [],
+      getSession: vi.fn().mockResolvedValue("mfa-session"),
+    });
+    authMocks.signIn.mockResolvedValue({ user });
+    authMocks.verifyPhoneNumber.mockRejectedValue({
+      code: "auth/captcha-check-failed",
+      message: "Firebase: Hostname match not found (auth/captcha-check-failed).",
+    });
+
+    render(<LoginPage />);
+    submitCredentials();
+
+    await screen.findByText("enroll-2faTitle");
+    fireEvent.change(screen.getByLabelText("phoneNumber"), {
+      target: { value: "+32497152743" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "sendSmsCode" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("recaptchaUnauthorizedDomain");
+    expect(authMocks.recaptchaClear).toHaveBeenCalled();
+  });
+
   it("shows the actionable Firebase error when verification email requests are throttled", async () => {
     const user = { uid: "user-1", email: "user@example.com", emailVerified: false };
     authMocks.signIn.mockResolvedValue({ user });
