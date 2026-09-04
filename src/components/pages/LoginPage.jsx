@@ -64,7 +64,10 @@ export default function LoginPage() {
       recaptchaVerifierRef.current = new RecaptchaVerifier(
         auth,
         "recaptcha-container",
-        { size: "invisible" },
+        // A visible challenge is intentional. Invisible reCAPTCHA is more
+        // likely to be rejected by browser tracking protection and privacy
+        // extensions, which makes SMS MFA device-dependent.
+        { size: "normal" },
       );
     }
     return recaptchaVerifierRef.current;
