@@ -35,6 +35,10 @@ const normalizePhoneNumber = (value) => value.trim().replace(/[\s().-]/g, "");
 const isRecaptchaError = (err) =>
   /(?:re-?captcha|grecaptcha|captcha)/i.test(`${err?.name || ""} ${err?.message || ""}`);
 
+const isUnauthorizedDomainError = (err) =>
+  err?.code === "auth/unauthorized-domain"
+  || /hostname match not found|unauthori[sz]ed domain/i.test(err?.message || "");
+
 const isBrowserNetworkError = (err) =>
   err?.name === "NetworkError"
   || (err?.name === "TypeError" && /(?:fetch|network|load|blocked)/i.test(err?.message || ""));
@@ -100,6 +104,13 @@ export default function LoginPage() {
   }, [t]);
 
   const enrollmentErrorMessage = useCallback((err) => {
+    // Identity Toolkit returns captcha-check-failed when the deployment host is
+    // absent from Firebase Authentication's authorized domains. Distinguish
+    // that configuration problem from a challenge blocked by the browser.
+    if (isUnauthorizedDomainError(err)) {
+      return t("recaptchaUnauthorizedDomain", { hostname: window.location.hostname });
+    }
+
     switch (err?.code) {
       case "auth/operation-not-allowed":
       case "auth/admin-restricted-operation":
