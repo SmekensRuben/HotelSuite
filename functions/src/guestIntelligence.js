@@ -55,6 +55,11 @@ function groupCandidatesByName(candidates) {
   return [...groups.values()];
 }
 
+function configuredHotelUids(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((hotelUid) => String(hotelUid || "").trim()).filter(Boolean))];
+}
+
 function analysisSchema() {
   return {
     type: "object",
@@ -189,13 +194,19 @@ async function processGuestIntelligenceForHotel(hotelUid, { db = getFirestore(),
 
 async function processNightlyGuestIntelligence() {
   const db = getFirestore();
-  const hotels = await db.collection("hotels").get();
-  for (const hotel of hotels.docs) {
+  const configuration = await db.doc("scheduledReports/guestIntelligence").get();
+  const hotelUids = configuredHotelUids(configuration.data()?.hotelUid);
+  if (!hotelUids.length) {
+    logger.info("Guest intelligence skipped: no hotel UIDs configured");
+    return;
+  }
+
+  for (const hotelUid of hotelUids) {
     try {
-      const result = await processGuestIntelligenceForHotel(hotel.id, { db });
+      const result = await processGuestIntelligenceForHotel(hotelUid, { db });
       logger.info("Guest intelligence completed", result);
     } catch (error) {
-      logger.error("Guest intelligence failed", { hotelUid: hotel.id, error: error.message });
+      logger.error("Guest intelligence failed", { hotelUid, error: error.message });
     }
   }
 }
@@ -208,5 +219,6 @@ exports.calculateNights = calculateNights;
 exports.reservationCandidates = reservationCandidates;
 exports.normalizeGuestName = normalizeGuestName;
 exports.groupCandidatesByName = groupCandidatesByName;
+exports.configuredHotelUids = configuredHotelUids;
 exports.researchGuests = researchGuests;
 exports.processGuestIntelligenceForHotel = processGuestIntelligenceForHotel;

@@ -5,6 +5,7 @@ const {
   reservationCandidates,
   normalizeGuestName,
   groupCandidatesByName,
+  configuredHotelUids,
   researchGuests,
 } = require("./guestIntelligence");
 
@@ -43,6 +44,15 @@ test("groupCandidatesByName combines normalized duplicate names", () => {
     [candidates[0], candidates[1]],
     [candidates[2]],
   ]);
+});
+
+test("configuredHotelUids returns unique non-empty hotel UIDs from an array", () => {
+  assert.deepEqual(configuredHotelUids(["hotel-a", " hotel-b ", "hotel-a", "", null]), [
+    "hotel-a",
+    "hotel-b",
+  ]);
+  assert.deepEqual(configuredHotelUids("hotel-a"), []);
+  assert.deepEqual(configuredHotelUids(undefined), []);
 });
 
 test("researchGuests sends a web-enabled structured response request", async () => {
