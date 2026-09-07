@@ -14,13 +14,21 @@ function confidenceRank(value) {
   return CONFIDENCE_RANK[String(value || "").trim().toLowerCase()] ?? 3;
 }
 
+function identityConfidence(guest) {
+  return guest.identityConfidence ?? guest.confidence;
+}
+
+function vipConfidence(guest) {
+  return guest.vipConfidence ?? guest.confidence;
+}
+
 function sortGuestsByConfidence(guests) {
   return [...guests].sort((left, right) => {
-    const identityDifference = confidenceRank(left.identityConfidence) - confidenceRank(right.identityConfidence);
+    const identityDifference = confidenceRank(identityConfidence(left)) - confidenceRank(identityConfidence(right));
     if (identityDifference) return identityDifference;
-    const vipDifference = confidenceRank(left.vipConfidence) - confidenceRank(right.vipConfidence);
+    const vipDifference = confidenceRank(vipConfidence(left)) - confidenceRank(vipConfidence(right));
     if (vipDifference) return vipDifference;
-    return String(left.fullName || "").localeCompare(String(right.fullName || ""), "nl", { sensitivity: "base" });
+    return String(left.fullName || "").localeCompare(String(right.fullName || ""), "en", { sensitivity: "base" });
   });
 }
 
@@ -61,12 +69,18 @@ function buildGuestHtml(guest) {
     return [`<a href="${escapeHtml(url)}" style="color:#9f1d20">${escapeHtml(optionalText(source?.title, "Source"))}</a>`];
   });
   const vipLabel = guest.isVip === true ? "Yes" : guest.isVip === false ? "No" : "Unknown";
+  const imageUrl = safeSourceUrl(guest.profileImageUrl);
+  const imageSourceUrl = safeSourceUrl(guest.profileImageSourceUrl);
+  const image = imageUrl ? `<div style="margin:0 0 12px">
+    ${imageSourceUrl ? `<a href="${escapeHtml(imageSourceUrl)}">` : ""}<img src="${escapeHtml(imageUrl)}" alt="Public professional portrait of ${escapeHtml(optionalText(guest.fullName, "guest"))}" width="120" height="120" style="display:block;width:120px;height:120px;border-radius:8px;object-fit:cover;border:1px solid #e5e7eb" referrerpolicy="no-referrer">${imageSourceUrl ? "</a>" : ""}
+  </div>` : "";
 
   return `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin:12px 0">
+    ${image}
     <h3 style="margin:0 0 8px;color:#111827">${escapeHtml(optionalText(guest.fullName, "Unknown guest"))}</h3>
     <p style="margin:4px 0"><strong>Stay:</strong> ${escapeHtml(optionalText(guest.arrivalDate))} – ${escapeHtml(optionalText(guest.departureDate))} (${escapeHtml(optionalText(guest.nights))} nights)</p>
     <p style="margin:4px 0"><strong>Position:</strong> ${escapeHtml(optionalText(guest.jobTitle))} at ${escapeHtml(optionalText(guest.employer))}</p>
-    <p style="margin:4px 0"><strong>Identity confidence:</strong> ${confidenceLabel(guest.identityConfidence)} · <strong>VIP:</strong> ${vipLabel} (${confidenceLabel(guest.vipConfidence)})</p>
+    <p style="margin:4px 0"><strong>Identity confidence:</strong> ${confidenceLabel(identityConfidence(guest))} · <strong>VIP:</strong> ${vipLabel} (${confidenceLabel(vipConfidence(guest))})</p>
     <p style="margin:8px 0">${escapeHtml(optionalText(guest.professionalProfile, "No professional profile found."))}</p>
     ${guest.vipReason ? `<p style="margin:4px 0"><strong>VIP rationale:</strong> ${escapeHtml(guest.vipReason)}</p>` : ""}
     ${guest.identityNotes ? `<p style="margin:4px 0"><strong>Identity notes:</strong> ${escapeHtml(guest.identityNotes)}</p>` : ""}
@@ -94,10 +108,11 @@ function buildEmailText(reports) {
     const heading = `${report.hotelName} — ${report.reportDate || "no report available"}`;
     if (!report.guests.length) return `${heading}\nNo recent guest intelligence is available.`;
     const guests = report.guests.map((guest) => [
-      `${guest.fullName || "Unknown guest"} | identity: ${confidenceLabel(guest.identityConfidence)} | VIP: ${guest.isVip === true ? "yes" : guest.isVip === false ? "no" : "unknown"}`,
+      `${guest.fullName || "Unknown guest"} | identity: ${confidenceLabel(identityConfidence(guest))} | VIP: ${guest.isVip === true ? "yes" : guest.isVip === false ? "no" : "unknown"} (${confidenceLabel(vipConfidence(guest))})`,
       `${optionalText(guest.jobTitle)} at ${optionalText(guest.employer)}`,
       optionalText(guest.professionalProfile, "No professional profile found."),
-    ].join("\n"));
+      safeSourceUrl(guest.profileImageUrl) ? `Photo: ${safeSourceUrl(guest.profileImageUrl)}` : null,
+    ].filter(Boolean).join("\n"));
     return `${heading}\n${guests.join("\n\n")}`;
   }).join("\n\n---\n\n");
 }

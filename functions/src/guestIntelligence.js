@@ -71,7 +71,7 @@ function analysisSchema() {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["reservationId", "employer", "jobTitle", "professionalProfile", "notableFacts", "isVip", "vipReason", "identityNotes", "identityConfidence", "vipConfidence", "sources"],
+          required: ["reservationId", "employer", "jobTitle", "professionalProfile", "notableFacts", "isVip", "vipReason", "identityNotes", "identityConfidence", "vipConfidence", "profileImageUrl", "profileImageSourceUrl", "sources"],
           properties: {
             reservationId: { type: "string" },
             employer: { type: ["string", "null"] },
@@ -83,6 +83,8 @@ function analysisSchema() {
             identityNotes: { type: ["string", "null"] },
             identityConfidence: { type: "string", enum: ["low", "medium", "high"] },
             vipConfidence: { type: ["string", "null"], enum: ["low", "medium", "high", null] },
+            profileImageUrl: { type: ["string", "null"] },
+            profileImageSourceUrl: { type: ["string", "null"] },
             sources: {
               type: "array",
               items: {
@@ -111,7 +113,7 @@ async function researchGuests(apiKey, model, guests, fetchImpl = fetch) {
       input: [
         {
           role: "system",
-          content: "Conduct thorough, multi-step research using only publicly available professional information. Search for each person separately, consult multiple independent and recent sources where possible, and distinguish people with the same name using employer, title, location and other public context. Never infer an employer or VIP status when identity is ambiguous. Summarize the person's career and relevant notable facts, but do not include sensitive personal data. VIP means a publicly notable senior executive, elected official, royal, celebrity, elite athlete, or another person whose public prominence may warrant special hotel attention. Return null for isVip and vipConfidence when evidence is insufficient. Report identityConfidence separately from vipConfidence: identityConfidence measures whether the public profile belongs to this guest, while vipConfidence measures confidence in the VIP classification after identity resolution. Explain identity uncertainty in identityNotes, and include direct public source URLs supporting every material conclusion.",
+          content: "Conduct thorough, multi-step research using only publicly available professional information. Search for each person separately, consult multiple independent and recent sources where possible, and distinguish people with the same name using employer, title, location and other public context. Never infer an employer or VIP status when identity is ambiguous. Summarize the person's career and relevant notable facts, but do not include sensitive personal data. VIP means a publicly notable senior executive, elected official, royal, celebrity, elite athlete, or another person whose public prominence may warrant special hotel attention. Return null for isVip and vipConfidence when evidence is insufficient. Report identityConfidence separately from vipConfidence: identityConfidence measures whether the public profile belongs to this guest, while vipConfidence measures confidence in the VIP classification after identity resolution. Explain identity uncertainty in identityNotes, and include direct public source URLs supporting every material conclusion. When a public professional headshot can be verified as belonging to the guest, return its direct HTTPS URL in profileImageUrl and the HTTPS page where it was found in profileImageSourceUrl. Otherwise return null for both image fields. Never return a social-media profile picture or an image when identity is uncertain.",
         },
         {
           role: "user",
@@ -170,6 +172,8 @@ async function processGuestIntelligenceForHotel(hotelUid, { db = getFirestore(),
         identityNotes: result.identityNotes,
         identityConfidence: result.identityConfidence,
         vipConfidence: result.vipConfidence,
+        profileImageUrl: result.profileImageUrl,
+        profileImageSourceUrl: result.profileImageSourceUrl,
         sources: result.sources,
         researchedAt: FieldValue.serverTimestamp(),
         model,

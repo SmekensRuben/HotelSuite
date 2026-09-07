@@ -25,6 +25,17 @@ test("sortGuestsByConfidence orders identity then VIP confidence", () => {
   ]);
 });
 
+test("legacy confidence is used for both confidence labels and sorting", () => {
+  const guests = [
+    { fullName: "Legacy low", confidence: "low" },
+    { fullName: "Legacy high", confidence: "high" },
+  ];
+  assert.deepEqual(sortGuestsByConfidence(guests).map(({ fullName }) => fullName), ["Legacy high", "Legacy low"]);
+
+  const html = buildEmailHtml([{ hotelName: "Hotel", reportDate: "2026-09-07", guests: [guests[1]] }]);
+  assert.match(html, /Identity confidence:<\/strong> High · <strong>VIP:<\/strong> Unknown \(High\)/);
+});
+
 test("email renderers create a clear overview and escape untrusted values", () => {
   const reports = [{
     hotelName: "Hotel <Central>",
@@ -40,6 +51,8 @@ test("email renderers create a clear overview and escape untrusted values", () =
       jobTitle: "CTO",
       employer: "Example",
       professionalProfile: "Technologist",
+      profileImageUrl: "https://images.example.com/ada.jpg",
+      profileImageSourceUrl: "https://example.com/ada",
       notableFacts: ["Pioneer"],
       sources: [{ title: "Profile", url: "https://example.com/profile" }, { title: "Bad", url: "javascript:alert(1)" }],
     }],
@@ -50,9 +63,12 @@ test("email renderers create a clear overview and escape untrusted values", () =
   assert.match(html, /Ada &amp; Co/);
   assert.match(html, /Identity confidence:<\/strong> High/);
   assert.match(html, /https:\/\/example.com\/profile/);
+  assert.match(html, /<img src="https:\/\/images\.example\.com\/ada\.jpg"/);
+  assert.match(html, /<a href="https:\/\/example\.com\/ada">/);
   assert.doesNotMatch(html, /javascript:/);
 
   const text = buildEmailText(reports);
   assert.match(text, /Hotel <Central> — 2026-09-06/);
-  assert.match(text, /identity: High \| VIP: yes/);
+  assert.match(text, /identity: High \| VIP: yes \(Medium\)/);
+  assert.match(text, /Photo: https:\/\/images\.example\.com\/ada\.jpg/);
 });
