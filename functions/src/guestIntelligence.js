@@ -6,7 +6,6 @@ const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MINIMUM_NIGHTS = 4;
 const OPENAI_API_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-5.6-terra";
-const BATCH_SIZE = 10;
 
 function calculateNights(arrivalDate, departureDate) {
   if (!DATE_KEY_PATTERN.test(String(arrivalDate || "")) || !DATE_KEY_PATTERN.test(String(departureDate || ""))) {
@@ -29,8 +28,9 @@ function reservationCandidates(snapshot) {
   return snapshot.docs.flatMap((document) => {
     const data = document.data();
     const fullName = String(data?.fullName || "").trim();
+    const roomCategoryLabel = String(data?.roomCategoryLabel || "").trim().toUpperCase();
     const nights = calculateNights(data?.arrivalDate, data?.departureDate);
-    if (!fullName || nights === null || nights < MINIMUM_NIGHTS) return [];
+    if (!fullName || ["PM", "PR"].includes(roomCategoryLabel) || nights === null || nights < MINIMUM_NIGHTS) return [];
     return [{
       reservationId: document.id,
       fullName,
@@ -39,6 +39,25 @@ function reservationCandidates(snapshot) {
       nights,
     }];
   });
+}
+
+function normalizeGuestName(fullName) {
+  return String(fullName || "").normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en");
+}
+
+function groupCandidatesByName(candidates) {
+  const groups = new Map();
+  candidates.forEach((candidate) => {
+    const key = normalizeGuestName(candidate.fullName);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(candidate);
+  });
+  return [...groups.values()];
+}
+
+function configuredHotelUids(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((hotelUid) => String(hotelUid || "").trim()).filter(Boolean))];
 }
 
 function analysisSchema() {
@@ -52,7 +71,7 @@ function analysisSchema() {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["reservationId", "employer", "jobTitle", "professionalProfile", "notableFacts", "isVip", "vipReason", "identityNotes", "confidence", "sources"],
+          required: ["reservationId", "employer", "jobTitle", "professionalProfile", "notableFacts", "isVip", "vipReason", "identityNotes", "identityConfidence", "vipConfidence", "sources"],
           properties: {
             reservationId: { type: "string" },
             employer: { type: ["string", "null"] },
@@ -62,7 +81,8 @@ function analysisSchema() {
             isVip: { type: ["boolean", "null"] },
             vipReason: { type: ["string", "null"] },
             identityNotes: { type: ["string", "null"] },
-            confidence: { type: "string", enum: ["low", "medium", "high"] },
+            identityConfidence: { type: "string", enum: ["low", "medium", "high"] },
+            vipConfidence: { type: ["string", "null"], enum: ["low", "medium", "high", null] },
             sources: {
               type: "array",
               items: {
@@ -91,7 +111,7 @@ async function researchGuests(apiKey, model, guests, fetchImpl = fetch) {
       input: [
         {
           role: "system",
-          content: "Conduct thorough, multi-step research using only publicly available professional information. Search for each person separately, consult multiple independent and recent sources where possible, and distinguish people with the same name using employer, title, location and other public context. Never infer an employer or VIP status when identity is ambiguous. Summarize the person's career and relevant notable facts, but do not include sensitive personal data. VIP means a publicly notable senior executive, elected official, royal, celebrity, elite athlete, or another person whose public prominence may warrant special hotel attention. Return null for isVip when evidence is insufficient, explain identity uncertainty in identityNotes, and include direct public source URLs supporting every material conclusion.",
+          content: "Conduct thorough, multi-step research using only publicly available professional information. Search for each person separately, consult multiple independent and recent sources where possible, and distinguish people with the same name using employer, title, location and other public context. Never infer an employer or VIP status when identity is ambiguous. Summarize the person's career and relevant notable facts, but do not include sensitive personal data. VIP means a publicly notable senior executive, elected official, royal, celebrity, elite athlete, or another person whose public prominence may warrant special hotel attention. Return null for isVip and vipConfidence when evidence is insufficient. Report identityConfidence separately from vipConfidence: identityConfidence measures whether the public profile belongs to this guest, while vipConfidence measures confidence in the VIP classification after identity resolution. Explain identity uncertainty in identityNotes, and include direct public source URLs supporting every material conclusion.",
         },
         {
           role: "user",
@@ -127,17 +147,17 @@ async function processGuestIntelligenceForHotel(hotelUid, { db = getFirestore(),
   if (!latest) return { hotelUid, reportDate: null, candidates: 0, written: 0 };
 
   const candidates = reservationCandidates(await latest.get());
+  const candidateGroups = groupCandidatesByName(candidates);
   const runRef = db.doc(`hotels/${hotelUid}/guestIntelligenceRuns/${latest.id}`);
   let written = 0;
 
-  for (let offset = 0; offset < candidates.length; offset += BATCH_SIZE) {
-    const batchCandidates = candidates.slice(offset, offset + BATCH_SIZE);
-    const researched = await researchGuests(apiKey, model, batchCandidates, fetchImpl);
-    const byId = new Map(researched.map((result) => [result.reservationId, result]));
+  for (const matchingCandidates of candidateGroups) {
+    const researchCandidate = matchingCandidates[0];
+    const researched = await researchGuests(apiKey, model, [researchCandidate], fetchImpl);
+    const result = researched.find((item) => item.reservationId === researchCandidate.reservationId);
+    if (!result) continue;
     const batch = db.batch();
-    batchCandidates.forEach((candidate) => {
-      const result = byId.get(candidate.reservationId);
-      if (!result) return;
+    matchingCandidates.forEach((candidate) => {
       const destination = db.doc(`hotels/${hotelUid}/guestIntelligence/${latest.id}/guests/${candidate.reservationId}`);
       batch.set(destination, {
         ...candidate,
@@ -148,7 +168,8 @@ async function processGuestIntelligenceForHotel(hotelUid, { db = getFirestore(),
         isVip: result.isVip,
         vipReason: result.vipReason,
         identityNotes: result.identityNotes,
-        confidence: result.confidence,
+        identityConfidence: result.identityConfidence,
+        vipConfidence: result.vipConfidence,
         sources: result.sources,
         researchedAt: FieldValue.serverTimestamp(),
         model,
@@ -163,6 +184,7 @@ async function processGuestIntelligenceForHotel(hotelUid, { db = getFirestore(),
     reportDate: latest.id,
     minimumNights: MINIMUM_NIGHTS,
     candidateCount: candidates.length,
+    uniqueCandidateCount: candidateGroups.length,
     writtenCount: written,
     model,
     completedAt: FieldValue.serverTimestamp(),
@@ -172,13 +194,19 @@ async function processGuestIntelligenceForHotel(hotelUid, { db = getFirestore(),
 
 async function processNightlyGuestIntelligence() {
   const db = getFirestore();
-  const hotels = await db.collection("hotels").get();
-  for (const hotel of hotels.docs) {
+  const configuration = await db.doc("scheduledReports/guestIntelligence").get();
+  const hotelUids = configuredHotelUids(configuration.data()?.hotelUid);
+  if (!hotelUids.length) {
+    logger.info("Guest intelligence skipped: no hotel UIDs configured");
+    return;
+  }
+
+  for (const hotelUid of hotelUids) {
     try {
-      const result = await processGuestIntelligenceForHotel(hotel.id, { db });
+      const result = await processGuestIntelligenceForHotel(hotelUid, { db });
       logger.info("Guest intelligence completed", result);
     } catch (error) {
-      logger.error("Guest intelligence failed", { hotelUid: hotel.id, error: error.message });
+      logger.error("Guest intelligence failed", { hotelUid, error: error.message });
     }
   }
 }
@@ -189,5 +217,8 @@ exports.processNightlyGuestIntelligence = onSchedule(
 );
 exports.calculateNights = calculateNights;
 exports.reservationCandidates = reservationCandidates;
+exports.normalizeGuestName = normalizeGuestName;
+exports.groupCandidatesByName = groupCandidatesByName;
+exports.configuredHotelUids = configuredHotelUids;
 exports.researchGuests = researchGuests;
 exports.processGuestIntelligenceForHotel = processGuestIntelligenceForHotel;
