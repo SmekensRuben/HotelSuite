@@ -72,6 +72,8 @@ test("researchGuests sends a web-enabled structured response request", async () 
   const guestSchema = request.body.text.format.schema.properties.guests.items;
   assert.ok(guestSchema.required.includes("identityConfidence"));
   assert.ok(guestSchema.required.includes("vipConfidence"));
+  assert.ok(guestSchema.required.includes("profileImageUrl"));
+  assert.ok(guestSchema.required.includes("profileImageSourceUrl"));
   assert.equal(guestSchema.required.includes("confidence"), false);
 });
 

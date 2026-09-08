@@ -10,6 +10,7 @@ const { sendScheduledBlockPickupReport } = require("./src/blockPickupMail");
 const { processScheduledAuditUpsells } = require("./src/auditUpsell");
 const { linkLatestArrivalDescriptions, listArrivalDates } = require("./src/arrivals");
 const { processNightlyGuestIntelligence } = require("./src/guestIntelligence");
+const { sendScheduledGuestIntelligenceMail } = require("./src/guestIntelligenceMail");
 
 exports.syncCatalogProductsToMeili = syncCatalogProductsToMeili;
 exports.syncSupplierProductsToMeili = syncSupplierProductsToMeili;
@@ -32,3 +33,4 @@ exports.processScheduledAuditUpsells = processScheduledAuditUpsells;
 exports.listArrivalDates = listArrivalDates;
 exports.linkLatestArrivalDescriptions = linkLatestArrivalDescriptions;
 exports.processNightlyGuestIntelligence = processNightlyGuestIntelligence;
+exports.sendScheduledGuestIntelligenceMail = sendScheduledGuestIntelligenceMail;
