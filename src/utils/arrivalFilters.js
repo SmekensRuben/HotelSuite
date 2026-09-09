@@ -8,17 +8,21 @@ export function getMembershipLevels(record) {
     .filter(Boolean);
 }
 
-export function filterArrivals(records, rateCodeSearch, selectedMemberships) {
-  const normalizedRateCodeSearch = rateCodeSearch.trim().toLocaleLowerCase();
+function matchesMarketSegment(record, marketSegmentPrefixes) {
+  if (!Array.isArray(marketSegmentPrefixes) || marketSegmentPrefixes.length === 0) return true;
+  const rateCode = String(record.rateCode || "").trim().toLocaleLowerCase();
+  return marketSegmentPrefixes.some((prefix) => rateCode.startsWith(String(prefix || "").trim().toLocaleLowerCase()));
+}
+
+export function filterArrivals(records, marketSegmentPrefixes, selectedMemberships) {
 
   return records.filter((record) => {
-    const matchesRateCode = !normalizedRateCodeSearch
-      || String(record.rateCode || "").toLocaleLowerCase().includes(normalizedRateCodeSearch);
+    const matchesSegment = matchesMarketSegment(record, marketSegmentPrefixes);
     const membershipLevels = getMembershipLevels(record);
     const matchesMembership = selectedMemberships.length === 0
       || selectedMemberships.some((membership) => membershipLevels.includes(membership));
 
-    return matchesRateCode && matchesMembership;
+    return matchesSegment && matchesMembership;
   });
 }
 
@@ -26,16 +30,13 @@ export function getReservationCreator(record) {
   return String(record.insertUser || "").trim();
 }
 
-export function filterMadeReservations(records, rateCodeSearch, includePms, selectedCreators) {
-  const normalizedRateCodeSearch = rateCodeSearch.trim().toLocaleLowerCase();
-
+export function filterMadeReservations(records, marketSegmentPrefixes, includePms, selectedCreators) {
   return records.filter((record) => {
-    const matchesRateCode = !normalizedRateCodeSearch
-      || String(record.rateCode || "").toLocaleLowerCase().includes(normalizedRateCodeSearch);
+    const matchesSegment = matchesMarketSegment(record, marketSegmentPrefixes);
     const isPmRoom = ["PR", "PM"].includes(String(record.roomCategoryLabel || "").trim().toUpperCase());
     const matchesCreator = !Array.isArray(selectedCreators)
       || selectedCreators.includes(getReservationCreator(record));
 
-    return matchesRateCode && (includePms || !isPmRoom) && matchesCreator;
+    return matchesSegment && (includePms || !isPmRoom) && matchesCreator;
   });
 }

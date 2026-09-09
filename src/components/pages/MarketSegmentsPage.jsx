@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from "react";
-import { ArrowLeft, Pencil, Plus, Trash2, X } from "lucide-react";
+import React, { useMemo, useRef, useState } from "react";
+import { ArrowLeft, Download, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
@@ -13,6 +13,7 @@ import {
   subscribeMarketSegments,
   updateMarketSegment,
 } from "../../services/firebaseMarketSegments";
+import { createMarketSegmentsExport, parseMarketSegmentsImport } from "../../utils/marketSegmentTransfer";
 
 const createEmptyPrefix = () => ({ prefix: "", name: "", description: "" });
 const createEmptyForm = () => ({ title: "", prefixes: [createEmptyPrefix()] });
@@ -27,6 +28,8 @@ export default function MarketSegmentsPage() {
   const [form, setForm] = useState(createEmptyForm);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importInputRef = useRef(null);
   const todayLabel = useMemo(() => new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }), []);
 
   React.useEffect(() => {
@@ -87,6 +90,34 @@ export default function MarketSegmentsPage() {
     setError("");
   };
 
+  const exportMarketSegments = () => {
+    const blob = new Blob([JSON.stringify(createMarketSegmentsExport(marketSegments), null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "market-segments.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importMarketSegments = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setImporting(true);
+    setError("");
+    try {
+      const importedMarketSegments = parseMarketSegmentsImport(await file.text());
+      await Promise.all(importedMarketSegments.map((marketSegment) => addMarketSegment(hotelUid, marketSegment)));
+    } catch (err) {
+      console.error("Unable to import Market Segments:", err);
+      setError(err?.message || "The Market Segments could not be imported.");
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const columns = useMemo(() => [
     { key: "title", label: "Title", render: (item) => <span className="font-semibold">{item.title}</span> },
     { key: "prefixes", label: "Prefixes", sortValue: (item) => item.prefixes?.map(({ prefix }) => prefix).join(" ") || "", render: (item) => <div className="space-y-1">
@@ -106,7 +137,12 @@ export default function MarketSegmentsPage() {
         <button onClick={() => navigate("/settings/property")} className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-blue-700"><ArrowLeft className="h-4 w-4" />Property Settings</button>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div><p className="text-sm uppercase tracking-wide text-gray-500">Property Settings</p><h1 className="text-3xl font-semibold">Market Segments</h1><p className="mt-2 text-gray-600">Manage the market segments available for this property.</p></div>
-          {!showForm && <button onClick={() => { setForm(createEmptyForm()); setShowForm(true); }} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"><Plus className="h-4 w-4" />Add Market Segment</button>}
+          <div className="flex flex-wrap gap-2">
+            <input ref={importInputRef} type="file" accept="application/json,.json" onChange={importMarketSegments} className="hidden" />
+            <button type="button" disabled={importing} onClick={() => importInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"><Upload className="h-4 w-4" />{importing ? "Importing..." : "Import"}</button>
+            <button type="button" disabled={marketSegments.length === 0} onClick={exportMarketSegments} className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"><Download className="h-4 w-4" />Export</button>
+            {!showForm && <button onClick={() => { setForm(createEmptyForm()); setShowForm(true); }} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"><Plus className="h-4 w-4" />Add Market Segment</button>}
+          </div>
         </div>
       </div>
 

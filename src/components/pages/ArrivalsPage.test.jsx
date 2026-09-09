@@ -13,12 +13,12 @@ describe("arrival filters", () => {
     expect(getMembershipLevels(arrivals[2])).toEqual(["Platinum", "Gold"]);
   });
 
-  it("filters Rate Codes case-insensitively using partial matches", () => {
-    expect(filterArrivals(arrivals, "bar", []).map(({ id }) => id)).toEqual(["1", "3"]);
+  it("filters Rate Codes by any Market Segment prefix case-insensitively", () => {
+    expect(filterArrivals(arrivals, ["bar", "corp"], []).map(({ id }) => id)).toEqual(["1", "2", "3"]);
   });
 
   it("matches any of the selected memberships and combines both filters", () => {
-    expect(filterArrivals(arrivals, "pkg", ["Silver", "Gold"]).map(({ id }) => id)).toEqual(["3"]);
+    expect(filterArrivals(arrivals, ["BAR-P"], ["Silver", "Gold"]).map(({ id }) => id)).toEqual(["3"]);
   });
 });
 
@@ -30,16 +30,16 @@ describe("made reservation filters", () => {
   ];
 
   it("excludes PM and PR room categories by default", () => {
-    expect(filterMadeReservations(madeReservations, "", false).map(({ id }) => id)).toEqual(["1"]);
+    expect(filterMadeReservations(madeReservations, [], false).map(({ id }) => id)).toEqual(["1"]);
   });
 
-  it("includes PM records when requested and combines the Rate Code filter", () => {
-    expect(filterMadeReservations(madeReservations, "bar", true).map(({ id }) => id)).toEqual(["1", "3"]);
+  it("includes PM records when requested and combines the Market Segment filter", () => {
+    expect(filterMadeReservations(madeReservations, ["bar"], true).map(({ id }) => id)).toEqual(["1", "3"]);
   });
 
   it("normalizes creator values and only includes checked creators", () => {
     expect(getReservationCreator(madeReservations[0])).toBe("ALICE");
-    expect(filterMadeReservations(madeReservations, "", true, ["BOB"]).map(({ id }) => id)).toEqual(["2"]);
-    expect(filterMadeReservations(madeReservations, "", true, []).map(({ id }) => id)).toEqual([]);
+    expect(filterMadeReservations(madeReservations, [], true, ["BOB"]).map(({ id }) => id)).toEqual(["2"]);
+    expect(filterMadeReservations(madeReservations, [], true, []).map(({ id }) => id)).toEqual([]);
   });
 });

@@ -6,6 +6,7 @@ import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getMadeReservationDates, getMadeReservations } from "../../services/firebaseArrivals";
 import { getSettings } from "../../services/firebaseSettings";
+import { subscribeMarketSegments } from "../../services/firebaseMarketSegments";
 import { calculateNights } from "../../utils/arrivalDates";
 import { filterMadeReservations, getReservationCreator } from "../../utils/arrivalFilters";
 
@@ -28,7 +29,8 @@ export default function MadeReservationsPage() {
   const [selectedDate, setSelectedDate] = useState("");
   const [reservations, setReservations] = useState([]);
   const [operaUserMappings, setOperaUserMappings] = useState({});
-  const [rateCodeSearch, setRateCodeSearch] = useState("");
+  const [marketSegments, setMarketSegments] = useState([]);
+  const [selectedMarketSegmentId, setSelectedMarketSegmentId] = useState("");
   const [includePms, setIncludePms] = useState(false);
   const [selectedCreators, setSelectedCreators] = useState([]);
   const [loadingDates, setLoadingDates] = useState(true);
@@ -39,9 +41,12 @@ export default function MadeReservationsPage() {
     [...new Set(reservations.map(getReservationCreator))]
       .sort((first, second) => first.localeCompare(second))
   ), [reservations]);
+  const selectedMarketSegmentPrefixes = useMemo(() => (
+    marketSegments.find(({ id }) => id === selectedMarketSegmentId)?.prefixes?.map(({ prefix }) => prefix) || []
+  ), [marketSegments, selectedMarketSegmentId]);
   const filteredReservations = useMemo(
-    () => filterMadeReservations(reservations, rateCodeSearch, includePms, selectedCreators),
-    [reservations, rateCodeSearch, includePms, selectedCreators]
+    () => filterMadeReservations(reservations, selectedMarketSegmentPrefixes, includePms, selectedCreators),
+    [reservations, selectedMarketSegmentPrefixes, includePms, selectedCreators]
   );
   const columns = useMemo(() => [
     { key: "fullName", label: "Guest Name" },
@@ -68,6 +73,12 @@ export default function MadeReservationsPage() {
       },
     },
   ], [operaUserMappings]);
+
+  useEffect(() => subscribeMarketSegments(hotelUid, setMarketSegments, () => setError("The Market Segments could not be loaded.")), [hotelUid]);
+
+  useEffect(() => {
+    if (selectedMarketSegmentId && !marketSegments.some(({ id }) => id === selectedMarketSegmentId)) setSelectedMarketSegmentId("");
+  }, [marketSegments, selectedMarketSegmentId]);
 
   useEffect(() => {
     let active = true;
@@ -161,15 +172,16 @@ export default function MadeReservationsPage() {
           </div>
 
           <div className="w-full sm:w-64">
-            <label htmlFor="rate-code-filter" className="mb-1 block text-sm font-medium text-gray-700">Rate Code</label>
-            <input
-              id="rate-code-filter"
-              type="search"
-              value={rateCodeSearch}
-              onChange={(event) => setRateCodeSearch(event.target.value)}
-              placeholder="Search Rate Code"
+            <label htmlFor="market-segment-filter" className="mb-1 block text-sm font-medium text-gray-700">Market Segment</label>
+            <select
+              id="market-segment-filter"
+              value={selectedMarketSegmentId}
+              onChange={(event) => setSelectedMarketSegmentId(event.target.value)}
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-            />
+            >
+              <option value="">All Market Segments</option>
+              {marketSegments.map((marketSegment) => <option key={marketSegment.id} value={marketSegment.id}>{marketSegment.title}</option>)}
+            </select>
           </div>
 
           <div className="w-full sm:w-64">
