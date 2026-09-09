@@ -14,7 +14,8 @@ import {
   updateMarketSegment,
 } from "../../services/firebaseMarketSegments";
 
-const createEmptyForm = () => ({ prefix: "", description: "" });
+const createEmptyPrefix = () => ({ prefix: "", description: "" });
+const createEmptyForm = () => ({ title: "", prefixes: [createEmptyPrefix()] });
 
 export default function MarketSegmentsPage() {
   const navigate = useNavigate();
@@ -22,7 +23,7 @@ export default function MarketSegmentsPage() {
   const [marketSegments, setMarketSegments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [editingPrefix, setEditingPrefix] = useState(null);
+  const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(createEmptyForm);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -40,23 +41,29 @@ export default function MarketSegmentsPage() {
     return unsubscribe;
   }, [hotelUid]);
 
-  const resetForm = () => { setShowForm(false); setEditingPrefix(null); setForm(createEmptyForm()); setError(""); };
+  const resetForm = () => { setShowForm(false); setEditingId(null); setForm(createEmptyForm()); setError(""); };
   const save = async (event) => {
     event.preventDefault();
-    const payload = { prefix: form.prefix.trim(), description: form.description.trim() };
-    if (!payload.prefix || !payload.description) {
-      setError("Enter a prefix and description.");
+    const payload = {
+      title: form.title.trim(),
+      prefixes: form.prefixes.map((item) => ({
+        prefix: item.prefix.trim(),
+        description: item.description.trim(),
+      })),
+    };
+    if (!payload.title || payload.prefixes.some((item) => !item.prefix || !item.description)) {
+      setError("Enter a title, prefix and description for every row.");
       return;
     }
-    if (payload.prefix.includes("/")) {
-      setError("Prefix cannot contain a slash.");
+    if (payload.prefixes.some((item) => item.prefix.includes("/"))) {
+      setError("Prefixes cannot contain a slash.");
       return;
     }
 
     setSaving(true);
     setError("");
     try {
-      if (editingPrefix) await updateMarketSegment(hotelUid, editingPrefix, payload);
+      if (editingId) await updateMarketSegment(hotelUid, editingId, payload);
       else await addMarketSegment(hotelUid, payload);
       resetForm();
     } catch (err) {
@@ -68,15 +75,22 @@ export default function MarketSegmentsPage() {
   };
 
   const edit = (marketSegment) => {
-    setEditingPrefix(marketSegment.id);
-    setForm({ prefix: marketSegment.prefix || marketSegment.id, description: marketSegment.description || "" });
+    setEditingId(marketSegment.id);
+    setForm({
+      title: marketSegment.title || "",
+      prefixes: marketSegment.prefixes?.length
+        ? marketSegment.prefixes.map(({ prefix = "", description = "" }) => ({ prefix, description }))
+        : [createEmptyPrefix()],
+    });
     setShowForm(true);
     setError("");
   };
 
   const columns = useMemo(() => [
-    { key: "prefix", label: "Prefix", render: (item) => <span className="font-mono font-semibold">{item.prefix || item.id}</span> },
-    { key: "description", label: "Description" },
+    { key: "title", label: "Title", render: (item) => <span className="font-semibold">{item.title}</span> },
+    { key: "prefixes", label: "Prefixes", sortValue: (item) => item.prefixes?.map(({ prefix }) => prefix).join(" ") || "", render: (item) => <div className="space-y-1">
+      {(item.prefixes || []).map(({ prefix, description }, index) => <div key={`${prefix}-${index}`}><span className="font-mono font-semibold">{prefix}</span><span className="text-gray-500"> — {description}</span></div>)}
+    </div> },
     { key: "actions", label: "Actions", sortable: false, render: (item) => <div className="flex gap-2">
       <button aria-label={`Edit ${item.id}`} onClick={() => edit(item)} className="rounded-lg border p-2 text-blue-700 hover:bg-blue-50"><Pencil className="h-4 w-4" /></button>
       <button aria-label={`Delete ${item.id}`} onClick={async () => { if (window.confirm(`Delete Market Segment ${item.id}?`)) await deleteMarketSegment(hotelUid, item.id); }} className="rounded-lg border p-2 text-red-700 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
@@ -96,11 +110,18 @@ export default function MarketSegmentsPage() {
       </div>
 
       {showForm && <Card>
-        <div className="flex justify-between"><h2 className="text-lg font-semibold">{editingPrefix ? "Edit Market Segment" : "New Market Segment"}</h2><button aria-label="Close form" onClick={resetForm}><X className="h-5 w-5" /></button></div>
-        <form onSubmit={save} className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4 xl:items-end">
-          <label className="text-sm font-semibold">Prefix<input required aria-label="Market segment prefix" value={form.prefix} onChange={(event) => setForm({ ...form, prefix: event.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 font-normal" /></label>
-          <label className="text-sm font-semibold">Description<input required aria-label="Market segment description" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 font-normal" /></label>
-          <button disabled={saving} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Saving..." : "Save"}</button>
+        <div className="flex justify-between"><h2 className="text-lg font-semibold">{editingId ? "Edit Market Segment" : "New Market Segment"}</h2><button aria-label="Close form" onClick={resetForm}><X className="h-5 w-5" /></button></div>
+        <form onSubmit={save} className="mt-4 space-y-4">
+          <label className="block max-w-xl text-sm font-semibold">Title<input required aria-label="Market segment title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 font-normal" /></label>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between"><h3 className="text-sm font-semibold">Prefixes</h3><button type="button" onClick={() => setForm({ ...form, prefixes: [...form.prefixes, createEmptyPrefix()] })} className="inline-flex items-center gap-1 text-sm font-semibold text-blue-700 hover:text-blue-900"><Plus className="h-4 w-4" />Add Prefix</button></div>
+            {form.prefixes.map((item, index) => <div key={index} className="grid gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 md:grid-cols-[1fr_2fr_auto] md:items-end">
+              <label className="text-sm font-semibold">Prefix<input required aria-label={`Prefix ${index + 1}`} value={item.prefix} onChange={(event) => setForm({ ...form, prefixes: form.prefixes.map((prefix, rowIndex) => rowIndex === index ? { ...prefix, prefix: event.target.value } : prefix) })} className="mt-1 w-full rounded-lg border bg-white px-3 py-2 font-normal" /></label>
+              <label className="text-sm font-semibold">Description<input required aria-label={`Prefix description ${index + 1}`} value={item.description} onChange={(event) => setForm({ ...form, prefixes: form.prefixes.map((prefix, rowIndex) => rowIndex === index ? { ...prefix, description: event.target.value } : prefix) })} className="mt-1 w-full rounded-lg border bg-white px-3 py-2 font-normal" /></label>
+              <button type="button" aria-label={`Remove prefix ${index + 1}`} disabled={form.prefixes.length === 1} onClick={() => setForm({ ...form, prefixes: form.prefixes.filter((_, rowIndex) => rowIndex !== index) })} className="rounded-lg border p-2 text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"><Trash2 className="h-4 w-4" /></button>
+            </div>)}
+          </div>
+          <div className="flex justify-end"><button disabled={saving} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Saving..." : "Save"}</button></div>
         </form>
         {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
       </Card>}
