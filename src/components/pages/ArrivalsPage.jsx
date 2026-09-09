@@ -5,6 +5,7 @@ import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getArrivalDates, getArrivals } from "../../services/firebaseArrivals";
+import { subscribeMarketSegments } from "../../services/firebaseMarketSegments";
 import { calculateNights } from "../../utils/arrivalDates";
 import { filterArrivals, getMembershipLevels } from "../../utils/arrivalFilters";
 
@@ -39,7 +40,8 @@ export default function ArrivalsPage() {
   const { hotelUid } = useHotelContext();
   const [selectedDate, setSelectedDate] = useState("");
   const [arrivals, setArrivals] = useState([]);
-  const [rateCodeSearch, setRateCodeSearch] = useState("");
+  const [marketSegments, setMarketSegments] = useState([]);
+  const [selectedMarketSegmentId, setSelectedMarketSegmentId] = useState("");
   const [selectedMemberships, setSelectedMemberships] = useState([]);
   const [loadingDates, setLoadingDates] = useState(true);
   const [loadingArrivals, setLoadingArrivals] = useState(false);
@@ -49,10 +51,19 @@ export default function ArrivalsPage() {
     [...new Set(arrivals.flatMap(getMembershipLevels))]
       .sort((first, second) => first.localeCompare(second))
   ), [arrivals]);
+  const selectedMarketSegmentPrefixes = useMemo(() => (
+    marketSegments.find(({ id }) => id === selectedMarketSegmentId)?.prefixes?.map(({ prefix }) => prefix) || []
+  ), [marketSegments, selectedMarketSegmentId]);
   const filteredArrivals = useMemo(
-    () => filterArrivals(arrivals, rateCodeSearch, selectedMemberships),
-    [arrivals, rateCodeSearch, selectedMemberships]
+    () => filterArrivals(arrivals, selectedMarketSegmentPrefixes, selectedMemberships),
+    [arrivals, selectedMarketSegmentPrefixes, selectedMemberships]
   );
+
+  useEffect(() => subscribeMarketSegments(hotelUid, setMarketSegments, () => setError("The Market Segments could not be loaded.")), [hotelUid]);
+
+  useEffect(() => {
+    if (selectedMarketSegmentId && !marketSegments.some(({ id }) => id === selectedMarketSegmentId)) setSelectedMarketSegmentId("");
+  }, [marketSegments, selectedMarketSegmentId]);
 
   useEffect(() => {
     let active = true;
@@ -137,15 +148,16 @@ export default function ArrivalsPage() {
           </div>
 
           <div className="w-full sm:w-64">
-            <label htmlFor="rate-code-filter" className="mb-1 block text-sm font-medium text-gray-700">Rate Code</label>
-            <input
-              id="rate-code-filter"
-              type="search"
-              value={rateCodeSearch}
-              onChange={(event) => setRateCodeSearch(event.target.value)}
-              placeholder="Search Rate Code"
+            <label htmlFor="market-segment-filter" className="mb-1 block text-sm font-medium text-gray-700">Market Segment</label>
+            <select
+              id="market-segment-filter"
+              value={selectedMarketSegmentId}
+              onChange={(event) => setSelectedMarketSegmentId(event.target.value)}
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-            />
+            >
+              <option value="">All Market Segments</option>
+              {marketSegments.map((marketSegment) => <option key={marketSegment.id} value={marketSegment.id}>{marketSegment.title}</option>)}
+            </select>
           </div>
 
           <div className="w-full sm:w-64">

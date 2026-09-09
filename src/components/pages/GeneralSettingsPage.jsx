@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { BedDouble, BadgeDollarSign, ChevronRight, SlidersHorizontal } from "lucide-react";
+import { BedDouble, BadgeDollarSign, ChevronRight, SlidersHorizontal, Tags } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
@@ -9,7 +9,7 @@ import { auth, signOut } from "../../firebaseConfig";
 const options = [
   { title: "Room Types", description: "Create, view, edit and delete the room types for this property.", icon: BedDouble, path: "/settings/property/room-types", available: true },
   { title: "Rate Codes", description: "Manage the rate codes available for this property.", icon: BadgeDollarSign, path: "/settings/property/rate-codes", available: true },
-  { title: "Option X", description: "Additional property configuration will be available here.", icon: SlidersHorizontal },
+  { title: "Market Segments", description: "Manage the market segments available for this property.", icon: Tags, path: "/settings/property/market-segments", available: true },
   { title: "Option Y", description: "Additional property configuration will be available here.", icon: SlidersHorizontal },
 ];
 

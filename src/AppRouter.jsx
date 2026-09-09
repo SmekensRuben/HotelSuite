@@ -7,6 +7,7 @@ import ProtectedRoute from "./components/shared/ProtectedRoute.jsx";
 import GeneralSettingsPage from "./components/pages/GeneralSettingsPage.jsx";
 import RoomTypesPage from "./components/pages/RoomTypesPage.jsx";
 import RateCodesPage from "./components/pages/RateCodesPage.jsx";
+import MarketSegmentsPage from "./components/pages/MarketSegmentsPage.jsx";
 import ProductsPage from "./components/pages/ProductsPage.jsx";
 import ProductCreatePage from "./components/pages/ProductCreatePage.jsx";
 import ProductDetailPage from "./components/pages/ProductDetailPage.jsx";
@@ -96,6 +97,7 @@ export default function AppRouter() {
       <Route path="/settings/property" element={<ProtectedRoute feature="settings" action="read"><GeneralSettingsPage /></ProtectedRoute>} />
       <Route path="/settings/property/room-types" element={<ProtectedRoute feature="settings" action="read"><RoomTypesPage /></ProtectedRoute>} />
       <Route path="/settings/property/rate-codes" element={<ProtectedRoute feature="settings" action="read"><RateCodesPage /></ProtectedRoute>} />
+      <Route path="/settings/property/market-segments" element={<ProtectedRoute feature="settings" action="read"><MarketSegmentsPage /></ProtectedRoute>} />
       <Route
         path="/catalog/products"
         element={
