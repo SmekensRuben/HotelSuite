@@ -9,9 +9,35 @@ export const LIGHTHOUSE_FIELDS = [
 ];
 
 const normalizeHeader = (value) => String(value ?? "")
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .replace(/[^a-z0-9]+/gi, " ")
   .replace(/\s+/g, " ")
   .trim()
   .toLowerCase();
+
+const HEADER_MATCHERS = {
+  Date: (header) => header === "date" || header === "day date",
+  "My OTB": (header) => header === "my otb",
+  "Market demand": (header) => header === "market demand",
+  "Gent Marriott Hotel": (header) =>
+    header.includes("marriott") && (header.includes("gent") || header.includes("ghent")),
+  "Pillows Grand Boutique Hotel Reylof Ghent": (header) =>
+    header.includes("pillows") && header.includes("reylof"),
+  "NH Collection Gent": (header) =>
+    header.includes("nh collection") && (header.includes("gent") || header.includes("ghent")),
+  "Yalo Urban Boutique Hotel Gent": (header) => header.includes("yalo"),
+  "Novotel Gent Centrum": (header) =>
+    header.includes("novotel") && (header.includes("centrum") || header.includes("centre")),
+};
+
+const findColumnIndexes = (row, requiredHeaders) => {
+  const normalizedCells = (row || []).map(normalizeHeader);
+  return Object.fromEntries(requiredHeaders.map((header) => [
+    header,
+    normalizedCells.findIndex(HEADER_MATCHERS[header]),
+  ]));
+};
 
 const toIsoDate = (value) => {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -45,19 +71,22 @@ export function parseLighthouseRows(rows) {
   if (!Array.isArray(rows)) throw new Error("Het tabblad Rates kon niet gelezen worden.");
 
   const requiredHeaders = ["Date", ...LIGHTHOUSE_FIELDS];
-  const headerRowIndex = rows.findIndex((row) => {
-    const headers = new Set((row || []).map(normalizeHeader));
-    return requiredHeaders.every((header) => headers.has(normalizeHeader(header)));
+  const headerCandidates = rows.map((row, index) => {
+    const indexes = findColumnIndexes(row, requiredHeaders);
+    const matchCount = Object.values(indexes).filter((columnIndex) => columnIndex >= 0).length;
+    return { index, indexes, matchCount };
   });
-  if (headerRowIndex < 0) {
-    throw new Error(`De vereiste kolommen ontbreken: ${requiredHeaders.join(", ")}.`);
+  const bestHeader = headerCandidates.reduce(
+    (best, candidate) => candidate.matchCount > best.matchCount ? candidate : best,
+    { index: -1, indexes: {}, matchCount: 0 }
+  );
+  const headerRowIndex = bestHeader.index;
+  const missingHeaders = requiredHeaders.filter((header) => bestHeader.indexes[header] < 0);
+  if (missingHeaders.length) {
+    throw new Error(`De vereiste kolommen ontbreken: ${missingHeaders.join(", ")}.`);
   }
 
-  const headerRow = rows[headerRowIndex];
-  const columnIndexes = Object.fromEntries(requiredHeaders.map((header) => [
-    header,
-    headerRow.findIndex((value) => normalizeHeader(value) === normalizeHeader(header)),
-  ]));
+  const columnIndexes = bestHeader.indexes;
 
   const importedRows = [];
   rows.slice(headerRowIndex + 1).forEach((row, offset) => {

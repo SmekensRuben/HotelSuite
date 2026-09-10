@@ -26,7 +26,21 @@ describe("parseLighthouseRows", () => {
   });
 
   it("rejects a sheet without all required headers", () => {
-    expect(() => parseLighthouseRows([["Date", "My OTB"]])).toThrow("vereiste kolommen");
+    expect(() => parseLighthouseRows([["Date", "My OTB"]])).toThrow(
+      "Market demand, Gent Marriott Hotel"
+    );
+  });
+
+  it("recognizes the combined date and variable hotel headers used by Lighthouse", () => {
+    const result = parseLighthouseRows([[
+      "Day Date", "My OTB", "Market demand", "Ghent Marriott", "Pillows Hotel Reylof",
+      "NH Collection Ghent", "Yalo Boutique", "Novotel Ghent Centre",
+    ], [
+      "Thu 10/09/2026", "89%", "93%", "239", "240", "239", "No flex", "190",
+    ]]);
+
+    expect(result[0].stayDate).toBe("2026-09-10");
+    expect(result[0].data["Pillows Grand Boutique Hotel Reylof Ghent"]).toBe("240");
   });
 
   it("formats dates without UTC conversion", () => {
