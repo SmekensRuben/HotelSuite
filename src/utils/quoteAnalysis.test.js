@@ -5,12 +5,18 @@ describe("buildHistoricalDateAnalysis", () => {
   it("finds the nearest available date with the same weekday per selected year", () => {
     const result = buildHistoricalDateAnalysis(
       ["2026-09-10", "2026-09-11"],
-      ["2025-09-04", "2025-09-05", "2025-09-11", "2025-09-12"],
+      ["2025-09-04", "2025-09-05", "2025-09-11", "2025-09-12"].map((date) => ({ date })),
       [2025]
     );
-    expect(result[0].matches).toEqual([
-      { quoteDate: "2026-09-10", historicalDate: "2025-09-11" },
-      { quoteDate: "2026-09-11", historicalDate: "2025-09-12" },
+    expect(result[0].matches.map(({ weekday, historicalDate }) => ({ weekday, historicalDate }))).toEqual([
+      { weekday: "Thursday", historicalDate: "2025-09-11" },
+      { weekday: "Friday", historicalDate: "2025-09-12" },
     ]);
+  });
+
+  it("moves a selected historical year by complete weeks", () => {
+    const dates = ["2025-09-11", "2025-09-18"].map((date) => ({ date, calculatedInventoryRooms: 10 }));
+    const result = buildHistoricalDateAnalysis(["2026-09-10"], dates, [2025], { 2025: 1 });
+    expect(result[0].matches[0].consideredDate).toMatchObject({ date: "2025-09-18", calculatedInventoryRooms: 10 });
   });
 });

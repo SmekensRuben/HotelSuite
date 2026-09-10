@@ -65,9 +65,13 @@ export const getHistoryQuoteDates = async (hotelUid) => {
     collection(db, `hotels/${hotelUid}/reports/historyquotes/consideredDates`)
   );
   return snapshot.docs
-    .map((snapshotDocument) => snapshotDocument.id)
-    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
-    .sort();
+    .filter((snapshotDocument) => /^\d{4}-\d{2}-\d{2}$/.test(snapshotDocument.id))
+    .map((snapshotDocument) => ({
+      id: snapshotDocument.id,
+      date: snapshotDocument.id,
+      ...snapshotDocument.data(),
+    }))
+    .sort((left, right) => left.date.localeCompare(right.date));
 };
 
 export const getGroupQuoteSettings = async (hotelUid) => {
