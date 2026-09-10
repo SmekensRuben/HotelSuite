@@ -5,10 +5,10 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
-  orderBy,
-  query,
   serverTimestamp,
+  setDoc,
   updateDoc,
 } from "../firebaseConfig";
 
@@ -19,17 +19,24 @@ const withId = (docSnap) => ({ id: docSnap.id, ...docSnap.data() });
 export const subscribeQuotes = (hotelUid, callback) => {
   if (!hotelUid) return () => {};
   const ref = collection(db, quotesPath(hotelUid));
-  const q = query(ref, orderBy("quoteDate", "desc"));
-  return onSnapshot(q, (snapshot) => callback(snapshot.docs.map(withId)));
+  return onSnapshot(ref, (snapshot) => {
+    const quotes = snapshot.docs.map(withId).sort((left, right) =>
+      String(right.startDate || right.quoteDate || "").localeCompare(
+        String(left.startDate || left.quoteDate || "")
+      )
+    );
+    callback(quotes);
+  });
 };
 
 export const addQuote = async (hotelUid, quote) => {
   if (!hotelUid) throw new Error("Hotel ontbreekt");
-  await addDoc(collection(db, quotesPath(hotelUid)), {
+  const document = await addDoc(collection(db, quotesPath(hotelUid)), {
     ...quote,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  return document.id;
 };
 
 export const getQuote = async (hotelUid, quoteId) => {
@@ -50,4 +57,33 @@ export const deleteQuote = async (hotelUid, quoteId) => {
   if (!hotelUid || !quoteId) return;
   const ref = doc(db, `${quotesPath(hotelUid)}/${quoteId}`);
   await deleteDoc(ref);
+};
+
+export const getHistoryQuoteDates = async (hotelUid) => {
+  if (!hotelUid) return [];
+  const snapshot = await getDocs(
+    collection(db, `hotels/${hotelUid}/reports/historyquotes/consideredDates`)
+  );
+  return snapshot.docs
+    .filter((snapshotDocument) => /^\d{4}-\d{2}-\d{2}$/.test(snapshotDocument.id))
+    .map((snapshotDocument) => ({
+      id: snapshotDocument.id,
+      date: snapshotDocument.id,
+      ...snapshotDocument.data(),
+    }))
+    .sort((left, right) => left.date.localeCompare(right.date));
+};
+
+export const getGroupQuoteSettings = async (hotelUid) => {
+  if (!hotelUid) return {};
+  const snapshot = await getDoc(doc(db, `hotels/${hotelUid}/settings/groupQuotes`));
+  return snapshot.exists() ? snapshot.data() : {};
+};
+
+export const saveGroupQuoteSettings = async (hotelUid, settings) => {
+  if (!hotelUid) throw new Error("Hotel ontbreekt");
+  await setDoc(doc(db, `hotels/${hotelUid}/settings/groupQuotes`), {
+    ...settings,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
 };

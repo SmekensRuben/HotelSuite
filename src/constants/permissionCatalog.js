@@ -10,6 +10,7 @@ export const PERMISSION_CATALOG = {
   users: ["create", "read", "update", "delete"],
   auditUpsells: ["read", "settings"],
   groups: ["create", "read", "update", "delete"],
+  groupquotes: ["create", "read", "update", "delete"],
 };
 
 export function listAllPermissionKeys() {

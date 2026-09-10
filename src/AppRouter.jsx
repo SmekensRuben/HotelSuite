@@ -71,6 +71,11 @@ import NotificationListsPage from "./components/pages/NotificationListsPage.jsx"
 import GroupSettingsPage from "./components/pages/GroupSettingsPage.jsx";
 import ArrivalsPage from "./components/pages/ArrivalsPage.jsx";
 import MadeReservationsPage from "./components/pages/MadeReservationsPage.jsx";
+import GroupQuotesPage from "./components/pages/GroupQuotesPage.jsx";
+import GroupQuoteCreatePage from "./components/pages/GroupQuoteCreatePage.jsx";
+import GroupQuoteDetailPage from "./components/pages/GroupQuoteDetailPage.jsx";
+import GroupQuoteEditPage from "./components/pages/GroupQuoteEditPage.jsx";
+import GroupQuoteSettingsPage from "./components/pages/GroupQuoteSettingsPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -401,6 +406,26 @@ export default function AppRouter() {
       <Route
         path="/front-office/made-reservations"
         element={<ProtectedRoute><MadeReservationsPage /></ProtectedRoute>}
+      />
+      <Route
+        path="/revenue/group-quotes"
+        element={<ProtectedRoute feature="groupquotes" action="read"><GroupQuotesPage /></ProtectedRoute>}
+      />
+      <Route
+        path="/revenue/group-quotes/new"
+        element={<ProtectedRoute feature="groupquotes" action="create"><GroupQuoteCreatePage /></ProtectedRoute>}
+      />
+      <Route
+        path="/revenue/group-quotes/settings"
+        element={<ProtectedRoute feature="groupquotes" action="update"><GroupQuoteSettingsPage /></ProtectedRoute>}
+      />
+      <Route
+        path="/revenue/group-quotes/:quoteId"
+        element={<ProtectedRoute feature="groupquotes" action="read"><GroupQuoteDetailPage /></ProtectedRoute>}
+      />
+      <Route
+        path="/revenue/group-quotes/:quoteId/edit"
+        element={<ProtectedRoute feature="groupquotes" action="update"><GroupQuoteEditPage /></ProtectedRoute>}
       />
       <Route
         path="/front-office/upselling"
