@@ -75,6 +75,7 @@ import GroupQuotesPage from "./components/pages/GroupQuotesPage.jsx";
 import GroupQuoteCreatePage from "./components/pages/GroupQuoteCreatePage.jsx";
 import GroupQuoteDetailPage from "./components/pages/GroupQuoteDetailPage.jsx";
 import GroupQuoteEditPage from "./components/pages/GroupQuoteEditPage.jsx";
+import GroupQuoteSettingsPage from "./components/pages/GroupQuoteSettingsPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -413,6 +414,10 @@ export default function AppRouter() {
       <Route
         path="/revenue/group-quotes/new"
         element={<ProtectedRoute feature="groupquotes" action="create"><GroupQuoteCreatePage /></ProtectedRoute>}
+      />
+      <Route
+        path="/revenue/group-quotes/settings"
+        element={<ProtectedRoute feature="groupquotes" action="update"><GroupQuoteSettingsPage /></ProtectedRoute>}
       />
       <Route
         path="/revenue/group-quotes/:quoteId"

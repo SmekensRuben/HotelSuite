@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Settings } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
@@ -13,6 +13,7 @@ export default function GroupQuotesPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
   const canCreate = usePermission("groupquotes", "create");
+  const canUpdate = usePermission("groupquotes", "update");
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const today = useMemo(() => new Date().toLocaleDateString(undefined, {
@@ -64,6 +65,8 @@ export default function GroupQuotesPage() {
             <h1 className="text-3xl font-semibold">Group Quotes</h1>
             <p className="mt-1 text-gray-600">Manage group accommodation quotes.</p>
           </div>
+          <div className="flex items-center gap-2">
+          {canUpdate && <button type="button" onClick={() => navigate("/revenue/group-quotes/settings")} className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white p-2 text-gray-700 shadow hover:bg-gray-100" title="Group Quote Settings" aria-label="Group Quote Settings"><Settings className="h-5 w-5" /></button>}
           {canCreate && (
             <button
               type="button"
@@ -73,6 +76,7 @@ export default function GroupQuotesPage() {
               <Plus className="h-5 w-5" /> Create Quote
             </button>
           )}
+          </div>
         </div>
         {loading ? <p className="text-gray-600">Loading quotes...</p> : (
           <DataListTable

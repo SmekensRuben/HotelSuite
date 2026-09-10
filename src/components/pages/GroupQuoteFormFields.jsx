@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { getInclusiveQuoteDates } from "../../utils/quoteDates";
 
-export default function GroupQuoteFormFields({ initialQuote, onSubmit, saving, submitLabel }) {
+export default function GroupQuoteFormFields({ initialQuote, onSubmit, saving, submitLabel, children }) {
   const [name, setName] = useState("");
   const [requestDate, setRequestDate] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -104,6 +104,7 @@ export default function GroupQuoteFormFields({ initialQuote, onSubmit, saving, s
           Breakfast included
         </label>
       </div>
+      {children}
       {error && <p role="alert" className="text-sm font-medium text-red-700">{error}</p>}
       <div className="flex justify-end">
         <button disabled={saving} type="submit" className="rounded-lg bg-[#b41f1f] px-5 py-2 font-semibold text-white shadow hover:bg-[#961919] disabled:bg-gray-400">

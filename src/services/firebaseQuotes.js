@@ -5,8 +5,10 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   serverTimestamp,
+  setDoc,
   updateDoc,
 } from "../firebaseConfig";
 
@@ -55,4 +57,29 @@ export const deleteQuote = async (hotelUid, quoteId) => {
   if (!hotelUid || !quoteId) return;
   const ref = doc(db, `${quotesPath(hotelUid)}/${quoteId}`);
   await deleteDoc(ref);
+};
+
+export const getHistoryQuoteDates = async (hotelUid) => {
+  if (!hotelUid) return [];
+  const snapshot = await getDocs(
+    collection(db, `hotels/${hotelUid}/reports/historyquotes/consideredDates`)
+  );
+  return snapshot.docs
+    .map((snapshotDocument) => snapshotDocument.id)
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+    .sort();
+};
+
+export const getGroupQuoteSettings = async (hotelUid) => {
+  if (!hotelUid) return {};
+  const snapshot = await getDoc(doc(db, `hotels/${hotelUid}/settings/groupQuotes`));
+  return snapshot.exists() ? snapshot.data() : {};
+};
+
+export const saveGroupQuoteSettings = async (hotelUid, settings) => {
+  if (!hotelUid) throw new Error("Hotel ontbreekt");
+  await setDoc(doc(db, `hotels/${hotelUid}/settings/groupQuotes`), {
+    ...settings,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
 };
