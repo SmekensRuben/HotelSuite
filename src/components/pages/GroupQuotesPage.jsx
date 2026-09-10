@@ -35,6 +35,8 @@ export default function GroupQuotesPage() {
   };
 
   const columns = [
+    { key: "name", label: "Name" },
+    { key: "requestDate", label: "Request Date" },
     { key: "startDate", label: "Start Date" },
     { key: "endDate", label: "End Date" },
     {
@@ -73,7 +75,12 @@ export default function GroupQuotesPage() {
           )}
         </div>
         {loading ? <p className="text-gray-600">Loading quotes...</p> : (
-          <DataListTable columns={columns} rows={quotes} emptyMessage="No group quotes found." />
+          <DataListTable
+            columns={columns}
+            rows={quotes}
+            onRowClick={(quote) => navigate(`/revenue/group-quotes/${quote.id}`)}
+            emptyMessage="No group quotes found."
+          />
         )}
       </PageContainer>
     </div>
