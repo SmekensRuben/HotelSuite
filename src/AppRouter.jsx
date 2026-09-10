@@ -71,6 +71,8 @@ import NotificationListsPage from "./components/pages/NotificationListsPage.jsx"
 import GroupSettingsPage from "./components/pages/GroupSettingsPage.jsx";
 import ArrivalsPage from "./components/pages/ArrivalsPage.jsx";
 import MadeReservationsPage from "./components/pages/MadeReservationsPage.jsx";
+import GroupQuotesPage from "./components/pages/GroupQuotesPage.jsx";
+import GroupQuoteCreatePage from "./components/pages/GroupQuoteCreatePage.jsx";
 
 export default function AppRouter() {
   return (
@@ -401,6 +403,14 @@ export default function AppRouter() {
       <Route
         path="/front-office/made-reservations"
         element={<ProtectedRoute><MadeReservationsPage /></ProtectedRoute>}
+      />
+      <Route
+        path="/revenue/group-quotes"
+        element={<ProtectedRoute feature="groupquotes" action="read"><GroupQuotesPage /></ProtectedRoute>}
+      />
+      <Route
+        path="/revenue/group-quotes/new"
+        element={<ProtectedRoute feature="groupquotes" action="create"><GroupQuoteCreatePage /></ProtectedRoute>}
       />
       <Route
         path="/front-office/upselling"

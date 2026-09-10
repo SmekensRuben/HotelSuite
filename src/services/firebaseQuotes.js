@@ -6,8 +6,6 @@ import {
   doc,
   getDoc,
   onSnapshot,
-  orderBy,
-  query,
   serverTimestamp,
   updateDoc,
 } from "../firebaseConfig";
@@ -19,17 +17,24 @@ const withId = (docSnap) => ({ id: docSnap.id, ...docSnap.data() });
 export const subscribeQuotes = (hotelUid, callback) => {
   if (!hotelUid) return () => {};
   const ref = collection(db, quotesPath(hotelUid));
-  const q = query(ref, orderBy("quoteDate", "desc"));
-  return onSnapshot(q, (snapshot) => callback(snapshot.docs.map(withId)));
+  return onSnapshot(ref, (snapshot) => {
+    const quotes = snapshot.docs.map(withId).sort((left, right) =>
+      String(right.startDate || right.quoteDate || "").localeCompare(
+        String(left.startDate || left.quoteDate || "")
+      )
+    );
+    callback(quotes);
+  });
 };
 
 export const addQuote = async (hotelUid, quote) => {
   if (!hotelUid) throw new Error("Hotel ontbreekt");
-  await addDoc(collection(db, quotesPath(hotelUid)), {
+  const document = await addDoc(collection(db, quotesPath(hotelUid)), {
     ...quote,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  return document.id;
 };
 
 export const getQuote = async (hotelUid, quoteId) => {

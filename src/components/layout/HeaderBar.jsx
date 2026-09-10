@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useHotelContext } from "contexts/HotelContext";
 import { db, doc, getDoc } from "../../firebaseConfig";
-import { BedDouble, BellRing, BriefcaseBusiness, ClipboardList, FileText, Package, Settings2, ShoppingBasket, Sparkles, Truck, Users } from "lucide-react";
+import { BedDouble, BellRing, BriefcaseBusiness, ClipboardList, FileText, Package, Settings2, ShoppingBasket, Sparkles, TrendingUp, Truck, Users } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
 
 export default function HeaderBar({ today, onLogout }) {
@@ -22,15 +22,18 @@ export default function HeaderBar({ today, onLogout }) {
   const canReadAuditUpsells = usePermission("auditUpsells", "read");
   const canManageAuditUpsells = usePermission("auditUpsells", "settings");
   const canViewGroups = usePermission("groups", "read");
+  const canViewGroupQuotes = usePermission("groupquotes", "read");
   const [hotels, setHotels] = useState([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
   const [isFrontOfficeOpen, setIsFrontOfficeOpen] = useState(false);
   const [isMeOpen, setIsMeOpen] = useState(false);
+  const [isRevenueOpen, setIsRevenueOpen] = useState(false);
   const settingsMenuRef = useRef(null);
   const catalogMenuRef = useRef(null);
   const frontOfficeMenuRef = useRef(null);
   const meMenuRef = useRef(null);
+  const revenueMenuRef = useRef(null);
 
   const settingsMenuItems = [
     {
@@ -119,6 +122,15 @@ export default function HeaderBar({ today, onLogout }) {
     },
   ].filter((item) => item.visible !== false);
 
+  const revenueMenuItems = [
+    {
+      label: "Group Quotes",
+      action: () => navigate("/revenue/group-quotes"),
+      icon: TrendingUp,
+      visible: canViewGroupQuotes,
+    },
+  ].filter((item) => item.visible !== false);
+
   const catalogMenuItems = [
     {
       label: "Catalog Products",
@@ -192,6 +204,9 @@ export default function HeaderBar({ today, onLogout }) {
       if (meMenuRef.current && !meMenuRef.current.contains(event.target)) {
         setIsMeOpen(false);
       }
+      if (revenueMenuRef.current && !revenueMenuRef.current.contains(event.target)) {
+        setIsRevenueOpen(false);
+      }
     };
 
     document.addEventListener("mousedown", handleClickOutside);
@@ -260,6 +275,7 @@ export default function HeaderBar({ today, onLogout }) {
                     setIsSettingsOpen(false);
                     setIsFrontOfficeOpen(false);
                     setIsMeOpen(false);
+                    setIsRevenueOpen(false);
                   }}
                   className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
                   style={{ minHeight: 44 }}
@@ -305,6 +321,7 @@ export default function HeaderBar({ today, onLogout }) {
                     setIsCatalogOpen(false);
                     setIsFrontOfficeOpen(false);
                     setIsSettingsOpen(false);
+                    setIsRevenueOpen(false);
                   }}
                   className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
                   style={{ minHeight: 44 }}
@@ -340,6 +357,42 @@ export default function HeaderBar({ today, onLogout }) {
             </div>
           )}
 
+          {revenueMenuItems.length > 0 && (
+            <div ref={revenueMenuRef} className="flex justify-end w-full sm:w-auto">
+              <div className="relative w-full sm:w-auto">
+                <button
+                  onClick={() => {
+                    setIsRevenueOpen((previous) => !previous);
+                    setIsCatalogOpen(false);
+                    setIsFrontOfficeOpen(false);
+                    setIsSettingsOpen(false);
+                    setIsMeOpen(false);
+                  }}
+                  className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
+                  style={{ minHeight: 44 }}
+                >
+                  <span className="uppercase tracking-wide">Revenue</span>
+                  <span className="ml-3 text-base">▾</span>
+                </button>
+                {isRevenueOpen && (
+                  <div className="absolute left-0 mt-2 w-64 rounded-lg shadow-xl ring-1 ring-black/5 z-30 overflow-hidden bg-white text-gray-900">
+                    <div className="py-2">
+                      {revenueMenuItems.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <button key={item.label} onClick={() => { item.action(); setIsRevenueOpen(false); }} className="w-full px-4 py-2 flex items-center gap-3 hover:bg-gray-100 transition-colors text-left">
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100"><Icon className="h-4 w-4" /></span>
+                            <span className="text-sm font-semibold">{item.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
 
           {frontOfficeMenuItems.length > 0 && (
             <div ref={frontOfficeMenuRef} className="flex justify-end w-full sm:w-auto">
@@ -350,6 +403,7 @@ export default function HeaderBar({ today, onLogout }) {
                     setIsCatalogOpen(false);
                     setIsSettingsOpen(false);
                     setIsMeOpen(false);
+                    setIsRevenueOpen(false);
                   }}
                   className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
                   style={{ minHeight: 44 }}
@@ -395,6 +449,7 @@ export default function HeaderBar({ today, onLogout }) {
                     setIsCatalogOpen(false);
                     setIsFrontOfficeOpen(false);
                     setIsMeOpen(false);
+                    setIsRevenueOpen(false);
                   }}
                   className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
                   style={{ minHeight: 44 }}
