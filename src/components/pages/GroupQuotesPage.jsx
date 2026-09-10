@@ -46,12 +46,6 @@ export default function GroupQuotesPage() {
       sortValue: (quote) => (quote.roomsByDate || []).reduce((sum, item) => sum + Number(item.rooms || 0), 0),
       render: (quote) => (quote.roomsByDate || []).reduce((sum, item) => sum + Number(item.rooms || 0), 0),
     },
-    {
-      key: "pricePerNight",
-      label: "Price / Night",
-      sortValue: (quote) => Number(quote.pricePerNight || 0),
-      render: (quote) => `€${Number(quote.pricePerNight || 0).toFixed(2)}`,
-    },
     { key: "breakfastIncluded", label: "Breakfast Included", render: (quote) => quote.breakfastIncluded ? "Yes" : "No" },
   ];
 

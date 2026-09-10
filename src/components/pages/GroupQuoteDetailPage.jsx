@@ -52,7 +52,6 @@ export default function GroupQuoteDetailPage() {
           <div><p className="text-xs uppercase text-gray-500">Name</p><p className="font-semibold">{quote.name || "-"}</p></div>
           <div><p className="text-xs uppercase text-gray-500">Request Date</p><p className="font-semibold">{quote.requestDate || "-"}</p></div>
           <div><p className="text-xs uppercase text-gray-500">Stay</p><p className="font-semibold">{quote.startDate} – {quote.endDate}</p></div>
-          <div><p className="text-xs uppercase text-gray-500">Price / Night</p><p className="font-semibold">{currency(quote.pricePerNight)}</p></div>
           <div><p className="text-xs uppercase text-gray-500">Breakfast Included</p><p className="font-semibold">{quote.breakfastIncluded ? "Yes" : "No"}</p></div>
         </Card>
         <div><h2 className="mb-3 text-xl font-semibold">Daily details</h2><DataListTable columns={columns} rows={(quote.roomsByDate || []).map((row) => ({ ...row, id: row.date }))} emptyMessage="No daily details found." /></div>
