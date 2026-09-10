@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildHistoricalDateAnalysis } from "./quoteAnalysis";
+import { buildHistoricalDateAnalysis, calculateDisplacementMetrics } from "./quoteAnalysis";
 
 describe("buildHistoricalDateAnalysis", () => {
   it("finds the nearest available date with the same weekday per selected year", () => {
@@ -18,5 +18,21 @@ describe("buildHistoricalDateAnalysis", () => {
     const dates = ["2025-09-11", "2025-09-18"].map((date) => ({ date, calculatedInventoryRooms: 10 }));
     const result = buildHistoricalDateAnalysis(["2026-09-10"], dates, [2025], { 2025: 1 });
     expect(result[0].matches[0].consideredDate).toMatchObject({ date: "2025-09-18", calculatedInventoryRooms: 10 });
+  });
+
+  it("calculates inflation-adjusted displacement metrics", () => {
+    expect(calculateDisplacementMetrics({
+      averageRoomRate: 100,
+      calculatedOccRooms: 80,
+      calculatedInventoryRooms: 100,
+      requestedGroupRooms: 20,
+      inflationPercentage: 5,
+      displacementThresholdPercentage: 10,
+      yearsAgo: 2,
+    })).toEqual({
+      adjustedAverageRoomRate: 110.25,
+      displacedRooms: 10,
+      displacedRevenue: 1102.5,
+    });
   });
 });
