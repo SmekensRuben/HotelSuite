@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildHistoricalDateAnalysis, calculateDisplacementMetrics } from "./quoteAnalysis";
+import { buildHistoricalDateAnalysis, calculateAnalysisSummary, calculateDisplacementMetrics } from "./quoteAnalysis";
 
 describe("buildHistoricalDateAnalysis", () => {
   it("finds the nearest available date with the same weekday per selected year", () => {
@@ -35,4 +35,33 @@ describe("buildHistoricalDateAnalysis", () => {
       displacedRevenue: 1102.5,
     });
   });
+
+  it("rounds displaced rooms up and never returns a negative room count", () => {
+    expect(calculateDisplacementMetrics({
+      calculatedOccRooms: 80,
+      calculatedInventoryRooms: 100,
+      requestedGroupRooms: 5.2,
+      displacementThresholdPercentage: 10,
+    }).displacedRooms).toBe(0);
+    expect(calculateDisplacementMetrics({
+      calculatedOccRooms: 90,
+      calculatedInventoryRooms: 100,
+      requestedGroupRooms: 5.2,
+      displacementThresholdPercentage: 10,
+    }).displacedRooms).toBe(6);
+  });
+
+  it("summarizes displacement and calculates the VAT-inclusive profitable price", () => {
+    const summary = calculateAnalysisSummary([
+      { year: 2024, matches: [{ displacedRevenue: 100 }, { displacedRevenue: 200 }] },
+      { year: 2025, matches: [{ displacedRevenue: 500 }] },
+    ], { totalRequestedRooms: 20, roomVatPercentage: 10, breakfastAllocation: 5, breakfastIncluded: true });
+    expect(summary.displacementByYear).toEqual([
+      { year: 2024, totalDisplacement: 300 },
+      { year: 2025, totalDisplacement: 500 },
+    ]);
+    expect(summary.averageDisplacement).toBe(400);
+    expect(summary.profitablePrice).toBe(27);
+  });
+
 });

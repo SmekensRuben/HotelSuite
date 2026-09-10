@@ -7,13 +7,28 @@ function addDays(dateValue, days) {
 export function calculateDisplacementMetrics({ averageRoomRate, calculatedOccRooms, calculatedInventoryRooms, requestedGroupRooms, inflationPercentage, displacementThresholdPercentage, yearsAgo }) {
   const adjustedAverageRoomRate = Number(averageRoomRate || 0)
     * ((1 + Number(inflationPercentage || 0) / 100) ** Number(yearsAgo || 0));
-  const displacedRooms = (Number(calculatedOccRooms || 0) + Number(requestedGroupRooms || 0))
+  const rawDisplacedRooms = (Number(calculatedOccRooms || 0) + Number(requestedGroupRooms || 0))
     - (Number(calculatedInventoryRooms || 0) * (1 - Number(displacementThresholdPercentage || 0) / 100));
+  const displacedRooms = Math.max(0, Math.ceil(rawDisplacedRooms));
   return {
     adjustedAverageRoomRate,
     displacedRooms,
     displacedRevenue: adjustedAverageRoomRate * displacedRooms,
   };
+}
+
+export function calculateAnalysisSummary(analysis, { totalRequestedRooms, roomVatPercentage, breakfastAllocation, breakfastIncluded }) {
+  const displacementByYear = analysis.map(({ year, matches }) => ({
+    year,
+    totalDisplacement: matches.reduce((total, match) => total + Number(match.displacedRevenue || 0), 0),
+  }));
+  const averageDisplacement = displacementByYear.length
+    ? displacementByYear.reduce((total, item) => total + item.totalDisplacement, 0) / displacementByYear.length
+    : 0;
+  const roomRevenuePerRequestedRoom = totalRequestedRooms > 0 ? averageDisplacement / totalRequestedRooms : 0;
+  const profitablePrice = roomRevenuePerRequestedRoom * (1 + Number(roomVatPercentage || 0) / 100)
+    + (breakfastIncluded ? Number(breakfastAllocation || 0) : 0);
+  return { displacementByYear, averageDisplacement, profitablePrice };
 }
 
 export function buildHistoricalDateAnalysis(quoteDates, consideredDates, selectedYears, weekOffsets = {}, options = {}) {

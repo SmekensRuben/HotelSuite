@@ -13,6 +13,8 @@ export default function GroupQuoteSettingsPage() {
   const { hotelUid } = useHotelContext();
   const [inflationPercentage, setInflationPercentage] = useState("");
   const [displacementThresholdPercentage, setDisplacementThresholdPercentage] = useState("");
+  const [roomVatPercentage, setRoomVatPercentage] = useState("");
+  const [breakfastAllocation, setBreakfastAllocation] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const today = useMemo(() => new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }), []);
@@ -23,6 +25,8 @@ export default function GroupQuoteSettingsPage() {
     getGroupQuoteSettings(hotelUid).then((settings) => {
       setInflationPercentage(settings.inflationPercentage ?? "");
       setDisplacementThresholdPercentage(settings.displacementThresholdPercentage ?? "");
+      setRoomVatPercentage(settings.roomVatPercentage ?? "");
+      setBreakfastAllocation(settings.breakfastAllocation ?? "");
       setLoading(false);
     });
   }, [hotelUid]);
@@ -33,6 +37,8 @@ export default function GroupQuoteSettingsPage() {
     await saveGroupQuoteSettings(hotelUid, {
       inflationPercentage: Number(inflationPercentage),
       displacementThresholdPercentage: Number(displacementThresholdPercentage),
+      roomVatPercentage: Number(roomVatPercentage),
+      breakfastAllocation: Number(breakfastAllocation),
     });
     setSaving(false);
     navigate("/revenue/group-quotes");
@@ -40,6 +46,6 @@ export default function GroupQuoteSettingsPage() {
 
   return <div className="min-h-screen bg-gray-50 text-gray-900"><HeaderBar today={today} onLogout={handleLogout} /><PageContainer className="space-y-6">
     <div className="flex items-center justify-between"><div><p className="text-sm uppercase tracking-wide text-gray-500">Revenue / Group Quotes</p><h1 className="text-3xl font-semibold">Group Quote Settings</h1></div><button type="button" onClick={() => navigate("/revenue/group-quotes")} className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-100"><ArrowLeft className="h-4 w-4" /> Back to overview</button></div>
-    <Card>{loading ? <p>Loading settings...</p> : <form onSubmit={handleSubmit} className="space-y-5"><div className="grid max-w-3xl gap-4 sm:grid-cols-2"><label className="block text-sm font-semibold">Inflation %<input required min="0" step="0.01" type="number" value={inflationPercentage} onChange={(event) => setInflationPercentage(event.target.value)} className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 font-normal" /></label><label className="block text-sm font-semibold">Displacement Threshold %<input required min="0" max="100" step="0.01" type="number" value={displacementThresholdPercentage} onChange={(event) => setDisplacementThresholdPercentage(event.target.value)} className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 font-normal" /></label></div><div><button disabled={saving} className="rounded-lg bg-[#b41f1f] px-5 py-2 font-semibold text-white disabled:bg-gray-400">{saving ? "Saving..." : "Save Settings"}</button></div></form>}</Card>
+    <Card>{loading ? <p>Loading settings...</p> : <form onSubmit={handleSubmit} className="space-y-5"><div className="grid max-w-3xl gap-4 sm:grid-cols-2"><label className="block text-sm font-semibold">Inflation %<input required min="0" step="0.01" type="number" value={inflationPercentage} onChange={(event) => setInflationPercentage(event.target.value)} className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 font-normal" /></label><label className="block text-sm font-semibold">Displacement Threshold %<input required min="0" max="100" step="0.01" type="number" value={displacementThresholdPercentage} onChange={(event) => setDisplacementThresholdPercentage(event.target.value)} className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 font-normal" /></label><label className="block text-sm font-semibold">Room VAT %<input required min="0" step="0.01" type="number" value={roomVatPercentage} onChange={(event) => setRoomVatPercentage(event.target.value)} className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 font-normal" /></label><label className="block text-sm font-semibold">Breakfast Allocation (€)<input required min="0" step="0.01" type="number" value={breakfastAllocation} onChange={(event) => setBreakfastAllocation(event.target.value)} className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 font-normal" /></label></div><div><button disabled={saving} className="rounded-lg bg-[#b41f1f] px-5 py-2 font-semibold text-white disabled:bg-gray-400">{saving ? "Saving..." : "Save Settings"}</button></div></form>}</Card>
   </PageContainer></div>;
 }
