@@ -99,6 +99,21 @@ describe("historical selection", () => {
     const season = weekdayDates("10", [2021, 2022, 2023, 2024, 2025, 2026]);
     expect(selectHistoricalObservations("2027-09-08", prepareHistoricalObservations([...sameMonth, ...season]), 1).tier).toBe("same-month-preferred");
   });
+  it("uses an explicitly selected year even when it is older than five years", () => {
+    const observations = prepareHistoricalObservations(weekdayDates("09", [2018]));
+    const result = selectHistoricalObservations("2027-09-08", observations, 1, undefined, [2018]);
+    expect(result.selected).toHaveLength(4);
+    expect(result.tier).toBe("same-season-low-sample");
+  });
+  it("excludes recent years that are not selected", () => {
+    const observations = prepareHistoricalObservations([
+      ...weekdayDates("09", [2018]),
+      ...weekdayDates("09", [2026]),
+    ]);
+    const result = selectHistoricalObservations("2027-09-08", observations, 1, undefined, [2018]);
+    expect(result.selected.every((item) => item.date.startsWith("2018-"))).toBe(true);
+    expect(result.counts.candidate).toBe(4);
+  });
   it("uses censored history only as a low-confidence lower bound", () => {
     const result = calculateDisplacementDay({ stayDate: "2027-09-08", requestedGroupRooms: 10, currentOtb: { calculatedInventoryRooms: 100, individualRooms: 20 }, historicalRows: [row("2026-09-09", { individualRooms: 95, calculatedOccRooms: 95, groupRooms: 0 })] });
     expect(result.historicalSelectionTier).toBe("censored-lower-bound");

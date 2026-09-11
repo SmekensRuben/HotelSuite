@@ -97,15 +97,21 @@ export function prepareHistoricalObservations(rows, config = DISPLACEMENT_FORECA
   });
 }
 
-export function selectHistoricalObservations(targetDate, observations, maxHistoricalGroupShare, config = DISPLACEMENT_FORECAST_CONFIG) {
+export function selectHistoricalObservations(targetDate, observations, maxHistoricalGroupShare, config = DISPLACEMENT_FORECAST_CONFIG, selectedHistoricalYears) {
   const target = utcDate(targetDate);
   if (!target) return { selected: [], tier: "unavailable", counts: { candidate: 0, preferred: 0, usable: 0, censored: 0 } };
   const threshold = Number.isFinite(maxHistoricalGroupShare) ? maxHistoricalGroupShare : 1;
   const targetYear = target.getUTCFullYear();
+  const selectedYearSet = Array.isArray(selectedHistoricalYears)
+    ? new Set(selectedHistoricalYears.map(Number).filter(Number.isFinite))
+    : null;
   const candidates = observations.filter((item) => {
     const date = utcDate(item.date);
     const age = date ? targetYear - date.getUTCFullYear() : 0;
-    return date && age >= 1 && age <= config.historicalYears && date.getUTCDay() === target.getUTCDay();
+    const yearIsEligible = selectedYearSet
+      ? selectedYearSet.has(date?.getUTCFullYear())
+      : age >= 1 && age <= config.historicalYears;
+    return date && yearIsEligible && date.getUTCDay() === target.getUTCDay();
   });
   const sameMonth = candidates.filter((item) => utcDate(item.date).getUTCMonth() === target.getUTCMonth());
   const sameSeason = candidates.filter((item) => getBusinessSeason(item.date) === getBusinessSeason(targetDate));
@@ -180,10 +186,10 @@ export function calculateDisplacementScenario({ sellableInventory, existingGroup
   return { availableTransientWithoutGroup, transientSoldWithoutGroup, availableTransientWithGroup, transientSoldWithGroup, displacedRooms, nonDisplacingGroupRooms: requested - displacedRooms };
 }
 
-export function calculateDisplacementDay({ stayDate, requestedGroupRooms, currentOtb, historicalRows = [], lighthouseByDate = {}, maxHistoricalGroupShare = 1, config = DISPLACEMENT_FORECAST_CONFIG }) {
+export function calculateDisplacementDay({ stayDate, requestedGroupRooms, currentOtb, historicalRows = [], lighthouseByDate = {}, maxHistoricalGroupShare = 1, selectedHistoricalYears, config = DISPLACEMENT_FORECAST_CONFIG }) {
   const current = mapCurrentOtb(currentOtb);
   const observations = prepareHistoricalObservations(historicalRows, config);
-  const historical = selectHistoricalObservations(stayDate, observations, maxHistoricalGroupShare, config);
+  const historical = selectHistoricalObservations(stayDate, observations, maxHistoricalGroupShare, config, selectedHistoricalYears);
   const historicalMedianTransientOccupancy = median(historical.selected.map((item) => item.transientOccupancyRatio));
   const historicalBaselineRooms = historicalMedianTransientOccupancy === null ? null : historicalMedianTransientOccupancy * current.sellableInventory;
   const lighthouse = calculateLighthouseModifier(stayDate, lighthouseByDate, config);
@@ -205,6 +211,7 @@ export function calculateDisplacementDay({ stayDate, requestedGroupRooms, curren
     stayDate,
     ...current,
     requestedGroupRooms: Math.max(0, numeric(requestedGroupRooms) ?? 0),
+    historicalYears: Array.isArray(selectedHistoricalYears) ? selectedHistoricalYears.map(Number) : null,
     historicalSelectionTier: historical.tier,
     forecastConfidence,
     historicalCandidateCount: historical.counts.candidate,

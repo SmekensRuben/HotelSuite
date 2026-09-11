@@ -60,6 +60,7 @@ export default function GroupQuoteCreatePage() {
   useEffect(() => {
     if (!hotelUid || !analysisQuote) return;
     let active = true;
+    setForecastData(null);
     setForecastLoading(true);
     Promise.all([getLatestHistoryForecastSnapshot(hotelUid), getLatestLighthouseSnapshot(hotelUid)])
       .then(([current, lighthouse]) => {
@@ -71,6 +72,7 @@ export default function GroupQuoteCreatePage() {
             requestedGroupRooms: analysisQuote.roomsByDate.find((item) => item.date === stayDate)?.rooms,
             currentOtb: current.byDate[stayDate],
             historicalRows: consideredDates,
+            selectedHistoricalYears: selectedYears,
             lighthouseByDate: lighthouse.byDate,
             maxHistoricalGroupShare: Number.isFinite(maxShare) ? maxShare / 100 : 1,
             config: DISPLACEMENT_FORECAST_CONFIG,
@@ -80,7 +82,7 @@ export default function GroupQuoteCreatePage() {
       })
       .finally(() => { if (active) setForecastLoading(false); });
     return () => { active = false; };
-  }, [hotelUid, analysisQuote, consideredDates, quoteSettings.maxHistoricalGroupSharePercentage]);
+  }, [hotelUid, analysisQuote, consideredDates, selectedYears, quoteSettings.maxHistoricalGroupSharePercentage]);
 
   const analysis = useMemo(() => analysisQuote ? buildHistoricalDateAnalysis(
     getInclusiveQuoteDates(analysisQuote.startDate, analysisQuote.endDate), consideredDates, selectedYears, weekOffsets, {
@@ -144,6 +146,7 @@ export default function GroupQuoteCreatePage() {
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold">{result.stayDate}</h4><span className={`rounded-full px-2.5 py-1 text-xs font-bold uppercase ${result.forecastConfidence === "high" ? "bg-green-100 text-green-800" : result.forecastConfidence === "medium" ? "bg-blue-100 text-blue-800" : "bg-amber-200 text-amber-900"}`}>{result.forecastConfidence} confidence</span></div>
             <dl className="grid gap-x-5 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
               <div><dt className="text-gray-500">Historical selection tier</dt><dd className="font-medium">{result.historicalSelectionTier}</dd></div>
+              <div><dt className="text-gray-500">Selected historical years</dt><dd className="font-medium">{result.historicalYears?.join(", ") || "None"}</dd></div>
               <div><dt className="text-gray-500">Historical sample used / censored</dt><dd className="font-medium">{result.historicalSelectedCount} / {result.historicalCensoredCount}</dd></div>
               <div><dt className="text-gray-500">Historical transient baseline</dt><dd className="font-medium">{rooms(result.historicalBaselineRooms)} rooms ({percentage(result.historicalMedianTransientOccupancy)})</dd></div>
               <div><dt className="text-gray-500">Latest Lighthouse Market Demand</dt><dd className="font-medium">{percentage(result.targetLighthouseMarketDemand)}</dd></div>
