@@ -46,7 +46,7 @@ export default function GroupQuotesPage() {
       sortValue: (quote) => (quote.roomsByDate || []).reduce((sum, item) => sum + Number(item.rooms || 0), 0),
       render: (quote) => (quote.roomsByDate || []).reduce((sum, item) => sum + Number(item.rooms || 0), 0),
     },
-    { key: "breakfastIncluded", label: "Breakfast Included", render: (quote) => quote.breakfastIncluded ? "Yes" : "No" },
+    { key: "breakfastPax", label: "Breakfast Pax", sortValue: (quote) => Number(quote.breakfastPax || 0), render: (quote) => Number(quote.breakfastPax || 0) },
   ];
 
   return (
