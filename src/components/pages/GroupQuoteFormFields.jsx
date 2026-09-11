@@ -1,13 +1,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { getInclusiveQuoteDates } from "../../utils/quoteDates";
 
-export default function GroupQuoteFormFields({ initialQuote, onSubmit, saving, submitLabel, children }) {
+export default function GroupQuoteFormFields({ initialQuote, defaultGroupCommissionPercentage, onSubmit, saving, submitLabel, children }) {
   const [name, setName] = useState("");
   const [requestDate, setRequestDate] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [dailyValues, setDailyValues] = useState({});
   const [breakfastPax, setBreakfastPax] = useState("");
+  const [groupCommissionPercentage, setGroupCommissionPercentage] = useState("");
   const [error, setError] = useState("");
   const dates = useMemo(() => getInclusiveQuoteDates(startDate, endDate), [startDate, endDate]);
 
@@ -18,11 +19,16 @@ export default function GroupQuoteFormFields({ initialQuote, onSubmit, saving, s
     setStartDate(initialQuote.startDate || "");
     setEndDate(initialQuote.endDate || "");
     setBreakfastPax(initialQuote.breakfastPax ?? "");
+    setGroupCommissionPercentage(initialQuote.groupCommissionPercentage ?? defaultGroupCommissionPercentage ?? "");
     setDailyValues(Object.fromEntries((initialQuote.roomsByDate || []).map((item) => [item.date, {
       rooms: item.rooms ?? "",
       bqtRevenue: item.bqtRevenue ?? "",
     }])));
-  }, [initialQuote]);
+  }, [initialQuote, defaultGroupCommissionPercentage]);
+
+  useEffect(() => {
+    if (!initialQuote && groupCommissionPercentage === "" && defaultGroupCommissionPercentage !== undefined) setGroupCommissionPercentage(defaultGroupCommissionPercentage);
+  }, [defaultGroupCommissionPercentage, groupCommissionPercentage, initialQuote]);
 
   const updateDailyValue = (date, key, value) => {
     setDailyValues((current) => ({
@@ -49,6 +55,7 @@ export default function GroupQuoteFormFields({ initialQuote, onSubmit, saving, s
         bqtRevenue: Number(dailyValues[date]?.bqtRevenue || 0),
       })),
       breakfastPax: Number(breakfastPax || 0),
+      groupCommissionPercentage: Number(groupCommissionPercentage),
     });
   };
 
@@ -95,6 +102,9 @@ export default function GroupQuoteFormFields({ initialQuote, onSubmit, saving, s
       <div className="grid items-end gap-4 sm:grid-cols-2">
         <label className="text-sm font-semibold">Breakfast Pax
           <input required min="0" step="1" type="number" value={breakfastPax} onChange={(event) => setBreakfastPax(event.target.value)} className={inputClassName} />
+        </label>
+        <label className="text-sm font-semibold">Group Commission %
+          <input required min="0" max="99.99" step="0.01" type="number" value={groupCommissionPercentage} onChange={(event) => setGroupCommissionPercentage(event.target.value)} className={inputClassName} />
         </label>
       </div>
       {children}
