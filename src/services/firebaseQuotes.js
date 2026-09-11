@@ -6,7 +6,11 @@ import {
   doc,
   getDoc,
   getDocs,
+  documentId,
+  limit,
   onSnapshot,
+  orderBy,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -73,6 +77,32 @@ export const getHistoryQuoteDates = async (hotelUid) => {
     }))
     .sort((left, right) => left.date.localeCompare(right.date));
 };
+
+const reportPath = (hotelUid, report) => `hotels/${hotelUid}/reports/${report}`;
+
+async function getLatestSnapshotStayDates(hotelUid, report) {
+  const snapshots = await getDocs(query(
+    collection(db, `${reportPath(hotelUid, report)}/snapshotDates`),
+    orderBy(documentId(), "desc"),
+    limit(1)
+  ));
+  const latest = snapshots.docs[0];
+  if (!latest) return { snapshotDate: null, byDate: {} };
+  const stayDates = await getDocs(collection(
+    db,
+    `${reportPath(hotelUid, report)}/snapshotDates/${latest.id}/stayDates`
+  ));
+  return {
+    snapshotDate: latest.id,
+    byDate: Object.fromEntries(stayDates.docs.map((item) => [item.id, { id: item.id, ...item.data() }])),
+  };
+}
+
+export const getLatestHistoryForecastSnapshot = (hotelUid) =>
+  getLatestSnapshotStayDates(hotelUid, "historyforecast");
+
+export const getLatestLighthouseSnapshot = (hotelUid) =>
+  getLatestSnapshotStayDates(hotelUid, "lightHouseData");
 
 export const getGroupQuoteSettings = async (hotelUid) => {
   if (!hotelUid) return {};
