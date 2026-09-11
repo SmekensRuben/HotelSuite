@@ -98,7 +98,7 @@ export default function GroupQuoteCreatePage() {
     totalRequestedRooms: analysisQuote?.roomsByDate.reduce((total, item) => total + Number(item.rooms || 0), 0) || 0,
     roomVatPercentage: quoteSettings.roomVatPercentage,
     breakfastAllocation: quoteSettings.breakfastAllocation,
-    breakfastIncluded: analysisQuote?.breakfastIncluded,
+    breakfastIncluded: Number(analysisQuote?.breakfastPax || 0) > 0,
   }), [analysis, analysisQuote, quoteSettings]);
 
   const forecastSummary = useMemo(() => {

@@ -7,7 +7,7 @@ export default function GroupQuoteFormFields({ initialQuote, onSubmit, saving, s
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [dailyValues, setDailyValues] = useState({});
-  const [breakfastIncluded, setBreakfastIncluded] = useState(false);
+  const [breakfastPax, setBreakfastPax] = useState("");
   const [error, setError] = useState("");
   const dates = useMemo(() => getInclusiveQuoteDates(startDate, endDate), [startDate, endDate]);
 
@@ -17,7 +17,7 @@ export default function GroupQuoteFormFields({ initialQuote, onSubmit, saving, s
     setRequestDate(initialQuote.requestDate || "");
     setStartDate(initialQuote.startDate || "");
     setEndDate(initialQuote.endDate || "");
-    setBreakfastIncluded(Boolean(initialQuote.breakfastIncluded));
+    setBreakfastPax(initialQuote.breakfastPax ?? "");
     setDailyValues(Object.fromEntries((initialQuote.roomsByDate || []).map((item) => [item.date, {
       rooms: item.rooms ?? "",
       bqtRevenue: item.bqtRevenue ?? "",
@@ -48,7 +48,7 @@ export default function GroupQuoteFormFields({ initialQuote, onSubmit, saving, s
         rooms: Number(dailyValues[date]?.rooms || 0),
         bqtRevenue: Number(dailyValues[date]?.bqtRevenue || 0),
       })),
-      breakfastIncluded,
+      breakfastPax: Number(breakfastPax || 0),
     });
   };
 
@@ -93,9 +93,8 @@ export default function GroupQuoteFormFields({ initialQuote, onSubmit, saving, s
       )}
 
       <div className="grid items-end gap-4 sm:grid-cols-2">
-        <label className="flex min-h-11 items-center gap-3 rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold">
-          <input type="checkbox" checked={breakfastIncluded} onChange={(event) => setBreakfastIncluded(event.target.checked)} className="h-4 w-4 accent-[#b41f1f]" />
-          Breakfast included
+        <label className="text-sm font-semibold">Breakfast Pax
+          <input required min="0" step="1" type="number" value={breakfastPax} onChange={(event) => setBreakfastPax(event.target.value)} className={inputClassName} />
         </label>
       </div>
       {children}
