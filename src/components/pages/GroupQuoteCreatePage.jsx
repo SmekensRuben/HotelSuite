@@ -101,6 +101,17 @@ export default function GroupQuoteCreatePage() {
     breakfastIncluded: analysisQuote?.breakfastIncluded,
   }), [analysis, analysisQuote, quoteSettings]);
 
+  const forecastSummary = useMemo(() => {
+    const days = Object.values(forecastData?.byDate || {});
+    const confidenceOrder = { high: 0, medium: 1, low: 2 };
+    return {
+      displacedRooms: days.reduce((total, day) => total + Number(day.displacedRooms || 0), 0),
+      confidence: days.length
+        ? days.reduce((lowest, day) => confidenceOrder[day.forecastConfidence] > confidenceOrder[lowest] ? day.forecastConfidence : lowest, "high")
+        : null,
+    };
+  }, [forecastData]);
+
   const toggleYear = (year) => setSelectedYears((current) => current.includes(year)
     ? current.filter((item) => item !== year)
     : [...current, year].sort((a, b) => b - a));
@@ -133,18 +144,35 @@ export default function GroupQuoteCreatePage() {
       </div>
 
       <Card className="border border-gray-200 bg-white shadow-sm">
-        <GroupQuoteFormFields onSubmit={setAnalysisQuote} saving={false} submitLabel="Start Analysis">
-          <fieldset><legend className="mb-2 text-sm font-semibold">Historical years</legend><HistoricalYearsDropdown years={availableYears} selectedYears={selectedYears} onToggle={toggleYear} /></fieldset>
-        </GroupQuoteFormFields>
+        <GroupQuoteFormFields onSubmit={setAnalysisQuote} saving={false} submitLabel="Start Analysis" />
+      </Card>
+
+      <Card className="border border-gray-200 bg-white shadow-sm">
+        <details>
+          <summary className="cursor-pointer font-semibold">Advanced / Model Settings</summary>
+          <div className="mt-4 border-t border-gray-200 pt-4">
+            <fieldset><legend className="mb-2 text-sm font-semibold">Historical years</legend><HistoricalYearsDropdown years={availableYears} selectedYears={selectedYears} onToggle={toggleYear} /></fieldset>
+          </div>
+        </details>
       </Card>
 
       {analysisQuote && <section className="space-y-4">
         <div><h2 className="text-2xl font-semibold">Analysis overview</h2><p className="text-sm text-gray-600">Comparable available dates with the same day of week for each selected year.</p></div>
         <Card className="border border-gray-200 bg-white shadow-sm">
+          <div className="mb-4"><h3 className="text-lg font-semibold">Quote recommendation</h3><p className="text-sm text-gray-600">Commercial recommendation fields are reserved for the next model phase.</p></div>
+          <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">Recommended Rate</dt><dd className="mt-1 text-xl font-semibold">—</dd></div>
+            <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">Floor Rate</dt><dd className="mt-1 text-xl font-semibold">—</dd></div>
+            <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">Displaced Rooms</dt><dd className="mt-1 text-xl font-semibold">{forecastLoading ? "…" : forecastData ? rooms(forecastSummary.displacedRooms) : "—"}</dd></div>
+            <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">Net Contribution</dt><dd className="mt-1 text-xl font-semibold">—</dd></div>
+            <div className="rounded-lg bg-gray-50 p-3"><dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">Confidence</dt><dd className="mt-1 text-xl font-semibold capitalize">{forecastLoading ? "…" : forecastSummary.confidence || "—"}</dd></div>
+          </dl>
+        </Card>
+        <Card className="border border-gray-200 bg-white shadow-sm">
           <div className="mb-4 flex flex-wrap items-end justify-between gap-2"><div><h3 className="text-lg font-semibold">Transient-demand forecast</h3><p className="text-sm text-gray-600">PMS snapshot {forecastData?.currentSnapshotDate || "unavailable"} · Lighthouse snapshot {forecastData?.lighthouseSnapshotDate || "unavailable"}</p></div>{forecastLoading && <span className="text-sm text-gray-500">Loading forecast…</span>}</div>
-          <div className="space-y-4">{Object.values(forecastData?.byDate || {}).map((result) => <div key={result.stayDate} className={`rounded-lg border p-4 ${result.forecastConfidence === "low" ? "border-amber-300 bg-amber-50" : "border-gray-200"}`}>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold">{result.stayDate}</h4><span className={`rounded-full px-2.5 py-1 text-xs font-bold uppercase ${result.forecastConfidence === "high" ? "bg-green-100 text-green-800" : result.forecastConfidence === "medium" ? "bg-blue-100 text-blue-800" : "bg-amber-200 text-amber-900"}`}>{result.forecastConfidence} confidence</span></div>
-            <dl className="grid gap-x-5 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <div className="space-y-3">{Object.values(forecastData?.byDate || {}).map((result) => <details key={result.stayDate} className={`rounded-lg border ${result.forecastConfidence === "low" ? "border-amber-300 bg-amber-50" : "border-gray-200"}`}>
+            <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 p-4"><span className="font-semibold">{result.stayDate}</span><span className="flex items-center gap-3"><span className="text-xs font-semibold uppercase text-gray-500">View details</span><span className="text-sm text-gray-600">{rooms(result.displacedRooms)} displaced rooms</span><span className={`rounded-full px-2.5 py-1 text-xs font-bold uppercase ${result.forecastConfidence === "high" ? "bg-green-100 text-green-800" : result.forecastConfidence === "medium" ? "bg-blue-100 text-blue-800" : "bg-amber-200 text-amber-900"}`}>{result.forecastConfidence} confidence</span></span></summary>
+            <div className="border-t border-inherit p-4"><dl className="grid gap-x-5 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
               <div><dt className="text-gray-500">Historical selection tier</dt><dd className="font-medium">{result.historicalSelectionTier}</dd></div>
               <div><dt className="text-gray-500">Selected historical years</dt><dd className="font-medium">{result.historicalYears?.join(", ") || "None"}</dd></div>
               <div><dt className="text-gray-500">Historical sample used / censored</dt><dd className="font-medium">{result.historicalSelectedCount} / {result.historicalCensoredCount}</dd></div>
@@ -163,8 +191,12 @@ export default function GroupQuoteCreatePage() {
               <div><dt className="text-gray-500">Non-displacing group rooms</dt><dd className="font-semibold text-green-700">{rooms(result.nonDisplacingGroupRooms)} rooms</dd></div>
             </dl>
             {result.warnings.length > 0 && <div className="mt-3 rounded border border-amber-300 bg-white/70 p-2 text-sm text-amber-900"><strong>Warnings:</strong><ul className="ml-5 list-disc">{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
-          </div>)}</div>
+            </div>
+          </details>)}</div>
         </Card>
+        <details className="rounded-lg border border-gray-200 bg-white shadow-sm">
+          <summary className="cursor-pointer p-4 text-lg font-semibold">Historical reference</summary>
+          <div className="space-y-4 border-t border-gray-200 p-4">
         {analysis.length ? analysis.map(({ year, matches }) => {
           const yearTotal = matches.reduce((total, match) => total + match.displacedRevenue, 0);
           return <Card key={year}>
@@ -211,6 +243,8 @@ export default function GroupQuoteCreatePage() {
             <tfoot className="border-t-2 border-gray-200 bg-gray-50 font-semibold"><tr><td className="px-4 py-2">Average displacement</td><td className="px-4 py-2">{currency(analysisSummary.averageDisplacement)}</td></tr><tr className="text-green-800"><td className="px-4 py-2">Profitable from</td><td className="px-4 py-2">{currency(analysisSummary.profitablePrice)} per room</td></tr></tfoot>
           </table></div>
         </Card>}
+          </div>
+        </details>
         <div className="flex justify-end"><button type="button" disabled={saving || forecastLoading || !forecastData} onClick={handleSave} className="rounded-lg bg-[#b41f1f] px-5 py-2 font-semibold text-white disabled:bg-gray-400">{saving ? "Saving quote..." : "Save Quote"}</button></div>
       </section>}
     </PageContainer>
