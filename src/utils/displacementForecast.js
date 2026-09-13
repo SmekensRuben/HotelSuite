@@ -1,3 +1,5 @@
+import { applyInflationAdjustment } from "./quoteAnalysis";
+
 export const DISPLACEMENT_FORECAST_CONFIG = {
   historicalYears: 5,
   minimumPreferredHistoricalSample: 6,
@@ -186,11 +188,19 @@ export function calculateDisplacementScenario({ sellableInventory, existingGroup
   return { availableTransientWithoutGroup, transientSoldWithoutGroup, availableTransientWithGroup, transientSoldWithGroup, displacedRooms, nonDisplacingGroupRooms: requested - displacedRooms };
 }
 
-export function calculateDisplacementDay({ stayDate, requestedGroupRooms, currentOtb, historicalRows = [], lighthouseByDate = {}, maxHistoricalGroupShare = 1, selectedHistoricalYears, config = DISPLACEMENT_FORECAST_CONFIG }) {
+export function calculateDisplacementDay({ stayDate, requestedGroupRooms, currentOtb, historicalRows = [], lighthouseByDate = {}, maxHistoricalGroupShare = 1, selectedHistoricalYears, inflationPercentage = 0, config = DISPLACEMENT_FORECAST_CONFIG }) {
   const current = mapCurrentOtb(currentOtb);
   const observations = prepareHistoricalObservations(historicalRows, config);
   const historical = selectHistoricalObservations(stayDate, observations, maxHistoricalGroupShare, config, selectedHistoricalYears);
   const historicalMedianTransientOccupancy = median(historical.selected.map((item) => item.transientOccupancyRatio));
+  const targetYear = utcDate(stayDate)?.getUTCFullYear();
+  const inflationAdjustedHistoricalAdrValues = historical.selected.flatMap((item) => {
+    const adr = numeric(item.averageRoomRate);
+    const historicalYear = utcDate(item.date)?.getUTCFullYear();
+    if (adr === null || adr <= 0 || !targetYear || !historicalYear) return [];
+    return [applyInflationAdjustment(adr, inflationPercentage, Math.max(0, targetYear - historicalYear))];
+  });
+  const expectedTransientRoomRate = median(inflationAdjustedHistoricalAdrValues);
   const historicalBaselineRooms = historicalMedianTransientOccupancy === null ? null : historicalMedianTransientOccupancy * current.sellableInventory;
   const lighthouse = calculateLighthouseModifier(stayDate, lighthouseByDate, config);
   const adjustedHistoricalDemand = historicalBaselineRooms === null ? null : historicalBaselineRooms * lighthouse.modifier;
@@ -220,6 +230,7 @@ export function calculateDisplacementDay({ stayDate, requestedGroupRooms, curren
     historicalCensoredCount: historical.counts.censored,
     historicalSelectedCount: historical.selected.length,
     historicalMedianTransientOccupancy,
+    expectedTransientRoomRate,
     historicalBaselineRooms,
     targetLighthouseMarketDemand: lighthouse.targetDemand,
     comparableLighthouseMarketDemand: lighthouse.comparableDemand,

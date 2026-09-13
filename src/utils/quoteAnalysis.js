@@ -4,9 +4,12 @@ function addDays(dateValue, days) {
   return date.toISOString().slice(0, 10);
 }
 
+export function applyInflationAdjustment(value, inflationPercentage, yearsDifference) {
+  return Number(value) * ((1 + Number(inflationPercentage || 0) / 100) ** Number(yearsDifference || 0));
+}
+
 export function calculateDisplacementMetrics({ averageRoomRate, calculatedOccRooms, calculatedInventoryRooms, requestedGroupRooms, inflationPercentage, displacementThresholdPercentage, yearsAgo, displacedRoomsOverride }) {
-  const adjustedAverageRoomRate = Number(averageRoomRate || 0)
-    * ((1 + Number(inflationPercentage || 0) / 100) ** Number(yearsAgo || 0));
+  const adjustedAverageRoomRate = applyInflationAdjustment(Number(averageRoomRate || 0), inflationPercentage, yearsAgo);
   const rawDisplacedRooms = (Number(calculatedOccRooms || 0) + Number(requestedGroupRooms || 0))
     - (Number(calculatedInventoryRooms || 0) * (1 - Number(displacementThresholdPercentage || 0) / 100));
   const displacedRooms = Number.isFinite(displacedRoomsOverride)

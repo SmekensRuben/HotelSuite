@@ -7,13 +7,14 @@ import { Card } from "../layout/Card";
 import GroupQuoteFormFields from "./GroupQuoteFormFields";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getQuote, updateQuote } from "../../services/firebaseQuotes";
+import { getGroupQuoteSettings, getQuote, updateQuote } from "../../services/firebaseQuotes";
 
 export default function GroupQuoteEditPage() {
   const navigate = useNavigate();
   const { quoteId } = useParams();
   const { hotelUid } = useHotelContext();
   const [quote, setQuote] = useState(null);
+  const [quoteSettings, setQuoteSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const today = useMemo(() => new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }), []);
@@ -21,7 +22,7 @@ export default function GroupQuoteEditPage() {
 
   useEffect(() => {
     if (!hotelUid || !quoteId) return;
-    getQuote(hotelUid, quoteId).then((result) => { setQuote(result); setLoading(false); });
+    Promise.all([getQuote(hotelUid, quoteId), getGroupQuoteSettings(hotelUid)]).then(([result, settings]) => { setQuote(result); setQuoteSettings(settings); setLoading(false); });
   }, [hotelUid, quoteId]);
 
   const handleUpdate = async (payload) => {
@@ -36,7 +37,7 @@ export default function GroupQuoteEditPage() {
     <HeaderBar today={today} onLogout={handleLogout} />
     <PageContainer className="space-y-6 pb-10">
       <div className="flex items-center justify-between gap-3"><div><p className="text-sm uppercase tracking-wide text-gray-500">Revenue / Group Quotes</p><h1 className="text-3xl font-semibold">Edit Group Quote</h1></div><button type="button" onClick={() => navigate(`/revenue/group-quotes/${quoteId}`)} className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-100"><ArrowLeft className="h-4 w-4" /> Back to detail</button></div>
-      {loading ? <p className="text-gray-600">Loading quote...</p> : !quote ? <Card>Group quote not found.</Card> : <Card><GroupQuoteFormFields initialQuote={quote} onSubmit={handleUpdate} saving={saving} submitLabel="Save Quote" /></Card>}
+      {loading ? <p className="text-gray-600">Loading quote...</p> : !quote ? <Card>Group quote not found.</Card> : <Card><GroupQuoteFormFields initialQuote={quote} defaultGroupCommissionPercentage={quoteSettings.defaultGroupCommissionPercentage} onSubmit={handleUpdate} saving={saving} submitLabel="Save Quote" /></Card>}
     </PageContainer>
   </div>;
 }
