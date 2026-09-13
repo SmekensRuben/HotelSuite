@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useHotelContext } from "contexts/HotelContext";
 import { db, doc, getDoc } from "../../firebaseConfig";
-import { BedDouble, BellRing, BriefcaseBusiness, ClipboardList, FileText, Package, Settings2, ShoppingBasket, Sparkles, TrendingUp, Truck, Users } from "lucide-react";
+import { BedDouble, BellRing, BriefcaseBusiness, CalendarDays, ClipboardList, FileText, Package, Settings2, ShoppingBasket, Sparkles, TrendingUp, Truck, Users } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
 
 export default function HeaderBar({ today, onLogout }) {
@@ -97,6 +97,12 @@ export default function HeaderBar({ today, onLogout }) {
       label: "Groups",
       action: () => navigate("/me/groups"),
       icon: BriefcaseBusiness,
+      visible: canViewGroups,
+    },
+    {
+      label: "Demand Calendar",
+      action: () => navigate("/me/demand-calendar"),
+      icon: CalendarDays,
       visible: canViewGroups,
     },
   ].filter((item) => item.visible !== false);

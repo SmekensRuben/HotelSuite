@@ -76,6 +76,10 @@ import GroupQuoteCreatePage from "./components/pages/GroupQuoteCreatePage.jsx";
 import GroupQuoteDetailPage from "./components/pages/GroupQuoteDetailPage.jsx";
 import GroupQuoteEditPage from "./components/pages/GroupQuoteEditPage.jsx";
 import GroupQuoteSettingsPage from "./components/pages/GroupQuoteSettingsPage.jsx";
+import DemandCalendarPage from "./components/pages/DemandCalendarPage.jsx";
+import DemandCalendarEventEditorPage from "./components/pages/DemandCalendarEventEditorPage.jsx";
+import DemandCalendarEventDetailPage from "./components/pages/DemandCalendarEventDetailPage.jsx";
+import DemandCalendarCategoriesPage from "./components/pages/DemandCalendarCategoriesPage.jsx";
 
 export default function AppRouter() {
   return (
@@ -479,6 +483,11 @@ export default function AppRouter() {
           </ProtectedRoute>
         }
       />
+      <Route path="/me/demand-calendar" element={<ProtectedRoute feature="groups" action="read"><DemandCalendarPage /></ProtectedRoute>} />
+      <Route path="/me/demand-calendar/new" element={<ProtectedRoute feature="groups" action="create"><DemandCalendarEventEditorPage /></ProtectedRoute>} />
+      <Route path="/me/demand-calendar/categories" element={<ProtectedRoute feature="groups" action="update"><DemandCalendarCategoriesPage /></ProtectedRoute>} />
+      <Route path="/me/demand-calendar/:eventId" element={<ProtectedRoute feature="groups" action="read"><DemandCalendarEventDetailPage /></ProtectedRoute>} />
+      <Route path="/me/demand-calendar/:eventId/edit" element={<ProtectedRoute feature="groups" action="update"><DemandCalendarEventEditorPage /></ProtectedRoute>} />
       <Route
         path="/me/groups/new"
         element={
