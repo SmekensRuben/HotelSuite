@@ -25,6 +25,8 @@ import { buildHistoricalDateAnalysis, calculateAnalysisSummary } from "../../uti
 import { getInclusiveQuoteDates } from "../../utils/quoteDates";
 import { calculateDisplacementDay, DISPLACEMENT_FORECAST_CONFIG } from "../../utils/displacementForecast";
 import { calculateGroupContribution, simulateGroupQuote } from "../../utils/contributionAnalysis";
+import { getDemandCalendarEvents } from "../../services/firebaseDemandCalendar";
+import { backtestGroupDemandForecast, calculateGroupDemandForecast } from "../../utils/groupDemandForecast";
 
 const currency = (value) => `€${Number(value || 0).toFixed(2)}`;
 const rooms = (value) => value === null || value === undefined ? "—" : Math.round(value).toLocaleString();
@@ -44,6 +46,7 @@ export default function GroupQuoteCreatePage() {
   const [analysisQuote, setAnalysisQuote] = useState(null);
   const [saving, setSaving] = useState(false);
   const [forecastData, setForecastData] = useState(null);
+  const [groupForecastData, setGroupForecastData] = useState(null);
   const [forecastLoading, setForecastLoading] = useState(false);
   const [testGroupRate, setTestGroupRate] = useState("");
   const today = useMemo(() => new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }), []);
@@ -63,9 +66,10 @@ export default function GroupQuoteCreatePage() {
     if (!hotelUid || !analysisQuote) return;
     let active = true;
     setForecastData(null);
+    setGroupForecastData(null);
     setForecastLoading(true);
-    Promise.all([getLatestHistoryForecastSnapshot(hotelUid), getLatestLighthouseSnapshot(hotelUid)])
-      .then(([current, lighthouse]) => {
+    Promise.all([getLatestHistoryForecastSnapshot(hotelUid), getLatestLighthouseSnapshot(hotelUid), getDemandCalendarEvents(hotelUid)])
+      .then(([current, lighthouse, events]) => {
         if (!active) return;
         const maxShare = Number(quoteSettings.maxHistoricalGroupSharePercentage);
         const byDate = Object.fromEntries(getInclusiveQuoteDates(analysisQuote.startDate, analysisQuote.endDate).map((stayDate) => [stayDate,
@@ -82,6 +86,8 @@ export default function GroupQuoteCreatePage() {
           })
         ]));
         setForecastData({ byDate, currentSnapshotDate: current.snapshotDate, lighthouseSnapshotDate: lighthouse.snapshotDate });
+        const groupByDate = Object.fromEntries(getInclusiveQuoteDates(analysisQuote.startDate, analysisQuote.endDate).map((stayDate) => [stayDate, calculateGroupDemandForecast({ stayDate, currentOtb: current.byDate[stayDate], historicalRows: consideredDates, events })]));
+        setGroupForecastData({ byDate: groupByDate, backtest: backtestGroupDemandForecast({ historicalRows: consideredDates, events }) });
       })
       .finally(() => { if (active) setForecastLoading(false); });
     return () => { active = false; };
@@ -127,6 +133,7 @@ export default function GroupQuoteCreatePage() {
         ...analysisQuote,
         analysisYears: selectedYears,
         displacementForecast: Object.values(forecastData?.byDate || {}),
+        groupDemandForecast: Object.values(groupForecastData?.byDate || {}),
       });
       navigate(`/revenue/group-quotes/${quoteId}`);
     } finally {
@@ -207,6 +214,18 @@ export default function GroupQuoteCreatePage() {
             {result.warnings.length > 0 && <div className="mt-3 rounded border border-amber-300 bg-white/70 p-2 text-sm text-amber-900"><strong>Warnings:</strong><ul className="ml-5 list-disc">{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
             </div>
           </details>)}</div>
+        </Card>
+        <Card className="border border-gray-200 bg-white shadow-sm">
+          <div className="mb-4"><p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Group Demand Forecast</p><h3 className="mt-1 text-lg font-semibold">Expected final group demand</h3><p className="mt-1 text-sm text-gray-600">Group Forecast V1 estimates expected final realized group demand from historical comparable dates. Historical booking pace and inquiry pipeline are not yet included.</p></div>
+          <div className="space-y-3">{Object.values(groupForecastData?.byDate || {}).map((result) => <details key={result.stayDate} className={`rounded-lg border ${result.confidence === "LOW" ? "border-amber-300 bg-amber-50" : "border-gray-200"}`}>
+            <summary className="grid cursor-pointer list-none gap-3 p-4 sm:grid-cols-[1fr_repeat(4,auto)] sm:items-center"><strong>{result.stayDate}</strong><span className="text-sm">Current Group OTB <strong>{rooms(result.currentGroupOtb)}</strong></span><span className="text-sm">Expected Final Group Demand <strong>{rooms(result.forecastBase)}</strong></span><span className="text-sm">Implied Remaining Group Potential <strong>+{rooms(result.remainingPotentialBase)}</strong></span><span className="text-xs font-bold">{result.confidence} · View details</span></summary>
+            <div className="space-y-4 border-t border-inherit p-4"><dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              {[['Current Group OTB', rooms(result.currentGroupOtb)], ['Current sellable inventory', rooms(result.currentSellableInventory)], ['Historical P25 / P50 / P75', `${rooms(result.historicalP25GroupRooms)} / ${rooms(result.historicalP50GroupRooms)} / ${rooms(result.historicalP75GroupRooms)}`], ['Low / Base / High forecast', `${rooms(result.forecastLow)} / ${rooms(result.forecastBase)} / ${rooms(result.forecastHigh)}`], ['Implied remaining potential', `${rooms(result.remainingPotentialLow)} / ${rooms(result.remainingPotentialBase)} / ${rooms(result.remainingPotentialHigh)}`], ['Comparable tier', result.comparableTier || 'Unavailable'], ['Historical sample size', result.sampleSize], ['Calendar context', result.targetCalendarFeatures.calendarRegime.join(', ')], ['Forecast method', 'Historical Final Group Demand'], ['Pace adjustment', 'Not available yet']].map(([label, value]) => <div key={label}><dt className="text-gray-500">{label}</dt><dd className="font-medium">{value}</dd></div>)}
+            </dl><div className="overflow-x-auto"><table className="min-w-full text-xs"><thead><tr className="border-b text-left text-gray-500">{['Historical Date', 'DOW', 'Calendar Context', 'Final Group Rooms', 'Sellable Inventory', 'Final Group Share', 'Normalized Group Rooms'].map((heading) => <th key={heading} className="p-2">{heading}</th>)}</tr></thead><tbody>{result.comparables.map((item) => <tr key={item.stayDate} className="border-b"><td className="p-2">{item.stayDate}</td><td className="p-2">{item.dayOfWeek}</td><td className="p-2">{item.calendarContext}</td><td className="p-2">{rooms(item.finalGroupRooms)}</td><td className="p-2">{rooms(item.sellableInventory)}</td><td className="p-2">{percentage(item.groupShare)}</td><td className="p-2">{item.normalizedGroupRooms.toFixed(1)}</td></tr>)}</tbody></table></div>
+            {result.warnings.length > 0 && <div className="rounded border border-amber-300 bg-white/70 p-2 text-sm text-amber-900"><strong>Warnings:</strong><ul className="ml-5 list-disc">{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
+            </div>
+          </details>)}</div>
+          {groupForecastData?.backtest && <details className="mt-4 rounded border border-gray-200"><summary className="cursor-pointer p-3 text-sm font-semibold">Development backtest metrics</summary><div className="grid gap-3 border-t p-3 text-sm sm:grid-cols-5">{[['Sample', groupForecastData.backtest.sampleCount], ['MAE', rooms(groupForecastData.backtest.mae)], ['Median absolute error', rooms(groupForecastData.backtest.medianAbsoluteError)], ['Bias', rooms(groupForecastData.backtest.bias)], ['P25–P75 coverage', percentage(groupForecastData.backtest.intervalCoverage)]].map(([label, value]) => <div key={label}><span className="text-gray-500">{label}</span><strong className="block">{value}</strong></div>)}</div></details>}
         </Card>
         <details className="rounded-lg border border-gray-200 bg-white shadow-sm">
           <summary className="cursor-pointer p-4 text-lg font-semibold">Historical Performance Reference</summary>
