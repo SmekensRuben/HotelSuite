@@ -1,4 +1,4 @@
-import { addDoc, collection, db, deleteDoc, doc, getDoc, onSnapshot, serverTimestamp, updateDoc } from "../firebaseConfig";
+import { addDoc, collection, db, deleteDoc, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from "../firebaseConfig";
 
 // Firestore collections are nested beneath the selected hotel. The extra `categories`
 // segment makes the requested settings document a valid Firestore collection parent.
@@ -24,3 +24,9 @@ export const deleteDemandCalendarEvent = (hotelUid, eventId) => deleteDoc(doc(db
 export const createDemandCalendarCategory = async (hotelUid, payload) => (await addDoc(collection(db, demandCalendarCategoriesPath(hotelUid)), { ...payload, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })).id;
 export const updateDemandCalendarCategory = (hotelUid, categoryId, payload) => updateDoc(doc(db, demandCalendarCategoriesPath(hotelUid), categoryId), { ...payload, updatedAt: serverTimestamp() });
 export const deleteDemandCalendarCategory = (hotelUid, categoryId) => deleteDoc(doc(db, demandCalendarCategoriesPath(hotelUid), categoryId));
+
+export async function importDemandCalendar(hotelUid, { categories, events }) {
+  if (!hotelUid) throw new Error("Hotel is required.");
+  await Promise.all(categories.map(({ id, ...category }) => setDoc(doc(db, demandCalendarCategoriesPath(hotelUid), id), { ...category, updatedAt: serverTimestamp() })));
+  await Promise.all(events.map(({ id, ...event }) => setDoc(doc(db, demandCalendarEventsPath(hotelUid), id), { ...event, updatedAt: serverTimestamp() })));
+}
