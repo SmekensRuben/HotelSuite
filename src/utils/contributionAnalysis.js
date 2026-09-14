@@ -1,9 +1,13 @@
 import { normalizeRoomVatPercentage, toRoomRateExVat, toRoomRateInclVat } from "./roomRateVat";
+import { calculateFutureGroupValue, FUTURE_GROUP_VALUE_WARNINGS } from "./futureGroupValue";
 
 const number = (value) => Number(value);
 const WARNING_CODES = new Map([
-  ["Future group contribution uses current prospect pipeline ADR as a room-rate proxy.", "FUTURE_GROUP_PIPELINE_ADR"],
   ["Future group contribution currently excludes unknown future BQT and breakfast economics.", "FUTURE_GROUP_ECONOMICS_EXCLUDED"],
+  [FUTURE_GROUP_VALUE_WARNINGS.LOW_EVIDENCE, "FUTURE_GROUP_VALUE_LOW_EVIDENCE"],
+  [FUTURE_GROUP_VALUE_WARNINGS.CURRENT_ONLY, "FUTURE_GROUP_VALUE_CURRENT_ONLY"],
+  [FUTURE_GROUP_VALUE_WARNINGS.UNAVAILABLE, "FUTURE_GROUP_VALUE_UNAVAILABLE"],
+  ["Future group contribution uses the default group commission because no separate expected future group commission is configured.", "FUTURE_GROUP_COMMISSION_DEFAULT_FALLBACK"],
   ["Group Forecast V1 does not yet use historical booking pace.", "GROUP_PACE_UNAVAILABLE"],
   ["High uncertainty in future group-demand forecast.", "FUTURE_GROUP_LOW_CONFIDENCE"],
   ["Group forecast is based on a limited but contextually relevant historical sample.", "GROUP_SAMPLE_LIMITED"],
@@ -34,6 +38,9 @@ export function calculateDemandCapacitySummary(transientForecast = {}, groupFore
 }
 
 export function normalizeContributionSettings(settings = {}) {
+  const futureGroupCommissionConfigured = settings.expectedFutureGroupCommissionPercentage !== null
+    && settings.expectedFutureGroupCommissionPercentage !== undefined
+    && settings.expectedFutureGroupCommissionPercentage !== "";
   const normalized = {
     variableRoomCost: number(settings.variableRoomCost),
     breakfastCostPerPerson: number(settings.breakfastCostPerPerson),
@@ -42,6 +49,9 @@ export function normalizeContributionSettings(settings = {}) {
     bqtContributionMargin: number(settings.bqtContributionMarginPercentage) / 100,
     transientDistributionCost: number(settings.transientDistributionCostPercentage) / 100,
     defaultGroupCommission: number(settings.defaultGroupCommissionPercentage) / 100,
+    expectedFutureGroupCommission: number(futureGroupCommissionConfigured ? settings.expectedFutureGroupCommissionPercentage : settings.defaultGroupCommissionPercentage) / 100,
+    futureGroupCommissionDefaultFallback: !futureGroupCommissionConfigured,
+    inflationPercentage: number(settings.inflationPercentage || 0),
     roomVatPercentage: normalizeRoomVatPercentage(settings.roomVatPercentage),
   };
   const errors = [];
@@ -54,6 +64,7 @@ export function normalizeContributionSettings(settings = {}) {
   if (!Number.isFinite(normalized.bqtContributionMargin) || normalized.bqtContributionMargin < 0 || normalized.bqtContributionMargin > 1) errors.push("bqtContributionMarginPercentage must be between 0 and 100.");
   if (!Number.isFinite(normalized.transientDistributionCost) || normalized.transientDistributionCost < 0 || normalized.transientDistributionCost >= 1) errors.push("transientDistributionCostPercentage must be at least 0 and less than 100.");
   if (!Number.isFinite(normalized.defaultGroupCommission) || normalized.defaultGroupCommission < 0 || normalized.defaultGroupCommission >= 1) errors.push("defaultGroupCommissionPercentage must be at least 0 and less than 100.");
+  if (!Number.isFinite(normalized.expectedFutureGroupCommission) || normalized.expectedFutureGroupCommission < 0 || normalized.expectedFutureGroupCommission >= 1) errors.push("expectedFutureGroupCommissionPercentage must be at least 0 and less than 100.");
   if (errors.length) throw new Error(errors.join(" "));
   return normalized;
 }
@@ -115,12 +126,23 @@ export function calculateGroupContribution({ quote, forecastByDate = {}, setting
     const transientContributionPerDisplacedRoom = expectedTransientRoomRate === null ? null : transientRoomContributionPerRoom + transientBreakfastContributionPerRoom;
     const pipelineRooms = Math.max(0, number(forecast.groupProspectPipelineRooms) || 0);
     const pipelineRevenue = Math.max(0, number(forecast.groupProspectPipelineRevenue) || 0);
-    const existingGroupRevenue = Math.max(0, number(forecast.existingGroupRevenue) || 0);
-    let expectedFutureGroupRoomRate = null, futureGroupRateSource = null;
-    if (pipelineRooms > 0 && pipelineRevenue > 0) { expectedFutureGroupRoomRate = pipelineRevenue / pipelineRooms; futureGroupRateSource = "PROSPECT_PIPELINE_ADR"; contributionWarnings.push("Future group contribution uses current prospect pipeline ADR as a room-rate proxy."); }
-    else if (currentGroupOtb > 0 && existingGroupRevenue > 0) { expectedFutureGroupRoomRate = existingGroupRevenue / currentGroupOtb; futureGroupRateSource = "EXISTING_GROUP_ADR"; }
-    const futureGroupContributionPerRoom = expectedFutureGroupRoomRate === null ? null : expectedFutureGroupRoomRate * (1 - groupCommission) - values.variableRoomCost;
+    const existingGroupRevenue = Math.max(0, number(forecast.currentDeductibleGroupRevenue ?? forecast.existingGroupRevenue) || 0);
+    const futureGroupValue = calculateFutureGroupValue({
+      stayDate: roomNight.date,
+      groupForecast,
+      inflationPercentage: values.inflationPercentage,
+      pipelineRooms,
+      pipelineRevenue,
+      currentGroupOtb,
+      currentDeductibleGroupRevenue: existingGroupRevenue,
+      currentDeductibleGroupRevenueSource: forecast.currentDeductibleGroupRevenueSource || (forecast.existingGroupRevenue ? "LEGACY_GROUP_REVENUE" : null),
+    });
+    const expectedFutureGroupRoomRate = futureGroupValue.expectedFutureGroupRoomRateExVat;
+    const futureGroupRateSource = futureGroupValue.futureGroupValueSource;
+    const futureGroupContributionPerRoom = expectedFutureGroupRoomRate === null ? null : expectedFutureGroupRoomRate * (1 - values.expectedFutureGroupCommission) - values.variableRoomCost;
     const expectedFutureGroupRoomRateInclVat = toRoomRateInclVat(expectedFutureGroupRoomRate, values.roomVatPercentage);
+    contributionWarnings.push(...futureGroupValue.warnings);
+    if (values.futureGroupCommissionDefaultFallback) contributionWarnings.push("Future group contribution uses the default group commission because no separate expected future group commission is configured.");
     const makeScenario = (groupDemand) => calculateScenario({ futureTransientDemand, futureGroupDemand: groupDemand, remainingCapacityBeforeNewGroup, requestedGroupRooms, transientValue: transientContributionPerDisplacedRoom, groupValue: futureGroupContributionPerRoom });
     let scenarios = { low: makeScenario(futureGroupDemandLow), base: makeScenario(futureGroupDemandBase), high: makeScenario(futureGroupDemandHigh), transientOnly: makeScenario(0) };
     // Saved analyses created before Future Group Demand do not contain its forecast.
@@ -133,14 +155,14 @@ export function calculateGroupContribution({ quote, forecastByDate = {}, setting
     }
     if (capacityConflictRooms > 0) contributionWarnings.push(`Requested group exceeds currently uncommitted physical capacity by ${capacityConflictRooms} rooms.`);
     if (Object.values(scenarios).some((scenario) => scenario.displacedFutureTransientRooms > 0) && transientContributionPerDisplacedRoom === null) contributionWarnings.push(`Historical ADR is missing for ${roomNight.date}; lost transient contribution is unavailable.`);
-    if ([scenarios.low, scenarios.base, scenarios.high].some((scenario) => scenario.displacedFutureGroupRooms > 0) && futureGroupContributionPerRoom === null) contributionWarnings.push("Future group demand is forecast, but no reliable future group rate/value estimate is available.");
+    if ([scenarios.low, scenarios.base, scenarios.high].some((scenario) => scenario.displacedFutureGroupRooms > 0) && futureGroupContributionPerRoom === null) contributionWarnings.push(FUTURE_GROUP_VALUE_WARNINGS.UNAVAILABLE);
     if (futureGroupDemandHigh > 0) contributionWarnings.push("Future group contribution currently excludes unknown future BQT and breakfast economics.");
     if (groupForecast.confidence === "LOW") contributionWarnings.push("High uncertainty in future group-demand forecast.");
     ["Group forecast is based on a limited but contextually relevant historical sample.", "Group forecast is based on a very limited historical sample.", "Historical Demand Calendar coverage is incomplete; normal-business matching may include unlabeled event periods.", "Current group OTB is missing; zero was used as a fallback.", "Historical group observations above 100% of sellable inventory were excluded."].forEach((message) => {
       if (groupForecast.warnings?.includes(message)) contributionWarnings.push(message);
     });
     contributionWarnings.push("Group Forecast V1 does not yet use historical booking pace.");
-    return { stayDate: roomNight.date, requestedGroupRooms, currentTransientOtb, currentGroupOtb, hardOtherCommittedRooms, hardCommittedRooms, sellableInventory, physicalCapacityAvailableForNewGroup, capacityConflictRooms, finalTransientDemandForecast, futureTransientDemand, futureGroupDemandLow, futureGroupDemandBase, futureGroupDemandHigh, remainingCapacityBeforeNewGroup, expectedTransientRoomRate, transientDistributionCostPerRoom, transientRoomContributionPerRoom, transientBreakfastContributionPerRoom, transientContributionPerDisplacedRoom, futureTransientContributionPerRoom: transientContributionPerDisplacedRoom, expectedFutureGroupRoomRate, expectedFutureGroupRoomRateExVat: expectedFutureGroupRoomRate, expectedFutureGroupRoomRateInclVat, futureGroupRateSource, futureGroupContributionPerRoom, scenarios, displacedRooms: scenarios.base.totalDisplacedFutureRooms, nonDisplacingGroupRooms: scenarios.base.nonDisplacingGroupRooms, lostTransientContribution: scenarios.transientOnly.lostFutureTransientContribution, contributionWarnings };
+    return { stayDate: roomNight.date, requestedGroupRooms, currentTransientOtb, currentGroupOtb, hardOtherCommittedRooms, hardCommittedRooms, sellableInventory, physicalCapacityAvailableForNewGroup, capacityConflictRooms, finalTransientDemandForecast, futureTransientDemand, futureGroupDemandLow, futureGroupDemandBase, futureGroupDemandHigh, remainingCapacityBeforeNewGroup, expectedTransientRoomRate, transientDistributionCostPerRoom, transientRoomContributionPerRoom, transientBreakfastContributionPerRoom, transientContributionPerDisplacedRoom, futureTransientContributionPerRoom: transientContributionPerDisplacedRoom, ...futureGroupValue, expectedFutureGroupRoomRate, expectedFutureGroupRoomRateExVat: expectedFutureGroupRoomRate, expectedFutureGroupRoomRateInclVat, futureGroupRateSource, expectedFutureGroupCommission: values.expectedFutureGroupCommission, futureGroupCommissionDefaultFallback: values.futureGroupCommissionDefaultFallback, futureGroupContributionPerRoom, scenarios, displacedRooms: scenarios.base.totalDisplacedFutureRooms, nonDisplacingGroupRooms: scenarios.base.nonDisplacingGroupRooms, lostTransientContribution: scenarios.transientOnly.lostFutureTransientContribution, contributionWarnings };
   });
   const totalRequestedGroupRoomNights = nightly.reduce((sum, night) => sum + night.requestedGroupRooms, 0);
   const totalDisplacedRooms = nightly.reduce((sum, night) => sum + night.displacedRooms, 0);
@@ -167,7 +189,7 @@ export function calculateGroupContribution({ quote, forecastByDate = {}, setting
   else if (floors.base.floor === null) warnings.push("Adjusted Economic Floor is unavailable because capacity or required contribution value is unavailable.");
   const allWarningDetails = [...warningDetails, ...warnings.filter((message) => !warningDetails.some((warning) => warning.message === message)).map((message) => ({ code: message.replace(/\W+/g, "_").replace(/^_|_$/g, "").toUpperCase(), message, stayDates: [] }))];
   const scenarioTotals = Object.fromEntries(["low", "base", "high"].map((key) => [key, { totalDisplacedRooms: sumScenario(key, "totalDisplacedFutureRooms"), displacedFutureTransientRooms: sumScenario(key, "displacedFutureTransientRooms"), displacedFutureGroupRooms: sumScenario(key, "displacedFutureGroupRooms"), lostFutureTransientContribution: sumScenario(key, "lostFutureTransientContribution"), lostFutureGroupContribution: sumScenario(key, "lostFutureGroupContribution"), totalLostContribution: sumScenario(key, "totalLostContribution"), economicFloorRate: floors[key].floor }]));
-  return { totalRequestedGroupRoomNights, totalDisplacedRooms, totalNonDisplacingGroupRooms, totalLostTransientContribution, totalLostContribution: scenarioTotals.base.totalLostContribution, totalLostFutureTransientContribution: scenarioTotals.base.lostFutureTransientContribution, totalLostFutureGroupContribution: scenarioTotals.base.lostFutureGroupContribution, groupVariableRoomCosts, breakfastPax, groupBreakfastCosts, totalBqtRevenue, bqtContributionMargin: values.bqtContributionMargin, bqtContribution, groupCommission, roomVatPercentage: values.roomVatPercentage, requiredNetGroupRoomRevenue: floors.base.requiredNet, requiredRoomRevenueAfterCostsExVat: floors.base.requiredNet, requiredGrossGroupRoomRevenue: floors.base.requiredGross, requiredCommissionableRoomRevenueExVat: floors.base.requiredGross, economicFloorRate: floors.base.floor, economicFloorRateExVat: floors.base.floor, economicFloorRateInclVat: floorInclVat(floors.base.floor), economicFloorLow: floors.low.floor, economicFloorBase: floors.base.floor, economicFloorHigh: floors.high.floor, economicFloorLowExVat: floors.low.floor, economicFloorBaseExVat: floors.base.floor, economicFloorHighExVat: floors.high.floor, economicFloorLowInclVat: floorInclVat(floors.low.floor), economicFloorBaseInclVat: floorInclVat(floors.base.floor), economicFloorHighInclVat: floorInclVat(floors.high.floor), transientOnlyEconomicFloor: floors.transientOnly.floor, transientOnlyEconomicFloorExVat: floors.transientOnly.floor, transientOnlyEconomicFloorInclVat: floorInclVat(floors.transientOnly.floor), scenarioTotals, nightly, warnings, warningDetails: allWarningDetails };
+  return { totalRequestedGroupRoomNights, totalDisplacedRooms, totalNonDisplacingGroupRooms, totalLostTransientContribution, totalLostContribution: scenarioTotals.base.totalLostContribution, totalLostFutureTransientContribution: scenarioTotals.base.lostFutureTransientContribution, totalLostFutureGroupContribution: scenarioTotals.base.lostFutureGroupContribution, groupVariableRoomCosts, breakfastPax, groupBreakfastCosts, totalBqtRevenue, bqtContributionMargin: values.bqtContributionMargin, bqtContribution, groupCommission, expectedFutureGroupCommission: values.expectedFutureGroupCommission, futureGroupCommissionDefaultFallback: values.futureGroupCommissionDefaultFallback, roomVatPercentage: values.roomVatPercentage, requiredNetGroupRoomRevenue: floors.base.requiredNet, requiredRoomRevenueAfterCostsExVat: floors.base.requiredNet, requiredGrossGroupRoomRevenue: floors.base.requiredGross, requiredCommissionableRoomRevenueExVat: floors.base.requiredGross, economicFloorRate: floors.base.floor, economicFloorRateExVat: floors.base.floor, economicFloorRateInclVat: floorInclVat(floors.base.floor), economicFloorLow: floors.low.floor, economicFloorBase: floors.base.floor, economicFloorHigh: floors.high.floor, economicFloorLowExVat: floors.low.floor, economicFloorBaseExVat: floors.base.floor, economicFloorHighExVat: floors.high.floor, economicFloorLowInclVat: floorInclVat(floors.low.floor), economicFloorBaseInclVat: floorInclVat(floors.base.floor), economicFloorHighInclVat: floorInclVat(floors.high.floor), transientOnlyEconomicFloor: floors.transientOnly.floor, transientOnlyEconomicFloorExVat: floors.transientOnly.floor, transientOnlyEconomicFloorInclVat: floorInclVat(floors.transientOnly.floor), scenarioTotals, nightly, warnings, warningDetails: allWarningDetails };
 }
 
 export function simulateGroupQuote(contribution, testGroupRate) {

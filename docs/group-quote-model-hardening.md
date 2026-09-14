@@ -1,6 +1,6 @@
 # Group Quote Model Hardening Notes
 
-This note records the controlled hardening applied after the AS-BUILT snapshot in `group-quote-analysis-as-built.md`. The Economic Floor, contribution, and VAT formulas were not changed.
+This note records the controlled hardening applied after the AS-BUILT snapshot in `group-quote-analysis-as-built.md`. Future Group Value V2 subsequently supersedes the future-group rate proxy described here; the Economic Floor structure and VAT formulas remain unchanged.
 
 ## Forecast selection
 
@@ -53,7 +53,7 @@ New quotes save:
 
 ```text
 analysisStatus: "CURRENT"
-analysisModelVersion: "group-contribution-v1-hardened"
+analysisModelVersion: "group-contribution-v2-group-value"
 integratedDisplacement: [{ stayDate, scenario: "BASE", ... }]
 ```
 

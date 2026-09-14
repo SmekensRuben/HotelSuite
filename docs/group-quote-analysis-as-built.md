@@ -4,6 +4,62 @@
 **Scope:** the current Create Quote analysis path and its supporting loaders, forecasts, contribution engine, VAT helpers, persistence, display, tests, and retained legacy helpers.  
 **Status vocabulary:** **IMPLEMENTED** means directly executed or exposed by current code; **ASSUMED** means a semantic interpretation encoded by the implementation but not independently guaranteed by source metadata; **NOT IMPLEMENTED** means no production code was found. Where the evidence cannot settle a point, this report says **UNCLEAR FROM CURRENT IMPLEMENTATION**.
 
+> **Implemented update — Future Group Value V2:** The repository has subsequently replaced the V1 pipeline-first future-group value proxy described in §§16, 19, 23, 32, 35, 37, and 39 below. The V2 behavior in the following subsection is authoritative wherever it conflicts with the original audit snapshot. Group demand volume, capacity, Economic Floor structure, and VAT formulas remain unchanged.
+
+### Future Group Value V2 (authoritative current implementation)
+
+For each target night, Group Forecast continues to select one authoritative comparable set for room-volume forecasting. Each selected comparable now retains the exact historical field `groupRevenueDeductible`. Future Group Value inspects **those same selected dates**; it does not rerun tier selection.
+
+A selected comparable supplies one historical ADR observation only when `groupRooms > 0`, `groupRevenueDeductible > 0`, both are finite, sellable inventory is positive, group rooms do not exceed inventory, and the date is earlier than the target. Selected-year and temporal rules are therefore inherited from Group Forecast. Zero-room dates remain valid demand observations but supply no rate evidence.
+
+```text
+rawHistoricalGroupAdrExVat_i = groupRevenueDeductible_i / groupRooms_i
+inflationAdjustedGroupAdrExVat_i = rawHistoricalGroupAdrExVat_i
+  × (1 + inflationPercentage/100)^(max(0,targetYear-historicalYear_i))
+
+historicalComparableGroupAdrExVat = median(one adjusted ADR per valid date)
+```
+
+The current forward signals remain value-only evidence:
+
+```text
+prospectPipelineAdrExVat = groupRevenueNonDeductible / groupRoomsNonDeductible
+currentExistingGroupAdrExVat = currentDeductibleGroupRevenue / currentGroupOtb
+```
+
+The current deductible revenue source prefers `groupRevenueDeductible`; `groupRevenue` is supported only as `LEGACY_GROUP_REVENUE`. Neither pipeline rooms nor current revenue signals alter forecast group demand or committed capacity.
+
+```text
+futureGroupAdrEvidence = [
+  each valid inflationAdjustedGroupAdrExVat once,
+  optional prospectPipelineAdrExVat once,
+  optional currentExistingGroupAdrExVat once
+]
+expectedFutureGroupRoomRateExVat = median(futureGroupAdrEvidence)
+```
+
+No signal is room-count weighted. Evidence metadata distinguishes `HISTORICAL_ONLY`, `HISTORICAL_AND_PIPELINE`, `HISTORICAL_AND_EXISTING`, `HISTORICAL_AND_CURRENT_SIGNALS`, `PIPELINE_ONLY`, `EXISTING_ONLY`, `PIPELINE_AND_EXISTING`, and `UNAVAILABLE`. The result exposes historical observations, historical evidence count, Group Forecast comparable count, both current signals, combined evidence, and source flags.
+
+Independent Future Group Value confidence is:
+
+* **HIGH:** at least five valid historical ADR observations and at least one current forward signal;
+* **MEDIUM:** at least three historical observations, or at least two historical observations plus a current signal;
+* **LOW:** any smaller nonempty evidence set;
+* `null`: no valid evidence and no fabricated rate.
+
+V2 separates commissions:
+
+* `quote.groupCommissionPercentage` applies to the proposed group, simulator, and proposed-group Economic Floor gross-up only.
+* `settings.expectedFutureGroupCommissionPercentage` applies only to hypothetical displaced future group value. It is stored as whole percentage points. If absent, `defaultGroupCommissionPercentage` is used and warning code `FUTURE_GROUP_COMMISSION_DEFAULT_FALLBACK` is emitted; the quote commission is never the fallback.
+
+```text
+futureGroupContributionPerRoom = expectedFutureGroupRoomRateExVat
+  × (1 - expectedFutureGroupCommissionPercentage/100)
+  - variableRoomCost
+```
+
+The same nightly ADR/contribution is used for Low/Base/High; only group room volume changes. Missing value invalidates the adjusted floor only if positive future group displacement must be valued. V2 warnings additionally use `FUTURE_GROUP_VALUE_LOW_EVIDENCE`, `FUTURE_GROUP_VALUE_CURRENT_ONLY`, and `FUTURE_GROUP_VALUE_UNAVAILABLE`. All rates remain excl. VAT internally; the existing room VAT helper produces `expectedFutureGroupRoomRateInclVat` for display.
+
 > This is an as-built report, not a target design. It does not treat prior prose, tests, or business requirements as proof when production code differs. File/line references below identify the implementation inspected.
 
 ## 1. Executive overview
@@ -146,6 +202,7 @@ All percentages below are stored as whole percentage points and divided by 100 w
 | `bqtContributionMarginPercentage` | **ACTIVE.** BQT revenue × fraction offsets required room revenue. | Required 0–100; otherwise settings error. |
 | `transientDistributionCostPercentage` | **ACTIVE.** Applied only to transient room ADR. | Required 0–<100; otherwise settings error. |
 | `defaultGroupCommissionPercentage` | **ACTIVE.** Form default and engine fallback only when override is null/undefined/empty. | Required 0–<100. In normal create, the required form sends a numeric override. |
+| `expectedFutureGroupCommissionPercentage` | **ACTIVE in Future Group Value V2.** Expected commission/distribution cost for hypothetical future group room revenue; independent from the proposed quote commission. | Whole percentage points, required 0–<100 when configured; missing hotels fall back to `defaultGroupCommissionPercentage` with `FUTURE_GROUP_COMMISSION_DEFAULT_FALLBACK`. |
 | `transientAverageBreakfastPax` | **ACTIVE.** Average breakfast people per displaced transient room. | Required/nonnegative. |
 | `transientAverageBreakfastRevenuePerPax` | **ACTIVE.** Transient breakfast revenue per person. | Required/nonnegative. |
 | `roomVatPercentage` | **ACTIVE.** Commercial floor/display and simulator conversions only. | Strictly required by `normalizeRoomVatPercentage`; missing throws before error-array handling. |

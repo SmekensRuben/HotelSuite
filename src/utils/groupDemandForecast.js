@@ -50,7 +50,7 @@ export function prepareGroupHistory(rows = [], events = []) {
     const inventory = number(row.calculatedInventoryRooms);
     const groupRooms = number(row.groupRooms);
     if ((row.historyFutureType && row.historyFutureType !== "History") || !date(stayDate) || inventory === null || inventory <= 0 || groupRooms === null || groupRooms < 0 || groupRooms > inventory) return [];
-    return [{ stayDate, finalGroupRooms: groupRooms, sellableInventory: inventory, groupShare: groupRooms / inventory, calendarFeatures: calendarFeatures(stayDate, events) }];
+    return [{ stayDate, finalGroupRooms: groupRooms, groupRevenueDeductible: number(row.groupRevenueDeductible), sellableInventory: inventory, groupShare: groupRooms / inventory, calendarFeatures: calendarFeatures(stayDate, events) }];
   });
 }
 
@@ -95,7 +95,7 @@ export function prepareGroupForecastData({ historicalRows = [], events = [], tar
     const inventory = number(row.calculatedInventoryRooms);
     const groupRooms = number(row.groupRooms);
     if ((row.historyFutureType && row.historyFutureType !== "History") || !date(stayDate) || inventory === null || inventory <= 0 || groupRooms === null || groupRooms < 0 || groupRooms > inventory) return [];
-    return [{ stayDate, finalGroupRooms: groupRooms, sellableInventory: inventory, groupShare: groupRooms / inventory, calendarFeatures: featuresFor(stayDate) }];
+    return [{ stayDate, finalGroupRooms: groupRooms, groupRevenueDeductible: number(row.groupRevenueDeductible), sellableInventory: inventory, groupShare: groupRooms / inventory, calendarFeatures: featuresFor(stayDate) }];
   });
   targetDates.forEach(featuresFor);
   const invalidGroupShareDates = historicalRows.flatMap((row) => {

@@ -14,7 +14,7 @@ const quote = {
 };
 
 describe("saved Group Quote analysis validity", () => {
-  it("uses a lightweight model version", () => expect(GROUP_QUOTE_ANALYSIS_MODEL_VERSION).toBe("group-contribution-v1-hardened"));
+  it("uses the Future Group Value V2 model version", () => expect(GROUP_QUOTE_ANALYSIS_MODEL_VERSION).toBe("group-contribution-v2-group-value"));
   it("does not invalidate analysis for a name-only edit", () => expect(hasAnalysisAffectingChanges(quote, { ...quote, name: "Renamed" })).toBe(false));
   it.each([
     ["stay dates", { ...quote, endDate: "2027-04-03" }],

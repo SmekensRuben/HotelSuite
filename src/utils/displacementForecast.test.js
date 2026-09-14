@@ -173,6 +173,10 @@ describe("daily forecast inputs", () => {
     expect(mapCurrentOtb({ groupRooms: 0 }).currentGroupOtbExists).toBe(true);
     expect(mapCurrentOtb({}).currentGroupOtbExists).toBe(false);
   });
+  it("prefers explicit deductible group revenue and documents the legacy fallback", () => {
+    expect(mapCurrentOtb({ groupRevenueDeductible: 1200, groupRevenue: 999 })).toMatchObject({ currentDeductibleGroupRevenue: 1200, currentDeductibleGroupRevenueSource: "GROUP_REVENUE_DEDUCTIBLE" });
+    expect(mapCurrentOtb({ groupRevenue: 999 })).toMatchObject({ currentDeductibleGroupRevenue: 999, currentDeductibleGroupRevenueSource: "LEGACY_GROUP_REVENUE" });
+  });
   it("does not infer committed rooms from calculated occupancy or numberOfRooms", () => {
     expect(mapCurrentOtb({ calculatedOccRooms: 999, numberOfRooms: 888, individualRooms: 20, groupRooms: 5 }).hardOtherCommittedRooms).toBe(0);
   });

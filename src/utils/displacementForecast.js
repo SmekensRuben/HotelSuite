@@ -63,12 +63,17 @@ export function getBusinessSeason(dateValue) {
 export function mapCurrentOtb(document) {
   const individualRooms = Math.max(0, numeric(document?.individualRooms) ?? 0);
   const groupRooms = Math.max(0, numeric(document?.groupRooms) ?? 0);
+  const explicitDeductibleGroupRevenue = numeric(document?.groupRevenueDeductible);
+  const legacyGroupRevenue = numeric(document?.groupRevenue);
+  const currentDeductibleGroupRevenue = explicitDeductibleGroupRevenue ?? legacyGroupRevenue;
   return {
     currentTransientOtb: individualRooms,
     existingGroupOtb: groupRooms,
     groupProspectPipelineRooms: Math.max(0, numeric(document?.groupRoomsNonDeductible) ?? 0),
     groupProspectPipelineRevenue: Math.max(0, numeric(document?.groupRevenueNonDeductible) ?? 0),
-    existingGroupRevenue: Math.max(0, numeric(document?.groupRevenue) ?? 0),
+    existingGroupRevenue: Math.max(0, currentDeductibleGroupRevenue ?? 0),
+    currentDeductibleGroupRevenue: Math.max(0, currentDeductibleGroupRevenue ?? 0),
+    currentDeductibleGroupRevenueSource: explicitDeductibleGroupRevenue !== null ? "GROUP_REVENUE_DEDUCTIBLE" : legacyGroupRevenue !== null ? "LEGACY_GROUP_REVENUE" : null,
     individualNonDeductibleRooms: Math.max(0, numeric(document?.individualRoomsNonDeductible) ?? 0),
     sellableInventory: Math.max(0, numeric(document?.calculatedInventoryRooms) ?? 0),
     // No current importer field is proven to be committed, consume sellable capacity,

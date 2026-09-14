@@ -114,6 +114,12 @@ describe("Group Demand Forecast V1", () => {
     expect(filtered.sampleSize).toBe(8);
     expect(filtered.historicalP75GroupRooms).not.toBe(all.historicalP75GroupRooms);
   });
+  it("exposes deductible group revenue only on the authoritative selected comparable set", () => {
+    const rows = history().map((row) => ({ ...row, groupRevenueDeductible: row.groupRooms * 200 }));
+    const result = calculateGroupDemandForecast({ stayDate: "2027-04-06", currentOtb: { calculatedInventoryRooms: 100, groupRooms: 0 }, historicalRows: rows, selectedHistoricalYears: [2023] });
+    expect(result.comparables).toHaveLength(4);
+    expect(result.comparables.every((item) => item.groupRevenueDeductible === item.finalGroupRooms * 200 && item.stayDate.startsWith("2023"))).toBe(true);
+  });
   it("recalculates confidence and warns after selected-year filtering limits the sample", () => {
     const result = forecast({ selectedHistoricalYears: [2023] });
     expect(result.sampleSize).toBe(4);
