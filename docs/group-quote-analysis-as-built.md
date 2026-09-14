@@ -20,32 +20,30 @@ inflationAdjustedGroupAdrExVat_i = rawHistoricalGroupAdrExVat_i
 historicalComparableGroupAdrExVat = median(one adjusted ADR per valid date)
 ```
 
-The current forward signals remain value-only evidence:
+Current deductible existing-group ADR remains an authoritative value-only signal:
 
 ```text
-prospectPipelineAdrExVat = groupRevenueNonDeductible / groupRoomsNonDeductible
-currentExistingGroupAdrExVat = currentDeductibleGroupRevenue / currentGroupOtb
+currentExistingGroupAdrExVat = groupRevenueDeductible / currentGroupOtb
 ```
 
-The current deductible revenue source prefers `groupRevenueDeductible`; `groupRevenue` is supported only as `LEGACY_GROUP_REVENUE`. Neither pipeline rooms nor current revenue signals alter forecast group demand or committed capacity.
+The current deductible revenue source prefers `groupRevenueDeductible`; `groupRevenue` is supported only as `LEGACY_GROUP_REVENUE`. Neither current revenue nor pipeline context alters forecast group demand or committed capacity.
 
 ```text
-futureGroupAdrEvidence = [
+futureGroupAdrEvidenceExVat = [
   each valid inflationAdjustedGroupAdrExVat once,
-  optional prospectPipelineAdrExVat once,
   optional currentExistingGroupAdrExVat once
 ]
-expectedFutureGroupRoomRateExVat = median(futureGroupAdrEvidence)
+expectedFutureGroupRoomRateExVat = median(futureGroupAdrEvidenceExVat)
 ```
 
-No signal is room-count weighted. Evidence metadata distinguishes `HISTORICAL_ONLY`, `HISTORICAL_AND_PIPELINE`, `HISTORICAL_AND_EXISTING`, `HISTORICAL_AND_CURRENT_SIGNALS`, `PIPELINE_ONLY`, `EXISTING_ONLY`, `PIPELINE_AND_EXISTING`, and `UNAVAILABLE`. The result exposes historical observations, historical evidence count, Group Forecast comparable count, both current signals, combined evidence, and source flags.
+`groupRevenueNonDeductible / groupRoomsNonDeductible` is retained separately as `pipelineCommercialRate` with basis `UNKNOWN_COMMERCIAL_PACKAGE`. It may include VAT and breakfast/package components, is informational only, and never enters the authoritative ADR median, confidence, contribution, allocation, or Economic Floor. Evidence metadata is limited to `HISTORICAL_ONLY`, `HISTORICAL_AND_EXISTING`, `EXISTING_ONLY`, and `UNAVAILABLE`.
 
-Independent Future Group Value confidence is:
+Independent Future Group Value confidence uses only deductible evidence:
 
-* **HIGH:** at least five valid historical ADR observations and at least one current forward signal;
-* **MEDIUM:** at least three historical observations, or at least two historical observations plus a current signal;
-* **LOW:** any smaller nonempty evidence set;
-* `null`: no valid evidence and no fabricated rate.
+* **HIGH:** at least five valid historical ADR observations plus current deductible existing-group ADR;
+* **MEDIUM:** at least three historical observations, or at least two plus current deductible existing-group ADR;
+* **LOW:** one or two historical observations, or current deductible existing-group ADR only;
+* `null`: no authoritative deductible evidence. Pipeline commercial context alone produces no value or confidence.
 
 V2 separates commissions:
 
@@ -535,7 +533,9 @@ transientContributionPerDisplacedRoom = roomContribution
 
 Distribution applies only to room revenue. Breakfast contribution can be negative and is not clamped. Missing/nonpositive expected ADR produces null contribution, but causes no floor problem if zero transient rooms are displaced.
 
-## 16. Future group value / contribution
+## 16. Future group value / contribution (legacy audit snapshot; superseded above)
+
+The following hierarchy documents retired behavior and is not executed by the current model:
 
 Exact fallback hierarchy:
 
@@ -696,7 +696,7 @@ Known stable contribution codes:
 
 | Code | Message |
 |---|---|
-| `FUTURE_GROUP_PIPELINE_ADR` | Future group contribution uses current prospect pipeline ADR as a room-rate proxy. |
+| `FUTURE_GROUP_PIPELINE_ADR` | **Retired:** pipeline commercial context is no longer contribution evidence and this warning is not emitted. |
 | `FUTURE_GROUP_ECONOMICS_EXCLUDED` | Future group contribution currently excludes unknown future BQT and breakfast economics. |
 | `GROUP_PACE_UNAVAILABLE` | Group Forecast V1 does not yet use historical booking pace. |
 | `FUTURE_GROUP_LOW_CONFIDENCE` | High uncertainty in future group-demand forecast. |
@@ -1091,3 +1091,18 @@ Group P25/P50/P75 demand, future-group opportunity cost, high/low scenario range
 Primary production references inspected: `GroupQuoteCreatePage.jsx:40-100,128-193`; `GroupQuoteFormFields.jsx:4-116`; `displacementForecast.js:3-269`; `groupDemandForecast.js:3-120`; `contributionAnalysis.js:4-176`; `roomRateVat.js:1-22`; `firebaseQuotes.js:15-119`; `firebaseDemandCalendar.js:3-43`; `firebaseLighthouse.js:3-25`; `lighthouseImport.js:1-97`; `GroupQuoteSettingsPage.jsx:14-109`; detail/edit pages; demand-calendar constants; relevant Vitest files.
 
 **Could not determine confidently:** actual production Firestore values or a real full quote/UI result; upstream PMS definitions beyond their use in code; tax basis of source ADR/group/BQT/breakfast/Lighthouse prices; whether all hotels have completed Demand Calendar path migration; whether external consumers read saved forecast arrays. These require data contracts, authenticated production evidence, or stakeholder confirmation and are not inferred here.
+
+## Transient Value V2 (model `group-contribution-v3-transient-value`)
+
+Previously, transient opportunity cost used historical `averageRoomRate`, a blended hotel ADR containing transient and group business. New analyses no longer use that field as authoritative value evidence.
+
+Transient Value V2 reuses the exact historical dates selected by the Transient Demand Forecast; it does not run another comparable scan. For each selected date with valid inventory, positive finite `individualRooms`, and positive finite `individualRevenueDeductible`, its excl.-VAT ADR observation is `individualRevenueDeductible / individualRooms`. Each date supplies one equally weighted observation. Observations are compounded to the target year with the central inflation helper and their median is the historical baseline.
+
+A current historyforecast stay date preserves `individualRevenueDeductible`. When current transient OTB rooms and deductible revenue are positive, revenue / rooms supplies one (not room-weighted) current OTB ADR signal. The expected future transient ADR is the median of all inflation-adjusted historical observations plus that optional single current signal. There is no blended-ADR fallback for new analyses.
+
+Value confidence is HIGH for at least five historical observations plus current OTB; MEDIUM for at least three historical observations, or at least two plus current OTB; LOW for lesser non-empty evidence; and unavailable for none. Current-only, low-evidence, and unavailable states have stable warnings. The contribution engine continues to subtract the configured transient distribution percentage and variable room cost, then adds the unchanged transient breakfast contribution. All economics remain excl. VAT; the incl.-VAT ADR is display metadata only. Missing value evidence makes an affected transient displacement and Economic Floor unavailable rather than fabricating a rate.
+
+
+## Net Group Value correction (model `group-contribution-v4-net-group-value`)
+
+The revenue-field contract is now explicit: `groupRevenueDeductible` is realized, deductible, room-only group revenue on an excl.-VAT basis and is authoritative for historical/current Group ADR. `individualRevenueDeductible` remains the corresponding authoritative transient room-revenue field. `groupRevenueNonDeductible` is non-deductible prospect/block commercial context whose VAT and package composition are not normalized; its calculated `pipelineCommercialRate` is informational only and is not Future Group Value contribution evidence. This corrects the prior Future Group Value V2 treatment, which placed the pipeline quotient into the net ADR median. No VAT or breakfast stripping is attempted.

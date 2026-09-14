@@ -3,6 +3,9 @@ import { calculateFutureGroupValue, FUTURE_GROUP_VALUE_WARNINGS } from "./future
 
 const number = (value) => Number(value);
 const WARNING_CODES = new Map([
+  ["Transient value is based on limited historical room-rate evidence.", "TRANSIENT_VALUE_LOW_EVIDENCE"],
+  ["Transient value is based only on current transient OTB ADR because no valid historical transient ADR evidence is available.", "TRANSIENT_VALUE_CURRENT_ONLY"],
+  ["Future transient demand is forecast, but no reliable transient room-rate evidence is available.", "TRANSIENT_VALUE_UNAVAILABLE"],
   ["Future group contribution currently excludes unknown future BQT and breakfast economics.", "FUTURE_GROUP_ECONOMICS_EXCLUDED"],
   [FUTURE_GROUP_VALUE_WARNINGS.LOW_EVIDENCE, "FUTURE_GROUP_VALUE_LOW_EVIDENCE"],
   [FUTURE_GROUP_VALUE_WARNINGS.CURRENT_ONLY, "FUTURE_GROUP_VALUE_CURRENT_ONLY"],
@@ -118,9 +121,12 @@ export function calculateGroupContribution({ quote, forecastByDate = {}, setting
     const physicalCapacityAvailableForNewGroup = Math.max(0, sellableInventory - hardCommittedRooms);
     const capacityConflictRooms = forecast.groupForecast ? Math.max(0, requestedGroupRooms - physicalCapacityAvailableForNewGroup) : 0;
     const remainingCapacityBeforeNewGroup = physicalCapacityAvailableForNewGroup;
-    const expectedTransientRoomRate = Number.isFinite(forecast.expectedTransientRoomRate) && forecast.expectedTransientRoomRate > 0
-      ? forecast.expectedTransientRoomRate : null;
+    const v2TransientRate = forecast.expectedFutureTransientRoomRateExVat;
+    const expectedTransientRoomRate = Number.isFinite(v2TransientRate) && v2TransientRate > 0
+      ? v2TransientRate : v2TransientRate === undefined && Number.isFinite(forecast.expectedTransientRoomRate) && forecast.expectedTransientRoomRate > 0
+        ? forecast.expectedTransientRoomRate : null;
     const contributionWarnings = [];
+    contributionWarnings.push(...(forecast.warnings || []).filter((message) => message.startsWith("Transient value")));
     const transientDistributionCostPerRoom = expectedTransientRoomRate === null ? null : expectedTransientRoomRate * values.transientDistributionCost;
     const transientRoomContributionPerRoom = expectedTransientRoomRate === null ? null : expectedTransientRoomRate - transientDistributionCostPerRoom - values.variableRoomCost;
     const transientContributionPerDisplacedRoom = expectedTransientRoomRate === null ? null : transientRoomContributionPerRoom + transientBreakfastContributionPerRoom;
@@ -154,7 +160,7 @@ export function calculateGroupContribution({ quote, forecastByDate = {}, setting
       scenarios = { low: legacy, base: legacy, high: legacy, transientOnly: legacy };
     }
     if (capacityConflictRooms > 0) contributionWarnings.push(`Requested group exceeds currently uncommitted physical capacity by ${capacityConflictRooms} rooms.`);
-    if (Object.values(scenarios).some((scenario) => scenario.displacedFutureTransientRooms > 0) && transientContributionPerDisplacedRoom === null) contributionWarnings.push(`Historical ADR is missing for ${roomNight.date}; lost transient contribution is unavailable.`);
+    if (Object.values(scenarios).some((scenario) => scenario.displacedFutureTransientRooms > 0) && transientContributionPerDisplacedRoom === null) contributionWarnings.push("Future transient demand is forecast, but no reliable transient room-rate evidence is available.");
     if ([scenarios.low, scenarios.base, scenarios.high].some((scenario) => scenario.displacedFutureGroupRooms > 0) && futureGroupContributionPerRoom === null) contributionWarnings.push(FUTURE_GROUP_VALUE_WARNINGS.UNAVAILABLE);
     if (futureGroupDemandHigh > 0) contributionWarnings.push("Future group contribution currently excludes unknown future BQT and breakfast economics.");
     if (groupForecast.confidence === "LOW") contributionWarnings.push("High uncertainty in future group-demand forecast.");
@@ -162,7 +168,7 @@ export function calculateGroupContribution({ quote, forecastByDate = {}, setting
       if (groupForecast.warnings?.includes(message)) contributionWarnings.push(message);
     });
     contributionWarnings.push("Group Forecast V1 does not yet use historical booking pace.");
-    return { stayDate: roomNight.date, requestedGroupRooms, currentTransientOtb, currentGroupOtb, hardOtherCommittedRooms, hardCommittedRooms, sellableInventory, physicalCapacityAvailableForNewGroup, capacityConflictRooms, finalTransientDemandForecast, futureTransientDemand, futureGroupDemandLow, futureGroupDemandBase, futureGroupDemandHigh, remainingCapacityBeforeNewGroup, expectedTransientRoomRate, transientDistributionCostPerRoom, transientRoomContributionPerRoom, transientBreakfastContributionPerRoom, transientContributionPerDisplacedRoom, futureTransientContributionPerRoom: transientContributionPerDisplacedRoom, ...futureGroupValue, expectedFutureGroupRoomRate, expectedFutureGroupRoomRateExVat: expectedFutureGroupRoomRate, expectedFutureGroupRoomRateInclVat, futureGroupRateSource, expectedFutureGroupCommission: values.expectedFutureGroupCommission, futureGroupCommissionDefaultFallback: values.futureGroupCommissionDefaultFallback, futureGroupContributionPerRoom, scenarios, displacedRooms: scenarios.base.totalDisplacedFutureRooms, nonDisplacingGroupRooms: scenarios.base.nonDisplacingGroupRooms, lostTransientContribution: scenarios.transientOnly.lostFutureTransientContribution, contributionWarnings };
+    return { stayDate: roomNight.date, requestedGroupRooms, currentTransientOtb, currentGroupOtb, hardOtherCommittedRooms, hardCommittedRooms, sellableInventory, physicalCapacityAvailableForNewGroup, capacityConflictRooms, finalTransientDemandForecast, futureTransientDemand, futureGroupDemandLow, futureGroupDemandBase, futureGroupDemandHigh, remainingCapacityBeforeNewGroup, expectedTransientRoomRate, expectedFutureTransientRoomRateExVat: expectedTransientRoomRate, expectedFutureTransientRoomRateInclVat: toRoomRateInclVat(expectedTransientRoomRate, values.roomVatPercentage), transientDemandConfidence: forecast.transientDemandConfidence || forecast.forecastConfidence, transientValueConfidence: forecast.transientValueConfidence || null, transientValueSource: forecast.transientValueSource || (v2TransientRate === undefined ? "LEGACY_BLENDED_ADR_FALLBACK" : "UNAVAILABLE"), historicalTransientAdrEvidenceCount: forecast.historicalTransientAdrEvidenceCount ?? 0, transientAdrEvidenceCount: forecast.transientAdrEvidenceCount ?? 0, historicalComparableTransientAdrExVat: forecast.historicalComparableTransientAdrExVat ?? null, currentTransientOtbAdrExVat: forecast.currentTransientOtbAdrExVat ?? null, historicalTransientAdrObservations: forecast.historicalTransientAdrObservations || [], transientDistributionCostPerRoom, transientRoomContributionPerRoom, transientBreakfastContributionPerRoom, transientContributionPerDisplacedRoom, futureTransientContributionPerRoom: transientContributionPerDisplacedRoom, ...futureGroupValue, expectedFutureGroupRoomRate, expectedFutureGroupRoomRateExVat: expectedFutureGroupRoomRate, expectedFutureGroupRoomRateInclVat, futureGroupRateSource, expectedFutureGroupCommission: values.expectedFutureGroupCommission, futureGroupCommissionDefaultFallback: values.futureGroupCommissionDefaultFallback, futureGroupContributionPerRoom, scenarios, displacedRooms: scenarios.base.totalDisplacedFutureRooms, nonDisplacingGroupRooms: scenarios.base.nonDisplacingGroupRooms, lostTransientContribution: scenarios.transientOnly.lostFutureTransientContribution, contributionWarnings };
   });
   const totalRequestedGroupRoomNights = nightly.reduce((sum, night) => sum + night.requestedGroupRooms, 0);
   const totalDisplacedRooms = nightly.reduce((sum, night) => sum + night.displacedRooms, 0);

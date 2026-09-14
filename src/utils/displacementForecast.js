@@ -68,6 +68,7 @@ export function mapCurrentOtb(document) {
   const currentDeductibleGroupRevenue = explicitDeductibleGroupRevenue ?? legacyGroupRevenue;
   return {
     currentTransientOtb: individualRooms,
+    currentTransientRevenueDeductible: Math.max(0, numeric(document?.individualRevenueDeductible) ?? 0),
     existingGroupOtb: groupRooms,
     groupProspectPipelineRooms: Math.max(0, numeric(document?.groupRoomsNonDeductible) ?? 0),
     groupProspectPipelineRevenue: Math.max(0, numeric(document?.groupRevenueNonDeductible) ?? 0),
@@ -102,6 +103,7 @@ export function prepareHistoricalObservations(rows, config = DISPLACEMENT_FORECA
       date,
       inventory,
       individualRooms,
+      individualRevenueDeductible: numeric(row.individualRevenueDeductible),
       groupShare: groupRooms / inventory,
       otherActualRooms,
       transientCapacity,
@@ -247,13 +249,25 @@ export function calculateDisplacementDay({ stayDate, requestedGroupRooms, curren
   const historical = selectHistoricalObservations(stayDate, observations, maxHistoricalGroupShare, config, selectedHistoricalYears);
   const historicalMedianTransientOccupancy = median(historical.selected.map((item) => item.transientOccupancyRatio));
   const targetYear = utcDate(stayDate)?.getUTCFullYear();
-  const inflationAdjustedHistoricalAdrValues = historical.selected.flatMap((item) => {
-    const adr = numeric(item.averageRoomRate);
+  // Transient Value V2 reuses the demand forecast's selected dates. The old
+  // averageRoomRate field is blended hotel ADR and is deliberately not evidence.
+  const historicalTransientAdrObservations = historical.selected.flatMap((item) => {
+    const rooms = numeric(item.individualRooms);
+    const revenue = numeric(item.individualRevenueDeductible);
     const historicalYear = utcDate(item.date)?.getUTCFullYear();
-    if (adr === null || adr <= 0 || !targetYear || !historicalYear) return [];
-    return [applyInflationAdjustment(adr, inflationPercentage, Math.max(0, targetYear - historicalYear))];
+    if (rooms === null || rooms <= 0 || revenue === null || revenue <= 0 || !targetYear || !historicalYear || item.inventory <= 0) return [];
+    const rawTransientAdrExVat = revenue / rooms;
+    return [{ date: item.date, individualRooms: rooms, individualRevenueDeductible: revenue, rawTransientAdrExVat, inflationAdjustedTransientAdrExVat: applyInflationAdjustment(rawTransientAdrExVat, inflationPercentage, Math.max(0, targetYear - historicalYear)) }];
   });
-  const expectedTransientRoomRate = median(inflationAdjustedHistoricalAdrValues);
+  const historicalComparableTransientAdrExVat = median(historicalTransientAdrObservations.map((item) => item.inflationAdjustedTransientAdrExVat));
+  const currentTransientOtbAdrExVat = current.currentTransientOtb > 0 && current.currentTransientRevenueDeductible > 0 ? current.currentTransientRevenueDeductible / current.currentTransientOtb : null;
+  const transientAdrEvidence = historicalTransientAdrObservations.map((item) => item.inflationAdjustedTransientAdrExVat);
+  if (currentTransientOtbAdrExVat !== null) transientAdrEvidence.push(currentTransientOtbAdrExVat);
+  const expectedFutureTransientRoomRateExVat = median(transientAdrEvidence);
+  const historicalEvidenceCount = historicalTransientAdrObservations.length;
+  const hasCurrentSignal = currentTransientOtbAdrExVat !== null;
+  const transientValueSource = historicalEvidenceCount && hasCurrentSignal ? "HISTORICAL_AND_CURRENT_OTB" : historicalEvidenceCount ? "HISTORICAL_ONLY" : hasCurrentSignal ? "CURRENT_OTB_ONLY" : "UNAVAILABLE";
+  const transientValueConfidence = historicalEvidenceCount >= 5 && hasCurrentSignal ? "HIGH" : historicalEvidenceCount >= 3 || (historicalEvidenceCount >= 2 && hasCurrentSignal) ? "MEDIUM" : historicalEvidenceCount > 0 || hasCurrentSignal ? "LOW" : null;
   const historicalBaselineRooms = historicalMedianTransientOccupancy === null ? null : historicalMedianTransientOccupancy * current.sellableInventory;
   const lighthouse = calculateLighthouseModifier(stayDate, preparedData?.normalizedLighthouseByDate || lighthouseByDate, config);
   const adjustedHistoricalDemand = historicalBaselineRooms === null ? null : historicalBaselineRooms * lighthouse.modifier;
@@ -265,6 +279,8 @@ export function calculateDisplacementDay({ stayDate, requestedGroupRooms, curren
   if (lighthouse.warning) warnings.push(lighthouse.warning);
   if (!current.currentOtbExists) warnings.push("Current transient OTB is missing.");
   if (!currentOtb || current.sellableInventory <= 0) warnings.push("Current sellable inventory is missing or invalid.");
+  if (transientValueSource === "CURRENT_OTB_ONLY") warnings.push("Transient value is based only on current transient OTB ADR because no valid historical transient ADR evidence is available.");
+  else if (transientValueConfidence === "LOW") warnings.push("Transient value is based on limited historical room-rate evidence.");
   let forecastConfidence = "LOW";
   const sameMonth = historical.tier.startsWith("same-month");
   const sameSeason = historical.tier === "same-season-preferred" || historical.tier === "same-season-unconstrained";
@@ -278,13 +294,22 @@ export function calculateDisplacementDay({ stayDate, requestedGroupRooms, curren
     historicalYears: Array.isArray(selectedHistoricalYears) ? selectedHistoricalYears.map(Number) : null,
     historicalSelectionTier: historical.tier,
     forecastConfidence,
+    transientDemandConfidence: forecastConfidence,
     historicalCandidateCount: historical.counts.candidate,
     historicalPreferredCount: historical.counts.preferred,
     historicalUsableCount: historical.counts.usable,
     historicalCensoredCount: historical.counts.censored,
     historicalSelectedCount: historical.selected.length,
     historicalMedianTransientOccupancy,
-    expectedTransientRoomRate,
+    historicalTransientAdrEvidenceCount: historicalEvidenceCount,
+    transientAdrEvidenceCount: transientAdrEvidence.length,
+    historicalComparableTransientAdrExVat,
+    currentTransientOtbAdrExVat,
+    expectedFutureTransientRoomRateExVat,
+    expectedTransientRoomRate: expectedFutureTransientRoomRateExVat,
+    transientValueSource,
+    transientValueConfidence,
+    historicalTransientAdrObservations,
     historicalBaselineRooms,
     targetLighthouseMarketDemand: lighthouse.targetDemand,
     comparableLighthouseMarketDemand: lighthouse.comparableDemand,
