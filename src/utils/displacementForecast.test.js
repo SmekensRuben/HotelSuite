@@ -196,3 +196,36 @@ describe("daily forecast inputs", () => {
   });
   it("uses calculated inventory rather than physical inventory", () => expect(mapCurrentOtb({ calculatedInventoryRooms: 94, inventoryRooms: 100 }).sellableInventory).toBe(94));
 });
+
+describe("Transient Value V2", () => {
+  const comparable = (date, overrides = {}) => ({ date, historyFutureType: "History", calculatedInventoryRooms: 100, calculatedOccRooms: 50, groupRooms: 10, individualRooms: 40, individualRevenueDeductible: 11200, averageRoomRate: 200, ...overrides });
+
+  it("uses true deductible transient revenue, not blended hotel ADR", () => {
+    const args = { stayDate: "2027-09-08", currentOtb: { calculatedInventoryRooms: 100, individualRooms: 0 }, selectedHistoricalYears: [2026], inflationPercentage: 0 };
+    const first = calculateDisplacementDay({ ...args, historicalRows: [comparable("2026-09-09")] });
+    const changedBlend = calculateDisplacementDay({ ...args, historicalRows: [comparable("2026-09-09", { averageRoomRate: 999 })] });
+    expect(first.expectedFutureTransientRoomRateExVat).toBe(280);
+    expect(changedBlend.expectedFutureTransientRoomRateExVat).toBe(280);
+    expect(first.historicalTransientAdrObservations[0].rawTransientAdrExVat).toBe(280);
+  });
+
+  it("maps current deductible transient revenue as exactly one full-precision signal", () => {
+    const revenue = 3993.526785714287;
+    const result = calculateDisplacementDay({ stayDate: "2027-09-08", currentOtb: { calculatedInventoryRooms: 100, individualRooms: 16, individualRevenueDeductible: revenue }, historicalRows: [], selectedHistoricalYears: [2026] });
+    expect(result.currentTransientRevenueDeductible).toBe(revenue);
+    expect(result.currentTransientOtbAdrExVat).toBe(revenue / 16);
+    expect(result.transientAdrEvidenceCount).toBe(1);
+    expect(result.transientValueSource).toBe("CURRENT_OTB_ONLY");
+  });
+
+  it.each([{ individualRooms: 0 }, { individualRevenueDeductible: 0 }, { individualRooms: -1 }, { individualRevenueDeductible: -1 }, { individualRevenueDeductible: Infinity }])("excludes invalid ADR evidence %#", (overrides) => {
+    const result = calculateDisplacementDay({ stayDate: "2027-09-08", currentOtb: { calculatedInventoryRooms: 100, individualRooms: 0 }, historicalRows: [comparable("2026-09-09", overrides)], selectedHistoricalYears: [2026] });
+    expect(result.historicalTransientAdrEvidenceCount).toBe(0);
+  });
+
+  it("excludes unselected years and target/future dates and inflation-adjusts without rounding", () => {
+    const result = calculateDisplacementDay({ stayDate: "2027-09-08", currentOtb: { calculatedInventoryRooms: 100, individualRooms: 0 }, historicalRows: [comparable("2025-09-10"), comparable("2027-09-08"), comparable("2028-09-06"), comparable("2026-09-09", { individualRooms: 16, individualRevenueDeductible: 3993.526785714287 })], selectedHistoricalYears: [2026], inflationPercentage: 10 });
+    expect(result.historicalTransientAdrEvidenceCount).toBe(1);
+    expect(result.expectedFutureTransientRoomRateExVat).toBe((3993.526785714287 / 16) * 1.1);
+  });
+});

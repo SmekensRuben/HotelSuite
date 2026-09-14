@@ -53,7 +53,7 @@ New quotes save:
 
 ```text
 analysisStatus: "CURRENT"
-analysisModelVersion: "group-contribution-v2-group-value"
+analysisModelVersion: "group-contribution-v3-transient-value"
 integratedDisplacement: [{ stayDate, scenario: "BASE", ... }]
 ```
 

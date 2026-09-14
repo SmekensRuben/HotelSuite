@@ -68,7 +68,7 @@ describe("Contribution Displacement Engine V1", () => {
   it("clamps required net revenue and floor at zero when BQT is sufficient", () => expect(result({ roomsByDate: [{ date: "2027-09-08", rooms: 10, bqtRevenue: 10000 }] }, {}, { displacedRooms: 0, nonDisplacingGroupRooms: 10 }).requiredNetGroupRoomRevenue).toBe(0));
   it("makes the floor null and warns when displaced rooms have no ADR", () => {
     const missing = result({}, {}, { expectedTransientRoomRate: null });
-    expect(missing.totalLostTransientContribution).toBeNull(); expect(missing.economicFloorRate).toBeNull(); expect(missing.warnings.join(" ")).toMatch(/ADR/);
+    expect(missing.totalLostTransientContribution).toBeNull(); expect(missing.economicFloorRate).toBeNull(); expect(missing.warningDetails.some((warning) => warning.code === "TRANSIENT_VALUE_UNAVAILABLE")).toBe(true);
   });
   it("does not block the floor for missing ADR when displacement is zero", () => expect(result({}, {}, { displacedRooms: 0, nonDisplacingGroupRooms: 10, expectedTransientRoomRate: null }).economicFloorRate).not.toBeNull());
   it("rejects invalid commission and settings", () => {
@@ -239,13 +239,13 @@ describe("Future Group Demand contribution integration", () => {
 });
 
 describe("expected transient ADR", () => {
-  const historicalRows = [100, 200, 1000].map((averageRoomRate, index) => ({ date: `2026-09-${String([2, 9, 16][index]).padStart(2, "0")}`, historyFutureType: "History", calculatedInventoryRooms: 100, calculatedOccRooms: 50, individualRooms: 40, groupRooms: 10, averageRoomRate }));
+  const historicalRows = [100, 200, 1000].map((averageRoomRate, index) => ({ date: `2026-09-${String([2, 9, 16][index]).padStart(2, "0")}`, historyFutureType: "History", calculatedInventoryRooms: 100, calculatedOccRooms: 50, individualRooms: 40, groupRooms: 10, averageRoomRate, individualRevenueDeductible: averageRoomRate * 40 }));
   it("uses the median of the forecast's selected comparables with existing inflation adjustment", () => {
     const output = calculateDisplacementDay({ stayDate: "2027-09-08", requestedGroupRooms: 10, currentOtb: { calculatedInventoryRooms: 100, individualRooms: 95 }, historicalRows, selectedHistoricalYears: [2024, 2025, 2026], inflationPercentage: 10 });
     expect(output.expectedTransientRoomRate).toBeCloseTo(220);
   });
   it("ignores invalid, missing, and non-positive ADR", () => {
-    const output = calculateDisplacementDay({ stayDate: "2027-09-08", requestedGroupRooms: 10, currentOtb: { calculatedInventoryRooms: 100 }, historicalRows: historicalRows.map((row, i) => ({ ...row, averageRoomRate: [0, "bad", 100][i] })), selectedHistoricalYears: [2024, 2025, 2026], inflationPercentage: 10 });
+    const output = calculateDisplacementDay({ stayDate: "2027-09-08", requestedGroupRooms: 10, currentOtb: { calculatedInventoryRooms: 100 }, historicalRows: historicalRows.map((row, i) => ({ ...row, individualRevenueDeductible: [0, "bad", 4000][i] })), selectedHistoricalYears: [2024, 2025, 2026], inflationPercentage: 10 });
     expect(output.expectedTransientRoomRate).toBeCloseTo(110);
   });
 });
