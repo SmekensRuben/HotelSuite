@@ -5,7 +5,7 @@ vi.mock("../firebaseConfig", () => ({
   documentId: vi.fn(), limit: vi.fn(), onSnapshot: vi.fn(), orderBy: vi.fn(), query: vi.fn(), serverTimestamp: vi.fn(), setDoc: vi.fn(), updateDoc: vi.fn(),
 }));
 
-import { GROUP_QUOTE_ANALYSIS_MODEL_VERSION, hasAnalysisAffectingChanges } from "./firebaseQuotes";
+import { competitorGroupQuotesPath, GROUP_QUOTE_ANALYSIS_MODEL_VERSION, hasAnalysisAffectingChanges, MARKET_CONTEXT_MODEL_VERSION, validateCompetitorGroupObservation } from "./firebaseQuotes";
 
 const quote = {
   name: "Original", startDate: "2027-04-01", endDate: "2027-04-02",
@@ -23,4 +23,25 @@ describe("saved Group Quote analysis validity", () => {
     ["Breakfast Pax", { ...quote, breakfastPax: 21 }],
     ["commission", { ...quote, groupCommissionPercentage: 11 }],
   ])("invalidates analysis when %s change", (_label, update) => expect(hasAnalysisAffectingChanges(quote, update)).toBe(true));
+});
+
+describe("competitor group intelligence foundation", () => {
+  const observation = {
+    competitorId: "pillows", sourceType: "LOST_GROUP", competitorQuotedRateInclVat: "229",
+    mealBasis: "BB", occupancyBasis: "DOUBLE", sourceConfidence: "HIGH",
+  };
+
+  it("uses a separate canonical collection and component model version", () => {
+    expect(competitorGroupQuotesPath("hotel-1")).toBe("hotels/hotel-1/competitorGroupQuotes");
+    expect(MARKET_CONTEXT_MODEL_VERSION).toBe("market-context-v1");
+  });
+
+  it("preserves controlled product/evidence fields and permits optional quote/public-rate links", () => {
+    expect(validateCompetitorGroupObservation(observation)).toMatchObject({ competitorQuotedRateInclVat: 229, mealBasis: "BB", occupancyBasis: "DOUBLE", sourceConfidence: "HIGH" });
+    expect(validateCompetitorGroupObservation({ ...observation, sourceQuoteId: "quote-1", publicRateAtObservationInclVat: 300 })).toMatchObject({ sourceQuoteId: "quote-1", publicRateAtObservationInclVat: 300 });
+  });
+
+  it("rejects uncontrolled categorical values", () => {
+    expect(() => validateCompetitorGroupObservation({ ...observation, mealBasis: "BREAKFAST_MAYBE" })).toThrow("Invalid mealBasis");
+  });
 });

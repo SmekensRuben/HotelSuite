@@ -18,6 +18,7 @@ import {
 
 const quotesPath = (hotelUid) => `hotels/${hotelUid}/quotes`;
 export const GROUP_QUOTE_ANALYSIS_MODEL_VERSION = "group-contribution-v4-net-group-value";
+export const MARKET_CONTEXT_MODEL_VERSION = "market-context-v1";
 export const SAVED_ANALYSIS_STALE_WARNING = Object.freeze({
   code: "SAVED_ANALYSIS_STALE",
   message: "Saved analysis is stale because analysis-affecting quote inputs changed.",
@@ -128,3 +129,100 @@ export const saveGroupQuoteSettings = async (hotelUid, settings) => {
     updatedAt: serverTimestamp(),
   }, { merge: true });
 };
+
+export const compsetSettingsPath = (hotelUid) => `hotels/${hotelUid}/settings/compset`;
+export const compsetCompetitorsPath = (hotelUid) => `${compsetSettingsPath(hotelUid)}/competitors`;
+export const competitorGroupQuotesPath = (hotelUid) => `hotels/${hotelUid}/competitorGroupQuotes`;
+
+export async function getCompsetConfiguration(hotelUid) {
+  if (!hotelUid) return { settings: {}, competitors: [] };
+  // Exactly one document read and one subcollection read; analysis uses the results in memory.
+  const [settingsSnapshot, competitorsSnapshot] = await Promise.all([
+    getDoc(doc(db, compsetSettingsPath(hotelUid))),
+    getDocs(collection(db, compsetCompetitorsPath(hotelUid))),
+  ]);
+  return {
+    settings: settingsSnapshot.exists() ? settingsSnapshot.data() : {},
+    competitors: competitorsSnapshot.docs
+      .map(withId)
+      .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0)),
+  };
+}
+
+export async function saveCompsetConfiguration(hotelUid, settings, competitors) {
+  if (!hotelUid) throw new Error("Hotel ontbreekt");
+  const sanitized = competitors.map((item, index) => {
+    const weight = Number(item.marketRelevanceWeight);
+    if (!Number.isFinite(weight) || weight < 0) throw new Error("Competitor relevance weights must be zero or greater.");
+    const id = String(item.id || item.competitorId || "").trim();
+    if (!id) throw new Error("Every competitor needs an identifier.");
+    return { ...item, id, marketRelevanceWeight: weight, sortOrder: Number(item.sortOrder ?? index) };
+  });
+  await Promise.all([
+    setDoc(doc(db, compsetSettingsPath(hotelUid)), {
+      ...settings,
+      lighthouseRateBasis: "INCL_VAT_CONSUMER",
+      updatedAt: serverTimestamp(),
+    }, { merge: true }),
+    ...sanitized.map(({ id, ...item }) => setDoc(doc(db, `${compsetCompetitorsPath(hotelUid)}/${id}`), {
+      ...item,
+      createdAt: item.createdAt || serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true })),
+  ]);
+}
+
+const CONTROLLED_VALUES = Object.freeze({
+  sourceType: ["LOST_GROUP", "WON_GROUP", "CLIENT_FEEDBACK", "SALES_INTELLIGENCE", "MANUAL_OBSERVATION", "OTHER"],
+  mealBasis: ["RO", "BB", "HB", "FB", "OTHER", "UNKNOWN"],
+  occupancyBasis: ["SINGLE", "DOUBLE", "MIXED", "UNKNOWN"],
+  sourceConfidence: ["HIGH", "MEDIUM", "LOW"],
+});
+
+export function validateCompetitorGroupObservation(observation) {
+  for (const [field, values] of Object.entries(CONTROLLED_VALUES)) {
+    if (!values.includes(observation[field])) throw new Error(`Invalid ${field}.`);
+  }
+  const rate = Number(observation.competitorQuotedRateInclVat);
+  if (!Number.isFinite(rate) || rate < 0) throw new Error("Competitor quoted rate must be a non-negative number including VAT.");
+  if (!observation.competitorId) throw new Error("Competitor is required.");
+  const publicRate = observation.publicRateAtObservationInclVat;
+  if (publicRate !== null && publicRate !== undefined && (!Number.isFinite(Number(publicRate)) || Number(publicRate) < 0)) {
+    throw new Error("Public rate at observation must be a non-negative number.");
+  }
+  return { ...observation, competitorQuotedRateInclVat: rate };
+}
+
+export async function saveCompetitorGroupObservation(hotelUid, observation) {
+  if (!hotelUid) throw new Error("Hotel ontbreekt");
+  const valid = validateCompetitorGroupObservation(observation);
+  // Quote-linked observations use a stable document ID, preventing repeated outcome saves.
+  const stableId = valid.sourceQuoteId
+    ? `${String(valid.sourceQuoteId).replace(/[^a-zA-Z0-9_-]/g, "_")}_${String(valid.competitorId).replace(/[^a-zA-Z0-9_-]/g, "_")}`
+    : null;
+  const timestamps = { updatedAt: serverTimestamp() };
+  if (stableId) {
+    await setDoc(doc(db, `${competitorGroupQuotesPath(hotelUid)}/${stableId}`), {
+      ...valid,
+      ...timestamps,
+      createdAt: valid.createdAt || serverTimestamp(),
+    }, { merge: true });
+    return stableId;
+  }
+  const created = await addDoc(collection(db, competitorGroupQuotesPath(hotelUid)), {
+    ...valid,
+    ...timestamps,
+    createdAt: serverTimestamp(),
+  });
+  return created.id;
+}
+
+export async function getCompetitorGroupObservationCounts(hotelUid) {
+  if (!hotelUid) return {};
+  const snapshot = await getDocs(collection(db, competitorGroupQuotesPath(hotelUid)));
+  return snapshot.docs.reduce((counts, item) => {
+    const competitorId = item.data().competitorId;
+    if (competitorId) counts[competitorId] = (counts[competitorId] || 0) + 1;
+    return counts;
+  }, {});
+}
