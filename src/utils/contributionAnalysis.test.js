@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateGroupContribution, normalizeContributionSettings, simulateGroupQuote } from "./contributionAnalysis";
+import { aggregateAnalysisWarnings, calculateDemandCapacitySummary, calculateGroupContribution, normalizeContributionSettings, simulateGroupQuote } from "./contributionAnalysis";
 import { calculateDisplacementDay, calculateDisplacementScenario } from "./displacementForecast";
 
 const settings = (overrides = {}) => ({ variableRoomCost: 20, breakfastCostPerPerson: 5, bqtContributionMarginPercentage: 30, defaultGroupCommissionPercentage: 10, transientAverageBreakfastPax: 1.5, transientAverageBreakfastRevenuePerPax: 12, transientDistributionCostPercentage: 8, inflationPercentage: 5, ...overrides });
@@ -153,6 +153,22 @@ describe("Future Group Demand contribution integration", () => {
     const baseline = integrated().economicFloorRate;
     expect(integrated({}, { roomsByDate: [{ date: "2027-09-08", rooms: 50, bqtRevenue: 1000 }] }).economicFloorRate).toBeLessThan(baseline);
     expect(integrated({}, { breakfastPax: 10 }, { breakfastCostPerPerson: 20 }).economicFloorRate).toBeGreaterThan(baseline);
+  });
+  it("deduplicates warning codes while retaining all affected stay dates", () => {
+    const details = aggregateAnalysisWarnings([{ stayDate: "a", contributionWarnings: ["Group Forecast V1 does not yet use historical booking pace."] }, { stayDate: "b", contributionWarnings: ["Group Forecast V1 does not yet use historical booking pace."] }]);
+    expect(details).toEqual([{ code: "GROUP_PACE_UNAVAILABLE", message: "Group Forecast V1 does not yet use historical booking pace.", stayDates: ["a", "b"] }]);
+  });
+  it("keeps opportunity cost separate and reconciles the existing floor components", () => {
+    const output = integrated({}, { breakfastPax: 2, roomsByDate: [{ date: "2027-09-08", rooms: 50, bqtRevenue: 100 }] });
+    expect(output.totalLostContribution).toBe(output.totalLostFutureTransientContribution + output.totalLostFutureGroupContribution);
+    expect(output.requiredNetGroupRoomRevenue).toBe(Math.max(0, output.totalLostContribution + output.groupVariableRoomCosts + output.groupBreakfastCosts - output.bqtContribution));
+    expect(output.requiredGrossGroupRoomRevenue).toBe(output.requiredNetGroupRoomRevenue / (1 - output.groupCommission));
+    expect(output.economicFloorRate).toBe(output.requiredGrossGroupRoomRevenue / output.totalRequestedGroupRoomNights);
+  });
+  it("summarizes demand without double-counting committed OTB or prospect rooms", () => {
+    const summary = calculateDemandCapacitySummary({ sellableInventory: 150, transientDemandForecast: 107, currentTransientOtb: 16, existingGroupOtb: 17, groupProspectPipelineRooms: 500, hardOtherCommittedRooms: 2 }, { forecastBase: 27 });
+    expect(summary.expectedTotalDemand).toBe(136);
+    expect(summary.expectedSlack).toBe(14);
   });
 });
 

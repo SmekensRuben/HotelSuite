@@ -52,4 +52,18 @@ describe("Group Demand Forecast V1", () => {
     const before = calculateGroupContribution(args).economicFloorRate; forecast(); expect(calculateGroupContribution(args).economicFloorRate).toBe(before);
   });
   it("returns deterministic backtest metrics and breakdowns", () => { const r = backtestGroupDemandForecast({ historicalRows: history() }); expect(r.sampleCount).toBe(8); expect(r.mae).toBeGreaterThanOrEqual(0); expect(r.breakdown.month["04"]).toBeTruthy(); });
+  it("excludes unselected years before selecting comparables and percentiles", () => {
+    const rows = [...history(), ...[1, 8, 15, 22, 29].map((day) => ({ date: `2025-04-${String(day).padStart(2, "0")}`, calculatedInventoryRooms: 100, groupRooms: 100 }))];
+    const all = calculateGroupDemandForecast({ stayDate: "2027-04-06", currentOtb: { calculatedInventoryRooms: 100, groupRooms: 0 }, historicalRows: rows });
+    const filtered = calculateGroupDemandForecast({ stayDate: "2027-04-06", currentOtb: { calculatedInventoryRooms: 100, groupRooms: 0 }, historicalRows: rows, selectedHistoricalYears: [2023, 2024] });
+    expect(filtered.comparables.every((item) => !item.stayDate.startsWith("2025"))).toBe(true);
+    expect(filtered.sampleSize).toBe(8);
+    expect(filtered.historicalP75GroupRooms).not.toBe(all.historicalP75GroupRooms);
+  });
+  it("recalculates confidence and warns after selected-year filtering limits the sample", () => {
+    const result = forecast({ selectedHistoricalYears: [2023] });
+    expect(result.sampleSize).toBe(4);
+    expect(result.confidence).toBe("LOW");
+    expect(result.warnings).toContain("Historical group sample is limited by the selected analysis years.");
+  });
 });

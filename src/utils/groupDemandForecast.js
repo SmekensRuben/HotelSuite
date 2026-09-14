@@ -65,11 +65,12 @@ export function selectGroupComparables(stayDate, observations, targetFeatures, c
   return matches.find((match) => match.selected.length >= config.preferredSample) || [...matches].reverse().find((match) => match.selected.length) || { selected: [], tier: null };
 }
 
-export function calculateGroupDemandForecast({ stayDate, currentOtb, historicalRows = [], events = [], config = GROUP_FORECAST_CONFIG }) {
+export function calculateGroupDemandForecast({ stayDate, currentOtb, historicalRows = [], events = [], selectedHistoricalYears, config = GROUP_FORECAST_CONFIG }) {
   const currentGroupOtb = Math.max(0, number(currentOtb?.groupRooms) ?? 0);
   const currentSellableInventory = number(currentOtb?.calculatedInventoryRooms);
   const targetCalendarFeatures = calendarFeatures(stayDate, events);
-  const history = prepareGroupHistory(historicalRows, events);
+  const selectedYearSet = Array.isArray(selectedHistoricalYears) ? new Set(selectedHistoricalYears.map(Number)) : null;
+  const history = prepareGroupHistory(historicalRows, events).filter((item) => !selectedYearSet || selectedYearSet.has(Number(item.stayDate.slice(0, 4))));
   const match = selectGroupComparables(stayDate, history, targetCalendarFeatures, config);
   const comparables = currentSellableInventory > 0 ? match.selected.map((item) => ({
     ...item, normalizedGroupRooms: item.groupShare * currentSellableInventory,
@@ -86,6 +87,7 @@ export function calculateGroupDemandForecast({ stayDate, currentOtb, historicalR
   else if (match.tier && !match.tier.startsWith("TIER_5") && comparables.length >= config.preferredSample) confidence = "MEDIUM";
   const warnings = ["Group pace adjustment is not available yet; forecast is based on historical final group demand.", "Forecast represents expected realized group demand, not unconstrained inquiry demand."];
   if (comparables.length < config.preferredSample) warnings.unshift("Limited historical group sample.");
+  if (selectedYearSet && comparables.length < config.preferredSample) warnings.unshift("Historical group sample is limited by the selected analysis years.");
   if (match.tier && !match.tier.startsWith("TIER_1") && !match.tier.startsWith("TIER_2")) warnings.unshift("Exact calendar-context comparables were unavailable; a broader seasonal sample was used.");
   if (!targetCalendarFeatures.activeEventIds.length) warnings.unshift("No Demand Calendar context was available for this stay date.");
   if (p75Rooms !== null && currentGroupOtb > p75Rooms) warnings.unshift("Current Group OTB already exceeds historical P75 final demand.");
@@ -97,7 +99,7 @@ export function calculateGroupDemandForecast({ stayDate, currentOtb, historicalR
     remainingPotentialHigh: forecastHigh === null ? null : Math.max(0, forecastHigh - currentGroupOtb),
     historicalP25GroupShare: percentile(shares, .25), historicalP50GroupShare: percentile(shares, .5), historicalP75GroupShare: percentile(shares, .75),
     historicalP25GroupRooms: p25Rooms, historicalP50GroupRooms: p50Rooms, historicalP75GroupRooms: p75Rooms,
-    sampleSize: comparables.length, comparableTier: match.tier, selectedHistoricalDates: comparables.map((item) => item.stayDate),
+    sampleSize: comparables.length, comparableTier: match.tier, selectedHistoricalDates: comparables.map((item) => item.stayDate), selectedHistoricalYears: selectedYearSet ? [...selectedYearSet] : null,
     comparables, targetCalendarFeatures, confidence, method: GROUP_FORECAST_METHOD, paceAdjustmentApplied: false, warnings,
   };
 }
