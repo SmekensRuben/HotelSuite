@@ -40,22 +40,45 @@ describe("Future Group Value V2 historical ADR evidence", () => {
 
 describe("Future Group Value V2 combined evidence", () => {
   const history = [185, 198, 202, 215, 220].map((adr, index) => comparable(`${2021 + index}-04-03`, 10, adr));
-  it("reconciles the specified seven-signal median to 205", () => {
+  it("excludes the pipeline commercial rate from the authoritative median", () => {
     const result = calculate({ groupForecast: { comparables: history }, pipelineRooms: 100, pipelineRevenue: 25000, currentGroupOtb: 10, currentDeductibleGroupRevenue: 2050 });
-    expect(result.expectedFutureGroupRoomRateExVat).toBe(205);
-    expect(result.futureGroupValueSource).toBe("HISTORICAL_AND_CURRENT_SIGNALS");
+    expect(result.expectedFutureGroupRoomRateExVat).toBe(203.5);
+    expect(result.pipelineCommercialRate).toBe(250);
+    expect(result.pipelineCommercialRateBasis).toBe("UNKNOWN_COMMERCIAL_PACKAGE");
+    expect(result.futureGroupAdrEvidenceExVat).toHaveLength(6);
+    expect(result.futureGroupValueSource).toBe("HISTORICAL_AND_EXISTING");
     expect(result.futureGroupValueConfidence).toBe("HIGH");
   });
   it.each([
     ["history only", { groupForecast: { comparables: history } }, "HISTORICAL_ONLY", 202],
-    ["history and pipeline", { groupForecast: { comparables: history }, pipelineRooms: 100, pipelineRevenue: 25000 }, "HISTORICAL_AND_PIPELINE", 208.5],
+    ["history and pipeline context", { groupForecast: { comparables: history }, pipelineRooms: 100, pipelineRevenue: 25000 }, "HISTORICAL_ONLY", 202],
     ["history and existing", { groupForecast: { comparables: history }, currentGroupOtb: 10, currentDeductibleGroupRevenue: 2050 }, "HISTORICAL_AND_EXISTING", 203.5],
-    ["pipeline only", { pipelineRooms: 100, pipelineRevenue: 25000 }, "PIPELINE_ONLY", 250],
+    ["pipeline only", { pipelineRooms: 100, pipelineRevenue: 25000 }, "UNAVAILABLE", null],
     ["existing only", { currentGroupOtb: 10, currentDeductibleGroupRevenue: 2050 }, "EXISTING_ONLY", 205],
-    ["pipeline and existing", { pipelineRooms: 100, pipelineRevenue: 25000, currentGroupOtb: 10, currentDeductibleGroupRevenue: 2050 }, "PIPELINE_AND_EXISTING", 227.5],
+    ["pipeline context and existing", { pipelineRooms: 100, pipelineRevenue: 25000, currentGroupOtb: 10, currentDeductibleGroupRevenue: 2050 }, "EXISTING_ONLY", 205],
     ["unavailable", {}, "UNAVAILABLE", null],
   ])("supports %s evidence", (_label, inputs, source, expected) => {
     const result = calculate(inputs); expect(result.futureGroupValueSource).toBe(source); expect(result.expectedFutureGroupRoomRateExVat).toBe(expected);
   });
-  it("does not weight a 100-room pipeline signal 100 times", () => expect(calculate({ groupForecast: { comparables: history }, pipelineRooms: 100, pipelineRevenue: 25000 }).futureGroupAdrEvidence).toHaveLength(6));
+  it("uses only the six authoritative values in the specified 180–220 example", () => {
+    const rows = [180, 190, 200, 210, 220].map((adr, index) => comparable(`${2021 + index}-04-03`, 10, adr));
+    const highPipeline = calculate({ groupForecast: { comparables: rows }, currentGroupOtb: 10, currentDeductibleGroupRevenue: 1850, pipelineRooms: 10, pipelineRevenue: 3000 });
+    const lowPipeline = calculate({ groupForecast: { comparables: rows }, currentGroupOtb: 10, currentDeductibleGroupRevenue: 1850, pipelineRooms: 10, pipelineRevenue: 1000 });
+    expect(highPipeline.expectedFutureGroupRoomRateExVat).toBe(195);
+    expect(lowPipeline.expectedFutureGroupRoomRateExVat).toBe(195);
+  });
+  it("does not count pipeline context as confidence evidence", () => {
+    const pipelineOnly = calculate({ pipelineRooms: 100, pipelineRevenue: 25000 });
+    expect(pipelineOnly.futureGroupValueConfidence).toBeNull();
+    expect(pipelineOnly.warnings).toEqual([]);
+  });
+  it("is invariant to pipeline revenue and rooms", () => {
+    const inputs = { groupForecast: { comparables: history }, currentGroupOtb: 10, currentDeductibleGroupRevenue: 1850 };
+    const high = calculate({ ...inputs, pipelineRooms: 10, pipelineRevenue: 3000 });
+    const low = calculate({ ...inputs, pipelineRooms: 25, pipelineRevenue: 2500 });
+    expect(high.expectedFutureGroupRoomRateExVat).toBe(low.expectedFutureGroupRoomRateExVat);
+    expect(high.futureGroupValueConfidence).toBe(low.futureGroupValueConfidence);
+    expect(high.pipelineCommercialRate).toBe(300);
+    expect(low.pipelineCommercialRate).toBe(100);
+  });
 });

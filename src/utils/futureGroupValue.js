@@ -13,13 +13,9 @@ export const FUTURE_GROUP_VALUE_WARNINGS = Object.freeze({
   UNAVAILABLE: "Future group demand is forecast, but no reliable group-rate evidence is available to value displaced future group rooms.",
 });
 
-function evidenceSource({ historicalCount, hasPipeline, hasExisting }) {
-  if (historicalCount && hasPipeline && hasExisting) return "HISTORICAL_AND_CURRENT_SIGNALS";
-  if (historicalCount && hasPipeline) return "HISTORICAL_AND_PIPELINE";
+function evidenceSource({ historicalCount, hasExisting }) {
   if (historicalCount && hasExisting) return "HISTORICAL_AND_EXISTING";
   if (historicalCount) return "HISTORICAL_ONLY";
-  if (hasPipeline && hasExisting) return "PIPELINE_AND_EXISTING";
-  if (hasPipeline) return "PIPELINE_ONLY";
   if (hasExisting) return "EXISTING_ONLY";
   return "UNAVAILABLE";
 }
@@ -56,43 +52,44 @@ export function calculateFutureGroupValue({
 
   const parsedPipelineRooms = numeric(pipelineRooms);
   const parsedPipelineRevenue = numeric(pipelineRevenue);
-  const prospectPipelineAdrExVat = parsedPipelineRooms > 0 && parsedPipelineRevenue > 0 ? parsedPipelineRevenue / parsedPipelineRooms : null;
+  // Non-deductible prospect revenue has an unknown VAT/package basis. Its rate
+  // is useful commercial context, but is not comparable net room ADR evidence.
+  const pipelineCommercialRate = parsedPipelineRooms > 0 && parsedPipelineRevenue > 0 ? parsedPipelineRevenue / parsedPipelineRooms : null;
   const parsedCurrentRooms = numeric(currentGroupOtb);
   const parsedCurrentRevenue = numeric(currentDeductibleGroupRevenue);
   const currentExistingGroupAdrExVat = parsedCurrentRooms > 0 && parsedCurrentRevenue > 0 ? parsedCurrentRevenue / parsedCurrentRooms : null;
-  const futureGroupAdrEvidence = [
+  const futureGroupAdrEvidenceExVat = [
     ...historicalValues.map((value) => ({ source: "HISTORICAL_COMPARABLE", value })),
-    ...(prospectPipelineAdrExVat === null ? [] : [{ source: "PROSPECT_PIPELINE", value: prospectPipelineAdrExVat }]),
     ...(currentExistingGroupAdrExVat === null ? [] : [{ source: "CURRENT_EXISTING_GROUP", value: currentExistingGroupAdrExVat }]),
   ];
-  const expectedFutureGroupRoomRateExVat = median(futureGroupAdrEvidence.map((item) => item.value));
+  const expectedFutureGroupRoomRateExVat = median(futureGroupAdrEvidenceExVat.map((item) => item.value));
   const historicalAdrEvidenceCount = historicalGroupAdrObservations.length;
-  const hasPipelineAdrSignal = prospectPipelineAdrExVat !== null;
+  const hasPipelineCommercialRate = pipelineCommercialRate !== null;
   const hasExistingGroupAdrSignal = currentExistingGroupAdrExVat !== null;
-  const currentSignalCount = Number(hasPipelineAdrSignal) + Number(hasExistingGroupAdrSignal);
   let futureGroupValueConfidence = null;
-  if (futureGroupAdrEvidence.length) {
-    if (historicalAdrEvidenceCount >= 5 && currentSignalCount >= 1) futureGroupValueConfidence = "HIGH";
-    else if (historicalAdrEvidenceCount >= 3 || (historicalAdrEvidenceCount >= 2 && currentSignalCount >= 1)) futureGroupValueConfidence = "MEDIUM";
+  if (futureGroupAdrEvidenceExVat.length) {
+    if (historicalAdrEvidenceCount >= 5 && hasExistingGroupAdrSignal) futureGroupValueConfidence = "HIGH";
+    else if (historicalAdrEvidenceCount >= 3 || (historicalAdrEvidenceCount >= 2 && hasExistingGroupAdrSignal)) futureGroupValueConfidence = "MEDIUM";
     else futureGroupValueConfidence = "LOW";
   }
   const warnings = [];
   if (futureGroupValueConfidence === "LOW") warnings.push(FUTURE_GROUP_VALUE_WARNINGS.LOW_EVIDENCE);
-  if (!historicalAdrEvidenceCount && currentSignalCount) warnings.push(FUTURE_GROUP_VALUE_WARNINGS.CURRENT_ONLY);
+  if (!historicalAdrEvidenceCount && hasExistingGroupAdrSignal) warnings.push(FUTURE_GROUP_VALUE_WARNINGS.CURRENT_ONLY);
 
   return {
     groupDemandComparableCount: (groupForecast.comparables || []).length,
     historicalGroupAdrObservations,
     historicalAdrEvidenceCount,
     historicalComparableGroupAdrExVat,
-    prospectPipelineAdrExVat,
+    pipelineCommercialRate,
+    pipelineCommercialRateBasis: "UNKNOWN_COMMERCIAL_PACKAGE",
+    hasPipelineCommercialRate,
     currentExistingGroupAdrExVat,
     currentDeductibleGroupRevenueSource,
-    futureGroupAdrEvidence,
+    futureGroupAdrEvidenceExVat,
     expectedFutureGroupRoomRateExVat,
     futureGroupValueConfidence,
-    futureGroupValueSource: evidenceSource({ historicalCount: historicalAdrEvidenceCount, hasPipeline: hasPipelineAdrSignal, hasExisting: hasExistingGroupAdrSignal }),
-    hasPipelineAdrSignal,
+    futureGroupValueSource: evidenceSource({ historicalCount: historicalAdrEvidenceCount, hasExisting: hasExistingGroupAdrSignal }),
     hasExistingGroupAdrSignal,
     warnings,
   };

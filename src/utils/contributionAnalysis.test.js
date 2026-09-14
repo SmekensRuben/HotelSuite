@@ -94,7 +94,7 @@ describe("Future Group Demand contribution integration", () => {
     forecastByDate: { "2027-09-08": {
       sellableInventory: 150, currentTransientOtb: 16, existingGroupOtb: 17, hardOtherCommittedRooms: 0,
       transientDemandForecast: 107, expectedTransientRoomRate: 200,
-      groupProspectPipelineRooms: 100, groupProspectPipelineRevenue: 22900,
+      groupProspectPipelineRooms: 100, groupProspectPipelineRevenue: 22900, currentDeductibleGroupRevenue: 3893,
       groupForecast: { forecastLow: 22, forecastBase: 27, forecastHigh: 37, confidence: "MEDIUM" },
       ...forecastOverrides,
     } },
@@ -107,11 +107,12 @@ describe("Future Group Demand contribution integration", () => {
     expect(night.hardCommittedRooms).toBe(33);
   });
   it("never makes future group demand negative", () => expect(integrated({ groupForecast: { forecastLow: 1, forecastBase: 2, forecastHigh: 3 } }).nightly[0].futureGroupDemandBase).toBe(0));
-  it("uses pipeline rooms only to calculate the €229 value proxy", () => {
+  it("shows the €229 pipeline commercial rate without using it as evidence", () => {
     const night = integrated().nightly[0];
+    expect(night.pipelineCommercialRate).toBe(229);
+    expect(night.pipelineCommercialRateBasis).toBe("UNKNOWN_COMMERCIAL_PACKAGE");
     expect(night.expectedFutureGroupRoomRate).toBe(229);
-    expect(night.futureGroupRateSource).toBe("PIPELINE_ONLY");
-    expect(night.futureGroupDemandBase).toBe(10);
+    expect(night.futureGroupRateSource).toBe("EXISTING_ONLY");
   });
   it("keeps pipeline rooms out of demand and hard capacity", () => {
     const small = integrated({ groupProspectPipelineRooms: 1, groupProspectPipelineRevenue: 229 });
@@ -133,7 +134,7 @@ describe("Future Group Demand contribution integration", () => {
     expect(lowCommission.nightly[0].futureGroupContributionPerRoom).toBeGreaterThan(highCommission.nightly[0].futureGroupContributionPerRoom);
   });
   it("falls back to existing deductible group ADR", () => {
-    const night = integrated({ groupProspectPipelineRooms: 0, groupProspectPipelineRevenue: 0, existingGroupRevenue: 3400 }).nightly[0];
+    const night = integrated({ groupProspectPipelineRooms: 0, groupProspectPipelineRevenue: 0, existingGroupRevenue: 3400, currentDeductibleGroupRevenue: null }).nightly[0];
     expect(night.expectedFutureGroupRoomRate).toBe(200);
     expect(night.futureGroupRateSource).toBe("EXISTING_ONLY");
   });
@@ -145,7 +146,7 @@ describe("Future Group Demand contribution integration", () => {
   });
   it("returns full displacement when future demand fills remaining capacity", () => expect(integrated({ transientDemandForecast: 200 }).nightly[0].scenarios.base.totalDisplacedFutureRooms).toBe(50));
   it("displaces lower-value future group first and never beyond its demand", () => {
-    const base = integrated({ groupProspectPipelineRevenue: 10000 }).nightly[0].scenarios.base;
+    const base = integrated({ currentDeductibleGroupRevenue: 1700 }).nightly[0].scenarios.base;
     expect(base.displacedFutureGroupRooms).toBe(10);
     expect(base.displacedFutureTransientRooms).toBe(24);
   });
@@ -155,15 +156,14 @@ describe("Future Group Demand contribution integration", () => {
     expect(base.displacedFutureGroupRooms).toBe(0);
     expect(base.displacedFutureTransientRooms + base.displacedFutureGroupRooms).toBe(base.totalDisplacedFutureRooms);
   });
-  it("changes allocation but not total displacement when V2 future-group value crosses transient value", () => {
-    const lowerGroup = integrated({ groupProspectPipelineRevenue: 10000 }, {}, { expectedFutureGroupCommissionPercentage: 10 }).nightly[0].scenarios.base;
-    const higherGroup = integrated({ groupProspectPipelineRevenue: 30000 }, {}, { expectedFutureGroupCommissionPercentage: 10 }).nightly[0].scenarios.base;
-    expect(lowerGroup.totalDisplacedFutureRooms).toBe(higherGroup.totalDisplacedFutureRooms);
-    expect(lowerGroup.displacedFutureGroupRooms).toBeGreaterThan(higherGroup.displacedFutureGroupRooms);
-    expect(lowerGroup.totalLostContribution).not.toBe(higherGroup.totalLostContribution);
+  it("pipeline commercial value changes neither allocation nor Economic Floor", () => {
+    const lower = integrated({ groupProspectPipelineRooms: 100, groupProspectPipelineRevenue: 10000 });
+    const higher = integrated({ groupProspectPipelineRooms: 50, groupProspectPipelineRevenue: 30000 });
+    expect(lower.nightly[0].scenarios.base).toEqual(higher.nightly[0].scenarios.base);
+    expect(lower.economicFloorRate).toBe(higher.economicFloorRate);
   });
   it("marks adjusted floor unavailable when displaced group demand has no value", () => {
-    const output = integrated({ groupProspectPipelineRooms: 500, groupProspectPipelineRevenue: 0, existingGroupRevenue: 0 });
+    const output = integrated({ groupProspectPipelineRooms: 500, groupProspectPipelineRevenue: 125000, existingGroupRevenue: 0, currentDeductibleGroupRevenue: 0 });
     expect(output.economicFloorRate).toBeNull();
     expect(output.transientOnlyEconomicFloor).not.toBeNull();
     expect(output.warnings.join(" ")).toMatch(/no reliable group-rate evidence/i);
@@ -184,7 +184,7 @@ describe("Future Group Demand contribution integration", () => {
     expect(output.warnings.join(" ")).toMatch(/physical capacity/i);
   });
   it("preserves exact arithmetic and group commission gross-up", () => {
-    const output = integrated({ groupProspectPipelineRooms: 3, groupProspectPipelineRevenue: 1000 });
+    const output = integrated({ existingGroupOtb: 3, currentDeductibleGroupRevenue: 1000 });
     expect(output.nightly[0].expectedFutureGroupRoomRate).toBe(1000 / 3);
     expect(output.requiredGrossGroupRoomRevenue).toBeCloseTo(output.requiredNetGroupRoomRevenue / .9, 12);
   });
@@ -230,11 +230,13 @@ describe("Future Group Demand contribution integration", () => {
     expect(simulation.rateAboveFloor).toBe(199 - contribution.economicFloorRateInclVat);
     expect(simulation.rateAboveFloorPercentage).toBe(199 / contribution.economicFloorRateInclVat - 1);
   });
-  it("keeps historical and pipeline ADR ex-VAT internally and exposes pipeline display VAT", () => {
+  it("keeps authoritative group ADR ex-VAT without normalizing pipeline context", () => {
     const output = integrated({}, {}, { roomVatPercentage: 12 });
     expect(output.nightly[0].expectedTransientRoomRate).toBe(200);
     expect(output.nightly[0].expectedFutureGroupRoomRateExVat).toBe(229);
     expect(output.nightly[0].expectedFutureGroupRoomRateInclVat).toBe(229 * 1.12);
+    expect(output.nightly[0].pipelineCommercialRate).toBe(229);
+    expect(output.nightly[0].pipelineCommercialRateBasis).toBe("UNKNOWN_COMMERCIAL_PACKAGE");
   });
 });
 
