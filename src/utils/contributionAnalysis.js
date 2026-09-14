@@ -6,6 +6,11 @@ const WARNING_CODES = new Map([
   ["Future group contribution currently excludes unknown future BQT and breakfast economics.", "FUTURE_GROUP_ECONOMICS_EXCLUDED"],
   ["Group Forecast V1 does not yet use historical booking pace.", "GROUP_PACE_UNAVAILABLE"],
   ["High uncertainty in future group-demand forecast.", "FUTURE_GROUP_LOW_CONFIDENCE"],
+  ["Group forecast is based on a limited but contextually relevant historical sample.", "GROUP_SAMPLE_LIMITED"],
+  ["Group forecast is based on a very limited historical sample.", "GROUP_SAMPLE_VERY_LIMITED"],
+  ["Historical Demand Calendar coverage is incomplete; normal-business matching may include unlabeled event periods.", "CALENDAR_COVERAGE_INCOMPLETE"],
+  ["Current group OTB is missing; zero was used as a fallback.", "CURRENT_GROUP_OTB_MISSING"],
+  ["Historical group observations above 100% of sellable inventory were excluded.", "INVALID_HISTORICAL_GROUP_SHARE"],
 ]);
 
 export function aggregateAnalysisWarnings(nightly) {
@@ -131,6 +136,9 @@ export function calculateGroupContribution({ quote, forecastByDate = {}, setting
     if ([scenarios.low, scenarios.base, scenarios.high].some((scenario) => scenario.displacedFutureGroupRooms > 0) && futureGroupContributionPerRoom === null) contributionWarnings.push("Future group demand is forecast, but no reliable future group rate/value estimate is available.");
     if (futureGroupDemandHigh > 0) contributionWarnings.push("Future group contribution currently excludes unknown future BQT and breakfast economics.");
     if (groupForecast.confidence === "LOW") contributionWarnings.push("High uncertainty in future group-demand forecast.");
+    ["Group forecast is based on a limited but contextually relevant historical sample.", "Group forecast is based on a very limited historical sample.", "Historical Demand Calendar coverage is incomplete; normal-business matching may include unlabeled event periods.", "Current group OTB is missing; zero was used as a fallback.", "Historical group observations above 100% of sellable inventory were excluded."].forEach((message) => {
+      if (groupForecast.warnings?.includes(message)) contributionWarnings.push(message);
+    });
     contributionWarnings.push("Group Forecast V1 does not yet use historical booking pace.");
     return { stayDate: roomNight.date, requestedGroupRooms, currentTransientOtb, currentGroupOtb, hardOtherCommittedRooms, hardCommittedRooms, sellableInventory, physicalCapacityAvailableForNewGroup, capacityConflictRooms, finalTransientDemandForecast, futureTransientDemand, futureGroupDemandLow, futureGroupDemandBase, futureGroupDemandHigh, remainingCapacityBeforeNewGroup, expectedTransientRoomRate, transientDistributionCostPerRoom, transientRoomContributionPerRoom, transientBreakfastContributionPerRoom, transientContributionPerDisplacedRoom, futureTransientContributionPerRoom: transientContributionPerDisplacedRoom, expectedFutureGroupRoomRate, expectedFutureGroupRoomRateExVat: expectedFutureGroupRoomRate, expectedFutureGroupRoomRateInclVat, futureGroupRateSource, futureGroupContributionPerRoom, scenarios, displacedRooms: scenarios.base.totalDisplacedFutureRooms, nonDisplacingGroupRooms: scenarios.base.nonDisplacingGroupRooms, lostTransientContribution: scenarios.transientOnly.lostFutureTransientContribution, contributionWarnings };
   });

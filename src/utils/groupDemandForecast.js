@@ -2,8 +2,16 @@ import { getBusinessSeason } from "./displacementForecast";
 
 export const GROUP_FORECAST_METHOD = "HISTORICAL_FINAL_GROUP_DEMAND";
 export const GROUP_FORECAST_CONFIG = { preferredSample: 5, strongSample: 8 };
+export const CALENDAR_COVERAGE_THRESHOLD = 0.8;
 
 const IMPORTANT_TYPES = new Set(["SCHOOL_HOLIDAY", "PUBLIC_HOLIDAY", "BRIDGE_DAY", "BUSINESS_EVENT", "CITYWIDE_COMPRESSION", "FESTIVE_PERIOD"]);
+const WARNING_CODES = new Map([
+  ["Group forecast is based on a limited but contextually relevant historical sample.", "GROUP_SAMPLE_LIMITED"],
+  ["Group forecast is based on a very limited historical sample.", "GROUP_SAMPLE_VERY_LIMITED"],
+  ["Historical Demand Calendar coverage is incomplete; normal-business matching may include unlabeled event periods.", "CALENDAR_COVERAGE_INCOMPLETE"],
+  ["Current group OTB is missing; zero was used as a fallback.", "CURRENT_GROUP_OTB_MISSING"],
+  ["Historical group observations above 100% of sellable inventory were excluded.", "INVALID_HISTORICAL_GROUP_SHARE"],
+]);
 const number = (value) => value === null || value === undefined || value === "" ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const date = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || "") ? new Date(`${value}T00:00:00Z`) : null;
 
@@ -22,7 +30,7 @@ export function calendarFeatures(stayDate, events = []) {
   const material = activeEvents.filter((event) => IMPORTANT_TYPES.has(event.systemType) && (event.groupDemandEffect || "NEUTRAL") !== "NEUTRAL");
   // Important event types remain part of the regime even when their effect is neutral.
   const regimeEvents = activeEvents.filter((event) => IMPORTANT_TYPES.has(event.systemType));
-  const regime = regimeEvents.length ? regimeEvents.map((event) => `${event.systemType}:${event.groupDemandEffect || "NEUTRAL"}`).sort() : ["NORMAL_GROUP_BUSINESS"];
+  const regime = regimeEvents.length ? [...new Set(regimeEvents.map((event) => `${event.systemType}:${event.groupDemandEffect || "NEUTRAL"}`))].sort() : ["NORMAL_GROUP_BUSINESS"];
   return {
     isSchoolHoliday: types.includes("SCHOOL_HOLIDAY"), isPublicHoliday: types.includes("PUBLIC_HOLIDAY"),
     isBridgeDay: types.includes("BRIDGE_DAY"), hasBusinessEvent: types.includes("BUSINESS_EVENT"),
@@ -41,7 +49,7 @@ export function prepareGroupHistory(rows = [], events = []) {
     const stayDate = row.date || row.consideredDate || row.id;
     const inventory = number(row.calculatedInventoryRooms);
     const groupRooms = number(row.groupRooms);
-    if ((row.historyFutureType && row.historyFutureType !== "History") || !date(stayDate) || inventory === null || inventory <= 0 || groupRooms === null || groupRooms < 0) return [];
+    if ((row.historyFutureType && row.historyFutureType !== "History") || !date(stayDate) || inventory === null || inventory <= 0 || groupRooms === null || groupRooms < 0 || groupRooms > inventory) return [];
     return [{ stayDate, finalGroupRooms: groupRooms, sellableInventory: inventory, groupShare: groupRooms / inventory, calendarFeatures: calendarFeatures(stayDate, events) }];
   });
 }
@@ -49,7 +57,7 @@ export function prepareGroupHistory(rows = [], events = []) {
 export function selectGroupComparables(stayDate, observations, targetFeatures, config = GROUP_FORECAST_CONFIG) {
   const target = date(stayDate);
   if (!target) return { selected: [], tier: null };
-  const eligible = observations.filter((item) => item.stayDate !== stayDate);
+  const eligible = observations.filter((item) => item.stayDate < stayDate);
   const sameDow = (item) => date(item.stayDate).getUTCDay() === target.getUTCDay();
   const sameMonth = (item) => date(item.stayDate).getUTCMonth() === target.getUTCMonth();
   const sameSeason = (item) => getBusinessSeason(item.stayDate) === getBusinessSeason(stayDate);
@@ -62,15 +70,51 @@ export function selectGroupComparables(stayDate, observations, targetFeatures, c
     ["TIER_5_SEASON_FALLBACK", sameSeason],
   ];
   const matches = tiers.map(([tier, predicate]) => ({ tier, selected: eligible.filter(predicate) }));
-  return matches.find((match) => match.selected.length >= config.preferredSample) || [...matches].reverse().find((match) => match.selected.length) || { selected: [], tier: null };
+  // Preserve context before breadth: broad Tier 5 cannot displace a relevant
+  // low-sample Tier 1-4 set merely by containing more observations.
+  const contextual = matches.slice(0, 4);
+  const normal = contextual.find((match) => match.selected.length >= config.preferredSample);
+  if (normal) return { ...normal, selectionPass: "NORMAL" };
+  const limited = contextual.find((match) => match.selected.length >= 3);
+  if (limited) return { ...limited, selectionPass: "LIMITED" };
+  const emergency = contextual.find((match) => match.selected.length > 0);
+  if (emergency) return { ...emergency, selectionPass: "EMERGENCY" };
+  const broad = matches[4];
+  if (broad.selected.length) return { ...broad, selectionPass: broad.selected.length >= config.preferredSample ? "NORMAL" : broad.selected.length >= 3 ? "LIMITED" : "EMERGENCY" };
+  return { selected: [], tier: null, selectionPass: "NONE" };
 }
 
-export function calculateGroupDemandForecast({ stayDate, currentOtb, historicalRows = [], events = [], selectedHistoricalYears, config = GROUP_FORECAST_CONFIG }) {
+export function prepareGroupForecastData({ historicalRows = [], events = [], targetDates = [] } = {}) {
+  const featureMap = new Map();
+  const featuresFor = (stayDate) => {
+    if (!featureMap.has(stayDate)) featureMap.set(stayDate, calendarFeatures(stayDate, events));
+    return featureMap.get(stayDate);
+  };
+  const observations = historicalRows.flatMap((row) => {
+    const stayDate = row.date || row.consideredDate || row.id;
+    const inventory = number(row.calculatedInventoryRooms);
+    const groupRooms = number(row.groupRooms);
+    if ((row.historyFutureType && row.historyFutureType !== "History") || !date(stayDate) || inventory === null || inventory <= 0 || groupRooms === null || groupRooms < 0 || groupRooms > inventory) return [];
+    return [{ stayDate, finalGroupRooms: groupRooms, sellableInventory: inventory, groupShare: groupRooms / inventory, calendarFeatures: featuresFor(stayDate) }];
+  });
+  targetDates.forEach(featuresFor);
+  const invalidGroupShareDates = historicalRows.flatMap((row) => {
+    const stayDate = row.date || row.consideredDate || row.id;
+    const inventory = number(row.calculatedInventoryRooms);
+    const groupRooms = number(row.groupRooms);
+    return date(stayDate) && inventory > 0 && groupRooms !== null && groupRooms > inventory ? [stayDate] : [];
+  });
+  return { observations, featureMap, events, invalidGroupShareDates, featuresFor };
+}
+
+export function calculateGroupDemandForecast({ stayDate, currentOtb, historicalRows = [], events = [], selectedHistoricalYears, preparedData, config = GROUP_FORECAST_CONFIG }) {
   const currentGroupOtb = Math.max(0, number(currentOtb?.groupRooms) ?? 0);
+  const currentGroupOtbExists = number(currentOtb?.groupRooms) !== null;
   const currentSellableInventory = number(currentOtb?.calculatedInventoryRooms);
-  const targetCalendarFeatures = calendarFeatures(stayDate, events);
+  const prepared = preparedData || prepareGroupForecastData({ historicalRows, events, targetDates: [stayDate] });
+  const targetCalendarFeatures = prepared.featuresFor ? prepared.featuresFor(stayDate) : prepared.featureMap.get(stayDate);
   const selectedYearSet = Array.isArray(selectedHistoricalYears) ? new Set(selectedHistoricalYears.map(Number)) : null;
-  const history = prepareGroupHistory(historicalRows, events).filter((item) => !selectedYearSet || selectedYearSet.has(Number(item.stayDate.slice(0, 4))));
+  const history = prepared.observations.filter((item) => (!selectedYearSet || selectedYearSet.has(Number(item.stayDate.slice(0, 4)))) && item.stayDate < stayDate);
   const match = selectGroupComparables(stayDate, history, targetCalendarFeatures, config);
   const comparables = currentSellableInventory > 0 ? match.selected.map((item) => ({
     ...item, normalizedGroupRooms: item.groupShare * currentSellableInventory,
@@ -82,14 +126,30 @@ export function calculateGroupDemandForecast({ stayDate, currentOtb, historicalR
   const p25Rooms = percentile(rooms, .25), p50Rooms = percentile(rooms, .5), p75Rooms = percentile(rooms, .75);
   const floor = (value) => value === null ? null : Math.max(currentGroupOtb, value);
   const forecastLow = floor(p25Rooms), forecastBase = floor(p50Rooms), forecastHigh = floor(p75Rooms);
+  const historicalYears = selectedYearSet ? [...selectedYearSet].filter((year) => year <= Number(stayDate.slice(0, 4))) : [...new Set(history.map((item) => Number(item.stayDate.slice(0, 4))))];
+  const relevantEvents = (prepared.events || events).filter((event) => event?.active === true && IMPORTANT_TYPES.has(event.systemType));
+  const yearsWithCalendarEvents = historicalYears.filter((year) => relevantEvents.some((event) =>
+    event.startDate <= `${year}-12-31` && event.endDate >= `${year}-01-01`
+  ));
+  const calendarCoverageRatio = historicalYears.length ? yearsWithCalendarEvents.length / historicalYears.length : 0;
+  const calendarCoverageIncomplete = targetCalendarFeatures.isNormalGroupBusiness && calendarCoverageRatio < CALENDAR_COVERAGE_THRESHOLD;
   let confidence = "LOW";
-  if (match.tier === "TIER_1_SAME_DOW_MONTH_CALENDAR" && comparables.length >= config.strongSample) confidence = "HIGH";
-  else if (match.tier && !match.tier.startsWith("TIER_5") && comparables.length >= config.preferredSample) confidence = "MEDIUM";
+  if (match.selectionPass === "NORMAL" && match.tier === "TIER_1_SAME_DOW_MONTH_CALENDAR" && comparables.length >= config.strongSample) confidence = "HIGH";
+  else if (match.selectionPass === "NORMAL" && match.tier && !match.tier.startsWith("TIER_5") && comparables.length >= config.preferredSample) confidence = "MEDIUM";
+  if (!currentGroupOtbExists || !(currentSellableInventory > 0)) confidence = "LOW";
+  else if (calendarCoverageIncomplete && confidence === "HIGH") confidence = "MEDIUM";
   const warnings = ["Group pace adjustment is not available yet; forecast is based on historical final group demand.", "Forecast represents expected realized group demand, not unconstrained inquiry demand."];
+  if (match.selectionPass === "LIMITED") warnings.unshift("Group forecast is based on a limited but contextually relevant historical sample.");
+  if (match.selectionPass === "EMERGENCY") warnings.unshift("Group forecast is based on a very limited historical sample.");
   if (comparables.length < config.preferredSample) warnings.unshift("Limited historical group sample.");
   if (selectedYearSet && comparables.length < config.preferredSample) warnings.unshift("Historical group sample is limited by the selected analysis years.");
   if (match.tier && !match.tier.startsWith("TIER_1") && !match.tier.startsWith("TIER_2")) warnings.unshift("Exact calendar-context comparables were unavailable; a broader seasonal sample was used.");
   if (!targetCalendarFeatures.activeEventIds.length) warnings.unshift("No Demand Calendar context was available for this stay date.");
+  if (calendarCoverageIncomplete) warnings.unshift("Historical Demand Calendar coverage is incomplete; normal-business matching may include unlabeled event periods.");
+  if (!currentGroupOtbExists) warnings.unshift("Current group OTB is missing; zero was used as a fallback.");
+  const invalidHistoricalGroupShareDates = (prepared.invalidGroupShareDates || []).filter((value) => value < stayDate && (!selectedYearSet || selectedYearSet.has(Number(value.slice(0, 4)))));
+  if (invalidHistoricalGroupShareDates.length) warnings.unshift("Historical group observations above 100% of sellable inventory were excluded.");
+  if (!(currentSellableInventory > 0)) warnings.unshift("Current sellable inventory is missing or invalid.");
   if (p75Rooms !== null && currentGroupOtb > p75Rooms) warnings.unshift("Current Group OTB already exceeds historical P75 final demand.");
   return {
     stayDate, currentGroupOtb, currentSellableInventory: currentSellableInventory > 0 ? currentSellableInventory : 0,
@@ -100,15 +160,20 @@ export function calculateGroupDemandForecast({ stayDate, currentOtb, historicalR
     historicalP25GroupShare: percentile(shares, .25), historicalP50GroupShare: percentile(shares, .5), historicalP75GroupShare: percentile(shares, .75),
     historicalP25GroupRooms: p25Rooms, historicalP50GroupRooms: p50Rooms, historicalP75GroupRooms: p75Rooms,
     sampleSize: comparables.length, comparableTier: match.tier, selectedHistoricalDates: comparables.map((item) => item.stayDate), selectedHistoricalYears: selectedYearSet ? [...selectedYearSet] : null,
-    comparables, targetCalendarFeatures, confidence, method: GROUP_FORECAST_METHOD, paceAdjustmentApplied: false, warnings,
+    comparables, targetCalendarFeatures, confidence, selectionPass: match.selectionPass, currentGroupOtbExists,
+    selectedHistoricalYearCount: historicalYears.length, historicalYearsWithRelevantCalendarEvents: yearsWithCalendarEvents,
+    calendarCoverageRatio, calendarCoverageThreshold: CALENDAR_COVERAGE_THRESHOLD, calendarCoverageIncomplete,
+    invalidHistoricalGroupShareDates, method: GROUP_FORECAST_METHOD, paceAdjustmentApplied: false, warnings,
+    warningDetails: warnings.map((message) => ({ code: WARNING_CODES.get(message) || message.replace(/\W+/g, "_").replace(/^_|_$/g, "").toUpperCase(), message })),
   };
 }
 
 const mean = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
-export function backtestGroupDemandForecast({ historicalRows = [], events = [], config = GROUP_FORECAST_CONFIG }) {
+export function backtestGroupDemandForecast({ historicalRows = [], events = [], selectedHistoricalYears, config = GROUP_FORECAST_CONFIG }) {
   const eligible = prepareGroupHistory(historicalRows, events);
   const observations = eligible.flatMap((target) => {
-    const result = calculateGroupDemandForecast({ stayDate: target.stayDate, currentOtb: { groupRooms: 0, calculatedInventoryRooms: target.sellableInventory }, historicalRows, events, config });
+    const priorRows = historicalRows.filter((row) => (row.date || row.consideredDate || row.id || "") < target.stayDate);
+    const result = calculateGroupDemandForecast({ stayDate: target.stayDate, currentOtb: { groupRooms: 0, calculatedInventoryRooms: target.sellableInventory }, historicalRows: priorRows, events, selectedHistoricalYears, config });
     if (result.forecastBase === null) return [];
     const signedError = result.forecastBase - target.finalGroupRooms;
     return [{ targetDate: target.stayDate, actualGroupRooms: target.finalGroupRooms, forecastP25: result.forecastLow, forecastP50: result.forecastBase, forecastP75: result.forecastHigh, absoluteError: Math.abs(signedError), signedError, selectionTier: result.comparableTier, sampleSize: result.sampleSize, confidence: result.confidence, calendarContext: result.targetCalendarFeatures.calendarRegime, month: target.stayDate.slice(5, 7), dayOfWeek: date(target.stayDate).getUTCDay(), businessSeason: getBusinessSeason(target.stayDate) }];

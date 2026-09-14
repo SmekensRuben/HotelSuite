@@ -10,12 +10,12 @@ import GroupQuoteFormFields from "./GroupQuoteFormFields";
 import HistoricalYearsDropdown from "./HistoricalYearsDropdown";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { addQuote, getGroupQuoteSettings, getHistoryQuoteDates, getLatestHistoryForecastSnapshot, getLatestLighthouseSnapshot } from "../../services/firebaseQuotes";
+import { addQuote, getGroupQuoteSettings, getHistoryQuoteDates, getLatestHistoryForecastSnapshot, getLatestLighthouseSnapshot, GROUP_QUOTE_ANALYSIS_MODEL_VERSION } from "../../services/firebaseQuotes";
 import { getInclusiveQuoteDates } from "../../utils/quoteDates";
-import { calculateDisplacementDay, DISPLACEMENT_FORECAST_CONFIG } from "../../utils/displacementForecast";
+import { calculateDisplacementDay, DISPLACEMENT_FORECAST_CONFIG, prepareDisplacementForecastData } from "../../utils/displacementForecast";
 import { calculateDemandCapacitySummary, calculateGroupContribution, simulateGroupQuote } from "../../utils/contributionAnalysis";
 import { getDemandCalendarEvents } from "../../services/firebaseDemandCalendar";
-import { calculateGroupDemandForecast } from "../../utils/groupDemandForecast";
+import { calculateGroupDemandForecast, prepareGroupForecastData } from "../../utils/groupDemandForecast";
 
 const currency = (value) => `€${Number(value || 0).toFixed(2)}`;
 const rooms = (value) => value === null || value === undefined ? "—" : Math.round(value).toLocaleString();
@@ -32,6 +32,8 @@ export default function GroupQuoteCreatePage() {
   const [forecastData, setForecastData] = useState(null);
   const [groupForecastData, setGroupForecastData] = useState(null);
   const [forecastLoading, setForecastLoading] = useState(false);
+  const [sourceData, setSourceData] = useState(null);
+  const [yearsCustomized, setYearsCustomized] = useState(false);
   const [testGroupRate, setTestGroupRate] = useState("");
   const today = useMemo(() => new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }), []);
   const handleLogout = async () => { await signOut(auth); sessionStorage.clear(); window.location.href = "/login"; };
@@ -42,40 +44,46 @@ export default function GroupQuoteCreatePage() {
     Promise.all([getHistoryQuoteDates(hotelUid), getGroupQuoteSettings(hotelUid)]).then(([dates, settings]) => {
       setConsideredDates(dates);
       setQuoteSettings(settings);
-      setSelectedYears([...new Set(dates.map((item) => Number(item.date.slice(0, 4))))].sort((a, b) => b - a));
+      setSelectedYears([]);
     });
   }, [hotelUid]);
 
   useEffect(() => {
     if (!hotelUid || !analysisQuote) return;
     let active = true;
-    setForecastData(null);
-    setGroupForecastData(null);
+    setSourceData(null);
     setForecastLoading(true);
     Promise.all([getLatestHistoryForecastSnapshot(hotelUid), getLatestLighthouseSnapshot(hotelUid), getDemandCalendarEvents(hotelUid)])
       .then(([current, lighthouse, events]) => {
         if (!active) return;
-        const maxShare = Number(quoteSettings.maxHistoricalGroupSharePercentage);
-        const byDate = Object.fromEntries(getInclusiveQuoteDates(analysisQuote.startDate, analysisQuote.endDate).map((stayDate) => [stayDate,
+        setSourceData({ current, lighthouse, events });
+      })
+      .finally(() => { if (active) setForecastLoading(false); });
+    return () => { active = false; };
+  }, [hotelUid, analysisQuote]);
+
+  useEffect(() => {
+    if (!analysisQuote || !sourceData) return;
+    const stayDates = getInclusiveQuoteDates(analysisQuote.startDate, analysisQuote.endDate);
+    const preparedTransient = prepareDisplacementForecastData({ historicalRows: consideredDates, lighthouseByDate: sourceData.lighthouse.byDate });
+    const preparedGroup = prepareGroupForecastData({ historicalRows: consideredDates, events: sourceData.events, targetDates: stayDates });
+    const maxShare = Number(quoteSettings.maxHistoricalGroupSharePercentage);
+    const byDate = Object.fromEntries(stayDates.map((stayDate) => [stayDate,
           calculateDisplacementDay({
             stayDate,
             requestedGroupRooms: analysisQuote.roomsByDate.find((item) => item.date === stayDate)?.rooms,
-            currentOtb: current.byDate[stayDate],
-            historicalRows: consideredDates,
+            currentOtb: sourceData.current.byDate[stayDate],
+            preparedData: preparedTransient,
             selectedHistoricalYears: selectedYears,
-            lighthouseByDate: lighthouse.byDate,
             maxHistoricalGroupShare: Number.isFinite(maxShare) ? maxShare / 100 : 1,
             inflationPercentage: quoteSettings.inflationPercentage,
             config: DISPLACEMENT_FORECAST_CONFIG,
           })
-        ]));
-        setForecastData({ byDate, currentSnapshotDate: current.snapshotDate, lighthouseSnapshotDate: lighthouse.snapshotDate });
-        const groupByDate = Object.fromEntries(getInclusiveQuoteDates(analysisQuote.startDate, analysisQuote.endDate).map((stayDate) => [stayDate, calculateGroupDemandForecast({ stayDate, currentOtb: current.byDate[stayDate], historicalRows: consideredDates, events, selectedHistoricalYears: selectedYears })]));
-        setGroupForecastData({ byDate: groupByDate });
-      })
-      .finally(() => { if (active) setForecastLoading(false); });
-    return () => { active = false; };
-  }, [hotelUid, analysisQuote, consideredDates, selectedYears, quoteSettings.maxHistoricalGroupSharePercentage]);
+    ]));
+    setForecastData({ byDate, currentSnapshotDate: sourceData.current.snapshotDate, lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate });
+    const groupByDate = Object.fromEntries(stayDates.map((stayDate) => [stayDate, calculateGroupDemandForecast({ stayDate, currentOtb: sourceData.current.byDate[stayDate], preparedData: preparedGroup, selectedHistoricalYears: selectedYears })]));
+    setGroupForecastData({ byDate: groupByDate });
+  }, [analysisQuote, sourceData, consideredDates, selectedYears, quoteSettings.maxHistoricalGroupSharePercentage, quoteSettings.inflationPercentage]);
 
   const contribution = useMemo(() => {
     if (!analysisQuote || !forecastData || !groupForecastData) return null;
@@ -85,9 +93,17 @@ export default function GroupQuoteCreatePage() {
   }, [analysisQuote, forecastData, groupForecastData, quoteSettings]);
   const simulation = useMemo(() => contribution && !contribution.validationError ? simulateGroupQuote(contribution, testGroupRate) : null, [contribution, testGroupRate]);
 
-  const toggleYear = (year) => setSelectedYears((current) => current.includes(year)
+  const toggleYear = (year) => { setYearsCustomized(true); setSelectedYears((current) => current.includes(year)
     ? current.filter((item) => item !== year)
-    : [...current, year].sort((a, b) => b - a));
+    : [...current, year].sort((a, b) => b - a)); };
+
+  const startAnalysis = (quote) => {
+    if (!yearsCustomized) {
+      const targetYear = Number(quote.startDate.slice(0, 4));
+      setSelectedYears(availableYears.filter((year) => year < targetYear).slice(0, 5));
+    }
+    setAnalysisQuote(quote);
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -97,6 +113,16 @@ export default function GroupQuoteCreatePage() {
         analysisYears: selectedYears,
         displacementForecast: Object.values(forecastData?.byDate || {}),
         groupDemandForecast: Object.values(groupForecastData?.byDate || {}),
+        integratedDisplacement: contribution?.nightly.map((night) => ({
+          stayDate: night.stayDate,
+          scenario: "BASE",
+          totalDisplacedRooms: night.scenarios.base.totalDisplacedFutureRooms,
+          displacedFutureTransientRooms: night.scenarios.base.displacedFutureTransientRooms,
+          displacedFutureGroupRooms: night.scenarios.base.displacedFutureGroupRooms,
+          nonDisplacingGroupRooms: night.scenarios.base.nonDisplacingGroupRooms,
+        })) || [],
+        analysisStatus: "CURRENT",
+        analysisModelVersion: GROUP_QUOTE_ANALYSIS_MODEL_VERSION,
       });
       navigate(`/revenue/group-quotes/${quoteId}`);
     } finally {
@@ -113,7 +139,7 @@ export default function GroupQuoteCreatePage() {
       </div>
 
       <Card className="border border-gray-200 bg-white shadow-sm">
-        <GroupQuoteFormFields defaultGroupCommissionPercentage={quoteSettings.defaultGroupCommissionPercentage} onSubmit={setAnalysisQuote} saving={false} submitLabel="Start Analysis" />
+        <GroupQuoteFormFields defaultGroupCommissionPercentage={quoteSettings.defaultGroupCommissionPercentage} onSubmit={startAnalysis} saving={false} submitLabel="Start Analysis" />
       </Card>
 
       <Card className="border border-gray-200 bg-white shadow-sm">
@@ -154,8 +180,8 @@ export default function GroupQuoteCreatePage() {
 
         <Card className="border border-gray-200 bg-white shadow-sm">
           <div className="mb-4 flex flex-wrap items-end justify-between gap-2"><div><h3 className="text-lg font-semibold">Transient-demand forecast</h3><p className="text-sm text-gray-600">PMS snapshot {forecastData?.currentSnapshotDate || "unavailable"} · Lighthouse snapshot {forecastData?.lighthouseSnapshotDate || "unavailable"}</p></div>{forecastLoading && <span className="text-sm text-gray-500">Loading forecast…</span>}</div>
-          <div className="space-y-3">{Object.values(forecastData?.byDate || {}).map((result) => <details key={result.stayDate} className={`rounded-lg border ${result.forecastConfidence === "low" ? "border-amber-300 bg-amber-50" : "border-gray-200"}`}>
-            <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 p-4"><span className="font-semibold">{result.stayDate}</span><span className="flex flex-wrap items-center gap-3"><span className="text-sm font-medium text-gray-700">{rooms(result.transientDemandForecast)} transient forecast</span><span className={`rounded-full px-2.5 py-1 text-xs font-bold uppercase ${result.forecastConfidence === "high" ? "bg-green-100 text-green-800" : result.forecastConfidence === "medium" ? "bg-blue-100 text-blue-800" : "bg-amber-200 text-amber-900"}`}>{result.forecastConfidence} confidence</span><span className="text-xs font-semibold uppercase text-gray-500">View details</span></span></summary>
+          <div className="space-y-3">{Object.values(forecastData?.byDate || {}).map((result) => <details key={result.stayDate} className={`rounded-lg border ${result.forecastConfidence === "LOW" ? "border-amber-300 bg-amber-50" : "border-gray-200"}`}>
+            <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 p-4"><span className="font-semibold">{result.stayDate}</span><span className="flex flex-wrap items-center gap-3"><span className="text-sm font-medium text-gray-700">{rooms(result.transientDemandForecast)} transient forecast</span><span className={`rounded-full px-2.5 py-1 text-xs font-bold uppercase ${result.forecastConfidence === "HIGH" ? "bg-green-100 text-green-800" : result.forecastConfidence === "MEDIUM" ? "bg-blue-100 text-blue-800" : "bg-amber-200 text-amber-900"}`}>{result.forecastConfidence} confidence</span><span className="text-xs font-semibold uppercase text-gray-500">View details</span></span></summary>
             <div className="border-t border-inherit p-4"><dl className="grid gap-x-5 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
               <div><dt className="text-gray-500">Historical selection tier</dt><dd className="font-medium">{result.historicalSelectionTier}</dd></div>
               <div><dt className="text-gray-500">Selected historical years</dt><dd className="font-medium">{result.historicalYears?.join(", ") || "None"}</dd></div>

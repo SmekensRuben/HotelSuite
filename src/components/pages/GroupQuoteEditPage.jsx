@@ -7,7 +7,7 @@ import { Card } from "../layout/Card";
 import GroupQuoteFormFields from "./GroupQuoteFormFields";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getGroupQuoteSettings, getQuote, updateQuote } from "../../services/firebaseQuotes";
+import { getGroupQuoteSettings, getQuote, hasAnalysisAffectingChanges, updateQuote } from "../../services/firebaseQuotes";
 
 export default function GroupQuoteEditPage() {
   const navigate = useNavigate();
@@ -28,7 +28,11 @@ export default function GroupQuoteEditPage() {
   const handleUpdate = async (payload) => {
     setSaving(true);
     try {
-      await updateQuote(hotelUid, quoteId, payload);
+      const analysisIsStale = hasAnalysisAffectingChanges(quote, payload);
+      await updateQuote(hotelUid, quoteId, {
+        ...payload,
+        ...(analysisIsStale ? { analysisStatus: "STALE", analysisStaleReason: "QUOTE_INPUTS_CHANGED" } : {}),
+      });
       navigate(`/revenue/group-quotes/${quoteId}`);
     } finally { setSaving(false); }
   };

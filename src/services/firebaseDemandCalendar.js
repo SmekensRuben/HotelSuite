@@ -2,12 +2,24 @@ import { addDoc, collection, db, deleteDoc, doc, getDoc, getDocs, onSnapshot, se
 
 // Firestore collections are nested beneath the selected hotel. The extra `categories`
 // segment makes the requested settings document a valid Firestore collection parent.
-export const demandCalendarEventsPath = (hotelUid) => `hotels/${hotelUid}/reports/demandCalendar/events`;
+export const demandCalendarEventsPath = (hotelUid) => `hotels/${hotelUid}/demandCalendarEvents`;
+export const legacyDemandCalendarEventsPath = (hotelUid) => `hotels/${hotelUid}/reports/demandCalendar/events`;
 export const demandCalendarCategoriesPath = (hotelUid) => `hotels/${hotelUid}/settings/demandCalendarCategories/categories`;
 const withId = (snapshot) => ({ id: snapshot.id, ...snapshot.data() });
 
 const subscribe = (path, callback, onError) => onSnapshot(collection(db, path), (snapshot) => callback(snapshot.docs.map(withId)), onError);
-export const subscribeDemandCalendarEvents = (hotelUid, callback, onError) => hotelUid ? subscribe(demandCalendarEventsPath(hotelUid), callback, onError) : () => {};
+export const mergeDemandCalendarEvents = (canonical = [], legacy = []) => {
+  const merged = new Map([...legacy, ...canonical].map((item) => [item.id, item]));
+  return [...merged.values()];
+};
+export const subscribeDemandCalendarEvents = (hotelUid, callback, onError) => {
+  if (!hotelUid) return () => {};
+  let canonical = [], legacy = [];
+  const emit = () => callback(mergeDemandCalendarEvents(canonical, legacy));
+  const unsubscribeCanonical = subscribe(demandCalendarEventsPath(hotelUid), (items) => { canonical = items; emit(); }, onError);
+  const unsubscribeLegacy = subscribe(legacyDemandCalendarEventsPath(hotelUid), (items) => { legacy = items; emit(); }, onError);
+  return () => { unsubscribeCanonical(); unsubscribeLegacy(); };
+};
 export const subscribeDemandCalendarCategories = (hotelUid, callback, onError) => hotelUid ? subscribe(demandCalendarCategoriesPath(hotelUid), callback, onError) : () => {};
 
 // Forecast data originally lived under reports; read both locations while hotels migrate
@@ -15,23 +27,26 @@ export const subscribeDemandCalendarCategories = (hotelUid, callback, onError) =
 export async function getDemandCalendarEvents(hotelUid) {
   if (!hotelUid) return [];
   const [canonical, legacy] = await Promise.all([
-    getDocs(collection(db, `hotels/${hotelUid}/demandCalendarEvents`)),
     getDocs(collection(db, demandCalendarEventsPath(hotelUid))),
+    getDocs(collection(db, legacyDemandCalendarEventsPath(hotelUid))),
   ]);
-  const merged = new Map([...legacy.docs, ...canonical.docs].map((item) => [item.id, withId(item)]));
-  return [...merged.values()];
+  return mergeDemandCalendarEvents(canonical.docs.map(withId), legacy.docs.map(withId));
 }
 
 export async function getDemandCalendarEvent(hotelUid, eventId) {
   if (!hotelUid || !eventId) return null;
-  const snapshot = await getDoc(doc(db, demandCalendarEventsPath(hotelUid), eventId));
+  const [canonical, legacy] = await Promise.all([
+    getDoc(doc(db, demandCalendarEventsPath(hotelUid), eventId)),
+    getDoc(doc(db, legacyDemandCalendarEventsPath(hotelUid), eventId)),
+  ]);
+  const snapshot = canonical.exists() ? canonical : legacy;
   return snapshot.exists() ? withId(snapshot) : null;
 }
 export async function createDemandCalendarEvent(hotelUid, payload) {
   const result = await addDoc(collection(db, demandCalendarEventsPath(hotelUid)), { ...payload, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
   return result.id;
 }
-export const updateDemandCalendarEvent = (hotelUid, eventId, payload) => updateDoc(doc(db, demandCalendarEventsPath(hotelUid), eventId), { ...payload, updatedAt: serverTimestamp() });
+export const updateDemandCalendarEvent = (hotelUid, eventId, payload) => setDoc(doc(db, demandCalendarEventsPath(hotelUid), eventId), { ...payload, updatedAt: serverTimestamp() }, { merge: true });
 export const deleteDemandCalendarEvent = (hotelUid, eventId) => deleteDoc(doc(db, demandCalendarEventsPath(hotelUid), eventId));
 export const createDemandCalendarCategory = async (hotelUid, payload) => (await addDoc(collection(db, demandCalendarCategoriesPath(hotelUid)), { ...payload, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })).id;
 export const updateDemandCalendarCategory = (hotelUid, categoryId, payload) => updateDoc(doc(db, demandCalendarCategoriesPath(hotelUid), categoryId), { ...payload, updatedAt: serverTimestamp() });
