@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { calculateGroupContribution, normalizeContributionSettings, simulateGroupQuote } from "./contributionAnalysis";
-import { calculateDisplacementDay } from "./displacementForecast";
+import { calculateDisplacementDay, calculateDisplacementScenario } from "./displacementForecast";
 
 const settings = (overrides = {}) => ({ variableRoomCost: 20, breakfastCostPerPerson: 5, bqtContributionMarginPercentage: 30, defaultGroupCommissionPercentage: 10, transientAverageBreakfastPax: 1.5, transientAverageBreakfastRevenuePerPax: 12, transientDistributionCostPercentage: 8, inflationPercentage: 5, ...overrides });
 const quote = (overrides = {}) => ({ breakfastPax: 20, roomsByDate: [{ date: "2027-09-08", rooms: 10, bqtRevenue: 1000 }], ...overrides });
@@ -41,6 +41,16 @@ describe("Contribution Displacement Engine V1", () => {
     expect(result({ roomsByDate: [{ date: "2027-09-08", rooms: 10, bqtRevenue: 2000 }] }).economicFloorRate).toBeLessThan(result().economicFloorRate);
     expect(result({ breakfastPax: 30 }).economicFloorRate).toBeGreaterThan(result().economicFloorRate);
     expect(result({}, {}, { displacedRooms: 5, nonDisplacingGroupRooms: 5 }).economicFloorRate).toBeGreaterThan(result().economicFloorRate);
+  });
+  it("changes the floor only through the corrected displaced-room input", () => {
+    const capacity = calculateDisplacementScenario({ sellableInventory: 150, existingGroupOtb: 17, hardOtherCommittedRooms: 0, requestedGroupRooms: 50, transientDemandForecast: 107 });
+    const quoteInput = quote({ breakfastPax: 0, roomsByDate: [{ date: "2027-09-08", rooms: 50, bqtRevenue: 0 }] });
+    const corrected = calculateGroupContribution({ quote: quoteInput, settings: settings(), forecastByDate: forecast({ displacedRooms: capacity.displacedTransientRooms, nonDisplacingGroupRooms: capacity.notDisplacingTransientDemand }) });
+    const formerResidualResult = calculateGroupContribution({ quote: quoteInput, settings: settings(), forecastByDate: forecast({ displacedRooms: 33, nonDisplacingGroupRooms: 17 }) });
+    expect(capacity.displacedTransientRooms).toBe(24);
+    expect(corrected.transientContributionPerDisplacedRoom).toBe(formerResidualResult.transientContributionPerDisplacedRoom);
+    expect(corrected.groupVariableRoomCosts).toBe(formerResidualResult.groupVariableRoomCosts);
+    expect(corrected.economicFloorRate).toBeLessThan(formerResidualResult.economicFloorRate);
   });
   it("clamps required net revenue and floor at zero when BQT is sufficient", () => expect(result({ roomsByDate: [{ date: "2027-09-08", rooms: 10, bqtRevenue: 10000 }] }, {}, { displacedRooms: 0, nonDisplacingGroupRooms: 10 }).requiredNetGroupRoomRevenue).toBe(0));
   it("makes the floor null and warns when displaced rooms have no ADR", () => {

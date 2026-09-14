@@ -62,12 +62,16 @@ export function getBusinessSeason(dateValue) {
 export function mapCurrentOtb(document) {
   const individualRooms = Math.max(0, numeric(document?.individualRooms) ?? 0);
   const groupRooms = Math.max(0, numeric(document?.groupRooms) ?? 0);
-  const occupiedRooms = Math.max(0, numeric(document?.calculatedOccRooms) ?? 0);
   return {
     currentTransientOtb: individualRooms,
     existingGroupOtb: groupRooms,
+    groupProspectPipelineRooms: Math.max(0, numeric(document?.groupRoomsNonDeductible) ?? 0),
+    individualNonDeductibleRooms: Math.max(0, numeric(document?.individualRoomsNonDeductible) ?? 0),
     sellableInventory: Math.max(0, numeric(document?.calculatedInventoryRooms) ?? 0),
-    otherCommittedRooms: Math.max(0, occupiedRooms - individualRooms - groupRooms),
+    // No current importer field is proven to be committed, consume sellable capacity,
+    // and sit outside individualRooms/groupRooms. In particular, occupancy residuals
+    // may contain non-deductible pipeline rooms and OOO is already reflected in inventory.
+    hardOtherCommittedRooms: 0,
     currentOtbExists: numeric(document?.individualRooms) !== null,
   };
 }
@@ -178,14 +182,33 @@ export function calculateLighthouseModifier(targetDate, lighthouseByDate, config
   };
 }
 
-export function calculateDisplacementScenario({ sellableInventory, existingGroupOtb, otherCommittedRooms, requestedGroupRooms, transientDemandForecast }) {
+export function calculateDisplacementScenario({ sellableInventory, existingGroupOtb, hardOtherCommittedRooms = 0, requestedGroupRooms, transientDemandForecast }) {
   const requested = Math.max(0, numeric(requestedGroupRooms) ?? 0);
-  const availableTransientWithoutGroup = Math.max(0, sellableInventory - existingGroupOtb - otherCommittedRooms);
-  const transientSoldWithoutGroup = Math.min(transientDemandForecast, availableTransientWithoutGroup);
-  const availableTransientWithGroup = Math.max(0, availableTransientWithoutGroup - requested);
-  const transientSoldWithGroup = Math.min(transientDemandForecast, availableTransientWithGroup);
-  const displacedRooms = Math.min(requested, Math.max(0, transientSoldWithoutGroup - transientSoldWithGroup));
-  return { availableTransientWithoutGroup, transientSoldWithoutGroup, availableTransientWithGroup, transientSoldWithGroup, displacedRooms, nonDisplacingGroupRooms: requested - displacedRooms };
+  const inventory = Math.max(0, numeric(sellableInventory) ?? 0);
+  const deductibleGroup = Math.max(0, numeric(existingGroupOtb) ?? 0);
+  const hardOther = Math.max(0, numeric(hardOtherCommittedRooms) ?? 0);
+  const finalTransientDemandForecast = Math.max(0, numeric(transientDemandForecast) ?? 0);
+  const availableTransientWithoutNewGroup = Math.max(0, inventory - deductibleGroup - hardOther);
+  const transientSoldWithoutNewGroup = Math.min(finalTransientDemandForecast, availableTransientWithoutNewGroup);
+  const availableTransientWithNewGroup = Math.max(0, inventory - deductibleGroup - hardOther - requested);
+  const transientSoldWithNewGroup = Math.min(finalTransientDemandForecast, availableTransientWithNewGroup);
+  const displacedTransientRooms = Math.min(requested, Math.max(0, transientSoldWithoutNewGroup - transientSoldWithNewGroup));
+  return {
+    finalTransientDemandForecast,
+    availableTransientWithoutNewGroup,
+    transientSoldWithoutNewGroup,
+    availableTransientWithNewGroup,
+    transientSoldWithNewGroup,
+    displacedTransientRooms,
+    notDisplacingTransientDemand: requested - displacedTransientRooms,
+    // Preserve established consumers while exposing unambiguous diagnostic names.
+    availableTransientWithoutGroup: availableTransientWithoutNewGroup,
+    transientSoldWithoutGroup: transientSoldWithoutNewGroup,
+    availableTransientWithGroup: availableTransientWithNewGroup,
+    transientSoldWithGroup: transientSoldWithNewGroup,
+    displacedRooms: displacedTransientRooms,
+    nonDisplacingGroupRooms: requested - displacedTransientRooms,
+  };
 }
 
 export function calculateDisplacementDay({ stayDate, requestedGroupRooms, currentOtb, historicalRows = [], lighthouseByDate = {}, maxHistoricalGroupShare = 1, selectedHistoricalYears, inflationPercentage = 0, config = DISPLACEMENT_FORECAST_CONFIG }) {

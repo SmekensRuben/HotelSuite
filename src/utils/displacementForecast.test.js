@@ -13,7 +13,7 @@ import {
 const scenario = (overrides = {}) => calculateDisplacementScenario({
   sellableInventory: 100,
   existingGroupOtb: 10,
-  otherCommittedRooms: 0,
+  hardOtherCommittedRooms: 0,
   requestedGroupRooms: 20,
   transientDemandForecast: 70,
   ...overrides,
@@ -62,6 +62,23 @@ describe("with/without-group scenarios", () => {
     expect(result.displacedRooms).toBe(7);
     expect(result.nonDisplacingGroupRooms).toBeGreaterThanOrEqual(0);
     expect(result.displacedRooms + result.nonDisplacingGroupRooms).toBe(7);
+  });
+  it.each([["2027-04-01", 96, 13], ["2027-04-02", 109, 26], ["2027-04-03", 107, 24]])("calculates corrected displacement for %s", (_date, transientDemandForecast, expected) => {
+    const result = calculateDisplacementScenario({ sellableInventory: 150, existingGroupOtb: 17, hardOtherCommittedRooms: 0, requestedGroupRooms: 50, transientDemandForecast });
+    expect(result.displacedTransientRooms).toBe(expected);
+  });
+  it("reports 26 rooms not displacing transient demand in the April 3 example", () => {
+    expect(calculateDisplacementScenario({ sellableInventory: 150, existingGroupOtb: 17, hardOtherCommittedRooms: 0, requestedGroupRooms: 50, transientDemandForecast: 107 }).notDisplacingTransientDemand).toBe(26);
+  });
+  it("does not double count current transient OTB against final transient demand", () => {
+    const result = calculateDisplacementScenario({ sellableInventory: 150, existingGroupOtb: 17, hardOtherCommittedRooms: 0, requestedGroupRooms: 50, transientDemandForecast: 107, currentTransientOtb: 16 });
+    expect(result.transientSoldWithoutNewGroup).toBe(107);
+    expect(result.availableTransientWithoutNewGroup).toBe(133);
+  });
+  it("cannot produce negative displacement with zero inventory", () => {
+    const result = calculateDisplacementScenario({ sellableInventory: 0, existingGroupOtb: 17, requestedGroupRooms: 50, transientDemandForecast: 107 });
+    expect(result.displacedTransientRooms).toBe(0);
+    expect(result.notDisplacingTransientDemand).toBe(50);
   });
 });
 
@@ -129,6 +146,28 @@ describe("daily forecast inputs", () => {
     expect(result.adjustedHistoricalDemand).toBe(40);
     expect(result.transientDemandForecast).toBe(90);
   });
-  it("never creates negative other committed rooms", () => expect(mapCurrentOtb({ calculatedOccRooms: 10, individualRooms: 20, groupRooms: 5 }).otherCommittedRooms).toBe(0));
+  it("keeps non-deductible group rooms separate from deductible group OTB and hard capacity", () => {
+    const mapped = mapCurrentOtb({ calculatedInventoryRooms: 150, calculatedOccRooms: 133, numberOfRooms: 133, individualRooms: 16, groupRooms: 17, groupRoomsNonDeductible: 100 });
+    expect(mapped.existingGroupOtb).toBe(17);
+    expect(mapped.groupProspectPipelineRooms).toBe(100);
+    expect(mapped.hardOtherCommittedRooms).toBe(0);
+  });
+  it("does not infer committed rooms from calculated occupancy or numberOfRooms", () => {
+    expect(mapCurrentOtb({ calculatedOccRooms: 999, numberOfRooms: 888, individualRooms: 20, groupRooms: 5 }).hardOtherCommittedRooms).toBe(0);
+  });
+  it("pipeline volume does not alter displacement", () => {
+    const calculate = (groupRoomsNonDeductible) => {
+      const current = mapCurrentOtb({ calculatedInventoryRooms: 150, individualRooms: 16, groupRooms: 17, groupRoomsNonDeductible });
+      return calculateDisplacementScenario({ ...current, requestedGroupRooms: 50, transientDemandForecast: 107 }).displacedTransientRooms;
+    };
+    expect(calculate(0)).toBe(24);
+    expect(calculate(500)).toBe(24);
+  });
+  it("does not subtract OOO twice from calculated sellable inventory", () => {
+    const current = mapCurrentOtb({ calculatedInventoryRooms: 144, inventoryRooms: 150, oooRooms: 6, groupRooms: 0 });
+    const result = calculateDisplacementScenario({ ...current, requestedGroupRooms: 10, transientDemandForecast: 140 });
+    expect(current.sellableInventory).toBe(144);
+    expect(result.availableTransientWithoutNewGroup).toBe(144);
+  });
   it("uses calculated inventory rather than physical inventory", () => expect(mapCurrentOtb({ calculatedInventoryRooms: 94, inventoryRooms: 100 }).sellableInventory).toBe(94));
 });

@@ -108,6 +108,8 @@ inventoryRooms
 calculatedOccRooms
 individualRooms
 groupRooms
+groupRoomsNonDeductible
+individualRoomsNonDeductible
 averageRoomRate
 complimentaryRooms
 houseUseRooms
@@ -124,24 +126,24 @@ Use:
 ```text
 current transient OTB       = individualRooms
 current existing group OTB  = groupRooms
-current total OTB           = calculatedOccRooms
 current sellable inventory  = calculatedInventoryRooms
+group prospect pipeline     = groupRoomsNonDeductible
 ```
 
-Calculate other committed rooms as:
+Do not derive hard committed capacity from `calculatedOccRooms` or
+`numberOfRooms`: these report totals can include non-deductible pipeline.
+`groupRoomsNonDeductible` is retained as prospect context and does not reduce
+capacity. No additional field is currently proven to be committed, consume
+sellable capacity, and be outside `individualRooms`/`groupRooms`, so V1 uses:
 
 ```text
-otherCommittedRooms =
-max(
-  0,
-  calculatedOccRooms
-  - individualRooms
-  - groupRooms
-)
+hardOtherCommittedRooms = 0
 ```
 
-This prevents the displacement model from having to make assumptions about
-how comp, house-use, owner, FF or other occupied-room categories are represented.
+OOO rooms are not subtracted again because `calculatedInventoryRooms` is
+already the sellable inventory after its adjustment. The remaining room
+categories are not added without proof that they are both separately committed
+and not already represented in individual/group rooms.
 
 Future documents should normally have:
 
@@ -405,7 +407,7 @@ Inputs:
 ```text
 sellableInventory
 existingGroupOtb
-otherCommittedRooms
+hardOtherCommittedRooms
 requestedGroupRooms
 transientDemandForecast
 ```
@@ -418,7 +420,7 @@ max(
   0,
   sellableInventory
   - existingGroupOtb
-  - otherCommittedRooms
+  - hardOtherCommittedRooms
 )
 
 transientSoldWithoutGroup =
@@ -492,7 +494,8 @@ transientDemandForecast
 
 sellableInventory
 existingGroupOtb
-otherCommittedRooms
+groupProspectPipelineRooms
+hardOtherCommittedRooms
 requestedGroupRooms
 
 availableTransientWithoutGroup
