@@ -13,6 +13,11 @@ describe("Contribution Displacement Engine V1", () => {
     expect(normalizeContributionSettings(source)).toMatchObject({ bqtContributionMargin: .3, defaultGroupCommission: .1, transientDistributionCost: .08 });
     expect(source).toMatchObject({ bqtContributionMarginPercentage: 30, defaultGroupCommissionPercentage: 10, transientDistributionCostPercentage: 8 });
   });
+  it("normalizes and validates the separate future-group commission", () => {
+    expect(normalizeContributionSettings(settings({ expectedFutureGroupCommissionPercentage: 8 })).expectedFutureGroupCommission).toBe(.08);
+    expect(() => normalizeContributionSettings(settings({ expectedFutureGroupCommissionPercentage: 100 }))).toThrow(/expectedFutureGroupCommissionPercentage/);
+    expect(() => normalizeContributionSettings(settings({ expectedFutureGroupCommissionPercentage: -1 }))).toThrow(/expectedFutureGroupCommissionPercentage/);
+  });
   it("rejects invalid room VAT configuration", () => expect(() => result({}, { roomVatPercentage: -1 })).toThrow(/roomVatPercentage/));
   it("returns zero lost contribution for zero displaced rooms, even without ADR", () => expect(result({}, {}, { displacedRooms: 0, nonDisplacingGroupRooms: 10, expectedTransientRoomRate: null }).totalLostTransientContribution).toBe(0));
   it("calculates transient room and breakfast contribution separately", () => {
@@ -33,6 +38,13 @@ describe("Contribution Displacement Engine V1", () => {
   it("uses default commission when override is absent and lets the quote override win", () => {
     expect(result().groupCommission).toBe(.1);
     expect(result({ groupCommissionPercentage: 5 }).groupCommission).toBe(.05);
+  });
+  it("falls back future-group commission to the default, never the quote commission", () => {
+    const output = result({ groupCommissionPercentage: 25 });
+    expect(output.groupCommission).toBe(.25);
+    expect(output.expectedFutureGroupCommission).toBe(.1);
+    expect(output.futureGroupCommissionDefaultFallback).toBe(true);
+    expect(output.warningDetails.map((warning) => warning.code)).toContain("FUTURE_GROUP_COMMISSION_DEFAULT_FALLBACK");
   });
   it("calculates floors with zero and ten percent commission", () => {
     expect(result({ groupCommissionPercentage: 0 }).economicFloorRate).toBe(33);
@@ -98,13 +110,32 @@ describe("Future Group Demand contribution integration", () => {
   it("uses pipeline rooms only to calculate the €229 value proxy", () => {
     const night = integrated().nightly[0];
     expect(night.expectedFutureGroupRoomRate).toBe(229);
-    expect(night.futureGroupRateSource).toBe("PROSPECT_PIPELINE_ADR");
+    expect(night.futureGroupRateSource).toBe("PIPELINE_ONLY");
     expect(night.futureGroupDemandBase).toBe(10);
+  });
+  it("keeps pipeline rooms out of demand and hard capacity", () => {
+    const small = integrated({ groupProspectPipelineRooms: 1, groupProspectPipelineRevenue: 229 });
+    const large = integrated({ groupProspectPipelineRooms: 1000, groupProspectPipelineRevenue: 229000 });
+    expect(large.nightly[0]).toMatchObject({ futureGroupDemandLow: small.nightly[0].futureGroupDemandLow, futureGroupDemandBase: small.nightly[0].futureGroupDemandBase, futureGroupDemandHigh: small.nightly[0].futureGroupDemandHigh, hardCommittedRooms: small.nightly[0].hardCommittedRooms });
+  });
+  it("separates proposed-group commission from future-group commission", () => {
+    const zero = integrated({}, { groupCommissionPercentage: 0 }, { expectedFutureGroupCommissionPercentage: 8 });
+    const fifteen = integrated({}, { groupCommissionPercentage: 15 }, { expectedFutureGroupCommissionPercentage: 8 });
+    expect(zero.nightly[0].futureGroupContributionPerRoom).toBe(fifteen.nightly[0].futureGroupContributionPerRoom);
+    expect(zero.economicFloorRate).not.toBe(fifteen.economicFloorRate);
+    expect(zero.groupCommission).toBe(0); expect(fifteen.groupCommission).toBe(.15);
+    expect(zero.expectedFutureGroupCommission).toBe(.08);
+  });
+  it("uses the configured future-group commission in future value only", () => {
+    const lowCommission = integrated({}, {}, { expectedFutureGroupCommissionPercentage: 5 });
+    const highCommission = integrated({}, {}, { expectedFutureGroupCommissionPercentage: 20 });
+    expect(lowCommission.groupCommission).toBe(highCommission.groupCommission);
+    expect(lowCommission.nightly[0].futureGroupContributionPerRoom).toBeGreaterThan(highCommission.nightly[0].futureGroupContributionPerRoom);
   });
   it("falls back to existing deductible group ADR", () => {
     const night = integrated({ groupProspectPipelineRooms: 0, groupProspectPipelineRevenue: 0, existingGroupRevenue: 3400 }).nightly[0];
     expect(night.expectedFutureGroupRoomRate).toBe(200);
-    expect(night.futureGroupRateSource).toBe("EXISTING_GROUP_ADR");
+    expect(night.futureGroupRateSource).toBe("EXISTING_ONLY");
   });
   it("protects committed rooms and calculates 34 displaced and 16 incremental rooms", () => {
     const night = integrated().nightly[0];
@@ -124,11 +155,18 @@ describe("Future Group Demand contribution integration", () => {
     expect(base.displacedFutureGroupRooms).toBe(0);
     expect(base.displacedFutureTransientRooms + base.displacedFutureGroupRooms).toBe(base.totalDisplacedFutureRooms);
   });
+  it("changes allocation but not total displacement when V2 future-group value crosses transient value", () => {
+    const lowerGroup = integrated({ groupProspectPipelineRevenue: 10000 }, {}, { expectedFutureGroupCommissionPercentage: 10 }).nightly[0].scenarios.base;
+    const higherGroup = integrated({ groupProspectPipelineRevenue: 30000 }, {}, { expectedFutureGroupCommissionPercentage: 10 }).nightly[0].scenarios.base;
+    expect(lowerGroup.totalDisplacedFutureRooms).toBe(higherGroup.totalDisplacedFutureRooms);
+    expect(lowerGroup.displacedFutureGroupRooms).toBeGreaterThan(higherGroup.displacedFutureGroupRooms);
+    expect(lowerGroup.totalLostContribution).not.toBe(higherGroup.totalLostContribution);
+  });
   it("marks adjusted floor unavailable when displaced group demand has no value", () => {
     const output = integrated({ groupProspectPipelineRooms: 500, groupProspectPipelineRevenue: 0, existingGroupRevenue: 0 });
     expect(output.economicFloorRate).toBeNull();
     expect(output.transientOnlyEconomicFloor).not.toBeNull();
-    expect(output.warnings.join(" ")).toMatch(/no reliable future group rate/i);
+    expect(output.warnings.join(" ")).toMatch(/no reliable group-rate evidence/i);
   });
   it("makes adjusted and transient-only floors equal when future group demand is zero", () => {
     const output = integrated({ groupForecast: { forecastLow: 17, forecastBase: 17, forecastHigh: 17 } });

@@ -7,6 +7,7 @@ import {
   median,
   normalizePercentage,
   prepareHistoricalObservations,
+  prepareDisplacementForecastData,
   selectHistoricalObservations,
 } from "./displacementForecast";
 
@@ -109,7 +110,7 @@ describe("historical selection", () => {
   });
   it("allows September to fall back to October and November", () => {
     const observations = prepareHistoricalObservations([row("2024-10-09"), row("2025-11-12"), row("2026-10-14")]);
-    expect(selectHistoricalObservations("2027-09-08", observations, 1).tier).toBe("same-season-low-sample");
+    expect(selectHistoricalObservations("2027-09-08", observations, 1).tier).toBe("same-season-preferred-low-sample");
   });
   it("prefers same-month over same-season", () => {
     const sameMonth = weekdayDates("09", [2021, 2022, 2023, 2024, 2025, 2026]);
@@ -120,7 +121,7 @@ describe("historical selection", () => {
     const observations = prepareHistoricalObservations(weekdayDates("09", [2018]));
     const result = selectHistoricalObservations("2027-09-08", observations, 1, undefined, [2018]);
     expect(result.selected).toHaveLength(4);
-    expect(result.tier).toBe("same-season-low-sample");
+    expect(result.tier).toBe("same-month-preferred-low-sample");
   });
   it("excludes recent years that are not selected", () => {
     const observations = prepareHistoricalObservations([
@@ -134,10 +135,25 @@ describe("historical selection", () => {
   it("uses censored history only as a low-confidence lower bound", () => {
     const result = calculateDisplacementDay({ stayDate: "2027-09-08", requestedGroupRooms: 10, currentOtb: { calculatedInventoryRooms: 100, individualRooms: 20 }, historicalRows: [row("2026-09-09", { individualRooms: 95, calculatedOccRooms: 95, groupRooms: 0 })] });
     expect(result.historicalSelectionTier).toBe("censored-lower-bound");
-    expect(result.forecastConfidence).toBe("low");
+    expect(result.forecastConfidence).toBe("LOW");
     expect(result.warnings.join(" ")).toMatch(/lower-bound/);
   });
   it("ignores invalid and zero calculated inventory", () => expect(prepareHistoricalObservations([row("2026-09-08", { calculatedInventoryRooms: 0 }), row("2025-09-08", { calculatedInventoryRooms: "bad" })])).toHaveLength(0));
+  it("prefers two relevant unconstrained observations over censored evidence", () => {
+    const usable = [row("2025-09-10"), row("2026-09-09")];
+    const censored = [row("2022-09-14"), row("2023-09-13"), row("2024-09-11")].map((item) => ({ ...item, individualRooms: 95, calculatedOccRooms: 95, groupRooms: 0 }));
+    const result = calculateDisplacementDay({ stayDate: "2027-09-08", currentOtb: { calculatedInventoryRooms: 100, individualRooms: 0 }, historicalRows: [...usable, ...censored] });
+    expect(result.historicalSelectionTier).toContain("low-sample");
+    expect(result.historicalSelectedCount).toBe(2);
+    expect(result.forecastConfidence).toBe("LOW");
+    expect(result.warnings).toContain("Transient forecast is based on a very limited unconstrained historical sample.");
+  });
+  it("excludes negative transient actuals", () => expect(prepareHistoricalObservations([row("2026-09-09", { individualRooms: -1 })])).toHaveLength(0));
+  it("prepares historical and Lighthouse inputs once for reuse", () => {
+    const prepared = prepareDisplacementForecastData({ historicalRows: [row("2026-09-09")], lighthouseByDate: { "2027-09-08": { "Market demand": "93%" } } });
+    expect(prepared.historicalObservations).toHaveLength(1);
+    expect(prepared.normalizedLighthouseByDate["2027-09-08"]["Market demand"]).toBe(.93);
+  });
 });
 
 describe("daily forecast inputs", () => {
@@ -151,6 +167,15 @@ describe("daily forecast inputs", () => {
     expect(mapped.existingGroupOtb).toBe(17);
     expect(mapped.groupProspectPipelineRooms).toBe(100);
     expect(mapped.hardOtherCommittedRooms).toBe(0);
+    expect(mapped.currentGroupOtbExists).toBe(true);
+  });
+  it("tracks missing group OTB separately from genuine zero", () => {
+    expect(mapCurrentOtb({ groupRooms: 0 }).currentGroupOtbExists).toBe(true);
+    expect(mapCurrentOtb({}).currentGroupOtbExists).toBe(false);
+  });
+  it("prefers explicit deductible group revenue and documents the legacy fallback", () => {
+    expect(mapCurrentOtb({ groupRevenueDeductible: 1200, groupRevenue: 999 })).toMatchObject({ currentDeductibleGroupRevenue: 1200, currentDeductibleGroupRevenueSource: "GROUP_REVENUE_DEDUCTIBLE" });
+    expect(mapCurrentOtb({ groupRevenue: 999 })).toMatchObject({ currentDeductibleGroupRevenue: 999, currentDeductibleGroupRevenueSource: "LEGACY_GROUP_REVENUE" });
   });
   it("does not infer committed rooms from calculated occupancy or numberOfRooms", () => {
     expect(mapCurrentOtb({ calculatedOccRooms: 999, numberOfRooms: 888, individualRooms: 20, groupRooms: 5 }).hardOtherCommittedRooms).toBe(0);

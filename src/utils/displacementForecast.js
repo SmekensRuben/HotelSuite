@@ -13,6 +13,7 @@ export const DISPLACEMENT_FORECAST_CONFIG = {
 
 const LOWER_BOUND_WARNING = "Historical transient demand is capacity constrained; baseline is a lower-bound estimate.";
 const LIGHTHOUSE_WARNING = "Lighthouse Market Demand is missing or invalid; no market adjustment was applied.";
+const LIMITED_SAMPLE_WARNING = "Transient forecast is based on a very limited unconstrained historical sample.";
 
 const numeric = (value) => {
   if (value === null || value === undefined || value === "") return null;
@@ -62,12 +63,17 @@ export function getBusinessSeason(dateValue) {
 export function mapCurrentOtb(document) {
   const individualRooms = Math.max(0, numeric(document?.individualRooms) ?? 0);
   const groupRooms = Math.max(0, numeric(document?.groupRooms) ?? 0);
+  const explicitDeductibleGroupRevenue = numeric(document?.groupRevenueDeductible);
+  const legacyGroupRevenue = numeric(document?.groupRevenue);
+  const currentDeductibleGroupRevenue = explicitDeductibleGroupRevenue ?? legacyGroupRevenue;
   return {
     currentTransientOtb: individualRooms,
     existingGroupOtb: groupRooms,
     groupProspectPipelineRooms: Math.max(0, numeric(document?.groupRoomsNonDeductible) ?? 0),
     groupProspectPipelineRevenue: Math.max(0, numeric(document?.groupRevenueNonDeductible) ?? 0),
-    existingGroupRevenue: Math.max(0, numeric(document?.groupRevenue) ?? 0),
+    existingGroupRevenue: Math.max(0, currentDeductibleGroupRevenue ?? 0),
+    currentDeductibleGroupRevenue: Math.max(0, currentDeductibleGroupRevenue ?? 0),
+    currentDeductibleGroupRevenueSource: explicitDeductibleGroupRevenue !== null ? "GROUP_REVENUE_DEDUCTIBLE" : legacyGroupRevenue !== null ? "LEGACY_GROUP_REVENUE" : null,
     individualNonDeductibleRooms: Math.max(0, numeric(document?.individualRoomsNonDeductible) ?? 0),
     sellableInventory: Math.max(0, numeric(document?.calculatedInventoryRooms) ?? 0),
     // No current importer field is proven to be committed, consume sellable capacity,
@@ -75,6 +81,7 @@ export function mapCurrentOtb(document) {
     // may contain non-deductible pipeline rooms and OOO is already reflected in inventory.
     hardOtherCommittedRooms: 0,
     currentOtbExists: numeric(document?.individualRooms) !== null,
+    currentGroupOtbExists: numeric(document?.groupRooms) !== null,
   };
 }
 
@@ -84,7 +91,7 @@ export function prepareHistoricalObservations(rows, config = DISPLACEMENT_FORECA
     const date = row.date || row.consideredDate || row.id;
     const inventory = numeric(row.calculatedInventoryRooms);
     const individualRooms = numeric(row.individualRooms);
-    if (!utcDate(date) || inventory === null || inventory <= 0 || individualRooms === null) return [];
+    if (!utcDate(date) || inventory === null || inventory <= 0 || individualRooms === null || individualRooms < 0) return [];
     const groupRooms = Math.max(0, numeric(row.groupRooms) ?? 0);
     const occupiedRooms = Math.max(0, numeric(row.calculatedOccRooms) ?? 0);
     const otherActualRooms = Math.max(0, occupiedRooms - individualRooms - groupRooms);
@@ -119,7 +126,7 @@ export function selectHistoricalObservations(targetDate, observations, maxHistor
     const yearIsEligible = selectedYearSet
       ? selectedYearSet.has(date?.getUTCFullYear())
       : age >= 1 && age <= config.historicalYears;
-    return date && yearIsEligible && date.getUTCDay() === target.getUTCDay();
+    return date && date < target && yearIsEligible && date.getUTCDay() === target.getUTCDay();
   });
   const sameMonth = candidates.filter((item) => utcDate(item.date).getUTCMonth() === target.getUTCMonth());
   const sameSeason = candidates.filter((item) => getBusinessSeason(item.date) === getBusinessSeason(targetDate));
@@ -135,10 +142,17 @@ export function selectHistoricalObservations(targetDate, observations, maxHistor
   let selected = match?.[0] || [];
   let tier = match?.[1] || "unavailable";
   if (!selected.length) {
-    const fallback = unconstrained(sameSeason);
-    if (fallback.length >= config.minimumFallbackHistoricalSample) {
-      selected = fallback;
-      tier = "same-season-low-sample";
+    const lowSampleTiers = [
+      [preferred(sameMonth), "same-month-preferred-low-sample"],
+      [unconstrained(sameMonth), "same-month-unconstrained-low-sample"],
+      [preferred(sameSeason), "same-season-preferred-low-sample"],
+      [unconstrained(sameSeason), "same-season-unconstrained-low-sample"],
+    ];
+    const lowSample = lowSampleTiers.find(([items]) => items.length >= config.minimumFallbackHistoricalSample)
+      || lowSampleTiers.find(([items]) => items.length > 0);
+    if (lowSample) {
+      selected = lowSample[0];
+      tier = lowSample[1];
     } else {
       const sameMonthCensored = sameMonth.filter((item) => item.isCapacityConstrained);
       const sameSeasonCensored = sameSeason.filter((item) => item.isCapacityConstrained);
@@ -184,6 +198,20 @@ export function calculateLighthouseModifier(targetDate, lighthouseByDate, config
   };
 }
 
+export function prepareLighthouseDemand(lighthouseByDate = {}) {
+  return Object.fromEntries(Object.entries(lighthouseByDate).map(([stayDate, row]) => [
+    stayDate,
+    { ...row, "Market demand": normalizePercentage(row?.["Market demand"]) },
+  ]));
+}
+
+export function prepareDisplacementForecastData({ historicalRows = [], lighthouseByDate = {}, config = DISPLACEMENT_FORECAST_CONFIG } = {}) {
+  return {
+    historicalObservations: prepareHistoricalObservations(historicalRows, config),
+    normalizedLighthouseByDate: prepareLighthouseDemand(lighthouseByDate),
+  };
+}
+
 export function calculateDisplacementScenario({ sellableInventory, existingGroupOtb, hardOtherCommittedRooms = 0, requestedGroupRooms, transientDemandForecast }) {
   const requested = Math.max(0, numeric(requestedGroupRooms) ?? 0);
   const inventory = Math.max(0, numeric(sellableInventory) ?? 0);
@@ -213,9 +241,9 @@ export function calculateDisplacementScenario({ sellableInventory, existingGroup
   };
 }
 
-export function calculateDisplacementDay({ stayDate, requestedGroupRooms, currentOtb, historicalRows = [], lighthouseByDate = {}, maxHistoricalGroupShare = 1, selectedHistoricalYears, inflationPercentage = 0, config = DISPLACEMENT_FORECAST_CONFIG }) {
+export function calculateDisplacementDay({ stayDate, requestedGroupRooms, currentOtb, historicalRows = [], lighthouseByDate = {}, preparedData, maxHistoricalGroupShare = 1, selectedHistoricalYears, inflationPercentage = 0, config = DISPLACEMENT_FORECAST_CONFIG }) {
   const current = mapCurrentOtb(currentOtb);
-  const observations = prepareHistoricalObservations(historicalRows, config);
+  const observations = preparedData?.historicalObservations || prepareHistoricalObservations(historicalRows, config);
   const historical = selectHistoricalObservations(stayDate, observations, maxHistoricalGroupShare, config, selectedHistoricalYears);
   const historicalMedianTransientOccupancy = median(historical.selected.map((item) => item.transientOccupancyRatio));
   const targetYear = utcDate(stayDate)?.getUTCFullYear();
@@ -227,20 +255,21 @@ export function calculateDisplacementDay({ stayDate, requestedGroupRooms, curren
   });
   const expectedTransientRoomRate = median(inflationAdjustedHistoricalAdrValues);
   const historicalBaselineRooms = historicalMedianTransientOccupancy === null ? null : historicalMedianTransientOccupancy * current.sellableInventory;
-  const lighthouse = calculateLighthouseModifier(stayDate, lighthouseByDate, config);
+  const lighthouse = calculateLighthouseModifier(stayDate, preparedData?.normalizedLighthouseByDate || lighthouseByDate, config);
   const adjustedHistoricalDemand = historicalBaselineRooms === null ? null : historicalBaselineRooms * lighthouse.modifier;
   const transientDemandForecast = Math.max(current.currentTransientOtb, adjustedHistoricalDemand ?? 0);
   const warnings = [];
   if (historical.tier === "censored-lower-bound") warnings.push(LOWER_BOUND_WARNING);
+  if (historical.tier.includes("low-sample") && historical.selected.length <= 2) warnings.push(LIMITED_SAMPLE_WARNING);
   if (historicalBaselineRooms === null) warnings.push("Historical transient baseline is unavailable.");
   if (lighthouse.warning) warnings.push(lighthouse.warning);
   if (!current.currentOtbExists) warnings.push("Current transient OTB is missing.");
   if (!currentOtb || current.sellableInventory <= 0) warnings.push("Current sellable inventory is missing or invalid.");
-  let forecastConfidence = "low";
+  let forecastConfidence = "LOW";
   const sameMonth = historical.tier.startsWith("same-month");
   const sameSeason = historical.tier === "same-season-preferred" || historical.tier === "same-season-unconstrained";
-  if (sameMonth && historical.selected.length >= 8 && current.currentOtbExists && lighthouse.valid) forecastConfidence = "high";
-  else if (current.currentOtbExists && ((sameMonth && historical.selected.length >= 6) || (sameSeason && historical.selected.length >= 6))) forecastConfidence = "medium";
+  if (sameMonth && historical.selected.length >= 8 && current.currentOtbExists && lighthouse.valid) forecastConfidence = "HIGH";
+  else if (current.currentOtbExists && ((sameMonth && historical.selected.length >= 6) || (sameSeason && historical.selected.length >= 6))) forecastConfidence = "MEDIUM";
   const scenario = calculateDisplacementScenario({ ...current, requestedGroupRooms, transientDemandForecast });
   return {
     stayDate,
@@ -264,6 +293,10 @@ export function calculateDisplacementDay({ stayDate, requestedGroupRooms, curren
     adjustedHistoricalDemand,
     transientDemandForecast,
     ...scenario,
+    // Compatibility diagnostic only. Integrated/authoritative displacement is
+    // calculated later by calculateGroupContribution with future group demand.
+    legacyTransientOnlyDisplacement: scenario.displacedTransientRooms,
     warnings,
+    warningDetails: warnings.map((message) => ({ code: message === LIMITED_SAMPLE_WARNING ? "TRANSIENT_SAMPLE_LIMITED" : message.replace(/\W+/g, "_").replace(/^_|_$/g, "").toUpperCase(), message })),
   };
 }

@@ -17,6 +17,17 @@ import {
 } from "../firebaseConfig";
 
 const quotesPath = (hotelUid) => `hotels/${hotelUid}/quotes`;
+export const GROUP_QUOTE_ANALYSIS_MODEL_VERSION = "group-contribution-v2-group-value";
+export const SAVED_ANALYSIS_STALE_WARNING = Object.freeze({
+  code: "SAVED_ANALYSIS_STALE",
+  message: "Saved analysis is stale because analysis-affecting quote inputs changed.",
+});
+
+const ANALYSIS_FIELDS = ["startDate", "endDate", "roomsByDate", "breakfastPax", "groupCommissionPercentage", "analysisYears"];
+const stableValue = (value) => JSON.stringify(value ?? null);
+export const hasAnalysisAffectingChanges = (current = {}, updates = {}) => ANALYSIS_FIELDS.some((field) =>
+  Object.prototype.hasOwnProperty.call(updates, field) && stableValue(current[field]) !== stableValue(updates[field])
+);
 
 const withId = (docSnap) => ({ id: docSnap.id, ...docSnap.data() });
 

@@ -9,7 +9,7 @@ import ConfirmModal from "../layout/ConfirmModal";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { usePermission } from "../../hooks/usePermission";
-import { deleteQuote, getQuote } from "../../services/firebaseQuotes";
+import { deleteQuote, getQuote, SAVED_ANALYSIS_STALE_WARNING } from "../../services/firebaseQuotes";
 
 export default function GroupQuoteDetailPage() {
   const navigate = useNavigate();
@@ -48,6 +48,7 @@ export default function GroupQuoteDetailPage() {
         </div>
       </div>
       {loading ? <p className="text-gray-600">Loading quote...</p> : !quote ? <Card><p>Group quote not found.</p></Card> : <>
+        {quote.analysisStatus === "STALE" && <Card data-warning-code={SAVED_ANALYSIS_STALE_WARNING.code} className="border border-amber-300 bg-amber-50 text-amber-900"><strong>Saved analysis is stale.</strong> Quote inputs changed after the forecast was created; saved forecast values must not be treated as current.</Card>}
         <Card className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           <div><p className="text-xs uppercase text-gray-500">Name</p><p className="font-semibold">{quote.name || "-"}</p></div>
           <div><p className="text-xs uppercase text-gray-500">Request Date</p><p className="font-semibold">{quote.requestDate || "-"}</p></div>
