@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { aggregateAnalysisWarnings, calculateDemandCapacitySummary, calculateGroupContribution, normalizeContributionSettings, simulateGroupQuote } from "./contributionAnalysis";
 import { calculateDisplacementDay, calculateDisplacementScenario } from "./displacementForecast";
 
-const settings = (overrides = {}) => ({ variableRoomCost: 20, breakfastCostPerPerson: 5, bqtContributionMarginPercentage: 30, defaultGroupCommissionPercentage: 10, transientAverageBreakfastPax: 1.5, transientAverageBreakfastRevenuePerPax: 12, transientDistributionCostPercentage: 8, inflationPercentage: 5, ...overrides });
+const settings = (overrides = {}) => ({ variableRoomCost: 20, breakfastCostPerPerson: 5, bqtContributionMarginPercentage: 30, defaultGroupCommissionPercentage: 10, transientAverageBreakfastPax: 1.5, transientAverageBreakfastRevenuePerPax: 12, transientDistributionCostPercentage: 8, inflationPercentage: 5, roomVatPercentage: 0, ...overrides });
 const quote = (overrides = {}) => ({ breakfastPax: 20, roomsByDate: [{ date: "2027-09-08", rooms: 10, bqtRevenue: 1000 }], ...overrides });
 const forecast = (overrides = {}) => ({ "2027-09-08": { displacedRooms: 4, nonDisplacingGroupRooms: 6, expectedTransientRoomRate: 100, ...overrides } });
 const result = (quoteOverrides, settingOverrides, forecastOverrides) => calculateGroupContribution({ quote: quote(quoteOverrides), settings: settings(settingOverrides), forecastByDate: forecast(forecastOverrides) });
@@ -13,6 +13,7 @@ describe("Contribution Displacement Engine V1", () => {
     expect(normalizeContributionSettings(source)).toMatchObject({ bqtContributionMargin: .3, defaultGroupCommission: .1, transientDistributionCost: .08 });
     expect(source).toMatchObject({ bqtContributionMarginPercentage: 30, defaultGroupCommissionPercentage: 10, transientDistributionCostPercentage: 8 });
   });
+  it("rejects invalid room VAT configuration", () => expect(() => result({}, { roomVatPercentage: -1 })).toThrow(/roomVatPercentage/));
   it("returns zero lost contribution for zero displaced rooms, even without ADR", () => expect(result({}, {}, { displacedRooms: 0, nonDisplacingGroupRooms: 10, expectedTransientRoomRate: null }).totalLostTransientContribution).toBe(0));
   it("calculates transient room and breakfast contribution separately", () => {
     const night = result().nightly[0];
@@ -66,10 +67,10 @@ describe("Contribution Displacement Engine V1", () => {
     const empty = result({ roomsByDate: [] }); expect(empty.economicFloorRate).toBeNull(); expect(empty.warnings.join(" ")).toMatch(/zero/);
   });
   it("simulates exact, above, and below-floor rates without rounding", () => {
-    const contribution = result(); const exact = simulateGroupQuote(contribution, contribution.economicFloorRate);
+    const contribution = result(); const exact = simulateGroupQuote(contribution, contribution.economicFloorRateInclVat);
     expect(exact.netIncrementalContribution).toBeCloseTo(0, 10);
-    expect(simulateGroupQuote(contribution, contribution.economicFloorRate + .123456).netIncrementalContribution).toBeGreaterThan(0);
-    expect(simulateGroupQuote(contribution, contribution.economicFloorRate - .123456).netIncrementalContribution).toBeLessThan(0);
+    expect(simulateGroupQuote(contribution, contribution.economicFloorRateInclVat + .123456).netIncrementalContribution).toBeGreaterThan(0);
+    expect(simulateGroupQuote(contribution, contribution.economicFloorRateInclVat - .123456).netIncrementalContribution).toBeLessThan(0);
     expect(exact.economicFloorRate).not.toBe(Number(exact.economicFloorRate.toFixed(2)));
   });
 });
@@ -169,6 +170,33 @@ describe("Future Group Demand contribution integration", () => {
     const summary = calculateDemandCapacitySummary({ sellableInventory: 150, transientDemandForecast: 107, currentTransientOtb: 16, existingGroupOtb: 17, groupProspectPipelineRooms: 500, hardOtherCommittedRooms: 2 }, { forecastBase: 27 });
     expect(summary.expectedTotalDemand).toBe(136);
     expect(summary.expectedSlack).toBe(14);
+  });
+  it("converts all floor scenarios for commercial display without changing ex-VAT economics", () => {
+    const exVat = integrated({}, {}, { roomVatPercentage: 0 });
+    const vat = integrated({}, {}, { roomVatPercentage: 12 });
+    expect(vat.economicFloorRateExVat).toBe(exVat.economicFloorRateExVat);
+    expect(vat.economicFloorBaseInclVat).toBe(vat.economicFloorBaseExVat * 1.12);
+    expect(vat.economicFloorLowInclVat).toBe(vat.economicFloorLowExVat * 1.12);
+    expect(vat.economicFloorHighInclVat).toBe(vat.economicFloorHighExVat * 1.12);
+    expect(vat.transientOnlyEconomicFloorInclVat).toBe(vat.transientOnlyEconomicFloorExVat * 1.12);
+    expect(vat.groupBreakfastCosts).toBe(exVat.groupBreakfastCosts);
+    expect(vat.bqtContribution).toBe(exVat.bqtContribution);
+  });
+  it("treats a €199 simulator input as VAT-inclusive and commissions ex-VAT revenue", () => {
+    const contribution = integrated({}, { roomsByDate: [{ date: "2027-09-08", rooms: 100, bqtRevenue: 0 }] }, { roomVatPercentage: 12 });
+    const simulation = simulateGroupQuote(contribution, 199);
+    expect(simulation.testGroupRateExVat).toBeCloseTo(177.67857142857142, 12);
+    expect(simulation.testGroupRoomRevenueExVat).toBeCloseTo(17767.85714285714, 10);
+    expect(simulation.testGroupRoomRevenueExVat).not.toBe(19900);
+    expect(simulation.testGroupCommissionCost).toBeCloseTo(simulation.testGroupRoomRevenueExVat * .1, 12);
+    expect(simulation.rateAboveFloor).toBe(199 - contribution.economicFloorRateInclVat);
+    expect(simulation.rateAboveFloorPercentage).toBe(199 / contribution.economicFloorRateInclVat - 1);
+  });
+  it("keeps historical and pipeline ADR ex-VAT internally and exposes pipeline display VAT", () => {
+    const output = integrated({}, {}, { roomVatPercentage: 12 });
+    expect(output.nightly[0].expectedTransientRoomRate).toBe(200);
+    expect(output.nightly[0].expectedFutureGroupRoomRateExVat).toBe(229);
+    expect(output.nightly[0].expectedFutureGroupRoomRateInclVat).toBe(229 * 1.12);
   });
 });
 

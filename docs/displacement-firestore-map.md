@@ -185,6 +185,11 @@ My OTB
 Other rate/compset fields are preserved but are NOT used in V1 transient-demand
 forecasting.
 
+The VAT basis of Lighthouse/compset commercial rate fields is not yet proven.
+Any future pricing integration must tag each source as `EXCL_VAT` or `INCL_VAT`
+before applying room-rate normalization; this analysis does not apply the hotel
+room VAT setting to those external rates blindly.
+
 Current imported Lighthouse values may be stored as strings, for example:
 
 ```text
