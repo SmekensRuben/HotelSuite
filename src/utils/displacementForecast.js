@@ -66,6 +66,8 @@ export function mapCurrentOtb(document) {
     currentTransientOtb: individualRooms,
     existingGroupOtb: groupRooms,
     groupProspectPipelineRooms: Math.max(0, numeric(document?.groupRoomsNonDeductible) ?? 0),
+    groupProspectPipelineRevenue: Math.max(0, numeric(document?.groupRevenueNonDeductible) ?? 0),
+    existingGroupRevenue: Math.max(0, numeric(document?.groupRevenue) ?? 0),
     individualNonDeductibleRooms: Math.max(0, numeric(document?.individualRoomsNonDeductible) ?? 0),
     sellableInventory: Math.max(0, numeric(document?.calculatedInventoryRooms) ?? 0),
     // No current importer field is proven to be committed, consume sellable capacity,

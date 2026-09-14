@@ -74,6 +74,88 @@ describe("Contribution Displacement Engine V1", () => {
   });
 });
 
+describe("Future Group Demand contribution integration", () => {
+  const integrated = (forecastOverrides = {}, quoteOverrides = {}, settingOverrides = {}) => calculateGroupContribution({
+    quote: quote({ breakfastPax: 0, groupCommissionPercentage: 10, roomsByDate: [{ date: "2027-09-08", rooms: 50, bqtRevenue: 0 }], ...quoteOverrides }),
+    settings: settings({ transientAverageBreakfastPax: 0, ...settingOverrides }),
+    forecastByDate: { "2027-09-08": {
+      sellableInventory: 150, currentTransientOtb: 16, existingGroupOtb: 17, hardOtherCommittedRooms: 0,
+      transientDemandForecast: 107, expectedTransientRoomRate: 200,
+      groupProspectPipelineRooms: 100, groupProspectPipelineRevenue: 22900,
+      groupForecast: { forecastLow: 22, forecastBase: 27, forecastHigh: 37, confidence: "MEDIUM" },
+      ...forecastOverrides,
+    } },
+  });
+
+  it("separates future transient and group demand from committed OTB", () => {
+    const night = integrated().nightly[0];
+    expect(night.futureTransientDemand).toBe(91);
+    expect(night.futureGroupDemandBase).toBe(10);
+    expect(night.hardCommittedRooms).toBe(33);
+  });
+  it("never makes future group demand negative", () => expect(integrated({ groupForecast: { forecastLow: 1, forecastBase: 2, forecastHigh: 3 } }).nightly[0].futureGroupDemandBase).toBe(0));
+  it("uses pipeline rooms only to calculate the €229 value proxy", () => {
+    const night = integrated().nightly[0];
+    expect(night.expectedFutureGroupRoomRate).toBe(229);
+    expect(night.futureGroupRateSource).toBe("PROSPECT_PIPELINE_ADR");
+    expect(night.futureGroupDemandBase).toBe(10);
+  });
+  it("falls back to existing deductible group ADR", () => {
+    const night = integrated({ groupProspectPipelineRooms: 0, groupProspectPipelineRevenue: 0, existingGroupRevenue: 3400 }).nightly[0];
+    expect(night.expectedFutureGroupRoomRate).toBe(200);
+    expect(night.futureGroupRateSource).toBe("EXISTING_GROUP_ADR");
+  });
+  it("protects committed rooms and calculates 34 displaced and 16 incremental rooms", () => {
+    const night = integrated().nightly[0];
+    expect(night.remainingCapacityBeforeNewGroup).toBe(117);
+    expect(night.scenarios.base.totalDisplacedFutureRooms).toBe(34);
+    expect(night.scenarios.base.nonDisplacingGroupRooms).toBe(16);
+  });
+  it("returns full displacement when future demand fills remaining capacity", () => expect(integrated({ transientDemandForecast: 200 }).nightly[0].scenarios.base.totalDisplacedFutureRooms).toBe(50));
+  it("displaces lower-value future group first and never beyond its demand", () => {
+    const base = integrated({ groupProspectPipelineRevenue: 10000 }).nightly[0].scenarios.base;
+    expect(base.displacedFutureGroupRooms).toBe(10);
+    expect(base.displacedFutureTransientRooms).toBe(24);
+  });
+  it("displaces lower-value transient demand first", () => {
+    const base = integrated().nightly[0].scenarios.base;
+    expect(base.displacedFutureTransientRooms).toBe(34);
+    expect(base.displacedFutureGroupRooms).toBe(0);
+    expect(base.displacedFutureTransientRooms + base.displacedFutureGroupRooms).toBe(base.totalDisplacedFutureRooms);
+  });
+  it("marks adjusted floor unavailable when displaced group demand has no value", () => {
+    const output = integrated({ groupProspectPipelineRooms: 500, groupProspectPipelineRevenue: 0, existingGroupRevenue: 0 });
+    expect(output.economicFloorRate).toBeNull();
+    expect(output.transientOnlyEconomicFloor).not.toBeNull();
+    expect(output.warnings.join(" ")).toMatch(/no reliable future group rate/i);
+  });
+  it("makes adjusted and transient-only floors equal when future group demand is zero", () => {
+    const output = integrated({ groupForecast: { forecastLow: 17, forecastBase: 17, forecastHigh: 17 } });
+    expect(output.economicFloorRate).toBe(output.transientOnlyEconomicFloor);
+  });
+  it("does not reduce displacement for the higher group-demand scenario", () => {
+    const output = integrated(); const night = output.nightly[0];
+    expect(night.scenarios.high.totalDisplacedFutureRooms).toBeGreaterThanOrEqual(night.scenarios.base.totalDisplacedFutureRooms);
+    expect(output.economicFloorHigh).toBeGreaterThanOrEqual(output.economicFloorBase);
+  });
+  it("marks the full floor unavailable on a committed-capacity conflict", () => {
+    const output = integrated({ currentTransientOtb: 100, existingGroupOtb: 30 });
+    expect(output.nightly[0].capacityConflictRooms).toBe(30);
+    expect(output.economicFloorRate).toBeNull();
+    expect(output.warnings.join(" ")).toMatch(/physical capacity/i);
+  });
+  it("preserves exact arithmetic and group commission gross-up", () => {
+    const output = integrated({ groupProspectPipelineRooms: 3, groupProspectPipelineRevenue: 1000 });
+    expect(output.nightly[0].expectedFutureGroupRoomRate).toBe(1000 / 3);
+    expect(output.requiredGrossGroupRoomRevenue).toBeCloseTo(output.requiredNetGroupRoomRevenue / .9, 12);
+  });
+  it("BQT lowers and breakfast cost raises the adjusted floor", () => {
+    const baseline = integrated().economicFloorRate;
+    expect(integrated({}, { roomsByDate: [{ date: "2027-09-08", rooms: 50, bqtRevenue: 1000 }] }).economicFloorRate).toBeLessThan(baseline);
+    expect(integrated({}, { breakfastPax: 10 }, { breakfastCostPerPerson: 20 }).economicFloorRate).toBeGreaterThan(baseline);
+  });
+});
+
 describe("expected transient ADR", () => {
   const historicalRows = [100, 200, 1000].map((averageRoomRate, index) => ({ date: `2026-09-${String([2, 9, 16][index]).padStart(2, "0")}`, historyFutureType: "History", calculatedInventoryRooms: 100, calculatedOccRooms: 50, individualRooms: 40, groupRooms: 10, averageRoomRate }));
   it("uses the median of the forecast's selected comparables with existing inflation adjustment", () => {
