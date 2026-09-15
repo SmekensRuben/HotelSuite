@@ -1106,3 +1106,108 @@ Value confidence is HIGH for at least five historical observations plus current 
 ## Net Group Value correction (model `group-contribution-v4-net-group-value`)
 
 The revenue-field contract is now explicit: `groupRevenueDeductible` is realized, deductible, room-only group revenue on an excl.-VAT basis and is authoritative for historical/current Group ADR. `individualRevenueDeductible` remains the corresponding authoritative transient room-revenue field. `groupRevenueNonDeductible` is non-deductible prospect/block commercial context whose VAT and package composition are not normalized; its calculated `pipelineCommercialRate` is informational only and is not Future Group Value contribution evidence. This corrects the prior Future Group Value V2 treatment, which placed the pipeline quotient into the net ADR median. No VAT or breakfast stripping is attempted.
+
+## Market Pricing Context V1 and competitor group intelligence foundation
+
+Market pricing is a separate informational layer above the unchanged contribution and Economic Floor engine. Lighthouse hotel prices are consumer-facing public rates **including VAT** (`INCL_VAT_CONSUMER`). They are parsed without VAT gross-up and never become transient/group ADR evidence, lost contribution, displacement, or an Economic Floor input. Product context is retained as nullable compset metadata because a public shopping rate must not be described as a competitor group quote.
+
+### Configuration and reads
+
+The compset header is stored at `hotels/{hotelUid}/settings/compset`. It contains `ownHotelLighthouseFieldName`, the fixed `lighthouseRateBasis`, nullable source-context fields, and `updatedAt`. Competitors are stored at `hotels/{hotelUid}/settings/compset/competitors/{competitorId}` with display/field mapping, active/include flags, non-negative `marketRelevanceWeight`, group-intelligence enablement, sort order, optional informational `strategyNotes`, and timestamps. Analysis loads the header once and the complete competitor subcollection once, alongside the already-loaded latest Lighthouse stay-date map; there are no per-date or per-competitor reads.
+
+For each date, only active, included, positive-weight competitors with a numeric mapped public rate participate. Available weights are renormalized and the arithmetic reference is `sum(publicRateInclVat × normalizedEffectiveWeight)`. Missing and nonnumeric values are unavailable, never zero. Coverage is available configured weight divided by all configured active/included positive weight; HIGH is at least 80%, MEDIUM at least 60%, LOW below 60%, and no valid rates is UNAVAILABLE. Median, range, own-versus-reference differences, Market Demand, and My OTB remain descriptive. Overall own, weighted-reference, median, and coverage values are requested-room-night weighted and omit missing values rather than zero-filling them.
+
+### Immutable quote snapshot
+
+A current analysis saves `marketContextSnapshot` with Lighthouse snapshot date, consumer-including-VAT basis, `market-context-v1`, own mapping, nullable shopping context, copied effective competitor settings, per-date rates/configured and effective weights/coverage/demand, and room-night-weighted group summary. It also saves `contributionModelVersion` separately, so Market Context does not imply an Economic Floor model change. Existing edit behavior marks analysis `STALE` when material quote inputs change; detail renders the old market snapshot explicitly as historical rather than current. Rerunning a new analysis reads current source/configuration and creates a new snapshot under the existing quote-analysis lifecycle.
+
+### Canonical observed competitor group quotes
+
+Actual observations are written independently to `hotels/{hotelUid}/competitorGroupQuotes/{observationId}`. Records preserve competitor, observation/source timestamps and controlled source type, optional source quote, stay/room context, quoted rate including VAT, unmodified meal and occupancy basis, optional public rate frozen from the quote snapshot, source confidence, notes, and optional user identity fields. Quote-linked saves use a stable `{sourceQuoteId}_{competitorId}` document ID to prevent duplicate observations. Public rate is optional. The dataset produces counts only: no discount ratio, prediction, product normalization, elasticity, conversion probability, or recommended/target/stretch rate exists in V1.
+
+## Market Pricing Context V1.1 and Pricing Guidance V1
+
+The architecture now has four deliberately separate layers:
+
+1. **Economic Floor** protects contribution and opportunity cost; its engine and formula are unchanged.
+2. **Market Context** describes consumer-facing Lighthouse public pricing including VAT and availability status; it is not contribution evidence.
+3. **Pricing Guidance V1** creates a deterministic commercial Target/Stretch corridor from the saved Economic Floor, base displacement, and public market context.
+4. **Competitor Group Intelligence** remains canonical observed group pricing and is not read by Pricing Guidance.
+
+### Lighthouse status and availability pressure
+
+The central parser returns the original raw value, nullable `rateInclVat`, and one of `AVAILABLE`, `SOLD_OUT`, `LOS_RESTRICTION`, `CLOSED`, or `UNAVAILABLE`. Status parsing is case-insensitive. Only `AVAILABLE` numeric observations enter the weighted reference, median, low, or high. For every stay date:
+
+```text
+configuredIncludedWeight = sum(active + included + positive configured weights)
+availableRateWeight       = sum(weights with AVAILABLE numeric price)
+soldOutWeight             = sum(weights with SOLD_OUT)
+restrictedWeight          = sum(weights with LOS_RESTRICTION)
+closedWeight              = sum(weights with CLOSED)
+rateCoverage              = availableRateWeight / configuredIncludedWeight
+soldOutWeightShare        = soldOutWeight / configuredIncludedWeight
+restrictedWeightShare     = restrictedWeight / configuredIncludedWeight
+```
+
+Available rates retain the V1 renormalization across `availableRateWeight`. Sold out never means zero, and LOS restrictions never count as sold-out pressure. The group-stay rate coverage, sold-out share, restricted share, and Market Demand are requested-room-night weighted. Each date exposes every configured competitor with raw status, configured weight, and an effective weight only when its numeric rate participates.
+
+### Editable deterministic strategy
+
+`settings/compset.pricingStrategy` stores decimal fractions and exposes these defaults in Revenue Management settings: low/high displacement thresholds `0.25/0.65`; Target capture by LOW/MEDIUM/HIGH `0.80/0.90/0.97`; Stretch capture `0.90/0.97/1.00`; high-demand threshold/uplift `0.80/0.02`; sold-out-weight threshold/uplift `0.20/0.02`; and final commercial rounding step `1` euro. Uplifts are percentage-point additions and adjusted capture is capped at `1.00`.
+
+```text
+displacementRatio = base total displaced room nights / requested room nights
+yieldBand = LOW when ratio <= low upper bound
+          = HIGH when ratio >= high lower bound
+          = MEDIUM otherwise
+marketAnchor = weighted compset reference when coverage >= 60%
+            else compset median
+            else own public rate
+adjustedCapture = min(1, baseCapture + highDemandUplift? + soldOutUplift?)
+rawTarget = marketAnchor * adjustedTargetCapture
+rawStretch = marketAnchor * adjustedStretchCapture
+target = max(Economic Floor, commercially rounded rawTarget)
+stretch = max(target, Economic Floor, commercially rounded rawStretch)
+```
+
+Intermediate values are not rounded. Floor protection is re-applied after presentation rounding. The quoted product label is `BB` when existing quote-level Breakfast Pax is positive and `RO` otherwise; no breakfast semantics or formulas changed. Every result warns `PUBLIC_MARKET_PRODUCT_NOT_NORMALIZED`. Floor above anchor adds `ECONOMIC_FLOOR_ABOVE_MARKET`; Target or Stretch above own public price adds `RECOMMENDATION_ABOVE_OWN_PUBLIC_RATE`. These are comparison warnings, not product normalization.
+
+New quotes persist `pricingGuidanceModelVersion: "pricing-guidance-v1"` and a `pricingGuidanceSnapshot` containing the floor, anchor/source, displacement ratio/band, weighted demand/sold-out pressure, base/adjusted captures, raw and final rates, meal basis, confidence, and warnings. Existing snapshots are not recalculated, and stale quote analyses do not present old guidance as current.
+
+## Group Quote Commercial Workflow V2
+
+New quotes use `quoteInputSchemaVersion: "group-quote-v2"` and `dateRangeSemantics: "CHECKOUT_EXCLUSIVE"`. `startDate` is Arrival and `endDate` is Check-out; generated room nights satisfy `arrival <= stayDate < checkout`, and same-day/reversed stays are rejected. Unversioned records remain legacy inclusive ranges and are explicitly labelled as such; no migration or silent reinterpretation occurs.
+
+V2 `roomsByDate` records are `{ date, rooms, breakfastPax, bqtRevenue }`. `totalBreakfastPax = sum(roomsByDate[].breakfastPax)` and the unchanged cost equation receives that total: `groupBreakfastCosts = totalBreakfastPax * breakfastCostPerPerson`. Legacy quote-level `breakfastPax` remains supported without inventing a nightly distribution. Meal basis is RO when all nightly pax are zero, BB when all nights are positive, and MIXED otherwise.
+
+Quotes begin with `commercialStatus: PENDING`. Mutable commercial history is stored separately from immutable analysis in `outcome` and append-only `rateHistory[]`. Status is controlled (`PENDING`, `WON`, `LOST`, `DECLINED`, `CANCELLED`), as are client-lost and hotel-declined reasons. `outcome.decisionSnapshot` freezes contribution/market/guidance versions, Floor/Target/Stretch, actual final quote, meal basis, displacement, market anchor/demand/confidence. LOST outcomes with competitor/rate evidence upsert `competitorGroupQuotes/{sourceQuoteId}_{competitorId}` and copy stay/public-rate context from the quote's saved Market Context—never today's Lighthouse data.
+
+Market Context version `market-context-v1.1-rate-quality` adds `PLACEHOLDER_RATE`. A numeric rate is excluded, not clamped, when it exceeds the competitor ceiling (falling back to compset global ceiling) or matches a configured exact placeholder within half a cent. The original/display rate remains visible. A reliable-booking-horizon breach adds `FAR_OUT_RATE_CONTEXT` but does not exclude an otherwise valid rate. Placeholder weight/share is separate from sold-out weight/share and is room-night weighted across the stay. Cleaner inputs may change Market Anchor and therefore Target/Stretch, but they cannot change the independently calculated Economic Floor; `pricing-guidance-v1` formulas remain unchanged.
+
+Commercial persistence shape:
+
+```text
+quotes/{quoteId}
+  quoteInputSchemaVersion, dateRangeSemantics, requestDate, startDate, endDate
+  roomsByDate[{date, rooms, breakfastPax, bqtRevenue}], groupSegment
+  quoteInputSnapshot{version, requestDate, arrivalDate, checkOutDate,
+                     dateRangeSemantics, groupSegment, roomsByDate[]}
+  commercialStatus
+  outcome{status, decidedAt, finalQuotedRateInclVat, finalQuotedMealBasis,
+          lostReason?, declinedReason?, lostToCompetitorId?,
+          competitorQuotedRateInclVat?, competitorMealBasis?,
+          competitorOccupancyBasis?, competitorSourceConfidence?, notes,
+          decisionSnapshot{model versions and analysis/guidance evidence}}
+  rateHistory[{quotedAt, rateInclVat, mealBasis, notes}]
+
+settings/compset
+  maxUsablePublicRateInclVat?, pricingStrategy{...}
+settings/compset/competitors/{competitorId}
+  maxUsablePublicRateInclVat?, placeholderPublicRatesInclVat[]?,
+  maxReliableLeadTimeDays?, plus existing mapping/weight/status fields
+competitorGroupQuotes/{sourceQuoteId}_{competitorId}
+  sourceType=LOST_GROUP, sourceQuoteId, observedAt, requestDate,
+  arrivalDate, checkOutDate, roomsByDate, requestedRoomNights, leadTimeDays,
+  groupSegment, competitorQuotedRateInclVat, mealBasis, occupancyBasis,
+  sourceConfidence, publicRatesByDate[{stayDate, publicRateInclVat}], notes
+```

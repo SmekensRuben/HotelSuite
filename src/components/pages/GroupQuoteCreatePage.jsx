@@ -10,12 +10,16 @@ import GroupQuoteFormFields from "./GroupQuoteFormFields";
 import HistoricalYearsDropdown from "./HistoricalYearsDropdown";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { addQuote, getGroupQuoteSettings, getHistoryQuoteDates, getLatestHistoryForecastSnapshot, getLatestLighthouseSnapshot, GROUP_QUOTE_ANALYSIS_MODEL_VERSION } from "../../services/firebaseQuotes";
-import { getInclusiveQuoteDates } from "../../utils/quoteDates";
+import { addQuote, getCompsetConfiguration, getGroupQuoteSettings, getHistoryQuoteDates, getLatestHistoryForecastSnapshot, getLatestLighthouseSnapshot, GROUP_QUOTE_ANALYSIS_MODEL_VERSION, MARKET_CONTEXT_MODEL_VERSION } from "../../services/firebaseQuotes";
+import { getQuoteStayDates } from "../../utils/quoteDates";
 import { calculateDisplacementDay, DISPLACEMENT_FORECAST_CONFIG, prepareDisplacementForecastData } from "../../utils/displacementForecast";
 import { calculateDemandCapacitySummary, calculateGroupContribution, simulateGroupQuote } from "../../utils/contributionAnalysis";
 import { getDemandCalendarEvents } from "../../services/firebaseDemandCalendar";
 import { calculateGroupDemandForecast, prepareGroupForecastData } from "../../utils/groupDemandForecast";
+import { buildMarketContextSnapshot } from "../../utils/marketPricingContext";
+import MarketPricingContext from "./MarketPricingContext";
+import PricingGuidance from "./PricingGuidance";
+import { calculatePricingGuidance, PRICING_GUIDANCE_MODEL_VERSION } from "../../utils/pricingGuidance";
 
 const currency = (value) => `€${Number(value || 0).toFixed(2)}`;
 const rooms = (value) => value === null || value === undefined ? "—" : Math.round(value).toLocaleString();
@@ -27,6 +31,7 @@ export default function GroupQuoteCreatePage() {
   const [consideredDates, setConsideredDates] = useState([]);
   const [selectedYears, setSelectedYears] = useState([]);
   const [quoteSettings, setQuoteSettings] = useState({});
+  const [compsetConfiguration, setCompsetConfiguration] = useState({ settings: {}, competitors: [] });
   const [analysisQuote, setAnalysisQuote] = useState(null);
   const [saving, setSaving] = useState(false);
   const [forecastData, setForecastData] = useState(null);
@@ -41,9 +46,10 @@ export default function GroupQuoteCreatePage() {
 
   useEffect(() => {
     if (!hotelUid) return;
-    Promise.all([getHistoryQuoteDates(hotelUid), getGroupQuoteSettings(hotelUid)]).then(([dates, settings]) => {
+    Promise.all([getHistoryQuoteDates(hotelUid), getGroupQuoteSettings(hotelUid), getCompsetConfiguration(hotelUid)]).then(([dates, settings, compset]) => {
       setConsideredDates(dates);
       setQuoteSettings(settings);
+      setCompsetConfiguration(compset);
       setSelectedYears([]);
     });
   }, [hotelUid]);
@@ -64,7 +70,7 @@ export default function GroupQuoteCreatePage() {
 
   useEffect(() => {
     if (!analysisQuote || !sourceData) return;
-    const stayDates = getInclusiveQuoteDates(analysisQuote.startDate, analysisQuote.endDate);
+    const stayDates = getQuoteStayDates(analysisQuote);
     const preparedTransient = prepareDisplacementForecastData({ historicalRows: consideredDates, lighthouseByDate: sourceData.lighthouse.byDate });
     const preparedGroup = prepareGroupForecastData({ historicalRows: consideredDates, events: sourceData.events, targetDates: stayDates });
     const maxShare = Number(quoteSettings.maxHistoricalGroupSharePercentage);
@@ -92,6 +98,8 @@ export default function GroupQuoteCreatePage() {
     catch (error) { return { validationError: error.message }; }
   }, [analysisQuote, forecastData, groupForecastData, quoteSettings]);
   const simulation = useMemo(() => contribution && !contribution.validationError ? simulateGroupQuote(contribution, testGroupRate) : null, [contribution, testGroupRate]);
+  const marketContextSnapshot = useMemo(() => analysisQuote && sourceData ? buildMarketContextSnapshot({ lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate, compset: compsetConfiguration.settings, competitors: compsetConfiguration.competitors, lighthouseByDate: sourceData.lighthouse.byDate, roomsByDate: analysisQuote.roomsByDate }) : null, [analysisQuote, sourceData, compsetConfiguration]);
+  const pricingGuidanceSnapshot = useMemo(() => contribution && !contribution.validationError && marketContextSnapshot ? calculatePricingGuidance({ economicFloorRateInclVat: contribution.economicFloorRateInclVat, totalDisplacedRoomNights: contribution.totalDisplacedRooms, requestedRoomNights: contribution.totalRequestedGroupRoomNights, marketSummary: marketContextSnapshot.groupStaySummary, roomsByDate: analysisQuote.roomsByDate, breakfastPax: analysisQuote.breakfastPax, strategy: compsetConfiguration.settings.pricingStrategy }) : null, [contribution, marketContextSnapshot, analysisQuote, compsetConfiguration]);
 
   const toggleYear = (year) => { setYearsCustomized(true); setSelectedYears((current) => current.includes(year)
     ? current.filter((item) => item !== year)
@@ -121,8 +129,16 @@ export default function GroupQuoteCreatePage() {
           displacedFutureGroupRooms: night.scenarios.base.displacedFutureGroupRooms,
           nonDisplacingGroupRooms: night.scenarios.base.nonDisplacingGroupRooms,
         })) || [],
+        commercialStatus: "PENDING",
+        quoteInputSnapshot: { version: "group-quote-v2", requestDate: analysisQuote.requestDate, arrivalDate: analysisQuote.startDate, checkOutDate: analysisQuote.endDate, dateRangeSemantics: analysisQuote.dateRangeSemantics, groupSegment: analysisQuote.groupSegment || "UNKNOWN", roomsByDate: analysisQuote.roomsByDate.map((night) => ({ date: night.date, rooms: night.rooms, breakfastPax: night.breakfastPax, bqtRevenue: night.bqtRevenue })) },
         analysisStatus: "CURRENT",
         analysisModelVersion: GROUP_QUOTE_ANALYSIS_MODEL_VERSION,
+        contributionModelVersion: GROUP_QUOTE_ANALYSIS_MODEL_VERSION,
+        marketContextModelVersion: MARKET_CONTEXT_MODEL_VERSION,
+        pricingGuidanceModelVersion: PRICING_GUIDANCE_MODEL_VERSION,
+        marketContextSnapshot,
+        pricingGuidanceSnapshot,
+        analysisContributionSnapshot: contribution ? { economicFloorRateInclVat: contribution.economicFloorRateInclVat, economicFloorRateExVat: contribution.economicFloorRateExVat } : null,
       });
       navigate(`/revenue/group-quotes/${quoteId}`);
     } finally {
@@ -174,6 +190,9 @@ export default function GroupQuoteCreatePage() {
           <div><h3 className="text-lg font-semibold">Group Impact</h3><p className="text-sm text-gray-600">Room-night impact across all requested stay dates.</p><dl className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[["Requested room nights", rooms(contribution.totalRequestedGroupRoomNights)], ["Total displaced room nights", rooms(contribution.totalDisplacedRooms)], ["Incremental / non-displacing room nights", rooms(contribution.totalNonDisplacingGroupRooms)], ["Displacement ratio", contribution.totalRequestedGroupRoomNights === 0 ? "—" : percentage(contribution.totalDisplacedRooms / contribution.totalRequestedGroupRoomNights)]].map(([label, value]) => <Card key={label} className="border border-gray-200 p-4 shadow-sm"><dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</dt><dd className="mt-2 text-2xl font-semibold">{value}</dd></Card>)}</dl><p className="mt-3 text-sm text-gray-600">Base breakdown: <strong>{rooms(contribution.scenarioTotals.base.displacedFutureTransientRooms)}</strong> future transient + <strong>{rooms(contribution.scenarioTotals.base.displacedFutureGroupRooms)}</strong> future group displaced.</p></div>
 
           <Card className="border border-gray-200 bg-white p-0 shadow-sm"><div className="px-6 py-5"><p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Demand & Capacity</p><h3 className="mt-1 text-lg font-semibold">Combined demand position</h3></div><div className="overflow-x-auto border-t"><table className="min-w-[760px] w-full text-sm"><thead className="bg-gray-50 text-left text-xs uppercase text-gray-500"><tr>{["Date", "Sellable Inventory", "Transient", "Group", "Total Demand", "Capacity Position"].map((heading) => <th key={heading} className="px-4 py-3">{heading}</th>)}</tr></thead><tbody className="divide-y">{Object.entries(forecastData?.byDate || {}).map(([stayDate, transient]) => { const position = calculateDemandCapacitySummary(transient, groupForecastData?.byDate?.[stayDate]); return <tr key={stayDate}><td className="px-4 py-3 font-medium">{stayDate}</td><td className="px-4 py-3">{rooms(position.sellableInventory)}</td><td className="px-4 py-3">{rooms(position.finalTransientDemandForecast)}</td><td className="px-4 py-3">{rooms(position.expectedFinalGroupDemand)}</td><td className="px-4 py-3 font-semibold">{rooms(position.expectedTotalDemand)}</td><td className={`px-4 py-3 font-semibold ${position.expectedSlack < 0 ? "text-red-700" : "text-green-700"}`}>{position.expectedSlack >= 0 ? "+" : ""}{rooms(position.expectedSlack)} rooms{position.expectedSlack < 0 ? " / Compression" : ""}</td></tr>; })}</tbody></table></div></Card>
+
+          <PricingGuidance guidance={pricingGuidanceSnapshot} ownPublicRateInclVat={marketContextSnapshot?.groupStaySummary?.weightedOwnPublicRateInclVat ?? null} />
+          <MarketPricingContext snapshot={marketContextSnapshot} economicFloorInclVat={contribution.economicFloorRateInclVat} />
 
           <Card className="border border-gray-200 bg-white p-0 shadow-sm"><div className="px-6 py-5"><p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Nightly Analysis</p><h3 className="mt-1 text-lg font-semibold">Stay-date impact</h3></div><div className="overflow-x-auto border-t border-gray-200"><table className="min-w-[1320px] w-full text-sm"><thead className="bg-gray-50 text-left text-xs uppercase text-gray-500"><tr>{["Date", "Requested Group RN", "Transient Forecast", "Final Group Forecast", "Future Group Potential", "Total Displaced RN", "Displaced Transient RN", "Displaced Future Group RN", "Incremental RN", "Lost Contribution", "Confidence"].map((heading) => <th key={heading} className="whitespace-nowrap px-4 py-3">{heading}</th>)}</tr></thead><tbody className="divide-y divide-gray-100">{contribution.nightly.map((night) => { const group = groupForecastData?.byDate?.[night.stayDate] || {}; const base = night.scenarios.base; return <tr key={night.stayDate}><td className="whitespace-nowrap px-4 py-3 font-medium">{night.stayDate}</td><td className="px-4 py-3">{rooms(night.requestedGroupRooms)}</td><td className="px-4 py-3">{rooms(night.finalTransientDemandForecast)}</td><td className="px-4 py-3">{rooms(group.forecastBase)}</td><td className="px-4 py-3">{rooms(night.futureGroupDemandBase)}</td><td className="px-4 py-3">{rooms(base.totalDisplacedFutureRooms)}</td><td className="px-4 py-3">{rooms(base.displacedFutureTransientRooms)}</td><td className="px-4 py-3">{rooms(base.displacedFutureGroupRooms)}</td><td className="px-4 py-3">{rooms(base.nonDisplacingGroupRooms)}</td><td className="px-4 py-3">{base.totalLostContribution === null ? "—" : currency(base.totalLostContribution)}</td><td className="px-4 py-3">{group.confidence || "—"}</td></tr>; })}</tbody></table></div></Card>
         </>}
