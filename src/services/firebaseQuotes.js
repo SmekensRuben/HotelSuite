@@ -15,6 +15,7 @@ import {
   setDoc,
   updateDoc,
 } from "../firebaseConfig";
+import { deriveExplicitQuoteMealBasis, NIGHTLY_MEAL_BASIS_VALUES } from "../constants/groupMealBasis";
 
 const quotesPath = (hotelUid) => `hotels/${hotelUid}/quotes`;
 export const GROUP_QUOTE_ANALYSIS_MODEL_VERSION = "group-contribution-v4-net-group-value";
@@ -127,6 +128,7 @@ export const getGroupQuoteSettings = async (hotelUid) => {
 
 export const saveGroupQuoteSettings = async (hotelUid, settings) => {
   if (!hotelUid) throw new Error("Hotel ontbreekt");
+  if (settings.defaultGroupMealBasis !== undefined && !NIGHTLY_MEAL_BASIS_VALUES.includes(settings.defaultGroupMealBasis)) throw new Error("Default Group Meal Basis must be RO or BB.");
   await setDoc(doc(db, `hotels/${hotelUid}/settings/groupQuotes`), {
     ...settings,
     updatedAt: serverTimestamp(),
@@ -248,6 +250,10 @@ export function buildQuoteDecisionSnapshot(quote, outcome) {
   };
 }
 
+export function getAuthoritativeQuoteMealBasis(quote) {
+  return deriveExplicitQuoteMealBasis(quote?.roomsByDate || []);
+}
+
 export async function saveQuoteOutcome(hotelUid, quote, input) {
   if (!QUOTE_STATUSES.includes(input.status)) throw new Error("Invalid quote status.");
   if (input.status === "LOST" && input.lostReason && !LOST_REASONS.includes(input.lostReason)) throw new Error("Invalid lost reason.");
@@ -255,9 +261,10 @@ export async function saveQuoteOutcome(hotelUid, quote, input) {
   const rate = input.finalQuotedRateInclVat === "" || input.finalQuotedRateInclVat === null || input.finalQuotedRateInclVat === undefined ? null : Number(input.finalQuotedRateInclVat);
   if (rate !== null && (!Number.isFinite(rate) || rate < 0)) throw new Error("Final quoted rate must be non-negative.");
   const now = new Date();
+  const finalQuotedMealBasis = getAuthoritativeQuoteMealBasis(quote);
   const priorHistory = Array.isArray(quote.rateHistory) ? quote.rateHistory : [];
-  const rateHistory = rate === null || priorHistory.at(-1)?.rateInclVat === rate ? priorHistory : [...priorHistory, { quotedAt: now, rateInclVat: rate, mealBasis: input.finalQuotedMealBasis || quote.pricingGuidanceSnapshot?.proposedRateMealBasis || "UNKNOWN", notes: input.rateNotes || "" }];
-  const outcome = { ...input, finalQuotedRateInclVat: rate, decidedAt: input.status === "PENDING" ? null : now, decisionSnapshot: buildQuoteDecisionSnapshot(quote, { ...input, finalQuotedRateInclVat: rate }) };
+  const rateHistory = rate === null || priorHistory.at(-1)?.rateInclVat === rate ? priorHistory : [...priorHistory, { quotedAt: now, rateInclVat: rate, mealBasis: finalQuotedMealBasis, notes: input.rateNotes || "" }];
+  const outcome = { ...input, finalQuotedMealBasis, finalQuotedRateInclVat: rate, decidedAt: input.status === "PENDING" ? null : now, decisionSnapshot: buildQuoteDecisionSnapshot(quote, { ...input, finalQuotedMealBasis, finalQuotedRateInclVat: rate }) };
   await updateQuote(hotelUid, quote.id, { commercialStatus: input.status, outcome, rateHistory });
   if (input.status === "LOST" && input.lostToCompetitorId && Number.isFinite(Number(input.competitorQuotedRateInclVat))) {
     const competitor = (input.competitors || []).find((item) => item.id === input.lostToCompetitorId);

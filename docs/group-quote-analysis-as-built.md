@@ -1211,3 +1211,23 @@ competitorGroupQuotes/{sourceQuoteId}_{competitorId}
   groupSegment, competitorQuotedRateInclVat, mealBasis, occupancyBasis,
   sourceConfidence, publicRatesByDate[{stayDate, publicRateInclVat}], notes
 ```
+
+## Revenue Management decision-screen hierarchy
+
+The create-analysis UI now presents the saved calculation outputs through three information levels without changing the calculation or persistence pipeline:
+
+1. **Decision** — the compact quote summary and open Commercial Decision card make Target the primary suggested starting quote, with Stretch as the upper negotiation anchor and Economic Floor as the protection threshold. Critical warnings remain visible; modelling notes and the quote simulator are collapsed.
+2. **Operational Detail** — Key Group Impact, Nightly Pricing, and Market Pricing Context remain open. Technical nightly fields and per-date competitor rows are available from collapsed details.
+3. **Model Diagnostics** — one collapsed master section contains separately expandable Transient Demand, Group Demand, Transient Value, and Future Group Value audits. Historical comparable and ADR-observation tables are nested and are not rendered visibly until expanded.
+
+After a successful analysis the input form is replaced by a compact summary; **Edit inputs** restores the pre-populated form. Economic Floor reconciliation, Model Diagnostics, quote simulation, historical evidence, and compset detail are closed by default. Commercial Decision, Key Group Impact, Nightly Pricing, and Market Pricing Context are open by default. Native `details`/`summary` controls retain keyboard and expanded-state semantics for the mounted page.
+
+## Explicit Group Quote meal basis (input V3)
+
+New quotes use input schema `group-quote-v3-meal-basis`. Every `roomsByDate[]` row freezes `{ date, rooms, mealBasis, breakfastPax, bqtRevenue }`, where `mealBasis` is the controlled commercial product definition (`RO` or `BB`) and `breakfastPax` is the independent economic breakfast quantity. Quote-level product labels are derived only from explicit nightly products: all RO is `RO`, all BB is `BB`, and a combination is `MIXED`.
+
+These inputs never overwrite one another. For example, **50 rooms / BB / 20 breakfast pax** remains a BB commercial product with 20 breakfasts costed; **50 rooms / RO / 20 breakfast pax** remains Room Only while the same 20 exceptional or complimentary breakfasts are still costed. BB with zero pax and RO with positive pax are permitted and produce informational data-quality notes.
+
+The `defaultGroupMealBasis` setting supplies the initial RO/BB selection for newly generated nights and can be overridden per night. Hotels without the setting default safely to RO. Existing V1 and pre-change V2 records without explicit nightly meal basis remain `LEGACY_UNKNOWN`; no product is inferred from their breakfast quantity and no old record is rewritten.
+
+Economic breakfast cost remains exactly `sum(roomsByDate[].breakfastPax) × breakfastCostPerPerson`. Meal basis adds no cost, revenue, VAT, market normalization, or price adjustment. The Economic Floor structure and Pricing Guidance capture, yield-band, uplift, market-anchor, Target, and Stretch formulas are unchanged.

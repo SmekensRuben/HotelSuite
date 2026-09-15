@@ -54,9 +54,19 @@ describe("Pricing Guidance V1", () => {
 
 
 describe("commercial meal basis", () => {
-  it("derives RO, BB and MIXED without inferring pax from rooms", () => {
-    expect(deriveQuoteMealBasis([{ breakfastPax: 0 }, { breakfastPax: 0 }])).toBe("RO");
-    expect(deriveQuoteMealBasis([{ breakfastPax: 50 }, { breakfastPax: 80 }])).toBe("BB");
-    expect(deriveQuoteMealBasis([{ breakfastPax: 0 }, { breakfastPax: 50 }])).toBe("MIXED");
+  it("derives RO, BB and MIXED exclusively from explicit nightly products", () => {
+    expect(deriveQuoteMealBasis([{ mealBasis: "RO", breakfastPax: 20 }])).toBe("RO");
+    expect(deriveQuoteMealBasis([{ mealBasis: "BB", breakfastPax: 0 }])).toBe("BB");
+    expect(deriveQuoteMealBasis([{ mealBasis: "BB", breakfastPax: 0 }, { mealBasis: "RO", breakfastPax: 50 }])).toBe("MIXED");
+    expect(deriveQuoteMealBasis([{ breakfastPax: 50 }])).toBe("LEGACY_UNKNOWN");
+  });
+
+  it("emits informational meal-basis data-quality warnings without changing rates", () => {
+    const base = { economicFloorRateInclVat: 176, totalDisplacedRoomNights: 45, requestedRoomNights: 100, marketSummary: market };
+    const ro = calculatePricingGuidance({ ...base, roomsByDate: [{ mealBasis: "RO", breakfastPax: 20 }] });
+    const bb = calculatePricingGuidance({ ...base, roomsByDate: [{ mealBasis: "BB", breakfastPax: 0 }] });
+    expect(ro.warnings.map((warning) => warning.code)).toContain("RO_WITH_BREAKFAST_PAX");
+    expect(bb.warnings.map((warning) => warning.code)).toContain("BB_WITH_ZERO_BREAKFAST_PAX");
+    expect([ro.targetRateInclVat, ro.stretchRateInclVat]).toEqual([bb.targetRateInclVat, bb.stretchRateInclVat]);
   });
 });
