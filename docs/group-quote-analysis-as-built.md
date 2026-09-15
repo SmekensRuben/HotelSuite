@@ -1211,3 +1211,13 @@ competitorGroupQuotes/{sourceQuoteId}_{competitorId}
   groupSegment, competitorQuotedRateInclVat, mealBasis, occupancyBasis,
   sourceConfidence, publicRatesByDate[{stayDate, publicRateInclVat}], notes
 ```
+
+## Revenue Management decision-screen hierarchy
+
+The create-analysis UI now presents the saved calculation outputs through three information levels without changing the calculation or persistence pipeline:
+
+1. **Decision** — the compact quote summary and open Commercial Decision card make Target the primary suggested starting quote, with Stretch as the upper negotiation anchor and Economic Floor as the protection threshold. Critical warnings remain visible; modelling notes and the quote simulator are collapsed.
+2. **Operational Detail** — Key Group Impact, Nightly Pricing, and Market Pricing Context remain open. Technical nightly fields and per-date competitor rows are available from collapsed details.
+3. **Model Diagnostics** — one collapsed master section contains separately expandable Transient Demand, Group Demand, Transient Value, and Future Group Value audits. Historical comparable and ADR-observation tables are nested and are not rendered visibly until expanded.
+
+After a successful analysis the input form is replaced by a compact summary; **Edit inputs** restores the pre-populated form. Economic Floor reconciliation, Model Diagnostics, quote simulation, historical evidence, and compset detail are closed by default. Commercial Decision, Key Group Impact, Nightly Pricing, and Market Pricing Context are open by default. Native `details`/`summary` controls retain keyboard and expanded-state semantics for the mounted page.
