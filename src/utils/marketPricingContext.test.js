@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMarketContextSnapshot, calculateGroupStayMarketSummary, calculateMarketPricingDate, parseLighthousePublicRate } from "./marketPricingContext";
+import { buildMarketContextSnapshot, calculateGroupStayMarketSummary, calculateMarketPricingDate, parseLighthousePublicRate, parseLighthouseRateStatus } from "./marketPricingContext";
 
 const compset = { ownHotelLighthouseFieldName: "Own" };
 const competitors = [
@@ -11,6 +11,7 @@ const competitors = [
 const rates = { Own: "249", Pillows: "270", NH: "244", Yalo: "195", Novotel: "176", "Market demand": "93%", "My OTB": "81" };
 
 describe("Lighthouse public market pricing", () => {
+  it.each([["289", "AVAILABLE", 289], ["Sold out", "SOLD_OUT", null], ["sold_OUT", "SOLD_OUT", null], ["LOS2", "LOS_RESTRICTION", null], ["los3", "LOS_RESTRICTION", null], ["Closed", "CLOSED", null], ["garbage", "UNAVAILABLE", null]])("classifies %j as %s", (input, status, rate) => expect(parseLighthouseRateStatus(input)).toEqual({ rawValue: input, rateInclVat: rate, availabilityStatus: status }));
   it.each([["249", 249], ["249.00", 249], ["249,00", 249], [" €249 ", 249], ["LOS2", null], ["Closed", null], ["", null], [null, null], ["N/A", null], ["-", null]])("parses %j as %j", (input, expected) => expect(parseLighthousePublicRate(input)).toBe(expected));
 
   it("keeps consumer rates including VAT regardless of room VAT", () => {
@@ -36,6 +37,17 @@ describe("Lighthouse public market pricing", () => {
     expect(result.validCompetitorRates.some((item) => item.publicRateInclVat === 0)).toBe(false);
     expect(result.compsetCoverage).toBe(.8);
     expect(result.weightedCompsetReferenceInclVat).toBeCloseTo((270 * 35 + 244 * 30 + 176 * 15) / 80);
+  });
+
+  it("keeps sold-out pressure visible but excludes it from all numeric references", () => {
+    const result = calculateMarketPricingDate({ stayDate: "2027-04-03", requestedRooms: 50, lighthouseRow: { Own: 349, Pillows: 375, NH: 314, Yalo: 235, Novotel: "Sold out" }, compset, competitors });
+    expect(result.validCompetitorRates).toHaveLength(3);
+    expect(result.weightedCompsetReferenceInclVat).toBeCloseTo((375 * 35 + 314 * 30 + 235 * 20) / 85);
+    expect(result.compsetMedianInclVat).toBe(314);
+    expect(result.rateCoverage).toBe(.85);
+    expect(result.soldOutWeightShare).toBe(.15);
+    expect(result.competitors.find((item) => item.competitorId === "novotel")).toMatchObject({ availabilityStatus: "SOLD_OUT", publicRateInclVat: null, normalizedEffectiveWeight: null });
+    expect(result.validCompetitorRates.map((item) => item.normalizedEffectiveWeight)).toEqual([35 / 85, 30 / 85, 20 / 85]);
   });
 
   it("supports arbitrary totals and excludes inactive, opted-out, zero-weight, and unmapped competitors", () => {

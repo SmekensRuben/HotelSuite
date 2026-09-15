@@ -1124,3 +1124,52 @@ A current analysis saves `marketContextSnapshot` with Lighthouse snapshot date, 
 ### Canonical observed competitor group quotes
 
 Actual observations are written independently to `hotels/{hotelUid}/competitorGroupQuotes/{observationId}`. Records preserve competitor, observation/source timestamps and controlled source type, optional source quote, stay/room context, quoted rate including VAT, unmodified meal and occupancy basis, optional public rate frozen from the quote snapshot, source confidence, notes, and optional user identity fields. Quote-linked saves use a stable `{sourceQuoteId}_{competitorId}` document ID to prevent duplicate observations. Public rate is optional. The dataset produces counts only: no discount ratio, prediction, product normalization, elasticity, conversion probability, or recommended/target/stretch rate exists in V1.
+
+## Market Pricing Context V1.1 and Pricing Guidance V1
+
+The architecture now has four deliberately separate layers:
+
+1. **Economic Floor** protects contribution and opportunity cost; its engine and formula are unchanged.
+2. **Market Context** describes consumer-facing Lighthouse public pricing including VAT and availability status; it is not contribution evidence.
+3. **Pricing Guidance V1** creates a deterministic commercial Target/Stretch corridor from the saved Economic Floor, base displacement, and public market context.
+4. **Competitor Group Intelligence** remains canonical observed group pricing and is not read by Pricing Guidance.
+
+### Lighthouse status and availability pressure
+
+The central parser returns the original raw value, nullable `rateInclVat`, and one of `AVAILABLE`, `SOLD_OUT`, `LOS_RESTRICTION`, `CLOSED`, or `UNAVAILABLE`. Status parsing is case-insensitive. Only `AVAILABLE` numeric observations enter the weighted reference, median, low, or high. For every stay date:
+
+```text
+configuredIncludedWeight = sum(active + included + positive configured weights)
+availableRateWeight       = sum(weights with AVAILABLE numeric price)
+soldOutWeight             = sum(weights with SOLD_OUT)
+restrictedWeight          = sum(weights with LOS_RESTRICTION)
+closedWeight              = sum(weights with CLOSED)
+rateCoverage              = availableRateWeight / configuredIncludedWeight
+soldOutWeightShare        = soldOutWeight / configuredIncludedWeight
+restrictedWeightShare     = restrictedWeight / configuredIncludedWeight
+```
+
+Available rates retain the V1 renormalization across `availableRateWeight`. Sold out never means zero, and LOS restrictions never count as sold-out pressure. The group-stay rate coverage, sold-out share, restricted share, and Market Demand are requested-room-night weighted. Each date exposes every configured competitor with raw status, configured weight, and an effective weight only when its numeric rate participates.
+
+### Editable deterministic strategy
+
+`settings/compset.pricingStrategy` stores decimal fractions and exposes these defaults in Revenue Management settings: low/high displacement thresholds `0.25/0.65`; Target capture by LOW/MEDIUM/HIGH `0.80/0.90/0.97`; Stretch capture `0.90/0.97/1.00`; high-demand threshold/uplift `0.80/0.02`; sold-out-weight threshold/uplift `0.20/0.02`; and final commercial rounding step `1` euro. Uplifts are percentage-point additions and adjusted capture is capped at `1.00`.
+
+```text
+displacementRatio = base total displaced room nights / requested room nights
+yieldBand = LOW when ratio <= low upper bound
+          = HIGH when ratio >= high lower bound
+          = MEDIUM otherwise
+marketAnchor = weighted compset reference when coverage >= 60%
+            else compset median
+            else own public rate
+adjustedCapture = min(1, baseCapture + highDemandUplift? + soldOutUplift?)
+rawTarget = marketAnchor * adjustedTargetCapture
+rawStretch = marketAnchor * adjustedStretchCapture
+target = max(Economic Floor, commercially rounded rawTarget)
+stretch = max(target, Economic Floor, commercially rounded rawStretch)
+```
+
+Intermediate values are not rounded. Floor protection is re-applied after presentation rounding. The quoted product label is `BB` when existing quote-level Breakfast Pax is positive and `RO` otherwise; no breakfast semantics or formulas changed. Every result warns `PUBLIC_MARKET_PRODUCT_NOT_NORMALIZED`. Floor above anchor adds `ECONOMIC_FLOOR_ABOVE_MARKET`; Target or Stretch above own public price adds `RECOMMENDATION_ABOVE_OWN_PUBLIC_RATE`. These are comparison warnings, not product normalization.
+
+New quotes persist `pricingGuidanceModelVersion: "pricing-guidance-v1"` and a `pricingGuidanceSnapshot` containing the floor, anchor/source, displacement ratio/band, weighted demand/sold-out pressure, base/adjusted captures, raw and final rates, meal basis, confidence, and warnings. Existing snapshots are not recalculated, and stale quote analyses do not present old guidance as current.

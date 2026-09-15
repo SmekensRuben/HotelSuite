@@ -12,6 +12,7 @@ import { usePermission } from "../../hooks/usePermission";
 import { deleteQuote, getCompsetConfiguration, getCompetitorGroupObservationCounts, getQuote, SAVED_ANALYSIS_STALE_WARNING } from "../../services/firebaseQuotes";
 import MarketPricingContext from "./MarketPricingContext";
 import CompetitorQuoteForm from "./CompetitorQuoteForm";
+import PricingGuidance from "./PricingGuidance";
 
 export default function GroupQuoteDetailPage() {
   const navigate = useNavigate();
@@ -60,6 +61,7 @@ export default function GroupQuoteDetailPage() {
           <div><p className="text-xs uppercase text-gray-500">Stay</p><p className="font-semibold">{quote.startDate} – {quote.endDate}</p></div>
           <div><p className="text-xs uppercase text-gray-500">Breakfast Pax</p><p className="font-semibold">{Number(quote.breakfastPax || 0)}</p></div>
         </Card>
+        {quote.analysisStatus !== "STALE" && <PricingGuidance guidance={quote.pricingGuidanceSnapshot} ownPublicRateInclVat={quote.marketContextSnapshot?.groupStaySummary?.weightedOwnPublicRateInclVat ?? null} />}
         <MarketPricingContext snapshot={quote.marketContextSnapshot} economicFloorInclVat={quote.analysisContributionSnapshot?.economicFloorRateInclVat ?? null} stale={quote.analysisStatus === "STALE"} />
         <Card><h2 className="text-xl font-semibold">Competitor Group Intelligence</h2><p className="mt-1 text-sm text-gray-600">Record real observed competitor group pricing. Meal and occupancy basis are retained; no rate prediction is produced.</p><div className="my-4 flex flex-wrap gap-2">{competitors.filter((item) => item.groupIntelligenceEnabled).map((item) => <span key={item.id} className="rounded-full bg-gray-100 px-3 py-1 text-xs">{item.displayName}: {observationCounts[item.id] || 0} observed</span>)}</div>{Object.keys(observationCounts).length === 0 && <p className="mb-4 text-sm italic text-gray-500">No competitor group-rate observations available.</p>}<CompetitorQuoteForm hotelUid={hotelUid} quote={quote} competitors={competitors} onSaved={async () => { setObservationCounts(await getCompetitorGroupObservationCounts(hotelUid)); setObservationMessage("Competitor quote recorded without changing the Economic Floor."); }} />{observationMessage && <p role="status" className="mt-3 text-sm font-semibold text-green-700">{observationMessage}</p>}</Card>
                 <div><h2 className="mb-3 text-xl font-semibold">Daily details</h2><DataListTable columns={columns} rows={(quote.roomsByDate || []).map((row) => ({ ...row, id: row.date }))} emptyMessage="No daily details found." /></div>
