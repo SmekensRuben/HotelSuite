@@ -20,6 +20,7 @@ import { buildMarketContextSnapshot } from "../../utils/marketPricingContext";
 import GroupQuoteAnalysisView from "./GroupQuoteAnalysisView";
 import { calculatePricingGuidance, PRICING_GUIDANCE_MODEL_VERSION } from "../../utils/pricingGuidance";
 import QuoteInputSummary from "./QuoteInputSummary";
+import { deriveExplicitQuoteMealBasis } from "../../constants/groupMealBasis";
 
 export default function GroupQuoteCreatePage() {
   const navigate = useNavigate();
@@ -129,7 +130,7 @@ export default function GroupQuoteCreatePage() {
           nonDisplacingGroupRooms: night.scenarios.base.nonDisplacingGroupRooms,
         })) || [],
         commercialStatus: "PENDING",
-        quoteInputSnapshot: { version: "group-quote-v2", requestDate: analysisQuote.requestDate, arrivalDate: analysisQuote.startDate, checkOutDate: analysisQuote.endDate, dateRangeSemantics: analysisQuote.dateRangeSemantics, groupSegment: analysisQuote.groupSegment || "UNKNOWN", roomsByDate: analysisQuote.roomsByDate.map((night) => ({ date: night.date, rooms: night.rooms, breakfastPax: night.breakfastPax, bqtRevenue: night.bqtRevenue })) },
+        quoteInputSnapshot: { version: analysisQuote.quoteInputSchemaVersion, requestDate: analysisQuote.requestDate, arrivalDate: analysisQuote.startDate, checkOutDate: analysisQuote.endDate, dateRangeSemantics: analysisQuote.dateRangeSemantics, groupSegment: analysisQuote.groupSegment || "UNKNOWN", roomsByDate: analysisQuote.roomsByDate.map((night) => ({ date: night.date, rooms: night.rooms, mealBasis: night.mealBasis, breakfastPax: night.breakfastPax, bqtRevenue: night.bqtRevenue })) },
         analysisStatus: "CURRENT",
         analysisModelVersion: GROUP_QUOTE_ANALYSIS_MODEL_VERSION,
         contributionModelVersion: GROUP_QUOTE_ANALYSIS_MODEL_VERSION,
@@ -145,7 +146,7 @@ export default function GroupQuoteCreatePage() {
     }
   };
 
-  const mealBasis = pricingGuidanceSnapshot?.proposedRateMealBasis || (analysisQuote?.roomsByDate?.some((night) => Number(night.breakfastPax) > 0) ? "BB" : "RO");
+  const mealBasis = analysisQuote ? deriveExplicitQuoteMealBasis(analysisQuote.roomsByDate) : "LEGACY_UNKNOWN";
 
   return <div className="min-h-screen bg-gray-50 text-gray-900">
     <HeaderBar today={today} onLogout={handleLogout} />
@@ -155,7 +156,7 @@ export default function GroupQuoteCreatePage() {
         <button type="button" onClick={() => navigate("/revenue/group-quotes")} className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-100"><ArrowLeft className="h-4 w-4" /> Back to overview</button>
       </div>
 
-      {analysisQuote && !showInputForm ? <QuoteInputSummary quote={analysisQuote} mealBasis={mealBasis} onEdit={() => setShowInputForm(true)} /> : <Card className="border border-gray-200 bg-white shadow-sm"><GroupQuoteFormFields initialQuote={analysisQuote} defaultGroupCommissionPercentage={quoteSettings.defaultGroupCommissionPercentage} onSubmit={startAnalysis} saving={false} submitLabel={analysisQuote ? "Run Updated Analysis" : "Start Analysis"} /></Card>}
+      {analysisQuote && !showInputForm ? <QuoteInputSummary quote={analysisQuote} mealBasis={mealBasis} onEdit={() => setShowInputForm(true)} /> : <Card className="border border-gray-200 bg-white shadow-sm"><GroupQuoteFormFields initialQuote={analysisQuote} defaultGroupCommissionPercentage={quoteSettings.defaultGroupCommissionPercentage} defaultGroupMealBasis={quoteSettings.defaultGroupMealBasis || "RO"} onSubmit={startAnalysis} saving={false} submitLabel={analysisQuote ? "Run Updated Analysis" : "Start Analysis"} /></Card>}
 
       {showInputForm && <Card className="border border-gray-200 bg-white shadow-sm"><details><summary className="cursor-pointer font-semibold">Advanced / Model Settings</summary><div className="mt-4 border-t border-gray-200 pt-4"><fieldset><legend className="mb-2 text-sm font-semibold">Historical years</legend><HistoricalYearsDropdown years={availableYears} selectedYears={selectedYears} onToggle={toggleYear} /></fieldset></div></details></Card>}
 

@@ -5,7 +5,7 @@ vi.mock("../firebaseConfig", () => ({
   documentId: vi.fn(), limit: vi.fn(), onSnapshot: vi.fn(), orderBy: vi.fn(), query: vi.fn(), serverTimestamp: vi.fn(), setDoc: vi.fn(), updateDoc: vi.fn(),
 }));
 
-import { buildQuoteDecisionSnapshot, competitorGroupQuotesPath, GROUP_QUOTE_ANALYSIS_MODEL_VERSION, hasAnalysisAffectingChanges, MARKET_CONTEXT_MODEL_VERSION, QUOTE_STATUSES, saveQuoteOutcome, validateCompetitorGroupObservation } from "./firebaseQuotes";
+import { buildQuoteDecisionSnapshot, competitorGroupQuotesPath, getAuthoritativeQuoteMealBasis, GROUP_QUOTE_ANALYSIS_MODEL_VERSION, hasAnalysisAffectingChanges, MARKET_CONTEXT_MODEL_VERSION, QUOTE_STATUSES, saveQuoteOutcome, validateCompetitorGroupObservation } from "./firebaseQuotes";
 import { doc, setDoc, updateDoc } from "../firebaseConfig";
 
 const quote = {
@@ -28,6 +28,16 @@ describe("saved Group Quote analysis validity", () => {
 
 describe("commercial outcome workflow", () => {
   const savedQuote = { ...quote, id: "quote-1", dateRangeSemantics: "CHECKOUT_EXCLUSIVE", quoteInputSchemaVersion: "group-quote-v2", requestDate: "2027-01-01", pricingGuidanceSnapshot: { economicFloorRateInclVat: 180, targetRateInclVat: 220, stretchRateInclVat: 240, proposedRateMealBasis: "BB", displacementRatio: .4, marketAnchorInclVat: 245, weightedMarketDemand: .8 }, marketContextSnapshot: { groupStaySummary: { marketPricingConfidence: "HIGH" }, stayDates: [{ stayDate: "2027-04-01", competitors: [{ competitorId: "pillows", publicRateInclVat: 300 }] }] } };
+  it("uses explicit nightly meal basis for outcomes and rate history", async () => {
+    const explicit = { ...savedQuote, roomsByDate: [{ ...savedQuote.roomsByDate[0], mealBasis: "BB", breakfastPax: 0 }, { date: "2027-04-02", rooms: 10, mealBasis: "RO", breakfastPax: 20, bqtRevenue: 0 }], rateHistory: [] };
+    expect(getAuthoritativeQuoteMealBasis(explicit)).toBe("MIXED");
+    updateDoc.mockResolvedValue();
+    await saveQuoteOutcome("hotel", explicit, { status: "WON", finalQuotedRateInclVat: 219, finalQuotedMealBasis: "BB" });
+    expect(updateDoc.mock.calls.at(-1)[1]).toMatchObject({ outcome: { finalQuotedMealBasis: "MIXED" }, rateHistory: [{ rateInclVat: 219, mealBasis: "MIXED" }] });
+  });
+  it("does not reuse breakfast-derived guidance labels for pre-V3 quotes", () => {
+    expect(getAuthoritativeQuoteMealBasis(savedQuote)).toBe("LEGACY_UNKNOWN");
+  });
   it("supports every controlled lifecycle status and freezes decision evidence", () => {
     expect(QUOTE_STATUSES).toEqual(["PENDING", "WON", "LOST", "DECLINED", "CANCELLED"]);
     expect(buildQuoteDecisionSnapshot(savedQuote, { finalQuotedRateInclVat: 219, finalQuotedMealBasis: "BB" })).toMatchObject({ economicFloorRateInclVat: 180, targetRateInclVat: 220, finalQuotedRateInclVat: 219, quoteMealBasis: "BB", marketContextConfidence: "HIGH" });
