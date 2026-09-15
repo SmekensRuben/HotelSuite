@@ -251,3 +251,14 @@ describe("expected transient ADR", () => {
     expect(output.expectedTransientRoomRate).toBeCloseTo(110);
   });
 });
+
+describe("Group Quote V2 nightly breakfast input", () => {
+  it("sums nightly breakfast pax without changing the cost formula", () => {
+    const output = result({ quoteInputSchemaVersion: "group-quote-v2", breakfastPax: 999, roomsByDate: [
+      { date: "2027-09-08", rooms: 50, breakfastPax: 50, bqtRevenue: 0 },
+      { date: "2027-09-09", rooms: 50, breakfastPax: 50, bqtRevenue: 0 },
+    ] }, { breakfastCostPerPerson: 10 }, {});
+    expect(output.totalBreakfastPax).toBe(100);
+    expect(output.groupBreakfastCosts).toBe(1000);
+  });
+});

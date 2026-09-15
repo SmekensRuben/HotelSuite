@@ -1173,3 +1173,41 @@ stretch = max(target, Economic Floor, commercially rounded rawStretch)
 Intermediate values are not rounded. Floor protection is re-applied after presentation rounding. The quoted product label is `BB` when existing quote-level Breakfast Pax is positive and `RO` otherwise; no breakfast semantics or formulas changed. Every result warns `PUBLIC_MARKET_PRODUCT_NOT_NORMALIZED`. Floor above anchor adds `ECONOMIC_FLOOR_ABOVE_MARKET`; Target or Stretch above own public price adds `RECOMMENDATION_ABOVE_OWN_PUBLIC_RATE`. These are comparison warnings, not product normalization.
 
 New quotes persist `pricingGuidanceModelVersion: "pricing-guidance-v1"` and a `pricingGuidanceSnapshot` containing the floor, anchor/source, displacement ratio/band, weighted demand/sold-out pressure, base/adjusted captures, raw and final rates, meal basis, confidence, and warnings. Existing snapshots are not recalculated, and stale quote analyses do not present old guidance as current.
+
+## Group Quote Commercial Workflow V2
+
+New quotes use `quoteInputSchemaVersion: "group-quote-v2"` and `dateRangeSemantics: "CHECKOUT_EXCLUSIVE"`. `startDate` is Arrival and `endDate` is Check-out; generated room nights satisfy `arrival <= stayDate < checkout`, and same-day/reversed stays are rejected. Unversioned records remain legacy inclusive ranges and are explicitly labelled as such; no migration or silent reinterpretation occurs.
+
+V2 `roomsByDate` records are `{ date, rooms, breakfastPax, bqtRevenue }`. `totalBreakfastPax = sum(roomsByDate[].breakfastPax)` and the unchanged cost equation receives that total: `groupBreakfastCosts = totalBreakfastPax * breakfastCostPerPerson`. Legacy quote-level `breakfastPax` remains supported without inventing a nightly distribution. Meal basis is RO when all nightly pax are zero, BB when all nights are positive, and MIXED otherwise.
+
+Quotes begin with `commercialStatus: PENDING`. Mutable commercial history is stored separately from immutable analysis in `outcome` and append-only `rateHistory[]`. Status is controlled (`PENDING`, `WON`, `LOST`, `DECLINED`, `CANCELLED`), as are client-lost and hotel-declined reasons. `outcome.decisionSnapshot` freezes contribution/market/guidance versions, Floor/Target/Stretch, actual final quote, meal basis, displacement, market anchor/demand/confidence. LOST outcomes with competitor/rate evidence upsert `competitorGroupQuotes/{sourceQuoteId}_{competitorId}` and copy stay/public-rate context from the quote's saved Market Context—never today's Lighthouse data.
+
+Market Context version `market-context-v1.1-rate-quality` adds `PLACEHOLDER_RATE`. A numeric rate is excluded, not clamped, when it exceeds the competitor ceiling (falling back to compset global ceiling) or matches a configured exact placeholder within half a cent. The original/display rate remains visible. A reliable-booking-horizon breach adds `FAR_OUT_RATE_CONTEXT` but does not exclude an otherwise valid rate. Placeholder weight/share is separate from sold-out weight/share and is room-night weighted across the stay. Cleaner inputs may change Market Anchor and therefore Target/Stretch, but they cannot change the independently calculated Economic Floor; `pricing-guidance-v1` formulas remain unchanged.
+
+Commercial persistence shape:
+
+```text
+quotes/{quoteId}
+  quoteInputSchemaVersion, dateRangeSemantics, requestDate, startDate, endDate
+  roomsByDate[{date, rooms, breakfastPax, bqtRevenue}], groupSegment
+  quoteInputSnapshot{version, requestDate, arrivalDate, checkOutDate,
+                     dateRangeSemantics, groupSegment, roomsByDate[]}
+  commercialStatus
+  outcome{status, decidedAt, finalQuotedRateInclVat, finalQuotedMealBasis,
+          lostReason?, declinedReason?, lostToCompetitorId?,
+          competitorQuotedRateInclVat?, competitorMealBasis?,
+          competitorOccupancyBasis?, competitorSourceConfidence?, notes,
+          decisionSnapshot{model versions and analysis/guidance evidence}}
+  rateHistory[{quotedAt, rateInclVat, mealBasis, notes}]
+
+settings/compset
+  maxUsablePublicRateInclVat?, pricingStrategy{...}
+settings/compset/competitors/{competitorId}
+  maxUsablePublicRateInclVat?, placeholderPublicRatesInclVat[]?,
+  maxReliableLeadTimeDays?, plus existing mapping/weight/status fields
+competitorGroupQuotes/{sourceQuoteId}_{competitorId}
+  sourceType=LOST_GROUP, sourceQuoteId, observedAt, requestDate,
+  arrivalDate, checkOutDate, roomsByDate, requestedRoomNights, leadTimeDays,
+  groupSegment, competitorQuotedRateInclVat, mealBasis, occupancyBasis,
+  sourceConfidence, publicRatesByDate[{stayDate, publicRateInclVat}], notes
+```

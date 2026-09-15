@@ -28,7 +28,7 @@ export default function CompetitorQuoteForm({ hotelUid, quote, competitors, onSa
     const competitor = enabled.find((item) => item.id === competitorId);
     await saveCompetitorGroupObservation(hotelUid, {
       competitorId, competitorName: competitor?.displayName || competitorId, observedAt: new Date(), sourceType,
-      sourceQuoteId: quote.id, stayStartDate: quote.startDate, stayEndDate: quote.endDate, roomsByDate: rooms,
+      sourceQuoteId: quote.id, arrivalDate: quote.startDate, checkOutDate: quote.dateRangeSemantics === "CHECKOUT_EXCLUSIVE" ? quote.endDate : null, stayStartDate: quote.startDate, stayEndDate: quote.endDate, roomsByDate: rooms,
       requestedRoomsTotal: rooms.reduce((sum, item) => sum + Number(item.rooms || 0), 0),
       requestedRoomNights: rooms.reduce((sum, item) => sum + Number(item.rooms || 0), 0), segment: quote.segment || null,
       competitorQuotedRateInclVat: Number(rate), mealBasis, occupancyBasis, publicRateAtObservationInclVat: publicRate,

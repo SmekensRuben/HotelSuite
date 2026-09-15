@@ -1,5 +1,5 @@
 export const LIGHTHOUSE_RATE_BASIS = "INCL_VAT_CONSUMER";
-export const MARKET_CONTEXT_MODEL_VERSION = "market-context-v1";
+export const MARKET_CONTEXT_MODEL_VERSION = "market-context-v1.1-rate-quality";
 export const PUBLIC_MARKET_PRODUCT_WARNING = Object.freeze({
   code: "PUBLIC_MARKET_PRODUCT_NOT_NORMALIZED",
   message: "Public market rates may differ from the group quote in meal basis, occupancy, room type and booking conditions.",
@@ -11,9 +11,9 @@ const finiteOrNull = (value) => {
 };
 
 /** Parse a Lighthouse consumer price without applying VAT or contribution logic. */
-export function parseLighthouseRateStatus(value) {
+export function parseLighthouseRateStatus(value, rules = {}) {
   const rawValue = value ?? null;
-  if (typeof value === "number") return { rawValue, rateInclVat: Number.isFinite(value) && value >= 0 ? value : null, availabilityStatus: Number.isFinite(value) && value >= 0 ? "AVAILABLE" : "UNAVAILABLE" };
+  if (typeof value === "number") value = String(value);
   if (typeof value !== "string") return { rawValue, rateInclVat: null, availabilityStatus: "UNAVAILABLE" };
   const compact = value.trim().replace(/[€\s]/g, "");
   const statusValue = value.trim().toUpperCase().replace(/[\s_-]+/g, " ");
@@ -22,7 +22,12 @@ export function parseLighthouseRateStatus(value) {
   if (statusValue === "CLOSED") return { rawValue, rateInclVat: null, availabilityStatus: "CLOSED" };
   if (!compact || !/^[+-]?\d+(?:[.,]\d+)?$/.test(compact)) return { rawValue, rateInclVat: null, availabilityStatus: "UNAVAILABLE" };
   const number = Number(compact.replace(",", "."));
-  return { rawValue, rateInclVat: Number.isFinite(number) && number >= 0 ? number : null, availabilityStatus: Number.isFinite(number) && number >= 0 ? "AVAILABLE" : "UNAVAILABLE" };
+  if (!Number.isFinite(number) || number < 0) return { rawValue, rateInclVat: null, availabilityStatus: "UNAVAILABLE", diagnostics: [] };
+  const ceiling = rules.maxUsablePublicRateInclVat === "" || rules.maxUsablePublicRateInclVat === null || rules.maxUsablePublicRateInclVat === undefined ? null : Number(rules.maxUsablePublicRateInclVat);
+  const exactPlaceholder = (rules.placeholderPublicRatesInclVat || []).some((candidate) => Number.isFinite(Number(candidate)) && Math.abs(number - Number(candidate)) < 0.005);
+  if ((Number.isFinite(ceiling) && number > ceiling) || exactPlaceholder) return { rawValue, rateInclVat: null, displayRateInclVat: number, availabilityStatus: "PLACEHOLDER_RATE", diagnostics: [exactPlaceholder ? "KNOWN_PLACEHOLDER_RATE" : "ABOVE_MAX_USABLE_PUBLIC_RATE"] };
+  const farOut = Number.isFinite(Number(rules.daysToArrival)) && Number.isFinite(Number(rules.maxReliableLeadTimeDays)) && Number(rules.daysToArrival) > Number(rules.maxReliableLeadTimeDays);
+  return { rawValue, rateInclVat: number, availabilityStatus: "AVAILABLE", diagnostics: farOut ? ["FAR_OUT_RATE_CONTEXT"] : [] };
 }
 
 export const parseLighthousePublicRate = (value) => parseLighthouseRateStatus(value).rateInclVat;
@@ -53,12 +58,12 @@ export function marketPricingConfidence(coverage, hasRates = true) {
   return "LOW";
 }
 
-export function calculateMarketPricingDate({ stayDate, requestedRooms, lighthouseRow = {}, compset = {}, competitors = [] }) {
+export function calculateMarketPricingDate({ stayDate, requestedRooms, lighthouseRow = {}, compset = {}, competitors = [], lighthouseSnapshotDate = null }) {
   const configured = competitors.filter((item) => item.active && item.includeInMarketContext && Number(item.marketRelevanceWeight) > 0);
   const configuredActiveWeight = configured.reduce((sum, item) => sum + Number(item.marketRelevanceWeight), 0);
   const configuredStatuses = configured.map((item) => ({
     item,
-    parsed: item.lighthouseFieldName ? parseLighthouseRateStatus(lighthouseRow[item.lighthouseFieldName]) : parseLighthouseRateStatus(null),
+    parsed: item.lighthouseFieldName ? parseLighthouseRateStatus(lighthouseRow[item.lighthouseFieldName], { maxUsablePublicRateInclVat: item.maxUsablePublicRateInclVat ?? compset.maxUsablePublicRateInclVat, placeholderPublicRatesInclVat: item.placeholderPublicRatesInclVat, maxReliableLeadTimeDays: item.maxReliableLeadTimeDays, daysToArrival: lighthouseSnapshotDate && stayDate ? Math.round((Date.parse(`${stayDate}T00:00:00Z`) - Date.parse(`${lighthouseSnapshotDate}T00:00:00Z`)) / 86400000) : null }) : parseLighthouseRateStatus(null),
   }));
   const available = configuredStatuses.flatMap(({ item, parsed }) => {
     return parsed.rateInclVat === null ? [] : [{
@@ -68,6 +73,7 @@ export function calculateMarketPricingDate({ stayDate, requestedRooms, lighthous
       publicRateInclVat: parsed.rateInclVat,
       rawLighthouseValue: parsed.rawValue,
       availabilityStatus: parsed.availabilityStatus,
+      diagnostics: parsed.diagnostics || [],
       configuredWeight: Number(item.marketRelevanceWeight),
       active: Boolean(item.active),
       includeInMarketContext: Boolean(item.includeInMarketContext),
@@ -79,6 +85,7 @@ export function calculateMarketPricingDate({ stayDate, requestedRooms, lighthous
   const soldOutWeight = statusWeight("SOLD_OUT");
   const restrictedWeight = statusWeight("LOS_RESTRICTION");
   const closedWeight = statusWeight("CLOSED");
+  const placeholderWeight = statusWeight("PLACEHOLDER_RATE");
   const competitorsWithWeights = available.map((item) => ({
     ...item,
     normalizedEffectiveWeight: availableWeight > 0 ? item.configuredWeight / availableWeight : null,
@@ -87,9 +94,10 @@ export function calculateMarketPricingDate({ stayDate, requestedRooms, lighthous
   const weighted = availableWeight > 0
     ? competitorsWithWeights.reduce((sum, item) => sum + item.publicRateInclVat * item.normalizedEffectiveWeight, 0)
     : null;
-  const own = compset.ownHotelLighthouseFieldName
-    ? parseLighthousePublicRate(lighthouseRow[compset.ownHotelLighthouseFieldName])
-    : null;
+  const ownParsed = compset.ownHotelLighthouseFieldName
+    ? parseLighthouseRateStatus(lighthouseRow[compset.ownHotelLighthouseFieldName], { maxUsablePublicRateInclVat: compset.maxUsablePublicRateInclVat })
+    : parseLighthouseRateStatus(null);
+  const own = ownParsed.rateInclVat;
   const midpoint = median(rates);
   const coverage = configuredActiveWeight > 0 ? availableWeight / configuredActiveWeight : null;
   const ownVsWeighted = difference(own, weighted);
@@ -99,13 +107,15 @@ export function calculateMarketPricingDate({ stayDate, requestedRooms, lighthous
     stayDate,
     requestedRooms: Math.max(0, Number(requestedRooms) || 0),
     ownPublicRateInclVat: own,
+    ownPublicRateStatus: ownParsed.availabilityStatus,
+    ownPublicRateRawValue: ownParsed.rawValue,
     validCompetitorRates: competitorsWithWeights,
     competitors: competitors.map((item) => {
       const valid = competitorsWithWeights.find((availableItem) => availableItem.competitorId === (item.id || item.competitorId));
-      const parsed = item.lighthouseFieldName ? parseLighthouseRateStatus(lighthouseRow[item.lighthouseFieldName]) : parseLighthouseRateStatus(null);
+      const parsed = configuredStatuses.find(({ item: configuredItem }) => (configuredItem.id || configuredItem.competitorId) === (item.id || item.competitorId))?.parsed || parseLighthouseRateStatus(null);
       return valid || {
         competitorId: item.id || item.competitorId, displayName: item.displayName || item.id || item.competitorId,
-        lighthouseFieldName: item.lighthouseFieldName || null, publicRateInclVat: null, rawLighthouseValue: parsed.rawValue, availabilityStatus: parsed.availabilityStatus,
+        lighthouseFieldName: item.lighthouseFieldName || null, publicRateInclVat: null, displayRateInclVat: parsed.displayRateInclVat ?? null, rawLighthouseValue: parsed.rawValue, availabilityStatus: parsed.availabilityStatus, diagnostics: parsed.diagnostics || [],
         configuredWeight: Number(item.marketRelevanceWeight) || 0, normalizedEffectiveWeight: null,
         active: Boolean(item.active), includeInMarketContext: Boolean(item.includeInMarketContext),
         groupIntelligenceEnabled: Boolean(item.groupIntelligenceEnabled),
@@ -122,10 +132,12 @@ export function calculateMarketPricingDate({ stayDate, requestedRooms, lighthous
     soldOutWeight,
     restrictedWeight,
     closedWeight,
+    placeholderWeight,
     rateCoverage: coverage,
     soldOutWeightShare: configuredActiveWeight > 0 ? soldOutWeight / configuredActiveWeight : null,
     restrictedWeightShare: configuredActiveWeight > 0 ? restrictedWeight / configuredActiveWeight : null,
     closedWeightShare: configuredActiveWeight > 0 ? closedWeight / configuredActiveWeight : null,
+    placeholderWeightShare: configuredActiveWeight > 0 ? placeholderWeight / configuredActiveWeight : null,
     marketPricingConfidence: marketPricingConfidence(coverage, rates.length > 0),
     ownVsWeightedCompsetAmount: ownVsWeighted.amount,
     ownVsWeightedCompsetPercentage: ownVsWeighted.percentage,
@@ -153,6 +165,7 @@ export function calculateGroupStayMarketSummary(stayDates) {
     marketPricingConfidence: marketPricingConfidence(rateCoverage, stayDates.some((item) => item.weightedCompsetReferenceInclVat !== null)),
     weightedSoldOutWeightShare: roomNightWeighted(stayDates, "soldOutWeightShare"),
     weightedRestrictedWeightShare: roomNightWeighted(stayDates, "restrictedWeightShare"),
+    weightedPlaceholderWeightShare: roomNightWeighted(stayDates, "placeholderWeightShare"),
     weightedMarketDemand: roomNightWeighted(stayDates, "marketDemand"),
   };
 }
@@ -162,6 +175,7 @@ export function buildMarketContextSnapshot({ lighthouseSnapshotDate, compset = {
     stayDate: room.date,
     requestedRooms: room.rooms,
     lighthouseRow: lighthouseByDate[room.date] || {},
+    lighthouseSnapshotDate,
     compset,
     competitors,
   }));
@@ -187,6 +201,9 @@ export function buildMarketContextSnapshot({ lighthouseSnapshotDate, compset = {
       active: Boolean(item.active),
       includeInMarketContext: Boolean(item.includeInMarketContext),
       groupIntelligenceEnabled: Boolean(item.groupIntelligenceEnabled),
+      maxUsablePublicRateInclVat: item.maxUsablePublicRateInclVat ?? null,
+      placeholderPublicRatesInclVat: [...(item.placeholderPublicRatesInclVat || [])],
+      maxReliableLeadTimeDays: item.maxReliableLeadTimeDays ?? null,
     })),
     groupStaySummary: calculateGroupStayMarketSummary(stayDates),
     stayDates,

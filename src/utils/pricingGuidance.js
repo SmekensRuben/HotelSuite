@@ -40,6 +40,12 @@ export function determineYieldBand(displacementRatio, strategy = DEFAULT_PRICING
   return "MEDIUM";
 }
 
+export function deriveQuoteMealBasis(roomsByDate = [], legacyBreakfastPax) {
+  if (!roomsByDate.length || roomsByDate.some((night) => night.breakfastPax === undefined)) return Number(legacyBreakfastPax) > 0 ? "LEGACY_UNKNOWN" : "RO";
+  const included = roomsByDate.map((night) => Math.max(0, Number(night.breakfastPax) || 0) > 0);
+  return included.every(Boolean) ? "BB" : included.some(Boolean) ? "MIXED" : "RO";
+}
+
 export function selectMarketAnchor(summary = {}) {
   if (validNumber(summary.weightedMarketReferenceInclVat) && Number(summary.rateCoverage) >= 0.6) return { value: Number(summary.weightedMarketReferenceInclVat), source: "WEIGHTED_COMPSET_REFERENCE" };
   if (validNumber(summary.weightedCompsetMedianInclVat)) return { value: Number(summary.weightedCompsetMedianInclVat), source: "COMPSET_MEDIAN" };
@@ -47,7 +53,7 @@ export function selectMarketAnchor(summary = {}) {
   return { value: null, source: "UNAVAILABLE" };
 }
 
-export function calculatePricingGuidance({ economicFloorRateInclVat, totalDisplacedRoomNights, requestedRoomNights, marketSummary = {}, breakfastPax = 0, strategy: inputStrategy = {} }) {
+export function calculatePricingGuidance({ economicFloorRateInclVat, totalDisplacedRoomNights, requestedRoomNights, marketSummary = {}, roomsByDate = [], breakfastPax = 0, strategy: inputStrategy = {} }) {
   const strategy = normalizePricingStrategy(inputStrategy);
   const floor = validNumber(economicFloorRateInclVat) ? Number(economicFloorRateInclVat) : null;
   const displacementRatio = Number(requestedRoomNights) > 0 ? Math.max(0, Number(totalDisplacedRoomNights) || 0) / Number(requestedRoomNights) : null;
@@ -70,5 +76,5 @@ export function calculatePricingGuidance({ economicFloorRateInclVat, totalDispla
   if (floor !== null && anchor.value !== null && floor > anchor.value) warnings.push({ code: "ECONOMIC_FLOOR_ABOVE_MARKET", message: PRICING_WARNINGS.ECONOMIC_FLOOR_ABOVE_MARKET });
   if (validNumber(marketSummary.weightedOwnPublicRateInclVat) && ((targetRateInclVat ?? -Infinity) > marketSummary.weightedOwnPublicRateInclVat || (stretchRateInclVat ?? -Infinity) > marketSummary.weightedOwnPublicRateInclVat)) warnings.push({ code: "RECOMMENDATION_ABOVE_OWN_PUBLIC_RATE", message: PRICING_WARNINGS.RECOMMENDATION_ABOVE_OWN_PUBLIC_RATE });
   const confidence = floor === null || anchor.value === null ? "UNAVAILABLE" : ["HIGH", "MEDIUM", "LOW"].includes(marketSummary.marketPricingConfidence) ? marketSummary.marketPricingConfidence : "LOW";
-  return { version: PRICING_GUIDANCE_MODEL_VERSION, strategy: { ...strategy }, economicFloorRateInclVat: floor, marketAnchorInclVat: anchor.value, marketAnchorSource: anchor.source, displacementRatio, yieldBand, weightedMarketDemand: marketSummary.weightedMarketDemand ?? null, weightedSoldOutWeightShare: marketSummary.weightedSoldOutWeightShare ?? null, baseTargetCapture, baseStretchCapture, demandAdjustment, soldOutAdjustment, targetCapture, stretchCapture, rawTargetRateInclVat, rawStretchRateInclVat, targetRateInclVat, stretchRateInclVat, proposedRateMealBasis: Number(breakfastPax) > 0 ? "BB" : "RO", confidence, warnings };
+  return { version: PRICING_GUIDANCE_MODEL_VERSION, strategy: { ...strategy }, economicFloorRateInclVat: floor, marketAnchorInclVat: anchor.value, marketAnchorSource: anchor.source, displacementRatio, yieldBand, weightedMarketDemand: marketSummary.weightedMarketDemand ?? null, weightedSoldOutWeightShare: marketSummary.weightedSoldOutWeightShare ?? null, baseTargetCapture, baseStretchCapture, demandAdjustment, soldOutAdjustment, targetCapture, stretchCapture, rawTargetRateInclVat, rawStretchRateInclVat, targetRateInclVat, stretchRateInclVat, proposedRateMealBasis: deriveQuoteMealBasis(roomsByDate, breakfastPax), confidence, warnings };
 }

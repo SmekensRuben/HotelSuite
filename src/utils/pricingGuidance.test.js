@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculatePricingGuidance, DEFAULT_PRICING_STRATEGY, determineYieldBand, selectMarketAnchor } from "./pricingGuidance";
+import { calculatePricingGuidance, DEFAULT_PRICING_STRATEGY, deriveQuoteMealBasis, determineYieldBand, selectMarketAnchor } from "./pricingGuidance";
 
 const market = { weightedMarketReferenceInclVat: 250, weightedCompsetMedianInclVat: 245, weightedOwnPublicRateInclVat: 260, rateCoverage: 1, weightedMarketDemand: .7, weightedSoldOutWeightShare: 0, marketPricingConfidence: "HIGH" };
 
@@ -18,7 +18,7 @@ describe("Pricing Guidance V1", () => {
     expect(result.rawStretchRateInclVat).toBeCloseTo(255.11);
     expect(result.targetRateInclVat).toBe(237);
     expect(result.stretchRateInclVat).toBe(255);
-    expect(result.proposedRateMealBasis).toBe("BB");
+    expect(result.proposedRateMealBasis).toBe("LEGACY_UNKNOWN");
   });
 
   it("protects the floor above market and emits the prominent warning", () => {
@@ -49,5 +49,14 @@ describe("Pricing Guidance V1", () => {
   it("returns unavailable guidance without a floor or market anchor", () => {
     expect(calculatePricingGuidance({ economicFloorRateInclVat: null, totalDisplacedRoomNights: 0, requestedRoomNights: 1, marketSummary: market }).confidence).toBe("UNAVAILABLE");
     expect(calculatePricingGuidance({ economicFloorRateInclVat: 100, totalDisplacedRoomNights: 0, requestedRoomNights: 1, marketSummary: {} }).targetRateInclVat).toBeNull();
+  });
+});
+
+
+describe("commercial meal basis", () => {
+  it("derives RO, BB and MIXED without inferring pax from rooms", () => {
+    expect(deriveQuoteMealBasis([{ breakfastPax: 0 }, { breakfastPax: 0 }])).toBe("RO");
+    expect(deriveQuoteMealBasis([{ breakfastPax: 50 }, { breakfastPax: 80 }])).toBe("BB");
+    expect(deriveQuoteMealBasis([{ breakfastPax: 0 }, { breakfastPax: 50 }])).toBe("MIXED");
   });
 });

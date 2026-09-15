@@ -11,7 +11,7 @@ const competitors = [
 const rates = { Own: "249", Pillows: "270", NH: "244", Yalo: "195", Novotel: "176", "Market demand": "93%", "My OTB": "81" };
 
 describe("Lighthouse public market pricing", () => {
-  it.each([["289", "AVAILABLE", 289], ["Sold out", "SOLD_OUT", null], ["sold_OUT", "SOLD_OUT", null], ["LOS2", "LOS_RESTRICTION", null], ["los3", "LOS_RESTRICTION", null], ["Closed", "CLOSED", null], ["garbage", "UNAVAILABLE", null]])("classifies %j as %s", (input, status, rate) => expect(parseLighthouseRateStatus(input)).toEqual({ rawValue: input, rateInclVat: rate, availabilityStatus: status }));
+  it.each([["289", "AVAILABLE", 289], ["Sold out", "SOLD_OUT", null], ["sold_OUT", "SOLD_OUT", null], ["LOS2", "LOS_RESTRICTION", null], ["los3", "LOS_RESTRICTION", null], ["Closed", "CLOSED", null], ["garbage", "UNAVAILABLE", null]])("classifies %j as %s", (input, status, rate) => expect(parseLighthouseRateStatus(input)).toMatchObject({ rawValue: input, rateInclVat: rate, availabilityStatus: status }));
   it.each([["249", 249], ["249.00", 249], ["249,00", 249], [" €249 ", 249], ["LOS2", null], ["Closed", null], ["", null], [null, null], ["N/A", null], ["-", null]])("parses %j as %j", (input, expected) => expect(parseLighthousePublicRate(input)).toBe(expected));
 
   it("keeps consumer rates including VAT regardless of room VAT", () => {
@@ -80,8 +80,25 @@ describe("Lighthouse public market pricing", () => {
     const snapshot = buildMarketContextSnapshot({ lighthouseSnapshotDate: "2026-09-14", compset, competitors: sourceCompetitors, lighthouseByDate: { "2027-04-03": rates }, roomsByDate: [{ date: "2027-04-03", rooms: 50 }] });
     sourceCompetitors[0].marketRelevanceWeight = 999;
     expect(snapshot.rateBasis).toBe("INCL_VAT_CONSUMER");
-    expect(snapshot.marketContextModelVersion).toBe("market-context-v1");
+    expect(snapshot.marketContextModelVersion).toBe("market-context-v1.1-rate-quality");
     expect(snapshot.competitorSettings[0].configuredWeight).toBe(35);
     expect(snapshot.stayDates[0].competitors[0].normalizedEffectiveWeight).toBe(.35);
+  });
+});
+
+describe("placeholder public-rate quality", () => {
+  it.each([[599, "AVAILABLE", 599], [601, "PLACEHOLDER_RATE", null], [999, "PLACEHOLDER_RATE", null]])("classifies %s against a 600 ceiling", (rate, status, usable) => {
+    const result = parseLighthouseRateStatus(String(rate), { maxUsablePublicRateInclVat: 600 });
+    expect(result.availabilityStatus).toBe(status); expect(result.rateInclVat).toBe(usable);
+    if (status === "PLACEHOLDER_RATE") expect(result.displayRateInclVat).toBe(rate);
+  });
+  it("excludes exact placeholders below the ceiling", () => expect(parseLighthouseRateStatus("800", { maxUsablePublicRateInclVat: 1000, placeholderPublicRatesInclVat: [800, 999] })).toMatchObject({ availabilityStatus: "PLACEHOLDER_RATE", rateInclVat: null, displayRateInclVat: 800 }));
+  it("keeps far-out numeric prices usable with a diagnostic", () => expect(parseLighthouseRateStatus("375", { daysToArrival: 400, maxReliableLeadTimeDays: 365 })).toMatchObject({ availabilityStatus: "AVAILABLE", rateInclVat: 375, diagnostics: ["FAR_OUT_RATE_CONTEXT"] }));
+  it("separates placeholder share from sold-out pressure and all numeric metrics", () => {
+    const extended = [...competitors, { id: "x", displayName: "X", lighthouseFieldName: "X", active: true, includeInMarketContext: true, marketRelevanceWeight: 10, maxUsablePublicRateInclVat: 600 }];
+    const result = calculateMarketPricingDate({ lighthouseRow: { Pillows: 375, NH: 314, Yalo: 235, Novotel: "Sold out", X: 999 }, compset, competitors: extended });
+    expect(result.validCompetitorRates.map((x) => x.publicRateInclVat)).toEqual([375,314,235]);
+    expect(result.compsetMedianInclVat).toBe(314); expect(result.compsetLowInclVat).toBe(235); expect(result.compsetHighInclVat).toBe(375);
+    expect(result.soldOutWeight).toBe(15); expect(result.placeholderWeight).toBe(10);
   });
 });

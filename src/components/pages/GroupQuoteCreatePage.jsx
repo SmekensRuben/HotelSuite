@@ -11,7 +11,7 @@ import HistoricalYearsDropdown from "./HistoricalYearsDropdown";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { addQuote, getCompsetConfiguration, getGroupQuoteSettings, getHistoryQuoteDates, getLatestHistoryForecastSnapshot, getLatestLighthouseSnapshot, GROUP_QUOTE_ANALYSIS_MODEL_VERSION, MARKET_CONTEXT_MODEL_VERSION } from "../../services/firebaseQuotes";
-import { getInclusiveQuoteDates } from "../../utils/quoteDates";
+import { getQuoteStayDates } from "../../utils/quoteDates";
 import { calculateDisplacementDay, DISPLACEMENT_FORECAST_CONFIG, prepareDisplacementForecastData } from "../../utils/displacementForecast";
 import { calculateDemandCapacitySummary, calculateGroupContribution, simulateGroupQuote } from "../../utils/contributionAnalysis";
 import { getDemandCalendarEvents } from "../../services/firebaseDemandCalendar";
@@ -70,7 +70,7 @@ export default function GroupQuoteCreatePage() {
 
   useEffect(() => {
     if (!analysisQuote || !sourceData) return;
-    const stayDates = getInclusiveQuoteDates(analysisQuote.startDate, analysisQuote.endDate);
+    const stayDates = getQuoteStayDates(analysisQuote);
     const preparedTransient = prepareDisplacementForecastData({ historicalRows: consideredDates, lighthouseByDate: sourceData.lighthouse.byDate });
     const preparedGroup = prepareGroupForecastData({ historicalRows: consideredDates, events: sourceData.events, targetDates: stayDates });
     const maxShare = Number(quoteSettings.maxHistoricalGroupSharePercentage);
@@ -99,7 +99,7 @@ export default function GroupQuoteCreatePage() {
   }, [analysisQuote, forecastData, groupForecastData, quoteSettings]);
   const simulation = useMemo(() => contribution && !contribution.validationError ? simulateGroupQuote(contribution, testGroupRate) : null, [contribution, testGroupRate]);
   const marketContextSnapshot = useMemo(() => analysisQuote && sourceData ? buildMarketContextSnapshot({ lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate, compset: compsetConfiguration.settings, competitors: compsetConfiguration.competitors, lighthouseByDate: sourceData.lighthouse.byDate, roomsByDate: analysisQuote.roomsByDate }) : null, [analysisQuote, sourceData, compsetConfiguration]);
-  const pricingGuidanceSnapshot = useMemo(() => contribution && !contribution.validationError && marketContextSnapshot ? calculatePricingGuidance({ economicFloorRateInclVat: contribution.economicFloorRateInclVat, totalDisplacedRoomNights: contribution.totalDisplacedRooms, requestedRoomNights: contribution.totalRequestedGroupRoomNights, marketSummary: marketContextSnapshot.groupStaySummary, breakfastPax: analysisQuote.breakfastPax, strategy: compsetConfiguration.settings.pricingStrategy }) : null, [contribution, marketContextSnapshot, analysisQuote, compsetConfiguration]);
+  const pricingGuidanceSnapshot = useMemo(() => contribution && !contribution.validationError && marketContextSnapshot ? calculatePricingGuidance({ economicFloorRateInclVat: contribution.economicFloorRateInclVat, totalDisplacedRoomNights: contribution.totalDisplacedRooms, requestedRoomNights: contribution.totalRequestedGroupRoomNights, marketSummary: marketContextSnapshot.groupStaySummary, roomsByDate: analysisQuote.roomsByDate, breakfastPax: analysisQuote.breakfastPax, strategy: compsetConfiguration.settings.pricingStrategy }) : null, [contribution, marketContextSnapshot, analysisQuote, compsetConfiguration]);
 
   const toggleYear = (year) => { setYearsCustomized(true); setSelectedYears((current) => current.includes(year)
     ? current.filter((item) => item !== year)
@@ -129,6 +129,8 @@ export default function GroupQuoteCreatePage() {
           displacedFutureGroupRooms: night.scenarios.base.displacedFutureGroupRooms,
           nonDisplacingGroupRooms: night.scenarios.base.nonDisplacingGroupRooms,
         })) || [],
+        commercialStatus: "PENDING",
+        quoteInputSnapshot: { version: "group-quote-v2", requestDate: analysisQuote.requestDate, arrivalDate: analysisQuote.startDate, checkOutDate: analysisQuote.endDate, dateRangeSemantics: analysisQuote.dateRangeSemantics, groupSegment: analysisQuote.groupSegment || "UNKNOWN", roomsByDate: analysisQuote.roomsByDate.map((night) => ({ date: night.date, rooms: night.rooms, breakfastPax: night.breakfastPax, bqtRevenue: night.bqtRevenue })) },
         analysisStatus: "CURRENT",
         analysisModelVersion: GROUP_QUOTE_ANALYSIS_MODEL_VERSION,
         contributionModelVersion: GROUP_QUOTE_ANALYSIS_MODEL_VERSION,

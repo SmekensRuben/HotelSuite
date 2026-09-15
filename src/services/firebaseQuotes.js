@@ -18,7 +18,10 @@ import {
 
 const quotesPath = (hotelUid) => `hotels/${hotelUid}/quotes`;
 export const GROUP_QUOTE_ANALYSIS_MODEL_VERSION = "group-contribution-v4-net-group-value";
-export const MARKET_CONTEXT_MODEL_VERSION = "market-context-v1";
+export const MARKET_CONTEXT_MODEL_VERSION = "market-context-v1.1-rate-quality";
+export const QUOTE_STATUSES = ["PENDING", "WON", "LOST", "DECLINED", "CANCELLED"];
+export const LOST_REASONS = ["PRICE", "LOCATION", "PRODUCT", "MEETING_SPACE", "TERMS", "AVAILABILITY", "BRAND", "LOYALTY", "DATES_CHANGED", "CLIENT_CANCELLED", "COMPETITOR_RELATIONSHIP", "UNKNOWN", "OTHER"];
+export const DECLINED_REASONS = ["ECONOMIC_FLOOR_TOO_HIGH", "CAPACITY", "OPERATIONAL", "ROOM_TYPE", "MEETING_SPACE", "STRATEGIC", "OTHER"];
 export const SAVED_ANALYSIS_STALE_WARNING = Object.freeze({
   code: "SAVED_ANALYSIS_STALE",
   message: "Saved analysis is stale because analysis-affecting quote inputs changed.",
@@ -225,4 +228,43 @@ export async function getCompetitorGroupObservationCounts(hotelUid) {
     if (competitorId) counts[competitorId] = (counts[competitorId] || 0) + 1;
     return counts;
   }, {});
+}
+
+export function buildQuoteDecisionSnapshot(quote, outcome) {
+  const guidance = quote.pricingGuidanceSnapshot || {};
+  return {
+    contributionModelVersion: quote.contributionModelVersion || quote.analysisModelVersion || null,
+    marketContextModelVersion: quote.marketContextModelVersion || null,
+    pricingGuidanceModelVersion: quote.pricingGuidanceModelVersion || null,
+    economicFloorRateInclVat: guidance.economicFloorRateInclVat ?? quote.analysisContributionSnapshot?.economicFloorRateInclVat ?? null,
+    targetRateInclVat: guidance.targetRateInclVat ?? null,
+    stretchRateInclVat: guidance.stretchRateInclVat ?? null,
+    finalQuotedRateInclVat: outcome.finalQuotedRateInclVat ?? null,
+    quoteMealBasis: outcome.finalQuotedMealBasis || guidance.proposedRateMealBasis || null,
+    displacementRatio: guidance.displacementRatio ?? null,
+    marketAnchorInclVat: guidance.marketAnchorInclVat ?? null,
+    weightedMarketDemand: guidance.weightedMarketDemand ?? null,
+    marketContextConfidence: quote.marketContextSnapshot?.groupStaySummary?.marketPricingConfidence ?? null,
+  };
+}
+
+export async function saveQuoteOutcome(hotelUid, quote, input) {
+  if (!QUOTE_STATUSES.includes(input.status)) throw new Error("Invalid quote status.");
+  if (input.status === "LOST" && input.lostReason && !LOST_REASONS.includes(input.lostReason)) throw new Error("Invalid lost reason.");
+  if (input.status === "DECLINED" && input.declinedReason && !DECLINED_REASONS.includes(input.declinedReason)) throw new Error("Invalid declined reason.");
+  const rate = input.finalQuotedRateInclVat === "" || input.finalQuotedRateInclVat === null || input.finalQuotedRateInclVat === undefined ? null : Number(input.finalQuotedRateInclVat);
+  if (rate !== null && (!Number.isFinite(rate) || rate < 0)) throw new Error("Final quoted rate must be non-negative.");
+  const now = new Date();
+  const priorHistory = Array.isArray(quote.rateHistory) ? quote.rateHistory : [];
+  const rateHistory = rate === null || priorHistory.at(-1)?.rateInclVat === rate ? priorHistory : [...priorHistory, { quotedAt: now, rateInclVat: rate, mealBasis: input.finalQuotedMealBasis || quote.pricingGuidanceSnapshot?.proposedRateMealBasis || "UNKNOWN", notes: input.rateNotes || "" }];
+  const outcome = { ...input, finalQuotedRateInclVat: rate, decidedAt: input.status === "PENDING" ? null : now, decisionSnapshot: buildQuoteDecisionSnapshot(quote, { ...input, finalQuotedRateInclVat: rate }) };
+  await updateQuote(hotelUid, quote.id, { commercialStatus: input.status, outcome, rateHistory });
+  if (input.status === "LOST" && input.lostToCompetitorId && Number.isFinite(Number(input.competitorQuotedRateInclVat))) {
+    const competitor = (input.competitors || []).find((item) => item.id === input.lostToCompetitorId);
+    const publicRatesByDate = (quote.marketContextSnapshot?.stayDates || []).map((night) => ({ stayDate: night.stayDate, publicRateInclVat: night.competitors?.find((item) => item.competitorId === input.lostToCompetitorId)?.publicRateInclVat ?? null })).filter((item) => item.publicRateInclVat !== null);
+    const requestedRoomNights = (quote.roomsByDate || []).reduce((sum, night) => sum + Math.max(0, Number(night.rooms) || 0), 0);
+    const leadTimeDays = quote.requestDate && quote.startDate ? Math.round((Date.parse(`${quote.startDate}T00:00:00Z`) - Date.parse(`${quote.requestDate}T00:00:00Z`)) / 86400000) : null;
+    await saveCompetitorGroupObservation(hotelUid, { competitorId: input.lostToCompetitorId, competitorName: competitor?.displayName || input.lostToCompetitorId, sourceType: "LOST_GROUP", sourceQuoteId: quote.id, observedAt: now, requestDate: quote.requestDate || null, arrivalDate: quote.startDate, checkOutDate: quote.dateRangeSemantics === "CHECKOUT_EXCLUSIVE" ? quote.endDate : null, stayStartDate: quote.startDate, stayEndDate: quote.endDate, roomsByDate: quote.roomsByDate || [], requestedRoomNights, requestedRoomsTotal: requestedRoomNights, leadTimeDays, groupSegment: quote.groupSegment || "UNKNOWN", competitorQuotedRateInclVat: Number(input.competitorQuotedRateInclVat), mealBasis: input.competitorMealBasis || "UNKNOWN", occupancyBasis: input.competitorOccupancyBasis || "UNKNOWN", sourceConfidence: input.competitorSourceConfidence || "LOW", publicRatesByDate, publicRateAtObservationInclVat: publicRatesByDate.length === 1 ? publicRatesByDate[0].publicRateInclVat : null, publicRateMealBasis: "UNKNOWN", notes: input.notes || "" });
+  }
+  return outcome;
 }
