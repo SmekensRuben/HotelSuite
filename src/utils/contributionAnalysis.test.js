@@ -165,6 +165,7 @@ describe("Future Group Demand contribution integration", () => {
   it("marks adjusted floor unavailable when displaced group demand has no value", () => {
     const output = integrated({ groupProspectPipelineRooms: 500, groupProspectPipelineRevenue: 125000, existingGroupRevenue: 0, currentDeductibleGroupRevenue: 0 });
     expect(output.economicFloorRate).toBeNull();
+    expect(output.economicFloorUnavailableReason).toBe("ECONOMIC_FLOOR_UNAVAILABLE_CONTRIBUTION_VALUE");
     expect(output.transientOnlyEconomicFloor).not.toBeNull();
     expect(output.warnings.join(" ")).toMatch(/no reliable group-rate evidence/i);
   });
@@ -181,6 +182,7 @@ describe("Future Group Demand contribution integration", () => {
     const output = integrated({ currentTransientOtb: 100, existingGroupOtb: 30 });
     expect(output.nightly[0].capacityConflictRooms).toBe(30);
     expect(output.economicFloorRate).toBeNull();
+    expect(output.economicFloorUnavailableReason).toBe("ECONOMIC_FLOOR_UNAVAILABLE_PHYSICAL_CAPACITY");
     expect(output.warnings.join(" ")).toMatch(/physical capacity/i);
   });
   it("preserves exact arithmetic and group commission gross-up", () => {

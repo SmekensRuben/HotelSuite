@@ -1270,3 +1270,32 @@ displacement, centralized lead-time, market-demand and segment breakdowns, separ
 lost/declined reasons, and an observation browser with source-quote links and frozen
 public-rate disclosure. Observed group rates are explicitly raw, not normalized or
 predictive.
+
+## Group Quote V3.2 physical capacity feasibility
+
+Physical feasibility is an independent decision layer, versioned as
+`physical-feasibility-v1`; the contribution and `pricing-guidance-v1` model
+versions remain unchanged. For each requested stay date, current hard committed
+rooms are `individualRooms + groupRooms + hardOtherCommittedRooms`. Remaining
+physical capacity is `max(0, calculatedInventoryRooms - hard committed rooms)`.
+Because calculated inventory is already sellable inventory, OOO is not subtracted
+again. Non-deductible prospect/pipeline rooms are not hard committed capacity.
+
+Nightly shortfall is `max(0, requested rooms - remaining physical capacity)`. A
+quote is `PHYSICALLY_FEASIBLE` only when every night has zero shortfall; otherwise
+it is `PHYSICAL_CAPACITY_SHORTFALL`. The frozen snapshot also records total
+requested RN, the sum of requested rooms that can currently fit, total shortfall
+RN, an optional uniform-block maximum, and all authoritative per-date inputs.
+Saved quote details use this snapshot rather than today's OTB.
+
+Current hard capacity is not forecast displacement. Physical feasibility asks
+whether the entered block fits around already committed rooms. Forecast
+displacement continues to measure expected future demand lost after accepting the
+group. An infeasible full request has no Economic Floor, Target, or Stretch, but
+its unchanged forecast-displacement results and independent Market Context remain
+visible. The Economic Floor formula runs unchanged once the request fits.
+
+The displacement model declares `displacementBasis: STAY_DATE`. It does not model
+arrival-date × LOS itinerary networks or additional shoulder-night contribution.
+No LOS distributions, shoulder multipliers, overbooking, walking, or stay-through
+controls were introduced by V3.2.
