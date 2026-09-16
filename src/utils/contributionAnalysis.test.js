@@ -262,3 +262,15 @@ describe("Group Quote V2 nightly breakfast input", () => {
     expect(output.groupBreakfastCosts).toBe(1000);
   });
 });
+
+describe("explicit meal basis is non-financial", () => {
+  it("keeps breakfast cost and Economic Floor identical when only meal basis changes", () => {
+    const make = (mealBasis) => result({ quoteInputSchemaVersion: "group-quote-v3-meal-basis", roomsByDate: [{ date: "2027-09-08", rooms: 50, mealBasis, breakfastPax: 20, bqtRevenue: 0 }] }, { breakfastCostPerPerson: 10 });
+    const ro = make("RO");
+    const bb = make("BB");
+    expect(ro.totalBreakfastPax).toBe(20);
+    expect(ro.groupBreakfastCosts).toBe(200);
+    expect(bb.groupBreakfastCosts).toBe(ro.groupBreakfastCosts);
+    expect(bb.economicFloorRateInclVat).toBe(ro.economicFloorRateInclVat);
+  });
+});

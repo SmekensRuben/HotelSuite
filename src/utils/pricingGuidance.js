@@ -1,3 +1,5 @@
+import { deriveExplicitQuoteMealBasis, getMealBasisDataQualityWarnings } from "../constants/groupMealBasis";
+
 export const PRICING_GUIDANCE_MODEL_VERSION = "pricing-guidance-v1";
 
 export const DEFAULT_PRICING_STRATEGY = Object.freeze({
@@ -41,9 +43,7 @@ export function determineYieldBand(displacementRatio, strategy = DEFAULT_PRICING
 }
 
 export function deriveQuoteMealBasis(roomsByDate = [], legacyBreakfastPax) {
-  if (!roomsByDate.length || roomsByDate.some((night) => night.breakfastPax === undefined)) return Number(legacyBreakfastPax) > 0 ? "LEGACY_UNKNOWN" : "RO";
-  const included = roomsByDate.map((night) => Math.max(0, Number(night.breakfastPax) || 0) > 0);
-  return included.every(Boolean) ? "BB" : included.some(Boolean) ? "MIXED" : "RO";
+  return deriveExplicitQuoteMealBasis(roomsByDate, legacyBreakfastPax);
 }
 
 export function selectMarketAnchor(summary = {}) {
@@ -72,7 +72,7 @@ export function calculatePricingGuidance({ economicFloorRateInclVat, totalDispla
   const unroundedStretchRateInclVat = unroundedTargetRateInclVat === null || rawStretchRateInclVat === null ? null : Math.max(unroundedTargetRateInclVat, rawStretchRateInclVat);
   const targetRateInclVat = unroundedTargetRateInclVat === null ? null : Math.max(floor, roundToStep(unroundedTargetRateInclVat, strategy.recommendedRateRoundingStep));
   const stretchRateInclVat = unroundedStretchRateInclVat === null ? null : Math.max(targetRateInclVat, roundToStep(unroundedStretchRateInclVat, strategy.recommendedRateRoundingStep));
-  const warnings = [{ code: "PUBLIC_MARKET_PRODUCT_NOT_NORMALIZED", message: PRICING_WARNINGS.PUBLIC_MARKET_PRODUCT_NOT_NORMALIZED }];
+  const warnings = [{ code: "PUBLIC_MARKET_PRODUCT_NOT_NORMALIZED", message: PRICING_WARNINGS.PUBLIC_MARKET_PRODUCT_NOT_NORMALIZED }, ...getMealBasisDataQualityWarnings(roomsByDate)];
   if (floor !== null && anchor.value !== null && floor > anchor.value) warnings.push({ code: "ECONOMIC_FLOOR_ABOVE_MARKET", message: PRICING_WARNINGS.ECONOMIC_FLOOR_ABOVE_MARKET });
   if (validNumber(marketSummary.weightedOwnPublicRateInclVat) && ((targetRateInclVat ?? -Infinity) > marketSummary.weightedOwnPublicRateInclVat || (stretchRateInclVat ?? -Infinity) > marketSummary.weightedOwnPublicRateInclVat)) warnings.push({ code: "RECOMMENDATION_ABOVE_OWN_PUBLIC_RATE", message: PRICING_WARNINGS.RECOMMENDATION_ABOVE_OWN_PUBLIC_RATE });
   const confidence = floor === null || anchor.value === null ? "UNAVAILABLE" : ["HIGH", "MEDIUM", "LOW"].includes(marketSummary.marketPricingConfidence) ? marketSummary.marketPricingConfidence : "LOW";

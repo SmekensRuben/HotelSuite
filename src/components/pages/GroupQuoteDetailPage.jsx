@@ -42,6 +42,7 @@ export default function GroupQuoteDetailPage() {
   const columns = [
     { key: "date", label: "Date" },
     { key: "rooms", label: "Rooms", sortValue: (row) => Number(row.rooms || 0) },
+    { key: "mealBasis", label: "Meal Basis", render: (row) => row.mealBasis || "Unknown" },
     { key: "breakfastPax", label: "Breakfast Pax", render: (row) => row.breakfastPax ?? "Legacy unknown" },
     { key: "bqtRevenue", label: "BQT Revenue", sortValue: (row) => Number(row.bqtRevenue || 0), render: (row) => currency(row.bqtRevenue) },
   ];
@@ -62,7 +63,7 @@ export default function GroupQuoteDetailPage() {
         <Card className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           <div><p className="text-xs uppercase text-gray-500">Name</p><p className="font-semibold">{quote.name || "-"}</p></div>
           <div><p className="text-xs uppercase text-gray-500">Request Date</p><p className="font-semibold">{quote.requestDate || "-"}</p></div>
-          <div><p className="text-xs uppercase text-gray-500">{quote.dateRangeSemantics === "CHECKOUT_EXCLUSIVE" ? "Arrival / Check-out" : "Legacy inclusive stay"}</p><p className="font-semibold">{quote.startDate} – {quote.endDate}</p><p className="text-sm text-gray-500">{stayNights.length} stay nights</p></div><div><p className="text-xs uppercase text-gray-500">Breakfast Pax</p><p className="font-semibold">{quote.quoteInputSchemaVersion === "group-quote-v2" ? (quote.roomsByDate || []).reduce((sum,row)=>sum+Number(row.breakfastPax||0),0) : `${Number(quote.breakfastPax || 0)} (legacy total)`}</p></div>
+          <div><p className="text-xs uppercase text-gray-500">{quote.dateRangeSemantics === "CHECKOUT_EXCLUSIVE" ? "Arrival / Check-out" : "Legacy inclusive stay"}</p><p className="font-semibold">{quote.startDate} – {quote.endDate}</p><p className="text-sm text-gray-500">{stayNights.length} stay nights</p></div><div><p className="text-xs uppercase text-gray-500">Breakfast Pax</p><p className="font-semibold">{["group-quote-v2", "group-quote-v3-meal-basis"].includes(quote.quoteInputSchemaVersion) ? (quote.roomsByDate || []).reduce((sum,row)=>sum+Number(row.breakfastPax||0),0) : `${Number(quote.breakfastPax || 0)} (legacy total)`}</p></div>
         </Card>
         {quote.analysisStatus !== "STALE" && <PricingGuidance guidance={quote.pricingGuidanceSnapshot} ownPublicRateInclVat={quote.marketContextSnapshot?.groupStaySummary?.weightedOwnPublicRateInclVat ?? null} />}
         {canEdit && <Card><h2 className="text-xl font-semibold">Update Outcome</h2><p className="text-sm text-gray-600">Record the actual commercial decision and quoted-rate history separately from the immutable analysis.</p><QuoteOutcomeForm hotelUid={hotelUid} quote={quote} competitors={competitors} onSaved={() => getQuote(hotelUid, quoteId).then(setQuote)} /></Card>}
