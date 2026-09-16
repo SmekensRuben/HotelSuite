@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../firebaseConfig", () => ({
   addDoc: vi.fn(), collection: vi.fn(), db: {}, deleteDoc: vi.fn(), doc: vi.fn(), getDoc: vi.fn(), getDocs: vi.fn(),
-  documentId: vi.fn(), limit: vi.fn(), onSnapshot: vi.fn(), orderBy: vi.fn(), query: vi.fn(), serverTimestamp: vi.fn(), setDoc: vi.fn(), updateDoc: vi.fn(),
+  documentId: vi.fn(), functions: {}, httpsCallable: vi.fn(), limit: vi.fn(), onSnapshot: vi.fn(), orderBy: vi.fn(), query: vi.fn(), serverTimestamp: vi.fn(), setDoc: vi.fn(), updateDoc: vi.fn(),
 }));
 
 import { buildQuoteDecisionSnapshot, competitorGroupQuotesPath, getAuthoritativeQuoteMealBasis, GROUP_QUOTE_ANALYSIS_MODEL_VERSION, hasAnalysisAffectingChanges, MARKET_CONTEXT_MODEL_VERSION, QUOTE_STATUSES, saveQuoteOutcome, validateCompetitorGroupObservation } from "./firebaseQuotes";
@@ -15,7 +15,7 @@ const quote = {
 };
 
 describe("saved Group Quote analysis validity", () => {
-  it("uses the Future Group Value V2 model version", () => expect(GROUP_QUOTE_ANALYSIS_MODEL_VERSION).toBe("group-contribution-v4-net-group-value"));
+  it("uses the LOS-network contribution model version", () => expect(GROUP_QUOTE_ANALYSIS_MODEL_VERSION).toBe("group-contribution-v5-los-network"));
   it("does not invalidate analysis for a name-only edit", () => expect(hasAnalysisAffectingChanges(quote, { ...quote, name: "Renamed" })).toBe(false));
   it.each([
     ["stay dates", { ...quote, endDate: "2027-04-03" }],

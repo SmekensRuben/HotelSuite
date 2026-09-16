@@ -3,6 +3,7 @@ const { parse: parseStream } = require("csv-parse");
 const { XMLParser } = require("fast-xml-parser");
 const sax = require("sax");
 const { onObjectFinalized, logger, admin } = require("./config");
+const { rebuildStayPatternModel } = require("./stayPatternModel");
 
 function normalizeDelimiter(value) {
   const raw = String(value || ",");
@@ -163,6 +164,19 @@ function hasMappedValue(value) {
     return Object.values(value).some((childValue) => hasMappedValue(childValue));
   }
   return value !== "";
+}
+
+function collectArrivalYears(value, years = new Set()) {
+  if (Array.isArray(value)) value.forEach((item) => collectArrivalYears(item, years));
+  else if (value && typeof value === "object") {
+    Object.entries(value).forEach(([key, child]) => {
+      if (["arrivaldate", "arrival_date", "considereddate"].includes(String(key).toLowerCase())) {
+        const match = String(child || "").match(/^(\d{4})-\d{2}-\d{2}/);
+        if (match) years.add(Number(match[1]));
+      } else collectArrivalYears(child, years);
+    });
+  }
+  return years;
 }
 
 function mapFlatObject(record, mappings) {
@@ -1211,6 +1225,7 @@ async function processMappedDocumentStream({
   const readConcurrency = 25;
   let writtenCount = 0;
   let firstWrittenPath = null;
+  const affectedStayPatternYears = new Set();
 
   const registerWrittenPaths = (flushedPaths = []) => {
     flushedPaths.forEach((writtenPath) => {
@@ -1239,6 +1254,12 @@ async function processMappedDocumentStream({
         });
 
         const resolvedPath = resolveFirestorePath(fileImportType, context);
+        if (resolvedPath.toLowerCase().includes("staydatepattern")) {
+          const pathDate = resolvedPath.match(/(?:^|\/)(\d{4})-\d{2}-\d{2}(?:\/|$)/)?.[1];
+          collectArrivalYears(documentRow.mappedDocument, affectedStayPatternYears);
+          const pathYear = Number(pathDate);
+          if (Number.isInteger(pathYear) && pathYear > 1900) affectedStayPatternYears.add(pathYear);
+        }
         const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
 
         return {
@@ -1292,7 +1313,7 @@ async function processMappedDocumentStream({
 
   await batchWriter.close();
 
-  return { writtenCount, firstWrittenPath };
+  return { writtenCount, firstWrittenPath, affectedStayPatternYears: [...affectedStayPatternYears].sort() };
 }
 
 const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", memory: "1GiB" }, async (event) => {
@@ -1407,6 +1428,17 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
     writtenCount: writeSummary.writtenCount,
     firstWrittenPath: writeSummary.firstWrittenPath,
   });
+
+  if (writeSummary.affectedStayPatternYears?.length) {
+    try {
+      const result = await rebuildStayPatternModel({ hotelUid, years: writeSummary.affectedStayPatternYears, trigger: "STAYDATEPATTERN_IMPORT_COMPLETED", db });
+      logger.info("Stay Pattern model rebuilt after completed import batch", { hotelUid, affectedYears: result.affectedYears, status: result.status, runId: result.runId });
+    } catch (error) {
+      // The raw import is already durable. Keep it successful and expose the
+      // failed/stale model state instead of retrying every reservation write.
+      logger.error("Post-import Stay Pattern rebuild failed", { hotelUid, affectedYears: writeSummary.affectedStayPatternYears, error: error.message });
+    }
+  }
 });
 
 module.exports = {

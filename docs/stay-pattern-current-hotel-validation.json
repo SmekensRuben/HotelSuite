@@ -1,0 +1,534 @@
+{
+  "generatedAt": "2026-09-16T13:59:14.862Z",
+  "modelVersion": "stay-pattern-v1",
+  "sourceRoot": "hotels/{hotelUid}/reports/staydatepattern/{arrivalDate}/{reservationDocument}",
+  "years": [
+    2022,
+    2023,
+    2024,
+    2025,
+    2026
+  ],
+  "sourceThroughDate": "2022-01-31",
+  "rawReservationCount": 1466,
+  "annual": [
+    {
+      "year": 2022,
+      "status": "VALIDATION_FAILED",
+      "sourceThroughDate": "2022-01-31",
+      "reconciliation": {
+        "transient": {
+          "comparedDates": 365,
+          "authoritativeRooms": 32172,
+          "reconstructedRooms": 1310,
+          "sumAbsoluteError": 30862,
+          "signedErrorRooms": -30862,
+          "signedAggregateBias": -30862,
+          "matchingDates": 28,
+          "meanAbsoluteError": 84.55342465753425,
+          "medianAbsoluteError": 90,
+          "wape": 0.9592813626756186,
+          "matchingDateShare": 0.07671232876712329,
+          "passes": false
+        },
+        "group": {
+          "comparedDates": 365,
+          "authoritativeRooms": 6320,
+          "reconstructedRooms": 0,
+          "sumAbsoluteError": 6320,
+          "signedErrorRooms": -6320,
+          "signedAggregateBias": -6320,
+          "matchingDates": 157,
+          "meanAbsoluteError": 17.315068493150687,
+          "medianAbsoluteError": 6,
+          "wape": 1,
+          "matchingDateShare": 0.4301369863013699,
+          "passes": false
+        }
+      },
+      "quality": {
+        "sourceReservations": 1466,
+        "realizedReservationsUsed": 779,
+        "cancelledNoShowExclusions": 273,
+        "norateExclusions": 400,
+        "unclassifiedRateCodeCount": 1,
+        "possibleShareCount": 1052,
+        "invalidStayCount": 13,
+        "modeledRoomArrivalCoverage": {
+          "TRANSIENT": 0.9974326059050064,
+          "GROUP": 1
+        }
+      },
+      "losCoverage": {
+        "TRANSIENT": 0.9974326059050064,
+        "GROUP": 1
+      },
+      "longStayRoomArrivalShare": {
+        "TRANSIENT": 0.0025673940949935813,
+        "GROUP": 0
+      }
+    },
+    {
+      "year": 2023,
+      "status": "VALIDATION_FAILED",
+      "sourceThroughDate": null,
+      "reconciliation": {
+        "transient": {
+          "comparedDates": 365,
+          "authoritativeRooms": 32142,
+          "reconstructedRooms": 0,
+          "sumAbsoluteError": 32142,
+          "signedErrorRooms": -32142,
+          "signedAggregateBias": -32142,
+          "matchingDates": 0,
+          "meanAbsoluteError": 88.06027397260274,
+          "medianAbsoluteError": 88,
+          "wape": 1,
+          "matchingDateShare": 0,
+          "passes": false
+        },
+        "group": {
+          "comparedDates": 365,
+          "authoritativeRooms": 7355,
+          "reconstructedRooms": 0,
+          "sumAbsoluteError": 7355,
+          "signedErrorRooms": -7355,
+          "signedAggregateBias": -7355,
+          "matchingDates": 102,
+          "meanAbsoluteError": 20.15068493150685,
+          "medianAbsoluteError": 12,
+          "wape": 1,
+          "matchingDateShare": 0.27945205479452057,
+          "passes": false
+        }
+      },
+      "quality": {
+        "sourceReservations": 0,
+        "realizedReservationsUsed": 0,
+        "cancelledNoShowExclusions": 0,
+        "norateExclusions": 0,
+        "unclassifiedRateCodeCount": 0,
+        "possibleShareCount": 0,
+        "invalidStayCount": 0,
+        "modeledRoomArrivalCoverage": {
+          "TRANSIENT": 1,
+          "GROUP": 1
+        }
+      },
+      "losCoverage": {
+        "TRANSIENT": 1,
+        "GROUP": 1
+      },
+      "longStayRoomArrivalShare": {
+        "TRANSIENT": 0,
+        "GROUP": 0
+      }
+    },
+    {
+      "year": 2024,
+      "status": "VALIDATION_FAILED",
+      "sourceThroughDate": null,
+      "reconciliation": {
+        "transient": {
+          "comparedDates": 366,
+          "authoritativeRooms": 33589,
+          "reconstructedRooms": 0,
+          "sumAbsoluteError": 33589,
+          "signedErrorRooms": -33589,
+          "signedAggregateBias": -33589,
+          "matchingDates": 0,
+          "meanAbsoluteError": 91.77322404371584,
+          "medianAbsoluteError": 94,
+          "wape": 1,
+          "matchingDateShare": 0,
+          "passes": false
+        },
+        "group": {
+          "comparedDates": 366,
+          "authoritativeRooms": 9242,
+          "reconstructedRooms": 0,
+          "sumAbsoluteError": 9242,
+          "signedErrorRooms": -9242,
+          "signedAggregateBias": -9242,
+          "matchingDates": 92,
+          "meanAbsoluteError": 25.25136612021858,
+          "medianAbsoluteError": 14,
+          "wape": 1,
+          "matchingDateShare": 0.25136612021857924,
+          "passes": false
+        }
+      },
+      "quality": {
+        "sourceReservations": 0,
+        "realizedReservationsUsed": 0,
+        "cancelledNoShowExclusions": 0,
+        "norateExclusions": 0,
+        "unclassifiedRateCodeCount": 0,
+        "possibleShareCount": 0,
+        "invalidStayCount": 0,
+        "modeledRoomArrivalCoverage": {
+          "TRANSIENT": 1,
+          "GROUP": 1
+        }
+      },
+      "losCoverage": {
+        "TRANSIENT": 1,
+        "GROUP": 1
+      },
+      "longStayRoomArrivalShare": {
+        "TRANSIENT": 0,
+        "GROUP": 0
+      }
+    },
+    {
+      "year": 2025,
+      "status": "VALIDATION_FAILED",
+      "sourceThroughDate": null,
+      "reconciliation": {
+        "transient": {
+          "comparedDates": 365,
+          "authoritativeRooms": 27563,
+          "reconstructedRooms": 0,
+          "sumAbsoluteError": 27563,
+          "signedErrorRooms": -27563,
+          "signedAggregateBias": -27563,
+          "matchingDates": 0,
+          "meanAbsoluteError": 75.51506849315068,
+          "medianAbsoluteError": 74,
+          "wape": 1,
+          "matchingDateShare": 0,
+          "passes": false
+        },
+        "group": {
+          "comparedDates": 365,
+          "authoritativeRooms": 6027,
+          "reconstructedRooms": 0,
+          "sumAbsoluteError": 6027,
+          "signedErrorRooms": -6027,
+          "signedAggregateBias": -6027,
+          "matchingDates": 153,
+          "meanAbsoluteError": 16.512328767123286,
+          "medianAbsoluteError": 7,
+          "wape": 1,
+          "matchingDateShare": 0.4191780821917808,
+          "passes": false
+        }
+      },
+      "quality": {
+        "sourceReservations": 0,
+        "realizedReservationsUsed": 0,
+        "cancelledNoShowExclusions": 0,
+        "norateExclusions": 0,
+        "unclassifiedRateCodeCount": 0,
+        "possibleShareCount": 0,
+        "invalidStayCount": 0,
+        "modeledRoomArrivalCoverage": {
+          "TRANSIENT": 1,
+          "GROUP": 1
+        }
+      },
+      "losCoverage": {
+        "TRANSIENT": 1,
+        "GROUP": 1
+      },
+      "longStayRoomArrivalShare": {
+        "TRANSIENT": 0,
+        "GROUP": 0
+      }
+    },
+    {
+      "year": 2026,
+      "status": "VALIDATION_FAILED",
+      "sourceThroughDate": null,
+      "reconciliation": {
+        "transient": {
+          "comparedDates": 252,
+          "authoritativeRooms": 24170,
+          "reconstructedRooms": 0,
+          "sumAbsoluteError": 24170,
+          "signedErrorRooms": -24170,
+          "signedAggregateBias": -24170,
+          "matchingDates": 0,
+          "meanAbsoluteError": 95.91269841269842,
+          "medianAbsoluteError": 101,
+          "wape": 1,
+          "matchingDateShare": 0,
+          "passes": false
+        },
+        "group": {
+          "comparedDates": 252,
+          "authoritativeRooms": 4727,
+          "reconstructedRooms": 0,
+          "sumAbsoluteError": 4727,
+          "signedErrorRooms": -4727,
+          "signedAggregateBias": -4727,
+          "matchingDates": 103,
+          "meanAbsoluteError": 18.75793650793651,
+          "medianAbsoluteError": 9,
+          "wape": 1,
+          "matchingDateShare": 0.4087301587301587,
+          "passes": false
+        }
+      },
+      "quality": {
+        "sourceReservations": 0,
+        "realizedReservationsUsed": 0,
+        "cancelledNoShowExclusions": 0,
+        "norateExclusions": 0,
+        "unclassifiedRateCodeCount": 0,
+        "possibleShareCount": 0,
+        "invalidStayCount": 0,
+        "modeledRoomArrivalCoverage": {
+          "TRANSIENT": 1,
+          "GROUP": 1
+        }
+      },
+      "losCoverage": {
+        "TRANSIENT": 1,
+        "GROUP": 1
+      },
+      "longStayRoomArrivalShare": {
+        "TRANSIENT": 0,
+        "GROUP": 0
+      }
+    }
+  ],
+  "combined": {
+    "transient": {
+      "comparedDates": 1713,
+      "authoritativeRooms": 149636,
+      "reconstructedRooms": 1310,
+      "sumAbsoluteError": 148326,
+      "signedErrorRooms": -148326,
+      "signedAggregateBias": -148326,
+      "matchingDates": 28,
+      "meanAbsoluteError": 86.58844133099825,
+      "medianAbsoluteError": 89,
+      "wape": 0.9912454222245983,
+      "matchingDateShare": 0.01634559252772913,
+      "passes": false
+    },
+    "group": {
+      "comparedDates": 1713,
+      "authoritativeRooms": 33671,
+      "reconstructedRooms": 0,
+      "sumAbsoluteError": 33671,
+      "signedErrorRooms": -33671,
+      "signedAggregateBias": -33671,
+      "matchingDates": 607,
+      "meanAbsoluteError": 19.656158785755984,
+      "medianAbsoluteError": 9,
+      "wape": 1,
+      "matchingDateShare": 0.35434909515469937,
+      "passes": false
+    }
+  },
+  "topMismatches": [
+    {
+      "stayDate": "2024-09-04",
+      "weekday": "Wednesday",
+      "authoritativeTransient": 50,
+      "reconstructedTransient": 0,
+      "differenceTransient": -50,
+      "authoritativeGroup": 100,
+      "reconstructedGroup": 0,
+      "differenceGroup": -100
+    },
+    {
+      "stayDate": "2024-09-10",
+      "weekday": "Tuesday",
+      "authoritativeTransient": 58,
+      "reconstructedTransient": 0,
+      "differenceTransient": -58,
+      "authoritativeGroup": 92,
+      "reconstructedGroup": 0,
+      "differenceGroup": -92
+    },
+    {
+      "stayDate": "2024-11-01",
+      "weekday": "Friday",
+      "authoritativeTransient": 96,
+      "reconstructedTransient": 0,
+      "differenceTransient": -96,
+      "authoritativeGroup": 54,
+      "reconstructedGroup": 0,
+      "differenceGroup": -54
+    },
+    {
+      "stayDate": "2025-10-09",
+      "weekday": "Thursday",
+      "authoritativeTransient": 83,
+      "reconstructedTransient": 0,
+      "differenceTransient": -83,
+      "authoritativeGroup": 67,
+      "reconstructedGroup": 0,
+      "differenceGroup": -67
+    },
+    {
+      "stayDate": "2025-12-29",
+      "weekday": "Monday",
+      "authoritativeTransient": 150,
+      "reconstructedTransient": 0,
+      "differenceTransient": -150,
+      "authoritativeGroup": 0,
+      "reconstructedGroup": 0,
+      "differenceGroup": 0
+    },
+    {
+      "stayDate": "2026-04-04",
+      "weekday": "Saturday",
+      "authoritativeTransient": 150,
+      "reconstructedTransient": 0,
+      "differenceTransient": -150,
+      "authoritativeGroup": 0,
+      "reconstructedGroup": 0,
+      "differenceGroup": 0
+    },
+    {
+      "stayDate": "2026-04-10",
+      "weekday": "Friday",
+      "authoritativeTransient": 74,
+      "reconstructedTransient": 0,
+      "differenceTransient": -74,
+      "authoritativeGroup": 76,
+      "reconstructedGroup": 0,
+      "differenceGroup": -76
+    },
+    {
+      "stayDate": "2026-05-02",
+      "weekday": "Saturday",
+      "authoritativeTransient": 127,
+      "reconstructedTransient": 0,
+      "differenceTransient": -127,
+      "authoritativeGroup": 23,
+      "reconstructedGroup": 0,
+      "differenceGroup": -23
+    },
+    {
+      "stayDate": "2026-05-05",
+      "weekday": "Tuesday",
+      "authoritativeTransient": 21,
+      "reconstructedTransient": 0,
+      "differenceTransient": -21,
+      "authoritativeGroup": 129,
+      "reconstructedGroup": 0,
+      "differenceGroup": -129
+    },
+    {
+      "stayDate": "2026-05-06",
+      "weekday": "Wednesday",
+      "authoritativeTransient": 17,
+      "reconstructedTransient": 0,
+      "differenceTransient": -17,
+      "authoritativeGroup": 133,
+      "reconstructedGroup": 0,
+      "differenceGroup": -133
+    },
+    {
+      "stayDate": "2026-05-09",
+      "weekday": "Saturday",
+      "authoritativeTransient": 121,
+      "reconstructedTransient": 0,
+      "differenceTransient": -121,
+      "authoritativeGroup": 29,
+      "reconstructedGroup": 0,
+      "differenceGroup": -29
+    },
+    {
+      "stayDate": "2026-05-23",
+      "weekday": "Saturday",
+      "authoritativeTransient": 150,
+      "reconstructedTransient": 0,
+      "differenceTransient": -150,
+      "authoritativeGroup": 0,
+      "reconstructedGroup": 0,
+      "differenceGroup": 0
+    },
+    {
+      "stayDate": "2026-05-24",
+      "weekday": "Sunday",
+      "authoritativeTransient": 150,
+      "reconstructedTransient": 0,
+      "differenceTransient": -150,
+      "authoritativeGroup": 0,
+      "reconstructedGroup": 0,
+      "differenceGroup": 0
+    },
+    {
+      "stayDate": "2026-06-07",
+      "weekday": "Sunday",
+      "authoritativeTransient": 19,
+      "reconstructedTransient": 0,
+      "differenceTransient": -19,
+      "authoritativeGroup": 131,
+      "reconstructedGroup": 0,
+      "differenceGroup": -131
+    },
+    {
+      "stayDate": "2022-05-27",
+      "weekday": "Friday",
+      "authoritativeTransient": 105,
+      "reconstructedTransient": 0,
+      "differenceTransient": -105,
+      "authoritativeGroup": 44,
+      "reconstructedGroup": 0,
+      "differenceGroup": -44
+    },
+    {
+      "stayDate": "2022-06-04",
+      "weekday": "Saturday",
+      "authoritativeTransient": 87,
+      "reconstructedTransient": 0,
+      "differenceTransient": -87,
+      "authoritativeGroup": 62,
+      "reconstructedGroup": 0,
+      "differenceGroup": -62
+    },
+    {
+      "stayDate": "2023-05-19",
+      "weekday": "Friday",
+      "authoritativeTransient": 149,
+      "reconstructedTransient": 0,
+      "differenceTransient": -149,
+      "authoritativeGroup": 0,
+      "reconstructedGroup": 0,
+      "differenceGroup": 0
+    },
+    {
+      "stayDate": "2023-08-17",
+      "weekday": "Thursday",
+      "authoritativeTransient": 137,
+      "reconstructedTransient": 0,
+      "differenceTransient": -137,
+      "authoritativeGroup": 12,
+      "reconstructedGroup": 0,
+      "differenceGroup": -12
+    },
+    {
+      "stayDate": "2023-08-23",
+      "weekday": "Wednesday",
+      "authoritativeTransient": 96,
+      "reconstructedTransient": 0,
+      "differenceTransient": -96,
+      "authoritativeGroup": 53,
+      "reconstructedGroup": 0,
+      "differenceGroup": -53
+    },
+    {
+      "stayDate": "2023-09-11",
+      "weekday": "Monday",
+      "authoritativeTransient": 55,
+      "reconstructedTransient": 0,
+      "differenceTransient": -55,
+      "authoritativeGroup": 94,
+      "reconstructedGroup": 0,
+      "differenceGroup": -94
+    }
+  ],
+  "status": "VALIDATION_FAILED",
+  "rawArrivalDateRange": {
+    "from": "2022-01-01",
+    "through": "2022-01-31"
+  },
+  "finding": "historyquotes spans 2022-2026, but the current raw staydatepattern source contains arrival collections only for January 2022; LOS Network must fall back."
+}
