@@ -16,10 +16,11 @@ import {
   updateDoc,
 } from "../firebaseConfig";
 import { deriveExplicitQuoteMealBasis, NIGHTLY_MEAL_BASIS_VALUES } from "../constants/groupMealBasis";
+import { deriveSourceCoverage } from "../utils/hotelStayDates";
 
 const quotesPath = (hotelUid) => `hotels/${hotelUid}/quotes`;
 export const GROUP_QUOTE_ANALYSIS_MODEL_VERSION = "group-contribution-v4-net-group-value";
-export const MARKET_CONTEXT_MODEL_VERSION = "market-context-v1.1-rate-quality";
+export const MARKET_CONTEXT_MODEL_VERSION = "market-context-v1.2-source-horizon";
 export const QUOTE_STATUSES = ["PENDING", "WON", "LOST", "DECLINED", "CANCELLED"];
 export const LOST_REASONS = ["PRICE", "LOCATION", "PRODUCT", "MEETING_SPACE", "TERMS", "AVAILABILITY", "BRAND", "LOYALTY", "DATES_CHANGED", "CLIENT_CANCELLED", "COMPETITOR_RELATIONSHIP", "UNKNOWN", "OTHER"];
 export const DECLINED_REASONS = ["ECONOMIC_FLOOR_TOO_HIGH", "CAPACITY", "OPERATIONAL", "ROOM_TYPE", "MEETING_SPACE", "STRATEGIC", "OTHER"];
@@ -103,14 +104,16 @@ async function getLatestSnapshotStayDates(hotelUid, report) {
     limit(1)
   ));
   const latest = snapshots.docs[0];
-  if (!latest) return { snapshotDate: null, byDate: {} };
+  if (!latest) return { snapshotDate: null, byDate: {}, coverage: deriveSourceCoverage(null, {}) };
   const stayDates = await getDocs(collection(
     db,
     `${reportPath(hotelUid, report)}/snapshotDates/${latest.id}/stayDates`
   ));
+  const byDate = Object.fromEntries(stayDates.docs.map((item) => [item.id, { id: item.id, ...item.data() }]));
   return {
     snapshotDate: latest.id,
-    byDate: Object.fromEntries(stayDates.docs.map((item) => [item.id, { id: item.id, ...item.data() }])),
+    byDate,
+    coverage: deriveSourceCoverage(latest.id, byDate),
   };
 }
 
@@ -232,6 +235,12 @@ export async function getCompetitorGroupObservationCounts(hotelUid) {
   }, {});
 }
 
+export async function getCompetitorGroupObservations(hotelUid) {
+  if (!hotelUid) return [];
+  const snapshot = await getDocs(collection(db, competitorGroupQuotesPath(hotelUid)));
+  return snapshot.docs.map(withId).sort((a, b) => String(b.observedAt?.toDate?.()?.toISOString?.() || b.observedAt || "").localeCompare(String(a.observedAt?.toDate?.()?.toISOString?.() || a.observedAt || "")));
+}
+
 export function buildQuoteDecisionSnapshot(quote, outcome) {
   const guidance = quote.pricingGuidanceSnapshot || {};
   return {
@@ -244,9 +253,11 @@ export function buildQuoteDecisionSnapshot(quote, outcome) {
     finalQuotedRateInclVat: outcome.finalQuotedRateInclVat ?? null,
     quoteMealBasis: outcome.finalQuotedMealBasis || guidance.proposedRateMealBasis || null,
     displacementRatio: guidance.displacementRatio ?? null,
+    yieldBand: guidance.yieldBand ?? null,
     marketAnchorInclVat: guidance.marketAnchorInclVat ?? null,
     weightedMarketDemand: guidance.weightedMarketDemand ?? null,
     marketContextConfidence: quote.marketContextSnapshot?.groupStaySummary?.marketPricingConfidence ?? null,
+    marketDateCoverage: quote.marketContextSnapshot?.groupStaySummary?.marketDateCoverage ?? null,
   };
 }
 

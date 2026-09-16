@@ -15,6 +15,7 @@ import CompetitorQuoteForm from "./CompetitorQuoteForm";
 import PricingGuidance from "./PricingGuidance";
 import QuoteOutcomeForm from "./QuoteOutcomeForm";
 import { getQuoteStayDates } from "../../utils/quoteDates";
+import { formatHotelStayDate } from "../../utils/hotelStayDates";
 
 export default function GroupQuoteDetailPage() {
   const navigate = useNavigate();
@@ -40,7 +41,7 @@ export default function GroupQuoteDetailPage() {
   const stayNights = quote ? getQuoteStayDates(quote) : [];
   const currency = (value) => `€${Number(value || 0).toFixed(2)}`;
   const columns = [
-    { key: "date", label: "Date" },
+    { key: "date", label: "Date", render: (row) => formatHotelStayDate(row.date) },
     { key: "rooms", label: "Rooms", sortValue: (row) => Number(row.rooms || 0) },
     { key: "mealBasis", label: "Meal Basis", render: (row) => row.mealBasis || "Unknown" },
     { key: "breakfastPax", label: "Breakfast Pax", render: (row) => row.breakfastPax ?? "Legacy unknown" },
@@ -63,8 +64,9 @@ export default function GroupQuoteDetailPage() {
         <Card className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           <div><p className="text-xs uppercase text-gray-500">Name</p><p className="font-semibold">{quote.name || "-"}</p></div>
           <div><p className="text-xs uppercase text-gray-500">Request Date</p><p className="font-semibold">{quote.requestDate || "-"}</p></div>
-          <div><p className="text-xs uppercase text-gray-500">{quote.dateRangeSemantics === "CHECKOUT_EXCLUSIVE" ? "Arrival / Check-out" : "Legacy inclusive stay"}</p><p className="font-semibold">{quote.startDate} – {quote.endDate}</p><p className="text-sm text-gray-500">{stayNights.length} stay nights</p></div><div><p className="text-xs uppercase text-gray-500">Breakfast Pax</p><p className="font-semibold">{["group-quote-v2", "group-quote-v3-meal-basis"].includes(quote.quoteInputSchemaVersion) ? (quote.roomsByDate || []).reduce((sum,row)=>sum+Number(row.breakfastPax||0),0) : `${Number(quote.breakfastPax || 0)} (legacy total)`}</p></div>
+          <div><p className="text-xs uppercase text-gray-500">{quote.dateRangeSemantics === "CHECKOUT_EXCLUSIVE" ? "Arrival / Check-out" : "Legacy inclusive stay"}</p><p className="font-semibold">{formatHotelStayDate(quote.startDate)} – {formatHotelStayDate(quote.endDate)}</p><p className="text-sm text-gray-500">{stayNights.length} stay nights</p></div><div><p className="text-xs uppercase text-gray-500">Breakfast Pax</p><p className="font-semibold">{["group-quote-v2", "group-quote-v3-meal-basis"].includes(quote.quoteInputSchemaVersion) ? (quote.roomsByDate || []).reduce((sum,row)=>sum+Number(row.breakfastPax||0),0) : `${Number(quote.breakfastPax || 0)} (legacy total)`}</p></div>
         </Card>
+        {quote.physicalFeasibility && <Card className={quote.physicalFeasibility.status === "PHYSICALLY_FEASIBLE" ? "border-green-200 bg-green-50" : "border-red-300 bg-red-50"}><p className="text-xs font-bold uppercase text-gray-600">Frozen physical capacity analysis</p><h2 className="text-xl font-bold">{quote.physicalFeasibility.status === "PHYSICALLY_FEASIBLE" ? "FEASIBLE" : "NOT FEASIBLE"}</h2><dl className="mt-3 grid gap-3 sm:grid-cols-3"><div><dt>Requested RN</dt><dd className="font-bold">{quote.physicalFeasibility.requestedRoomNights}</dd></div><div><dt>Physically feasible requested RN</dt><dd className="font-bold">{quote.physicalFeasibility.physicallyFeasibleRequestedRoomNights}</dd></div><div><dt>Capacity shortfall RN</dt><dd className="font-bold">{quote.physicalFeasibility.totalCapacityShortfallRoomNights}</dd></div></dl>{quote.physicalFeasibility.perDate?.filter((night) => !night.feasible).map((night) => <p className="mt-2 text-sm" key={night.date}><strong>{formatHotelStayDate(night.date)}</strong>: {night.requestedRooms} requested · {night.remainingPhysicalCapacity} currently available · shortfall {night.capacityShortfallRooms}</p>)}</Card>}
         {quote.analysisStatus !== "STALE" && <PricingGuidance guidance={quote.pricingGuidanceSnapshot} ownPublicRateInclVat={quote.marketContextSnapshot?.groupStaySummary?.weightedOwnPublicRateInclVat ?? null} />}
         {canEdit && <Card><h2 className="text-xl font-semibold">Update Outcome</h2><p className="text-sm text-gray-600">Record the actual commercial decision and quoted-rate history separately from the immutable analysis.</p><QuoteOutcomeForm hotelUid={hotelUid} quote={quote} competitors={competitors} onSaved={() => getQuote(hotelUid, quoteId).then(setQuote)} /></Card>}
         <MarketPricingContext snapshot={quote.marketContextSnapshot} economicFloorInclVat={quote.analysisContributionSnapshot?.economicFloorRateInclVat ?? null} stale={quote.analysisStatus === "STALE"} />

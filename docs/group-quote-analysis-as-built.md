@@ -1231,3 +1231,71 @@ These inputs never overwrite one another. For example, **50 rooms / BB / 20 brea
 The `defaultGroupMealBasis` setting supplies the initial RO/BB selection for newly generated nights and can be overridden per night. Hotels without the setting default safely to RO. Existing V1 and pre-change V2 records without explicit nightly meal basis remain `LEGACY_UNKNOWN`; no product is inferred from their breakfast quantity and no old record is rewritten.
 
 Economic breakfast cost remains exactly `sum(roomsByDate[].breakfastPax) × breakfastCostPerPerson`. Meal basis adds no cost, revenue, VAT, market normalization, or price adjustment. The Economic Floor structure and Pricing Guidance capture, yield-band, uplift, market-anchor, Target, and Stretch formulas are unchanged.
+
+## Group Quote V3.1 source horizons and Commercial Intelligence V1
+
+Hotel stay-date display is centralized in `hotelStayDates.js`: exact `YYYY-MM-DD`
+keys are parsed as UTC calendar components and rendered with a localized abbreviated
+weekday. Arrival/check-out, stay-night input, nightly pricing, Market Context and
+diagnostic comparable views use that formatter; check-out remains exclusive.
+
+The latest PMS/historyforecast and Lighthouse loaders read each latest snapshot's
+stay-date collection once and derive snapshot date, minimum stay date and maximum
+stay date. Each requested date is classified as `AVAILABLE`, `OUT_OF_HORIZON` or
+`MISSING`. These source states are separate from competitor rate availability states.
+Missing source data is never converted to zero.
+
+Nightly pricing exposes current transient OTB (`individualRooms`), current group OTB
+(`groupRooms`) and hard committed OTB (transient + group + the existing
+`hardOtherCommittedRooms`) against inventory. OTB is committed business today and
+is labelled separately from expected final demand forecasts.
+
+Economic Floor is unavailable when any requested night lacks usable target-date PMS
+inputs. Lighthouse-unavailable dates retain null public rates, market demand and
+references. Without a usable Market Anchor, Target/Stretch remain unavailable while
+a valid Economic Floor may remain available. Partial Lighthouse coverage is requested
+room-night weighted as `marketDateCoverage`, distinct from compset rate coverage.
+
+Frozen quote analysis stores both source snapshot dates, maximum stay dates, per-date
+statuses and market-date coverage. Market Context version is
+`market-context-v1.2-source-horizon`; contribution and `pricing-guidance-v1` formulas
+and versions are unchanged.
+
+Revenue → Commercial Intelligence consumes the existing quote collection and the
+canonical `competitorGroupQuotes` collection in two collection reads, not N+1 reads
+or analysis reruns. Performance uses frozen outcome decision snapshots. Decision Win
+Rate is `WON / (WON + LOST)`; pending, declined and cancelled are excluded. Missing
+frozen values are excluded from averages and statistics expose N. The page provides
+displacement, centralized lead-time, market-demand and segment breakdowns, separate
+lost/declined reasons, and an observation browser with source-quote links and frozen
+public-rate disclosure. Observed group rates are explicitly raw, not normalized or
+predictive.
+
+## Group Quote V3.2 physical capacity feasibility
+
+Physical feasibility is an independent decision layer, versioned as
+`physical-feasibility-v1`; the contribution and `pricing-guidance-v1` model
+versions remain unchanged. For each requested stay date, current hard committed
+rooms are `individualRooms + groupRooms + hardOtherCommittedRooms`. Remaining
+physical capacity is `max(0, calculatedInventoryRooms - hard committed rooms)`.
+Because calculated inventory is already sellable inventory, OOO is not subtracted
+again. Non-deductible prospect/pipeline rooms are not hard committed capacity.
+
+Nightly shortfall is `max(0, requested rooms - remaining physical capacity)`. A
+quote is `PHYSICALLY_FEASIBLE` only when every night has zero shortfall; otherwise
+it is `PHYSICAL_CAPACITY_SHORTFALL`. The frozen snapshot also records total
+requested RN, the sum of requested rooms that can currently fit, total shortfall
+RN, an optional uniform-block maximum, and all authoritative per-date inputs.
+Saved quote details use this snapshot rather than today's OTB.
+
+Current hard capacity is not forecast displacement. Physical feasibility asks
+whether the entered block fits around already committed rooms. Forecast
+displacement continues to measure expected future demand lost after accepting the
+group. An infeasible full request has no Economic Floor, Target, or Stretch, but
+its unchanged forecast-displacement results and independent Market Context remain
+visible. The Economic Floor formula runs unchanged once the request fits.
+
+The displacement model declares `displacementBasis: STAY_DATE`. It does not model
+arrival-date × LOS itinerary networks or additional shoulder-night contribution.
+No LOS distributions, shoulder multipliers, overbooking, walking, or stay-through
+controls were introduced by V3.2.

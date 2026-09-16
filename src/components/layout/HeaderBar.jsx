@@ -130,6 +130,12 @@ export default function HeaderBar({ today, onLogout }) {
 
   const revenueMenuItems = [
     {
+      label: "Commercial Intelligence",
+      action: () => navigate("/revenue/commercial-intelligence"),
+      icon: TrendingUp,
+      visible: canViewGroupQuotes,
+    },
+    {
       label: "Group Quotes",
       action: () => navigate("/revenue/group-quotes"),
       icon: TrendingUp,

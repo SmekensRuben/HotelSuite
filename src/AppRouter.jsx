@@ -80,6 +80,7 @@ import DemandCalendarPage from "./components/pages/DemandCalendarPage.jsx";
 import DemandCalendarEventEditorPage from "./components/pages/DemandCalendarEventEditorPage.jsx";
 import DemandCalendarEventDetailPage from "./components/pages/DemandCalendarEventDetailPage.jsx";
 import DemandCalendarCategoriesPage from "./components/pages/DemandCalendarCategoriesPage.jsx";
+import CommercialIntelligencePage from "./components/pages/CommercialIntelligencePage.jsx";
 
 export default function AppRouter() {
   return (
@@ -415,6 +416,7 @@ export default function AppRouter() {
         path="/revenue/group-quotes"
         element={<ProtectedRoute feature="groupquotes" action="read"><GroupQuotesPage /></ProtectedRoute>}
       />
+      <Route path="/revenue/commercial-intelligence" element={<ProtectedRoute feature="groupquotes" action="read"><CommercialIntelligencePage /></ProtectedRoute>} />
       <Route
         path="/revenue/group-quotes/new"
         element={<ProtectedRoute feature="groupquotes" action="create"><GroupQuoteCreatePage /></ProtectedRoute>}

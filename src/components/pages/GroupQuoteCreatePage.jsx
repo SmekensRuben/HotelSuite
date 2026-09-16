@@ -21,6 +21,8 @@ import GroupQuoteAnalysisView from "./GroupQuoteAnalysisView";
 import { calculatePricingGuidance, PRICING_GUIDANCE_MODEL_VERSION } from "../../utils/pricingGuidance";
 import QuoteInputSummary from "./QuoteInputSummary";
 import { deriveExplicitQuoteMealBasis } from "../../constants/groupMealBasis";
+import { sourceStatusForDate } from "../../utils/hotelStayDates";
+import { calculatePhysicalFeasibility, PHYSICAL_FEASIBILITY_VERSION } from "../../utils/physicalCapacity";
 
 export default function GroupQuoteCreatePage() {
   const navigate = useNavigate();
@@ -72,32 +74,42 @@ export default function GroupQuoteCreatePage() {
     const preparedTransient = prepareDisplacementForecastData({ historicalRows: consideredDates, lighthouseByDate: sourceData.lighthouse.byDate });
     const preparedGroup = prepareGroupForecastData({ historicalRows: consideredDates, events: sourceData.events, targetDates: stayDates });
     const maxShare = Number(quoteSettings.maxHistoricalGroupSharePercentage);
-    const byDate = Object.fromEntries(stayDates.map((stayDate) => [stayDate,
-          calculateDisplacementDay({
+    const byDate = Object.fromEntries(stayDates.map((stayDate) => {
+      const pmsRow = sourceData.current.byDate[stayDate];
+      const pmsDataStatus = sourceStatusForDate(stayDate, sourceData.current.coverage, pmsRow, (row) => row && Number.isFinite(Number(row.calculatedInventoryRooms)) && Number.isFinite(Number(row.individualRooms)) && Number.isFinite(Number(row.groupRooms)));
+      if (pmsDataStatus !== "AVAILABLE") return [stayDate, { stayDate, pmsDataStatus }];
+      return [stayDate, { ...calculateDisplacementDay({
             stayDate,
             requestedGroupRooms: analysisQuote.roomsByDate.find((item) => item.date === stayDate)?.rooms,
-            currentOtb: sourceData.current.byDate[stayDate],
+            currentOtb: pmsRow,
             preparedData: preparedTransient,
             selectedHistoricalYears: selectedYears,
             maxHistoricalGroupShare: Number.isFinite(maxShare) ? maxShare / 100 : 1,
             inflationPercentage: quoteSettings.inflationPercentage,
             config: DISPLACEMENT_FORECAST_CONFIG,
-          })
-    ]));
-    setForecastData({ byDate, currentSnapshotDate: sourceData.current.snapshotDate, lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate });
-    const groupByDate = Object.fromEntries(stayDates.map((stayDate) => [stayDate, calculateGroupDemandForecast({ stayDate, currentOtb: sourceData.current.byDate[stayDate], preparedData: preparedGroup, selectedHistoricalYears: selectedYears })]));
+          }), pmsDataStatus }];
+    }));
+    setForecastData({ byDate, pmsCoverage: sourceData.current.coverage, currentSnapshotDate: sourceData.current.snapshotDate, lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate });
+    const groupByDate = Object.fromEntries(stayDates.map((stayDate) => [stayDate, byDate[stayDate].pmsDataStatus === "AVAILABLE" ? calculateGroupDemandForecast({ stayDate, currentOtb: sourceData.current.byDate[stayDate], preparedData: preparedGroup, selectedHistoricalYears: selectedYears }) : { stayDate, pmsDataStatus: byDate[stayDate].pmsDataStatus }]));
     setGroupForecastData({ byDate: groupByDate });
   }, [analysisQuote, sourceData, consideredDates, selectedYears, quoteSettings.maxHistoricalGroupSharePercentage, quoteSettings.inflationPercentage]);
 
+  const combinedForecastByDate = useMemo(() => forecastData && groupForecastData ? Object.fromEntries(Object.entries(forecastData.byDate).map(([stayDate, forecast]) => [stayDate, { ...forecast, groupForecast: groupForecastData.byDate[stayDate] }])) : null, [forecastData, groupForecastData]);
+  const physicalFeasibility = useMemo(() => {
+    if (!analysisQuote || !combinedForecastByDate || Object.values(forecastData.byDate).some((date) => date.pmsDataStatus !== "AVAILABLE")) return null;
+    return calculatePhysicalFeasibility({ roomsByDate: analysisQuote.roomsByDate, forecastByDate: combinedForecastByDate });
+  }, [analysisQuote, combinedForecastByDate, forecastData]);
   const contribution = useMemo(() => {
     if (!analysisQuote || !forecastData || !groupForecastData) return null;
-    const combined = Object.fromEntries(Object.entries(forecastData.byDate).map(([stayDate, forecast]) => [stayDate, { ...forecast, groupForecast: groupForecastData.byDate[stayDate] }]));
-    try { return calculateGroupContribution({ quote: analysisQuote, forecastByDate: combined, settings: quoteSettings }); }
-    catch (error) { return { validationError: error.message }; }
-  }, [analysisQuote, forecastData, groupForecastData, quoteSettings]);
+    if (Object.values(forecastData.byDate).some((date) => date.pmsDataStatus !== "AVAILABLE")) return { validationError: "PMS target-date data is unavailable for one or more stay nights." };
+    try {
+      const result = calculateGroupContribution({ quote: analysisQuote, forecastByDate: combinedForecastByDate, settings: quoteSettings });
+      return physicalFeasibility?.status === "PHYSICAL_CAPACITY_SHORTFALL" ? { ...result, economicFloorUnavailableReason: "ECONOMIC_FLOOR_UNAVAILABLE_PHYSICAL_CAPACITY" } : result;
+    } catch (error) { return { validationError: error.message }; }
+  }, [analysisQuote, forecastData, groupForecastData, combinedForecastByDate, physicalFeasibility, quoteSettings]);
   const simulation = useMemo(() => contribution && !contribution.validationError ? simulateGroupQuote(contribution, testGroupRate) : null, [contribution, testGroupRate]);
-  const marketContextSnapshot = useMemo(() => analysisQuote && sourceData ? buildMarketContextSnapshot({ lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate, compset: compsetConfiguration.settings, competitors: compsetConfiguration.competitors, lighthouseByDate: sourceData.lighthouse.byDate, roomsByDate: analysisQuote.roomsByDate }) : null, [analysisQuote, sourceData, compsetConfiguration]);
-  const pricingGuidanceSnapshot = useMemo(() => contribution && !contribution.validationError && marketContextSnapshot ? calculatePricingGuidance({ economicFloorRateInclVat: contribution.economicFloorRateInclVat, totalDisplacedRoomNights: contribution.totalDisplacedRooms, requestedRoomNights: contribution.totalRequestedGroupRoomNights, marketSummary: marketContextSnapshot.groupStaySummary, roomsByDate: analysisQuote.roomsByDate, breakfastPax: analysisQuote.breakfastPax, strategy: compsetConfiguration.settings.pricingStrategy }) : null, [contribution, marketContextSnapshot, analysisQuote, compsetConfiguration]);
+  const marketContextSnapshot = useMemo(() => analysisQuote && sourceData ? buildMarketContextSnapshot({ lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate, lighthouseCoverage: sourceData.lighthouse.coverage, compset: compsetConfiguration.settings, competitors: compsetConfiguration.competitors, lighthouseByDate: sourceData.lighthouse.byDate, roomsByDate: analysisQuote.roomsByDate }) : null, [analysisQuote, sourceData, compsetConfiguration]);
+  const pricingGuidanceSnapshot = useMemo(() => contribution && !contribution.validationError && marketContextSnapshot ? { ...calculatePricingGuidance({ economicFloorRateInclVat: contribution.economicFloorRateInclVat, totalDisplacedRoomNights: contribution.totalDisplacedRooms, requestedRoomNights: contribution.totalRequestedGroupRoomNights, marketSummary: marketContextSnapshot.groupStaySummary, roomsByDate: analysisQuote.roomsByDate, breakfastPax: analysisQuote.breakfastPax, strategy: compsetConfiguration.settings.pricingStrategy }), ...(physicalFeasibility?.status === "PHYSICAL_CAPACITY_SHORTFALL" ? { unavailableReason: "REQUESTED_PRODUCT_PHYSICALLY_INFEASIBLE" } : {}) } : null, [contribution, marketContextSnapshot, analysisQuote, compsetConfiguration, physicalFeasibility]);
   const targetSimulation = useMemo(() => contribution && !contribution.validationError && pricingGuidanceSnapshot?.targetRateInclVat != null ? simulateGroupQuote(contribution, pricingGuidanceSnapshot.targetRateInclVat) : null, [contribution, pricingGuidanceSnapshot]);
 
   const toggleYear = (year) => { setYearsCustomized(true); setSelectedYears((current) => current.includes(year)
@@ -136,9 +148,12 @@ export default function GroupQuoteCreatePage() {
         contributionModelVersion: GROUP_QUOTE_ANALYSIS_MODEL_VERSION,
         marketContextModelVersion: MARKET_CONTEXT_MODEL_VERSION,
         pricingGuidanceModelVersion: PRICING_GUIDANCE_MODEL_VERSION,
+        physicalFeasibilityVersion: PHYSICAL_FEASIBILITY_VERSION,
+        physicalFeasibility,
         marketContextSnapshot,
         pricingGuidanceSnapshot,
-        analysisContributionSnapshot: contribution ? { economicFloorRateInclVat: contribution.economicFloorRateInclVat, economicFloorRateExVat: contribution.economicFloorRateExVat } : null,
+        sourceAvailabilitySnapshot: { pmsSnapshotDate: sourceData.current.snapshotDate, pmsMaximumStayDateAvailable: sourceData.current.coverage?.maximumStayDateAvailable || null, pmsStatusByDate: Object.fromEntries(Object.entries(forecastData.byDate).map(([date, value]) => [date, value.pmsDataStatus])), lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate, lighthouseMaximumStayDateAvailable: sourceData.lighthouse.coverage?.maximumStayDateAvailable || null, lighthouseStatusByDate: Object.fromEntries((marketContextSnapshot?.stayDates || []).map((date) => [date.stayDate, date.lighthouseDataStatus])), marketDateCoverage: marketContextSnapshot?.groupStaySummary?.marketDateCoverage ?? null },
+        analysisContributionSnapshot: contribution && !contribution.validationError ? { economicFloorRateInclVat: contribution.economicFloorRateInclVat, economicFloorRateExVat: contribution.economicFloorRateExVat, economicFloorUnavailableReason: contribution.economicFloorUnavailableReason || null } : null,
       });
       navigate(`/revenue/group-quotes/${quoteId}`);
     } finally {
@@ -160,7 +175,7 @@ export default function GroupQuoteCreatePage() {
 
       {showInputForm && <Card className="border border-gray-200 bg-white shadow-sm"><details><summary className="cursor-pointer font-semibold">Advanced / Model Settings</summary><div className="mt-4 border-t border-gray-200 pt-4"><fieldset><legend className="mb-2 text-sm font-semibold">Historical years</legend><HistoricalYearsDropdown years={availableYears} selectedYears={selectedYears} onToggle={toggleYear} /></fieldset></div></details></Card>}
 
-      {analysisQuote && <section className="space-y-6"><GroupQuoteAnalysisView contribution={contribution} forecastData={forecastData} groupForecastData={groupForecastData} marketContextSnapshot={marketContextSnapshot} pricingGuidance={pricingGuidanceSnapshot} quoteSettings={quoteSettings} testGroupRate={testGroupRate} setTestGroupRate={setTestGroupRate} simulation={simulation} targetSimulation={targetSimulation} forecastLoading={forecastLoading} /><div className="flex justify-end"><button type="button" disabled={saving || forecastLoading || !forecastData} onClick={handleSave} className="rounded-lg bg-[#b41f1f] px-5 py-2 font-semibold text-white disabled:bg-gray-400">{saving ? "Saving quote..." : "Save Quote"}</button></div></section>}
+      {analysisQuote && <section className="space-y-6"><GroupQuoteAnalysisView contribution={contribution} physicalFeasibility={physicalFeasibility} forecastData={forecastData} groupForecastData={groupForecastData} marketContextSnapshot={marketContextSnapshot} pricingGuidance={pricingGuidanceSnapshot} quoteSettings={quoteSettings} testGroupRate={testGroupRate} setTestGroupRate={setTestGroupRate} simulation={simulation} targetSimulation={targetSimulation} forecastLoading={forecastLoading} /><div className="flex justify-end"><button type="button" disabled={saving || forecastLoading || !forecastData} onClick={handleSave} className="rounded-lg bg-[#b41f1f] px-5 py-2 font-semibold text-white disabled:bg-gray-400">{saving ? "Saving quote..." : "Save Quote"}</button></div></section>}
     </PageContainer>
   </div>;
 }

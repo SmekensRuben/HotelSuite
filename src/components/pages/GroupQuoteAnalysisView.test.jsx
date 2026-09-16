@@ -12,6 +12,17 @@ const market = { groupStaySummary: { weightedOwnPublicRateInclVat: 244, weighted
 const props = { contribution, forecastData: { byDate: { "2027-04-03": forecast } }, groupForecastData: { byDate: { "2027-04-03": group } }, marketContextSnapshot: market, pricingGuidance: guidance, quoteSettings: { transientDistributionCostPercentage: 10 }, testGroupRate: "", setTestGroupRate: vi.fn(), simulation: null, targetSimulation: { netIncrementalContribution: 3840 }, forecastLoading: false };
 
 describe("GroupQuoteAnalysisView hierarchy", () => {
+  it("discloses stay-date displacement without introducing LOS adjustments", () => {
+    render(<GroupQuoteAnalysisView {...props} />);
+    expect(screen.getByText(/Potential additional shoulder-night impact/)).toBeVisible();
+  });
+  it("shows physical shortfall separately while retaining market context", () => {
+    const physicalFeasibility = { status: "PHYSICAL_CAPACITY_SHORTFALL", requestedRoomNights: 100, physicallyFeasibleRequestedRoomNights: 97, totalCapacityShortfallRoomNights: 3, perDate: [{ date: "2027-04-03", requestedRooms: 100, remainingPhysicalCapacity: 97, capacityShortfallRooms: 3, feasible: false }] };
+    render(<GroupQuoteAnalysisView {...props} physicalFeasibility={physicalFeasibility} pricingGuidance={{ ...guidance, targetRateInclVat: null, stretchRateInclVat: null }} />);
+    expect(screen.getByText("NOT FEASIBLE")).toBeVisible();
+    expect(screen.getByText(/shortfall 3/)).toBeVisible();
+    expect(screen.getByText("Market Pricing Context")).toBeVisible();
+  });
   it("makes Target primary while preserving the unchanged quote corridor and decision values", () => {
     render(<GroupQuoteAnalysisView {...props} />);
     const decision = screen.getByRole("heading", { name: "Commercial Decision" }).closest("section, [aria-labelledby]");
@@ -36,7 +47,7 @@ describe("GroupQuoteAnalysisView hierarchy", () => {
     fireEvent.click(within(transientDemand).getByText("Transient Demand"));
     expect(within(transientDemand).getByText("Historical selection tier")).toBeVisible();
     expect(within(transientDemand).getByText("View 1 historical ADR observations")).toBeVisible();
-    expect(within(transientDemand).getByText("2026-04-04")).not.toBeVisible();
+    expect(within(transientDemand).getByText("Sat 4 Apr 2026")).not.toBeVisible();
   });
 
   it("keeps critical warnings visible and summarizes informational notes", () => {
