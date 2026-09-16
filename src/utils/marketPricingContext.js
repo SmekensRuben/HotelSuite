@@ -1,5 +1,7 @@
+import { deriveSourceCoverage, sourceStatusForDate } from "./hotelStayDates";
+
 export const LIGHTHOUSE_RATE_BASIS = "INCL_VAT_CONSUMER";
-export const MARKET_CONTEXT_MODEL_VERSION = "market-context-v1.1-rate-quality";
+export const MARKET_CONTEXT_MODEL_VERSION = "market-context-v1.2-source-horizon";
 export const PUBLIC_MARKET_PRODUCT_WARNING = Object.freeze({
   code: "PUBLIC_MARKET_PRODUCT_NOT_NORMALIZED",
   message: "Public market rates may differ from the group quote in meal basis, occupancy, room type and booking conditions.",
@@ -58,7 +60,9 @@ export function marketPricingConfidence(coverage, hasRates = true) {
   return "LOW";
 }
 
-export function calculateMarketPricingDate({ stayDate, requestedRooms, lighthouseRow = {}, compset = {}, competitors = [], lighthouseSnapshotDate = null }) {
+export function calculateMarketPricingDate({ stayDate, requestedRooms, lighthouseRow, lighthouseDataStatus = "AVAILABLE", compset = {}, competitors = [], lighthouseSnapshotDate = null }) {
+  if (lighthouseDataStatus !== "AVAILABLE") return { stayDate, requestedRooms: Math.max(0, Number(requestedRooms) || 0), lighthouseDataStatus, ownPublicRateInclVat: null, weightedCompsetReferenceInclVat: null, compsetMedianInclVat: null, marketDemand: null, coverage: null, rateCoverage: null, competitors: [] };
+  lighthouseRow ||= {};
   const configured = competitors.filter((item) => item.active && item.includeInMarketContext && Number(item.marketRelevanceWeight) > 0);
   const configuredActiveWeight = configured.reduce((sum, item) => sum + Number(item.marketRelevanceWeight), 0);
   const configuredStatuses = configured.map((item) => ({
@@ -105,6 +109,7 @@ export function calculateMarketPricingDate({ stayDate, requestedRooms, lighthous
 
   return {
     stayDate,
+    lighthouseDataStatus,
     requestedRooms: Math.max(0, Number(requestedRooms) || 0),
     ownPublicRateInclVat: own,
     ownPublicRateStatus: ownParsed.availabilityStatus,
@@ -156,7 +161,10 @@ const roomNightWeighted = (dates, field) => {
 
 export function calculateGroupStayMarketSummary(stayDates) {
   const rateCoverage = roomNightWeighted(stayDates, "rateCoverage");
+  const totalRequested = stayDates.reduce((sum, item) => sum + item.requestedRooms, 0);
+  const availableRequested = stayDates.filter((item) => item.lighthouseDataStatus === "AVAILABLE").reduce((sum, item) => sum + item.requestedRooms, 0);
   return {
+    marketDateCoverage: totalRequested > 0 ? availableRequested / totalRequested : null,
     weightedOwnPublicRateInclVat: roomNightWeighted(stayDates, "ownPublicRateInclVat"),
     weightedMarketReferenceInclVat: roomNightWeighted(stayDates, "weightedCompsetReferenceInclVat"),
     weightedCompsetMedianInclVat: roomNightWeighted(stayDates, "compsetMedianInclVat"),
@@ -170,20 +178,23 @@ export function calculateGroupStayMarketSummary(stayDates) {
   };
 }
 
-export function buildMarketContextSnapshot({ lighthouseSnapshotDate, compset = {}, competitors = [], lighthouseByDate = {}, roomsByDate = [] }) {
+export function buildMarketContextSnapshot({ lighthouseSnapshotDate, lighthouseCoverage, compset = {}, competitors = [], lighthouseByDate = {}, roomsByDate = [] }) {
+  const coverage = lighthouseCoverage || deriveSourceCoverage(lighthouseSnapshotDate, lighthouseByDate);
   const stayDates = roomsByDate.map((room) => calculateMarketPricingDate({
     stayDate: room.date,
     requestedRooms: room.rooms,
-    lighthouseRow: lighthouseByDate[room.date] || {},
+    lighthouseRow: lighthouseByDate[room.date],
+    lighthouseDataStatus: sourceStatusForDate(room.date, coverage, lighthouseByDate[room.date]),
     lighthouseSnapshotDate,
     compset,
     competitors,
   }));
   return {
     lighthouseSnapshotDate: lighthouseSnapshotDate || null,
+    lighthouseCoverage: coverage,
     rateBasis: LIGHTHOUSE_RATE_BASIS,
     marketContextModelVersion: MARKET_CONTEXT_MODEL_VERSION,
-    warnings: [PUBLIC_MARKET_PRODUCT_WARNING],
+    warnings: [PUBLIC_MARKET_PRODUCT_WARNING, ...(stayDates.some((date) => date.lighthouseDataStatus === "AVAILABLE") && stayDates.some((date) => date.lighthouseDataStatus !== "AVAILABLE") ? [{ code: "PARTIAL_MARKET_DATE_COVERAGE", message: `Public market context is available for ${(calculateGroupStayMarketSummary(stayDates).marketDateCoverage * 100).toFixed(0)}% of requested room nights.` }] : [])],
     ownHotelFieldName: compset.ownHotelLighthouseFieldName || null,
     sourceContext: {
       lighthouseChannel: compset.lighthouseChannel ?? null,

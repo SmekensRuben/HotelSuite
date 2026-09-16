@@ -36,7 +36,7 @@ describe("GroupQuoteAnalysisView hierarchy", () => {
     fireEvent.click(within(transientDemand).getByText("Transient Demand"));
     expect(within(transientDemand).getByText("Historical selection tier")).toBeVisible();
     expect(within(transientDemand).getByText("View 1 historical ADR observations")).toBeVisible();
-    expect(within(transientDemand).getByText("2026-04-04")).not.toBeVisible();
+    expect(within(transientDemand).getByText("Sat 4 Apr 2026")).not.toBeVisible();
   });
 
   it("keeps critical warnings visible and summarizes informational notes", () => {

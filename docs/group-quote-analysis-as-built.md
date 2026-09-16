@@ -1231,3 +1231,42 @@ These inputs never overwrite one another. For example, **50 rooms / BB / 20 brea
 The `defaultGroupMealBasis` setting supplies the initial RO/BB selection for newly generated nights and can be overridden per night. Hotels without the setting default safely to RO. Existing V1 and pre-change V2 records without explicit nightly meal basis remain `LEGACY_UNKNOWN`; no product is inferred from their breakfast quantity and no old record is rewritten.
 
 Economic breakfast cost remains exactly `sum(roomsByDate[].breakfastPax) × breakfastCostPerPerson`. Meal basis adds no cost, revenue, VAT, market normalization, or price adjustment. The Economic Floor structure and Pricing Guidance capture, yield-band, uplift, market-anchor, Target, and Stretch formulas are unchanged.
+
+## Group Quote V3.1 source horizons and Commercial Intelligence V1
+
+Hotel stay-date display is centralized in `hotelStayDates.js`: exact `YYYY-MM-DD`
+keys are parsed as UTC calendar components and rendered with a localized abbreviated
+weekday. Arrival/check-out, stay-night input, nightly pricing, Market Context and
+diagnostic comparable views use that formatter; check-out remains exclusive.
+
+The latest PMS/historyforecast and Lighthouse loaders read each latest snapshot's
+stay-date collection once and derive snapshot date, minimum stay date and maximum
+stay date. Each requested date is classified as `AVAILABLE`, `OUT_OF_HORIZON` or
+`MISSING`. These source states are separate from competitor rate availability states.
+Missing source data is never converted to zero.
+
+Nightly pricing exposes current transient OTB (`individualRooms`), current group OTB
+(`groupRooms`) and hard committed OTB (transient + group + the existing
+`hardOtherCommittedRooms`) against inventory. OTB is committed business today and
+is labelled separately from expected final demand forecasts.
+
+Economic Floor is unavailable when any requested night lacks usable target-date PMS
+inputs. Lighthouse-unavailable dates retain null public rates, market demand and
+references. Without a usable Market Anchor, Target/Stretch remain unavailable while
+a valid Economic Floor may remain available. Partial Lighthouse coverage is requested
+room-night weighted as `marketDateCoverage`, distinct from compset rate coverage.
+
+Frozen quote analysis stores both source snapshot dates, maximum stay dates, per-date
+statuses and market-date coverage. Market Context version is
+`market-context-v1.2-source-horizon`; contribution and `pricing-guidance-v1` formulas
+and versions are unchanged.
+
+Revenue → Commercial Intelligence consumes the existing quote collection and the
+canonical `competitorGroupQuotes` collection in two collection reads, not N+1 reads
+or analysis reruns. Performance uses frozen outcome decision snapshots. Decision Win
+Rate is `WON / (WON + LOST)`; pending, declined and cancelled are excluded. Missing
+frozen values are excluded from averages and statistics expose N. The page provides
+displacement, centralized lead-time, market-demand and segment breakdowns, separate
+lost/declined reasons, and an observation browser with source-quote links and frozen
+public-rate disclosure. Observed group rates are explicitly raw, not normalized or
+predictive.

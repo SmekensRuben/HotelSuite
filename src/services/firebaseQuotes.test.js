@@ -61,7 +61,7 @@ describe("competitor group intelligence foundation", () => {
 
   it("uses a separate canonical collection and component model version", () => {
     expect(competitorGroupQuotesPath("hotel-1")).toBe("hotels/hotel-1/competitorGroupQuotes");
-    expect(MARKET_CONTEXT_MODEL_VERSION).toBe("market-context-v1.1-rate-quality");
+    expect(MARKET_CONTEXT_MODEL_VERSION).toBe("market-context-v1.2-source-horizon");
   });
 
   it("preserves controlled product/evidence fields and permits optional quote/public-rate links", () => {

@@ -80,7 +80,7 @@ describe("Lighthouse public market pricing", () => {
     const snapshot = buildMarketContextSnapshot({ lighthouseSnapshotDate: "2026-09-14", compset, competitors: sourceCompetitors, lighthouseByDate: { "2027-04-03": rates }, roomsByDate: [{ date: "2027-04-03", rooms: 50 }] });
     sourceCompetitors[0].marketRelevanceWeight = 999;
     expect(snapshot.rateBasis).toBe("INCL_VAT_CONSUMER");
-    expect(snapshot.marketContextModelVersion).toBe("market-context-v1.1-rate-quality");
+    expect(snapshot.marketContextModelVersion).toBe("market-context-v1.2-source-horizon");
     expect(snapshot.competitorSettings[0].configuredWeight).toBe(35);
     expect(snapshot.stayDates[0].competitors[0].normalizedEffectiveWeight).toBe(.35);
   });
@@ -100,5 +100,21 @@ describe("placeholder public-rate quality", () => {
     expect(result.validCompetitorRates.map((x) => x.publicRateInclVat)).toEqual([375,314,235]);
     expect(result.compsetMedianInclVat).toBe(314); expect(result.compsetLowInclVat).toBe(235); expect(result.compsetHighInclVat).toBe(375);
     expect(result.soldOutWeight).toBe(15); expect(result.placeholderWeight).toBe(10);
+  });
+});
+
+describe("source horizon semantics", () => {
+  it("keeps out-of-horizon market values unavailable and computes RN weighted date coverage", () => {
+    const snapshot = buildMarketContextSnapshot({
+      lighthouseSnapshotDate: "2026-09-15",
+      lighthouseCoverage: { snapshotDate: "2026-09-15", minimumStayDateAvailable: "2027-01-01", maximumStayDateAvailable: "2027-09-15" },
+      lighthouseByDate: { "2027-09-10": { Own: "200", Comp: "220", "Market demand": "80%" } },
+      compset: { ownHotelLighthouseFieldName: "Own" },
+      competitors: [{ id: "comp", active: true, includeInMarketContext: true, marketRelevanceWeight: 1, lighthouseFieldName: "Comp" }],
+      roomsByDate: [{ date: "2027-09-10", rooms: 25 }, { date: "2027-10-01", rooms: 75 }],
+    });
+    expect(snapshot.stayDates[1]).toMatchObject({ lighthouseDataStatus: "OUT_OF_HORIZON", ownPublicRateInclVat: null, weightedCompsetReferenceInclVat: null, marketDemand: null });
+    expect(snapshot.groupStaySummary.marketDateCoverage).toBe(.25);
+    expect(snapshot.warnings.some((warning) => warning.code === "PARTIAL_MARKET_DATE_COVERAGE")).toBe(true);
   });
 });

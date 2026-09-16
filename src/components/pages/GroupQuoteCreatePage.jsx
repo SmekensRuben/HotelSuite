@@ -21,6 +21,7 @@ import GroupQuoteAnalysisView from "./GroupQuoteAnalysisView";
 import { calculatePricingGuidance, PRICING_GUIDANCE_MODEL_VERSION } from "../../utils/pricingGuidance";
 import QuoteInputSummary from "./QuoteInputSummary";
 import { deriveExplicitQuoteMealBasis } from "../../constants/groupMealBasis";
+import { sourceStatusForDate } from "../../utils/hotelStayDates";
 
 export default function GroupQuoteCreatePage() {
   const navigate = useNavigate();
@@ -72,31 +73,35 @@ export default function GroupQuoteCreatePage() {
     const preparedTransient = prepareDisplacementForecastData({ historicalRows: consideredDates, lighthouseByDate: sourceData.lighthouse.byDate });
     const preparedGroup = prepareGroupForecastData({ historicalRows: consideredDates, events: sourceData.events, targetDates: stayDates });
     const maxShare = Number(quoteSettings.maxHistoricalGroupSharePercentage);
-    const byDate = Object.fromEntries(stayDates.map((stayDate) => [stayDate,
-          calculateDisplacementDay({
+    const byDate = Object.fromEntries(stayDates.map((stayDate) => {
+      const pmsRow = sourceData.current.byDate[stayDate];
+      const pmsDataStatus = sourceStatusForDate(stayDate, sourceData.current.coverage, pmsRow, (row) => row && Number.isFinite(Number(row.calculatedInventoryRooms)) && Number.isFinite(Number(row.individualRooms)) && Number.isFinite(Number(row.groupRooms)));
+      if (pmsDataStatus !== "AVAILABLE") return [stayDate, { stayDate, pmsDataStatus }];
+      return [stayDate, { ...calculateDisplacementDay({
             stayDate,
             requestedGroupRooms: analysisQuote.roomsByDate.find((item) => item.date === stayDate)?.rooms,
-            currentOtb: sourceData.current.byDate[stayDate],
+            currentOtb: pmsRow,
             preparedData: preparedTransient,
             selectedHistoricalYears: selectedYears,
             maxHistoricalGroupShare: Number.isFinite(maxShare) ? maxShare / 100 : 1,
             inflationPercentage: quoteSettings.inflationPercentage,
             config: DISPLACEMENT_FORECAST_CONFIG,
-          })
-    ]));
-    setForecastData({ byDate, currentSnapshotDate: sourceData.current.snapshotDate, lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate });
-    const groupByDate = Object.fromEntries(stayDates.map((stayDate) => [stayDate, calculateGroupDemandForecast({ stayDate, currentOtb: sourceData.current.byDate[stayDate], preparedData: preparedGroup, selectedHistoricalYears: selectedYears })]));
+          }), pmsDataStatus }];
+    }));
+    setForecastData({ byDate, pmsCoverage: sourceData.current.coverage, currentSnapshotDate: sourceData.current.snapshotDate, lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate });
+    const groupByDate = Object.fromEntries(stayDates.map((stayDate) => [stayDate, byDate[stayDate].pmsDataStatus === "AVAILABLE" ? calculateGroupDemandForecast({ stayDate, currentOtb: sourceData.current.byDate[stayDate], preparedData: preparedGroup, selectedHistoricalYears: selectedYears }) : { stayDate, pmsDataStatus: byDate[stayDate].pmsDataStatus }]));
     setGroupForecastData({ byDate: groupByDate });
   }, [analysisQuote, sourceData, consideredDates, selectedYears, quoteSettings.maxHistoricalGroupSharePercentage, quoteSettings.inflationPercentage]);
 
   const contribution = useMemo(() => {
     if (!analysisQuote || !forecastData || !groupForecastData) return null;
+    if (Object.values(forecastData.byDate).some((date) => date.pmsDataStatus !== "AVAILABLE")) return { validationError: "PMS target-date data is unavailable for one or more stay nights." };
     const combined = Object.fromEntries(Object.entries(forecastData.byDate).map(([stayDate, forecast]) => [stayDate, { ...forecast, groupForecast: groupForecastData.byDate[stayDate] }]));
     try { return calculateGroupContribution({ quote: analysisQuote, forecastByDate: combined, settings: quoteSettings }); }
     catch (error) { return { validationError: error.message }; }
   }, [analysisQuote, forecastData, groupForecastData, quoteSettings]);
   const simulation = useMemo(() => contribution && !contribution.validationError ? simulateGroupQuote(contribution, testGroupRate) : null, [contribution, testGroupRate]);
-  const marketContextSnapshot = useMemo(() => analysisQuote && sourceData ? buildMarketContextSnapshot({ lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate, compset: compsetConfiguration.settings, competitors: compsetConfiguration.competitors, lighthouseByDate: sourceData.lighthouse.byDate, roomsByDate: analysisQuote.roomsByDate }) : null, [analysisQuote, sourceData, compsetConfiguration]);
+  const marketContextSnapshot = useMemo(() => analysisQuote && sourceData ? buildMarketContextSnapshot({ lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate, lighthouseCoverage: sourceData.lighthouse.coverage, compset: compsetConfiguration.settings, competitors: compsetConfiguration.competitors, lighthouseByDate: sourceData.lighthouse.byDate, roomsByDate: analysisQuote.roomsByDate }) : null, [analysisQuote, sourceData, compsetConfiguration]);
   const pricingGuidanceSnapshot = useMemo(() => contribution && !contribution.validationError && marketContextSnapshot ? calculatePricingGuidance({ economicFloorRateInclVat: contribution.economicFloorRateInclVat, totalDisplacedRoomNights: contribution.totalDisplacedRooms, requestedRoomNights: contribution.totalRequestedGroupRoomNights, marketSummary: marketContextSnapshot.groupStaySummary, roomsByDate: analysisQuote.roomsByDate, breakfastPax: analysisQuote.breakfastPax, strategy: compsetConfiguration.settings.pricingStrategy }) : null, [contribution, marketContextSnapshot, analysisQuote, compsetConfiguration]);
   const targetSimulation = useMemo(() => contribution && !contribution.validationError && pricingGuidanceSnapshot?.targetRateInclVat != null ? simulateGroupQuote(contribution, pricingGuidanceSnapshot.targetRateInclVat) : null, [contribution, pricingGuidanceSnapshot]);
 
@@ -138,7 +143,8 @@ export default function GroupQuoteCreatePage() {
         pricingGuidanceModelVersion: PRICING_GUIDANCE_MODEL_VERSION,
         marketContextSnapshot,
         pricingGuidanceSnapshot,
-        analysisContributionSnapshot: contribution ? { economicFloorRateInclVat: contribution.economicFloorRateInclVat, economicFloorRateExVat: contribution.economicFloorRateExVat } : null,
+        sourceAvailabilitySnapshot: { pmsSnapshotDate: sourceData.current.snapshotDate, pmsMaximumStayDateAvailable: sourceData.current.coverage?.maximumStayDateAvailable || null, pmsStatusByDate: Object.fromEntries(Object.entries(forecastData.byDate).map(([date, value]) => [date, value.pmsDataStatus])), lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate, lighthouseMaximumStayDateAvailable: sourceData.lighthouse.coverage?.maximumStayDateAvailable || null, lighthouseStatusByDate: Object.fromEntries((marketContextSnapshot?.stayDates || []).map((date) => [date.stayDate, date.lighthouseDataStatus])), marketDateCoverage: marketContextSnapshot?.groupStaySummary?.marketDateCoverage ?? null },
+        analysisContributionSnapshot: contribution && !contribution.validationError ? { economicFloorRateInclVat: contribution.economicFloorRateInclVat, economicFloorRateExVat: contribution.economicFloorRateExVat } : null,
       });
       navigate(`/revenue/group-quotes/${quoteId}`);
     } finally {
