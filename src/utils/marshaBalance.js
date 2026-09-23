@@ -77,6 +77,8 @@ export function evaluateBalance(marshaRooms, operaRooms, rules) {
     const marshaPresent = isTotalRule || Object.prototype.hasOwnProperty.call(marshaRooms, rule.marshaRoomType);
     const missingOperaTypes = isTotalRule ? [] : (rule.operaRoomTypes || []).filter((type) => !Object.prototype.hasOwnProperty.call(operaRooms, type));
     if (!marshaPresent || missingOperaTypes.length) return { rule, assessable: false, missingOperaTypes, marshaPresent };
+    const rawMarshaValue = isTotalRule ? null : marshaRooms[rule.marshaRoomType];
+    const rawOperaValue = isTotalRule ? null : rule.operaRoomTypes.reduce((sum, type) => sum + operaRooms[type], 0);
     const marshaValue = isTotalRule
       ? Object.entries(marshaRooms).reduce((sum, [type, value]) => type.toLowerCase() === "total" ? sum : sum + value, 0)
       : Math.max(0, marshaRooms[rule.marshaRoomType]);
@@ -102,7 +104,7 @@ export function evaluateBalance(marshaRooms, operaRooms, rules) {
         : mode === "range"
           ? Math.max(0, -(Number(rule.lowerDeviation) || tolerance) - difference, difference - (Number(rule.upperDeviation) || tolerance))
           : Math.max(0, Math.abs(difference) - tolerance);
-    return { rule, applicable: true, assessable: true, marshaValue, operaValue, reservedRooms, comparedOperaValue, difference, tolerance, within, violation };
+    return { rule, applicable: true, assessable: true, rawMarshaValue, rawOperaValue, marshaValue, operaValue, reservedRooms, comparedOperaValue, difference, tolerance, within, violation };
   });
   const applicableCalculations = calculations.filter((item) => item.applicable !== false);
   if (!applicableCalculations.length) return { status: "ok", label: "No applicable rules", calculations };

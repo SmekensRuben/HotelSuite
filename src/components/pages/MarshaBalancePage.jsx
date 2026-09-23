@@ -74,6 +74,16 @@ export default function MarshaBalancePage() {
     return { id: stayDate, stayDate, marshaState, operaState, balance, healthy };
   }), [data, dates, rules, today]);
   const filteredRows = statusFilter ? rows.filter((row) => row.balance.status === statusFilter) : rows;
+  const ruleGroups = useMemo(() => {
+    const groups = new Map();
+    rules.forEach((rule) => {
+      const key = rule.ruleScope === "total" ? "__totals" : rule.marshaRoomType || "__unassigned";
+      const label = key === "__totals" ? "Total controls" : key === "__unassigned" ? "Unassigned MARSHA room type" : `MARSHA ${key}`;
+      if (!groups.has(key)) groups.set(key, { key, label, rules: [] });
+      groups.get(key).rules.push(rule);
+    });
+    return [...groups.values()].sort((first, second) => first.label.localeCompare(second.label));
+  }, [rules]);
   const updateRule = (id, field, value) => setRules((current) => current.map((rule) => rule.id === id ? { ...rule, [field]: value } : rule));
 
   const saveRules = async () => {
@@ -110,7 +120,7 @@ export default function MarshaBalancePage() {
       </>}
       {activeTab === "settings" && <Card className="space-y-4">
         <div><h2 className="text-xl font-semibold">Comparison rules</h2><p className="text-sm text-gray-600">Map a MARSHA category to Opera room types, or add a totals rule that compares all physical room types. Negative values in room type mappings are compared as zero. New rules remain inactive until you enable them.</p></div>
-        {rules.map((rule) => <div key={rule.id} className="space-y-3 rounded-lg border p-4">
+        {ruleGroups.map((group) => <section key={group.key} className="space-y-3 rounded-xl border border-gray-200 bg-gray-50/60 p-4"><div className="flex items-center justify-between"><h3 className="text-lg font-semibold">{group.label}</h3><span className="text-xs text-gray-500">{group.rules.length} {group.rules.length === 1 ? "rule" : "rules"}</span></div><div className="space-y-3">{group.rules.map((rule) => <div key={rule.id} className="space-y-3 rounded-lg border-l-4 border-l-[#b41f1f] bg-white p-4 shadow-sm">
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
             <label className="text-xs font-medium">Rule type<select value={rule.ruleScope || "rooms"} disabled={!canUpdate} onChange={(event) => updateRule(rule.id, "ruleScope", event.target.value)} className="mt-1 w-full rounded border bg-white px-2 py-2"><option value="rooms">Room type mapping</option><option value="total">All room totals</option></select><span className="mt-1 block font-normal text-gray-500">Totals sum all physical types; the imported Total field is never counted.</span></label>
             {rule.ruleScope !== "total" ? <><label className="text-xs font-medium">MARSHA room type<input value={rule.marshaRoomType} disabled={!canUpdate} onChange={(event) => updateRule(rule.id, "marshaRoomType", event.target.value.trim().toUpperCase())} className="mt-1 w-full rounded border px-2 py-2" /></label><label className="text-xs font-medium">Opera room types<OperaTypesInput values={rule.operaRoomTypes || []} disabled={!canUpdate} onChange={(value) => updateRule(rule.id, "operaRoomTypes", value)} /></label></> : <div className="md:col-span-2 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">This rule compares the sum of all MARSHA physical room types with the sum of all Opera physical room types.</div>}
@@ -123,7 +133,7 @@ export default function MarshaBalancePage() {
             {canUpdate && <button className="pb-2 text-sm text-red-700" onClick={() => setRules((current) => current.filter((item) => item.id !== rule.id))}>Remove rule</button>}
           </div>
           <div className="rounded-lg bg-gray-50 p-3"><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">When should this rule apply?</p><div className="flex flex-wrap items-end gap-3"><label className="text-xs font-medium">Condition<select value={rule.activationCondition || "always"} disabled={!canUpdate} onChange={(event) => updateRule(rule.id, "activationCondition", event.target.value)} className="mt-1 block rounded border bg-white px-2 py-2"><option value="always">Always</option><option value="totalAbove">More than X rooms remaining</option><option value="totalBelow">Fewer than X rooms remaining</option></select></label>{(rule.activationCondition || "always") !== "always" && <><label className="text-xs font-medium">Use total from<select value={rule.activationSource || "marsha"} disabled={!canUpdate} onChange={(event) => updateRule(rule.id, "activationSource", event.target.value)} className="mt-1 block rounded border bg-white px-2 py-2"><option value="marsha">MARSHA</option><option value="opera">Opera</option></select></label><label className="text-xs font-medium">X rooms<input type="number" min="0" value={rule.activationThreshold || 0} disabled={!canUpdate} onChange={(event) => updateRule(rule.id, "activationThreshold", Number(event.target.value))} className="mt-1 block w-28 rounded border px-2 py-2" /></label></>}</div></div>
-        </div>)}
+        </div>)}</div></section>)}
         {canUpdate ? <div className="flex gap-3"><button onClick={() => setRules((current) => [...current, emptyRule()])} className="rounded-lg border px-4 py-2 font-semibold">Add rule</button><button disabled={saving} onClick={saveRules} className="rounded-lg bg-[#b41f1f] px-4 py-2 font-semibold text-white disabled:opacity-50">{saving ? "Saving…" : "Save rules"}</button></div> : <p className="text-sm text-amber-700">You have read-only access to these settings.</p>}
       </Card>}
     </PageContainer>

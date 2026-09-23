@@ -23,7 +23,7 @@ describe("MARSHA Balance", () => {
     const noReservationRule = { ...rule, reservedRooms: 0 };
     const result = evaluateBalance({ GENR: -4 }, { QNK: -2, DBDB: -1 }, [noReservationRule]);
     expect(result.status).toBe("ok");
-    expect(result.calculations[0]).toMatchObject({ marshaValue: 0, operaValue: 0, difference: 0 });
+    expect(result.calculations[0]).toMatchObject({ rawMarshaValue: -4, rawOperaValue: -3, marshaValue: 0, operaValue: 0, difference: 0 });
   });
 
   it("applies rules above or below a configured remaining-room total", () => {
