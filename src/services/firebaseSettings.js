@@ -555,6 +555,17 @@ export async function deleteFileImportSetting(hotelUid, fileImportSettingId) {
 }
 
 // *** FILE IMPORT TYPES ***
+/**
+ * @typedef {Object} FileImportColumnMapping
+ * @property {string} databaseField
+ * @property {"string"|"number"|"array"|"date"|"list"|"map"} targetType
+ * @property {string} [sourceField]
+ * @property {string} [mapKeySourceField]
+ * @property {string} [mapValueSourceField]
+ * @property {"string"|"number"|"array"|"date"} [mapValueType]
+ * @property {string} [mapExcludedKeys]
+ * @property {FileImportColumnMapping[]} [childMappings]
+ */
 function normalizeFileImportDelimiter(value) {
   const original = String(value ?? "");
   const raw = original.toLowerCase().trim();
@@ -569,7 +580,12 @@ function normalizeFileImportDelimiter(value) {
 
 function normalizeMappingTargetType(value) {
   const normalized = String(value || "string").trim().toLowerCase();
-  return ["string", "number", "array", "date", "list"].includes(normalized) ? normalized : "string";
+  return ["string", "number", "array", "date", "list", "map"].includes(normalized) ? normalized : "string";
+}
+
+function normalizeMapValueType(value) {
+  const normalized = String(value || "string").trim().toLowerCase();
+  return ["string", "number", "array", "date"].includes(normalized) ? normalized : "string";
 }
 
 function normalizeMappingSeparator(value) {
@@ -612,6 +628,10 @@ function normalizeColumnMapping(mapping = {}) {
     importFormat: normalizeDateFormat(mapping?.importFormat),
     targetFormat: normalizeDateFormat(mapping?.targetFormat),
     listItemKeyField: String(mapping?.listItemKeyField || "").trim(),
+    mapKeySourceField: String(mapping?.mapKeySourceField || "").trim(),
+    mapValueSourceField: String(mapping?.mapValueSourceField || "").trim(),
+    mapValueType: normalizeMapValueType(mapping?.mapValueType),
+    mapExcludedKeys: String(mapping?.mapExcludedKeys ?? "Total").trim(),
     childMappings: Array.isArray(mapping?.childMappings)
       ? mapping.childMappings.map((childMapping) => normalizeColumnMapping(childMapping))
       : [],
@@ -646,7 +666,24 @@ function sanitizeColumnMappings(columnMappings, parserType) {
         return normalizedMapping;
       }
 
+      if (normalizedMapping.targetType === "map") {
+        if (!normalizedMapping.databaseField || !normalizedMapping.mapKeySourceField || !normalizedMapping.mapValueSourceField) {
+          throw new Error("Map mappings vereisen een Database Field, Key Source Field en Value Source Field");
+        }
+        normalizedMapping.sourceField = "";
+        normalizedMapping.seperator = ",";
+        normalizedMapping.importFormat = "";
+        normalizedMapping.targetFormat = "";
+        normalizedMapping.listItemKeyField = "";
+        normalizedMapping.childMappings = [];
+        return normalizedMapping;
+      }
+
       normalizedMapping.listItemKeyField = "";
+      normalizedMapping.mapKeySourceField = "";
+      normalizedMapping.mapValueSourceField = "";
+      normalizedMapping.mapValueType = "string";
+      normalizedMapping.mapExcludedKeys = "";
       normalizedMapping.childMappings = [];
 
       if (normalizedMapping.targetType === "date") {
