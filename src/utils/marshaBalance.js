@@ -38,7 +38,7 @@ export function normalizeRoomsByType(value) {
 export function findOverlappingOperaTypes(rules) {
   const owner = new Map();
   const overlaps = new Set();
-  rules.filter((rule) => rule.enabled).forEach((rule) => {
+  rules.filter((rule) => rule.enabled && rule.ruleScope !== "total").forEach((rule) => {
     (rule.operaRoomTypes || []).forEach((type) => {
       const normalized = String(type).trim();
       if (!normalized) return;
@@ -56,11 +56,16 @@ export function evaluateBalance(marshaRooms, operaRooms, rules) {
   if (overlaps.length) return { status: "unassessable", label: "Cannot assess", reason: `Opera room type used more than once: ${overlaps.join(", ")}`, calculations: [] };
 
   const calculations = activeRules.map((rule) => {
-    const marshaPresent = Object.prototype.hasOwnProperty.call(marshaRooms, rule.marshaRoomType);
-    const missingOperaTypes = (rule.operaRoomTypes || []).filter((type) => !Object.prototype.hasOwnProperty.call(operaRooms, type));
+    const isTotalRule = rule.ruleScope === "total";
+    const marshaPresent = isTotalRule || Object.prototype.hasOwnProperty.call(marshaRooms, rule.marshaRoomType);
+    const missingOperaTypes = isTotalRule ? [] : (rule.operaRoomTypes || []).filter((type) => !Object.prototype.hasOwnProperty.call(operaRooms, type));
     if (!marshaPresent || missingOperaTypes.length) return { rule, assessable: false, missingOperaTypes, marshaPresent };
-    const marshaValue = marshaRooms[rule.marshaRoomType];
-    const operaValue = rule.operaRoomTypes.reduce((sum, type) => sum + operaRooms[type], 0);
+    const marshaValue = isTotalRule
+      ? Object.entries(marshaRooms).reduce((sum, [type, value]) => type.toLowerCase() === "total" ? sum : sum + value, 0)
+      : marshaRooms[rule.marshaRoomType];
+    const operaValue = isTotalRule
+      ? Object.entries(operaRooms).reduce((sum, [type, value]) => type.toLowerCase() === "total" ? sum : sum + value, 0)
+      : rule.operaRoomTypes.reduce((sum, type) => sum + operaRooms[type], 0);
     const reservedRooms = Number(rule.reservedRooms) || 0;
     const comparedOperaValue = operaValue - reservedRooms;
     const difference = comparedOperaValue - marshaValue;
@@ -68,6 +73,8 @@ export function evaluateBalance(marshaRooms, operaRooms, rules) {
     const mode = rule.comparisonMode || "exact";
     const within = mode === "upper"
       ? difference <= tolerance
+      : mode === "lower"
+        ? difference >= -tolerance
       : mode === "range"
         ? difference >= -(Number(rule.lowerDeviation) || tolerance) && difference <= (Number(rule.upperDeviation) || tolerance)
         : Math.abs(difference) <= tolerance;

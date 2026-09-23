@@ -12,7 +12,7 @@ import { usePermission } from "../../hooks/usePermission";
 import { getMarshaBalanceData, getMarshaBalanceSettings, saveMarshaBalanceSettings } from "../../services/firebaseMarshaBalance";
 import { enumerateDates, evaluateBalance, findOverlappingOperaTypes, getBrusselsDateString, getDefaultBalanceRange, getSourceState } from "../../utils/marshaBalance";
 
-const emptyRule = () => ({ id: crypto.randomUUID(), marshaRoomType: "", operaRoomTypes: [], comparisonMode: "exact", reservedRooms: 0, allowedDeviation: 0, lowerDeviation: 0, upperDeviation: 0, enabled: false });
+const emptyRule = () => ({ id: crypto.randomUUID(), ruleScope: "rooms", marshaRoomType: "", operaRoomTypes: [], comparisonMode: "exact", reservedRooms: 0, allowedDeviation: 0, lowerDeviation: 0, upperDeviation: 0, enabled: false });
 
 function Status({ state }) {
   if (state.status === "current" || state.status === "ok") return <span className="inline-flex items-center gap-1 font-medium text-green-700"><Check className="h-4 w-4" aria-hidden="true" />{state.label}</span>;
@@ -79,7 +79,7 @@ export default function MarshaBalancePage() {
   const saveRules = async () => {
     const overlaps = findOverlappingOperaTypes(rules);
     if (overlaps.length) return toast.error(`Opera room types can only be used by one active rule: ${overlaps.join(", ")}`);
-    if (rules.some((rule) => rule.enabled && (!rule.marshaRoomType.trim() || !rule.operaRoomTypes.length))) return toast.error("Every active rule needs a MARSHA type and at least one Opera type.");
+    if (rules.some((rule) => rule.enabled && rule.ruleScope !== "total" && (!rule.marshaRoomType.trim() || !rule.operaRoomTypes.length))) return toast.error("Every active room mapping needs a MARSHA type and at least one Opera type.");
     setSaving(true);
     try { await saveMarshaBalanceSettings(hotelUid, rules); toast.success("Comparison rules saved."); }
     catch (saveError) { console.error(saveError); toast.error("The rules could not be saved."); }
@@ -109,12 +109,12 @@ export default function MarshaBalancePage() {
         {loading ? <p>Loading data…</p> : <DataListTable columns={columns} rows={filteredRows} emptyMessage="No stay dates match these filters." onRowClick={(row) => navigate(`/front-office/marsha-balance/${row.stayDate}`)} getRowProps={(row) => ({ className: row.healthy ? "bg-green-50 hover:bg-green-100" : "bg-red-50 hover:bg-red-100", "aria-label": `Open balance details for ${row.stayDate}` })} />}
       </>}
       {activeTab === "settings" && <Card className="space-y-4">
-        <div><h2 className="text-xl font-semibold">Comparison rules</h2><p className="text-sm text-gray-600">A rule maps one MARSHA category to one or more Opera room types. New rules remain inactive until you enable them.</p></div>
+        <div><h2 className="text-xl font-semibold">Comparison rules</h2><p className="text-sm text-gray-600">Map a MARSHA category to Opera room types, or add a totals rule that compares all physical room types. New rules remain inactive until you enable them.</p></div>
         {rules.map((rule) => <div key={rule.id} className="space-y-3 rounded-lg border p-4">
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-            <label className="text-xs font-medium">MARSHA room type<input value={rule.marshaRoomType} disabled={!canUpdate} onChange={(event) => updateRule(rule.id, "marshaRoomType", event.target.value.trim().toUpperCase())} className="mt-1 w-full rounded border px-2 py-2" /></label>
-            <label className="text-xs font-medium">Opera room types<OperaTypesInput values={rule.operaRoomTypes || []} disabled={!canUpdate} onChange={(value) => updateRule(rule.id, "operaRoomTypes", value)} /></label>
-            <label className="text-xs font-medium">Comparison<select value={rule.comparisonMode} disabled={!canUpdate} onChange={(event) => updateRule(rule.id, "comparisonMode", event.target.value)} className="mt-1 w-full rounded border bg-white px-2 py-2"><option value="exact">Exact match</option><option value="upper">Maximum only</option><option value="range">Allowed range</option></select><span className="mt-1 block font-normal text-gray-500">{rule.comparisonMode === "exact" ? "Adjusted Opera should equal MARSHA." : rule.comparisonMode === "upper" ? "Adjusted Opera may not exceed MARSHA." : "Set a separate allowed difference below and above."}</span></label>
+            <label className="text-xs font-medium">Rule type<select value={rule.ruleScope || "rooms"} disabled={!canUpdate} onChange={(event) => updateRule(rule.id, "ruleScope", event.target.value)} className="mt-1 w-full rounded border bg-white px-2 py-2"><option value="rooms">Room type mapping</option><option value="total">All room totals</option></select><span className="mt-1 block font-normal text-gray-500">Totals sum all physical types; the imported Total field is never counted.</span></label>
+            {rule.ruleScope !== "total" ? <><label className="text-xs font-medium">MARSHA room type<input value={rule.marshaRoomType} disabled={!canUpdate} onChange={(event) => updateRule(rule.id, "marshaRoomType", event.target.value.trim().toUpperCase())} className="mt-1 w-full rounded border px-2 py-2" /></label><label className="text-xs font-medium">Opera room types<OperaTypesInput values={rule.operaRoomTypes || []} disabled={!canUpdate} onChange={(value) => updateRule(rule.id, "operaRoomTypes", value)} /></label></> : <div className="md:col-span-2 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">This rule compares the sum of all MARSHA physical room types with the sum of all Opera physical room types.</div>}
+            <label className="text-xs font-medium">Comparison<select value={rule.comparisonMode} disabled={!canUpdate} onChange={(event) => updateRule(rule.id, "comparisonMode", event.target.value)} className="mt-1 w-full rounded border bg-white px-2 py-2"><option value="exact">Exact match</option><option value="upper">Maximum only</option><option value="lower">Minimum only</option><option value="range">Allowed range</option></select><span className="mt-1 block font-normal text-gray-500">{rule.comparisonMode === "exact" ? "Adjusted Opera should equal MARSHA." : rule.comparisonMode === "upper" ? "Opera may not exceed MARSHA." : rule.comparisonMode === "lower" ? "MARSHA may not exceed adjusted Opera." : "Set a separate allowed difference below and above."}</span></label>
             <label className="text-xs font-medium">Reserved rooms<input type="number" value={rule.reservedRooms} disabled={!canUpdate} onChange={(event) => updateRule(rule.id, "reservedRooms", Number(event.target.value))} className="mt-1 w-full rounded border px-2 py-2" /><span className="mt-1 block font-normal text-gray-500">Rooms deducted from the combined Opera value before comparison.</span></label>
           </div>
           <div className="flex flex-wrap items-end gap-4">

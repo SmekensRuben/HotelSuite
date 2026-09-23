@@ -55,8 +55,9 @@ export default function MarshaBalanceDetailPage() {
     return { marshaDoc, operaDoc, result };
   }, [data, rules, stayDate]);
 
-  const mappedMarsha = new Set(rules.filter((rule) => rule.enabled).map((rule) => rule.marshaRoomType));
-  const mappedOpera = new Set(rules.filter((rule) => rule.enabled).flatMap((rule) => rule.operaRoomTypes || []));
+  const roomRules = rules.filter((rule) => rule.enabled && rule.ruleScope !== "total");
+  const mappedMarsha = new Set(roomRules.map((rule) => rule.marshaRoomType));
+  const mappedOpera = new Set(roomRules.flatMap((rule) => rule.operaRoomTypes || []));
   const logout = async () => { await signOut(auth); sessionStorage.clear(); window.location.href = "/login"; };
 
   return <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -73,8 +74,8 @@ export default function MarshaBalanceDetailPage() {
         </Card>
         <div className="space-y-4">
           {detail.result.calculations.map((calculation) => <Card key={calculation.rule.id}>
-            <div className="mb-4"><h2 className="text-lg font-semibold">{calculation.rule.marshaRoomType} mapped to {(calculation.rule.operaRoomTypes || []).join(" + ")}</h2><p className="text-sm text-gray-500">{calculation.rule.comparisonMode === "exact" ? "Exact match" : calculation.rule.comparisonMode === "upper" ? "Maximum only" : "Allowed range"}</p></div>
-            {calculation.assessable ? <><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><ValueBox label={`MARSHA ${calculation.rule.marshaRoomType}`} value={calculation.marshaValue} /><ValueBox label="Combined Opera" value={calculation.operaValue} /><ValueBox label="Reserved rooms deducted" value={calculation.reservedRooms} /><ValueBox label="Difference" value={calculation.difference} tone="difference" /></div><p className="mt-3 text-sm text-gray-600">Calculation: {calculation.operaValue} Opera − {calculation.reservedRooms} reserved − {calculation.marshaValue} MARSHA = <strong>{calculation.difference}</strong>.</p></> : <p className="rounded bg-red-50 p-3 text-red-700">A required mapped room type is missing from the source data.</p>}
+            <div className="mb-4"><h2 className="text-lg font-semibold">{calculation.rule.ruleScope === "total" ? "All physical room totals" : `${calculation.rule.marshaRoomType} mapped to ${(calculation.rule.operaRoomTypes || []).join(" + ")}`}</h2><p className="text-sm text-gray-500">{calculation.rule.comparisonMode === "exact" ? "Exact match" : calculation.rule.comparisonMode === "upper" ? "Maximum only — Opera may not exceed MARSHA" : calculation.rule.comparisonMode === "lower" ? "Minimum only — MARSHA may not exceed Opera" : "Allowed range"}</p></div>
+            {calculation.assessable ? <><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><ValueBox label={calculation.rule.ruleScope === "total" ? "MARSHA total" : `MARSHA ${calculation.rule.marshaRoomType}`} value={calculation.marshaValue} /><ValueBox label={calculation.rule.ruleScope === "total" ? "Opera total" : "Combined Opera"} value={calculation.operaValue} /><ValueBox label="Reserved rooms deducted" value={calculation.reservedRooms} /><ValueBox label="Difference" value={calculation.difference} tone="difference" /></div><p className="mt-3 text-sm text-gray-600">Calculation: {calculation.operaValue} Opera − {calculation.reservedRooms} reserved − {calculation.marshaValue} MARSHA = <strong>{calculation.difference}</strong>.</p></> : <p className="rounded bg-red-50 p-3 text-red-700">A required mapped room type is missing from the source data.</p>}
           </Card>)}
         </div>
         <Card className="space-y-5"><h2 className="text-xl font-semibold">Unmapped room types</h2><UnmappedTypes title="MARSHA" rooms={detail.marshaDoc?.roomsByType} mappedTypes={mappedMarsha} /><UnmappedTypes title="Opera" rooms={detail.operaDoc?.roomsByType} mappedTypes={mappedOpera} /></Card>

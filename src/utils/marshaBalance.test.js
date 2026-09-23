@@ -24,4 +24,17 @@ describe("MARSHA Balance", () => {
     expect(findOverlappingOperaTypes(rules)).toEqual(["QNK"]);
     expect(evaluateBalance({ GENR: 1, QNQN: 1 }, { QNK: 1, DBDB: 1 }, rules).status).toBe("unassessable");
   });
+
+  it("supports a minimum rule where MARSHA may not exceed Opera", () => {
+    const minimumRule = { ...rule, comparisonMode: "lower", reservedRooms: 0 };
+    expect(evaluateBalance({ GENR: 5 }, { QNK: 3, DBDB: 2 }, [minimumRule]).status).toBe("ok");
+    expect(evaluateBalance({ GENR: 6 }, { QNK: 3, DBDB: 2 }, [minimumRule]).status).not.toBe("ok");
+  });
+
+  it("compares calculated physical-room totals without using imported Total", () => {
+    const totalRule = { id: "total", enabled: true, ruleScope: "total", comparisonMode: "exact", reservedRooms: 0, allowedDeviation: 0 };
+    const result = evaluateBalance({ GENR: 3, QNQN: 2, Total: 999 }, { QNK: 1, DBDB: 4, Total: -999 }, [totalRule]);
+    expect(result.status).toBe("ok");
+    expect(result.calculations[0]).toMatchObject({ marshaValue: 5, operaValue: 5 });
+  });
 });
