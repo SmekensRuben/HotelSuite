@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enumerateDates, evaluateBalance, findOverlappingOperaTypes, getDefaultBalanceRange, normalizeRoomsByType } from "./marshaBalance";
+import { enumerateDates, evaluateBalance, findOverlappingOperaTypes, getDefaultBalanceRange, isBalanceRuleApplicable, normalizeRoomsByType } from "./marshaBalance";
 
 const rule = { id: "one", enabled: true, marshaRoomType: "GENR", operaRoomTypes: ["QNK", "DBDB"], comparisonMode: "exact", reservedRooms: 1, allowedDeviation: 0 };
 
@@ -24,6 +24,20 @@ describe("MARSHA Balance", () => {
     const result = evaluateBalance({ GENR: -4 }, { QNK: -2, DBDB: -1 }, [noReservationRule]);
     expect(result.status).toBe("ok");
     expect(result.calculations[0]).toMatchObject({ marshaValue: 0, operaValue: 0, difference: 0 });
+  });
+
+  it("applies rules above or below a configured remaining-room total", () => {
+    const rooms = { GENR: 3, KING: 2, Negative: -4, Total: 999 };
+    expect(isBalanceRuleApplicable({ activationCondition: "totalAbove", activationThreshold: 4 }, rooms, {})).toBe(true);
+    expect(isBalanceRuleApplicable({ activationCondition: "totalBelow", activationThreshold: 6 }, rooms, {})).toBe(true);
+    expect(isBalanceRuleApplicable({ activationCondition: "totalBelow", activationThreshold: 5 }, rooms, {})).toBe(false);
+  });
+
+  it("skips a comparison when its remaining-room condition is not met", () => {
+    const conditionalRule = { ...rule, activationCondition: "totalBelow", activationThreshold: 2 };
+    const result = evaluateBalance({ GENR: 10 }, { QNK: 0, DBDB: 0 }, [conditionalRule]);
+    expect(result).toMatchObject({ status: "ok", label: "No applicable rules" });
+    expect(result.calculations[0]).toMatchObject({ applicable: false, within: true });
   });
 
   it("does not allow the same Opera inventory in multiple active rules", () => {

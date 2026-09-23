@@ -49,6 +49,21 @@ export function findOverlappingOperaTypes(rules) {
   return [...overlaps];
 }
 
+function getPhysicalRoomTotal(rooms) {
+  return Object.entries(rooms).reduce((sum, [type, value]) => (
+    type.toLowerCase() === "total" ? sum : sum + Math.max(0, value)
+  ), 0);
+}
+
+export function isBalanceRuleApplicable(rule, marshaRooms, operaRooms) {
+  const condition = rule.activationCondition || "always";
+  if (condition === "always") return true;
+  const rooms = rule.activationSource === "opera" ? operaRooms : marshaRooms;
+  const total = getPhysicalRoomTotal(rooms);
+  const threshold = Number(rule.activationThreshold) || 0;
+  return condition === "totalAbove" ? total > threshold : total < threshold;
+}
+
 export function evaluateBalance(marshaRooms, operaRooms, rules) {
   const activeRules = (rules || []).filter((rule) => rule.enabled);
   if (!activeRules.length) return { status: "unconfigured", label: "No rules configured", calculations: [] };
@@ -56,6 +71,8 @@ export function evaluateBalance(marshaRooms, operaRooms, rules) {
   if (overlaps.length) return { status: "unassessable", label: "Cannot assess", reason: `Opera room type used more than once: ${overlaps.join(", ")}`, calculations: [] };
 
   const calculations = activeRules.map((rule) => {
+    const applicable = isBalanceRuleApplicable(rule, marshaRooms, operaRooms);
+    if (!applicable) return { rule, applicable: false, assessable: true, within: true, violation: 0 };
     const isTotalRule = rule.ruleScope === "total";
     const marshaPresent = isTotalRule || Object.prototype.hasOwnProperty.call(marshaRooms, rule.marshaRoomType);
     const missingOperaTypes = isTotalRule ? [] : (rule.operaRoomTypes || []).filter((type) => !Object.prototype.hasOwnProperty.call(operaRooms, type));
@@ -85,11 +102,13 @@ export function evaluateBalance(marshaRooms, operaRooms, rules) {
         : mode === "range"
           ? Math.max(0, -(Number(rule.lowerDeviation) || tolerance) - difference, difference - (Number(rule.upperDeviation) || tolerance))
           : Math.max(0, Math.abs(difference) - tolerance);
-    return { rule, assessable: true, marshaValue, operaValue, reservedRooms, comparedOperaValue, difference, tolerance, within, violation };
+    return { rule, applicable: true, assessable: true, marshaValue, operaValue, reservedRooms, comparedOperaValue, difference, tolerance, within, violation };
   });
-  if (calculations.some((item) => !item.assessable)) return { status: "unassessable", label: "Cannot assess", calculations };
-  const worstDifference = Math.max(...calculations.map((item) => item.violation));
-  if (calculations.every((item) => item.within)) return { status: "ok", label: "Balanced", calculations };
+  const applicableCalculations = calculations.filter((item) => item.applicable !== false);
+  if (!applicableCalculations.length) return { status: "ok", label: "No applicable rules", calculations };
+  if (applicableCalculations.some((item) => !item.assessable)) return { status: "unassessable", label: "Cannot assess", calculations };
+  const worstDifference = Math.max(...applicableCalculations.map((item) => item.violation));
+  if (applicableCalculations.every((item) => item.within)) return { status: "ok", label: "Balanced", calculations };
   if (worstDifference <= 2) return { status: "review", label: "Review", calculations };
   return { status: "critical", label: "Critical", calculations };
 }
