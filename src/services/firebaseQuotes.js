@@ -14,12 +14,14 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  functions,
+  httpsCallable,
 } from "../firebaseConfig";
 import { deriveExplicitQuoteMealBasis, NIGHTLY_MEAL_BASIS_VALUES } from "../constants/groupMealBasis";
 import { deriveSourceCoverage } from "../utils/hotelStayDates";
 
 const quotesPath = (hotelUid) => `hotels/${hotelUid}/quotes`;
-export const GROUP_QUOTE_ANALYSIS_MODEL_VERSION = "group-contribution-v4-net-group-value";
+export const GROUP_QUOTE_ANALYSIS_MODEL_VERSION = "group-contribution-v5-los-network";
 export const MARKET_CONTEXT_MODEL_VERSION = "market-context-v1.2-source-horizon";
 export const QUOTE_STATUSES = ["PENDING", "WON", "LOST", "DECLINED", "CANCELLED"];
 export const LOST_REASONS = ["PRICE", "LOCATION", "PRODUCT", "MEETING_SPACE", "TERMS", "AVAILABILITY", "BRAND", "LOYALTY", "DATES_CHANGED", "CLIENT_CANCELLED", "COMPETITOR_RELATIONSHIP", "UNKNOWN", "OTHER"];
@@ -93,6 +95,31 @@ export const getHistoryQuoteDates = async (hotelUid) => {
       ...snapshotDocument.data(),
     }))
     .sort((left, right) => left.date.localeCompare(right.date));
+};
+
+// Quote analysis reads only anonymous annual aggregates. Raw reservations remain
+// under hotels/{hotelUid}/reports/staydatepattern/{arrivalDate}/{reservationDocument}
+// and are consumed only by the server-side model-preparation/import workflow.
+export const stayPatternModelYearPath = (hotelUid, year) =>
+  `hotels/${hotelUid}/reports/stayPatternModel/years/${year}`;
+
+export const getStayPatternModelYears = async (hotelUid, years = []) => {
+  if (!hotelUid || !years.length) return [];
+  const snapshots = await Promise.all(years.map((year) => getDoc(doc(db, stayPatternModelYearPath(hotelUid, year)))));
+  return snapshots.filter((snapshot) => snapshot.exists()).map((snapshot) => ({ year: Number(snapshot.id), ...snapshot.data() }));
+};
+
+export const rebuildStayPatternModel = async (hotelUid, year = null) => {
+  if (!hotelUid) throw new Error("Hotel is required.");
+  const callable = httpsCallable(functions, "rebuildStayPatternModel");
+  const response = await callable({ hotelUid, ...(year ? { year: Number(year) } : {}) });
+  return response.data;
+};
+
+export const getStayPatternModelMetadata = async (hotelUid) => {
+  if (!hotelUid) return null;
+  const snapshot = await getDoc(doc(db, `hotels/${hotelUid}/reports/stayPatternModel`));
+  return snapshot.exists() ? snapshot.data() : null;
 };
 
 const reportPath = (hotelUid, report) => `hotels/${hotelUid}/reports/${report}`;

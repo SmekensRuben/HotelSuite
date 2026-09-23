@@ -10,7 +10,7 @@ import GroupQuoteFormFields from "./GroupQuoteFormFields";
 import HistoricalYearsDropdown from "./HistoricalYearsDropdown";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { addQuote, getCompsetConfiguration, getGroupQuoteSettings, getHistoryQuoteDates, getLatestHistoryForecastSnapshot, getLatestLighthouseSnapshot, GROUP_QUOTE_ANALYSIS_MODEL_VERSION, MARKET_CONTEXT_MODEL_VERSION } from "../../services/firebaseQuotes";
+import { addQuote, getCompsetConfiguration, getGroupQuoteSettings, getHistoryQuoteDates, getLatestHistoryForecastSnapshot, getLatestLighthouseSnapshot, getStayPatternModelYears, GROUP_QUOTE_ANALYSIS_MODEL_VERSION, MARKET_CONTEXT_MODEL_VERSION } from "../../services/firebaseQuotes";
 import { getQuoteStayDates } from "../../utils/quoteDates";
 import { calculateDisplacementDay, DISPLACEMENT_FORECAST_CONFIG, prepareDisplacementForecastData } from "../../utils/displacementForecast";
 import { calculateGroupContribution, simulateGroupQuote } from "../../utils/contributionAnalysis";
@@ -23,6 +23,7 @@ import QuoteInputSummary from "./QuoteInputSummary";
 import { deriveExplicitQuoteMealBasis } from "../../constants/groupMealBasis";
 import { sourceStatusForDate } from "../../utils/hotelStayDates";
 import { calculatePhysicalFeasibility, PHYSICAL_FEASIBILITY_VERSION } from "../../utils/physicalCapacity";
+import { addDays, applyLosNetworkOpportunityCost, buildLosNetworkSnapshot, combineStayPatternYears, LOS_NETWORK_DEFAULTS, LOS_DISPLACEMENT_MODEL_VERSION, STAY_PATTERN_MODEL_VERSION } from "../../utils/losNetwork";
 
 export default function GroupQuoteCreatePage() {
   const navigate = useNavigate();
@@ -40,6 +41,7 @@ export default function GroupQuoteCreatePage() {
   const [yearsCustomized, setYearsCustomized] = useState(false);
   const [testGroupRate, setTestGroupRate] = useState("");
   const [showInputForm, setShowInputForm] = useState(true);
+  const [stayPatternYears, setStayPatternYears] = useState({});
   const today = useMemo(() => new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }), []);
   const handleLogout = async () => { await signOut(auth); sessionStorage.clear(); window.location.href = "/login"; };
   const availableYears = useMemo(() => [...new Set(consideredDates.map((item) => Number(item.date.slice(0, 4))))].sort((a, b) => b - a), [consideredDates]);
@@ -67,6 +69,19 @@ export default function GroupQuoteCreatePage() {
       .finally(() => { if (active) setForecastLoading(false); });
     return () => { active = false; };
   }, [hotelUid, analysisQuote]);
+
+  useEffect(() => {
+    if (!hotelUid || !selectedYears.length) return;
+    const missing = selectedYears.filter((year) => !Object.prototype.hasOwnProperty.call(stayPatternYears, year));
+    if (!missing.length) return;
+    let active = true;
+    getStayPatternModelYears(hotelUid, missing).then((models) => {
+      if (!active) return;
+      const returned = Object.fromEntries(models.map((model) => [model.year, model]));
+      setStayPatternYears((current) => ({ ...current, ...Object.fromEntries(missing.map((year) => [year, returned[year] || null])) }));
+    });
+    return () => { active = false; };
+  }, [hotelUid, selectedYears, stayPatternYears]);
 
   useEffect(() => {
     if (!analysisQuote || !sourceData) return;
@@ -99,7 +114,7 @@ export default function GroupQuoteCreatePage() {
     if (!analysisQuote || !combinedForecastByDate || Object.values(forecastData.byDate).some((date) => date.pmsDataStatus !== "AVAILABLE")) return null;
     return calculatePhysicalFeasibility({ roomsByDate: analysisQuote.roomsByDate, forecastByDate: combinedForecastByDate });
   }, [analysisQuote, combinedForecastByDate, forecastData]);
-  const contribution = useMemo(() => {
+  const legacyContribution = useMemo(() => {
     if (!analysisQuote || !forecastData || !groupForecastData) return null;
     if (Object.values(forecastData.byDate).some((date) => date.pmsDataStatus !== "AVAILABLE")) return { validationError: "PMS target-date data is unavailable for one or more stay nights." };
     try {
@@ -107,6 +122,30 @@ export default function GroupQuoteCreatePage() {
       return physicalFeasibility?.status === "PHYSICAL_CAPACITY_SHORTFALL" ? { ...result, economicFloorUnavailableReason: "ECONOMIC_FLOOR_UNAVAILABLE_PHYSICAL_CAPACITY" } : result;
     } catch (error) { return { validationError: error.message }; }
   }, [analysisQuote, forecastData, groupForecastData, combinedForecastByDate, physicalFeasibility, quoteSettings]);
+  const losNetworkSnapshot = useMemo(() => {
+    if (!analysisQuote || !sourceData || !legacyContribution || legacyContribution.validationError) return null;
+    const maxLos = Number(quoteSettings.maxModeledLos) || LOS_NETWORK_DEFAULTS.maxModeledLos;
+    const simulationStart = addDays(analysisQuote.startDate, -2 * maxLos);
+    const simulationEndExclusive = addDays(analysisQuote.endDate, 2 * maxLos);
+    const horizonDates = [];
+    for (let cursor = simulationStart; cursor && cursor < simulationEndExclusive; cursor = addDays(cursor, 1)) horizonDates.push(cursor);
+    const preparedTransient = prepareDisplacementForecastData({ historicalRows: consideredDates, lighthouseByDate: sourceData.lighthouse.byDate });
+    const preparedGroup = prepareGroupForecastData({ historicalRows: consideredDates, events: sourceData.events, targetDates: horizonDates });
+    const maxShare = Number(quoteSettings.maxHistoricalGroupSharePercentage);
+    const networkForecastByDate = {};
+    for (const stayDate of horizonDates) {
+      const pmsRow = sourceData.current.byDate[stayDate];
+      const status = sourceStatusForDate(stayDate, sourceData.current.coverage, pmsRow, (row) => row && Number.isFinite(Number(row.calculatedInventoryRooms)) && Number.isFinite(Number(row.individualRooms)) && Number.isFinite(Number(row.groupRooms)));
+      if (status !== "AVAILABLE") continue;
+      networkForecastByDate[stayDate] = { ...calculateDisplacementDay({ stayDate, requestedGroupRooms: analysisQuote.roomsByDate.find((item) => item.date === stayDate)?.rooms || 0, currentOtb: pmsRow, preparedData: preparedTransient, selectedHistoricalYears: selectedYears, maxHistoricalGroupShare: Number.isFinite(maxShare) ? maxShare / 100 : 1, inflationPercentage: quoteSettings.inflationPercentage, config: DISPLACEMENT_FORECAST_CONFIG }), groupForecast: calculateGroupDemandForecast({ stayDate, currentOtb: pmsRow, preparedData: preparedGroup, selectedHistoricalYears: selectedYears }) };
+    }
+    const horizonQuote = { ...analysisQuote, roomsByDate: horizonDates.map((date) => ({ date, rooms: analysisQuote.roomsByDate.find((row) => row.date === date)?.rooms || 0, breakfastPax: 0, bqtRevenue: 0, mealBasis: "RO" })) };
+    let horizonContribution;
+    try { horizonContribution = calculateGroupContribution({ quote: horizonQuote, forecastByDate: networkForecastByDate, settings: quoteSettings }); } catch { return null; }
+    const pattern = combineStayPatternYears(Object.values(stayPatternYears).filter(Boolean), selectedYears);
+    return buildLosNetworkSnapshot({ stayPattern: pattern, horizonDates, nightlyByDate: Object.fromEntries(horizonContribution.nightly.filter((night) => networkForecastByDate[night.stayDate]).map((night) => [night.stayDate, night])), requestedRoomsByDate: Object.fromEntries(analysisQuote.roomsByDate.map((night) => [night.date, Number(night.rooms) || 0])), groupArrivalDate: analysisQuote.startDate, groupCheckOutDate: analysisQuote.endDate, settings: { ...LOS_NETWORK_DEFAULTS, maxModeledLos: maxLos } });
+  }, [analysisQuote, sourceData, legacyContribution, quoteSettings, consideredDates, selectedYears, stayPatternYears]);
+  const contribution = useMemo(() => !legacyContribution || legacyContribution.validationError ? legacyContribution : applyLosNetworkOpportunityCost(legacyContribution, losNetworkSnapshot), [legacyContribution, losNetworkSnapshot]);
   const simulation = useMemo(() => contribution && !contribution.validationError ? simulateGroupQuote(contribution, testGroupRate) : null, [contribution, testGroupRate]);
   const marketContextSnapshot = useMemo(() => analysisQuote && sourceData ? buildMarketContextSnapshot({ lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate, lighthouseCoverage: sourceData.lighthouse.coverage, compset: compsetConfiguration.settings, competitors: compsetConfiguration.competitors, lighthouseByDate: sourceData.lighthouse.byDate, roomsByDate: analysisQuote.roomsByDate }) : null, [analysisQuote, sourceData, compsetConfiguration]);
   const pricingGuidanceSnapshot = useMemo(() => contribution && !contribution.validationError && marketContextSnapshot ? { ...calculatePricingGuidance({ economicFloorRateInclVat: contribution.economicFloorRateInclVat, totalDisplacedRoomNights: contribution.totalDisplacedRooms, requestedRoomNights: contribution.totalRequestedGroupRoomNights, marketSummary: marketContextSnapshot.groupStaySummary, roomsByDate: analysisQuote.roomsByDate, breakfastPax: analysisQuote.breakfastPax, strategy: compsetConfiguration.settings.pricingStrategy }), ...(physicalFeasibility?.status === "PHYSICAL_CAPACITY_SHORTFALL" ? { unavailableReason: "REQUESTED_PRODUCT_PHYSICALLY_INFEASIBLE" } : {}) } : null, [contribution, marketContextSnapshot, analysisQuote, compsetConfiguration, physicalFeasibility]);
@@ -146,6 +185,8 @@ export default function GroupQuoteCreatePage() {
         analysisStatus: "CURRENT",
         analysisModelVersion: GROUP_QUOTE_ANALYSIS_MODEL_VERSION,
         contributionModelVersion: GROUP_QUOTE_ANALYSIS_MODEL_VERSION,
+        stayPatternModelVersion: STAY_PATTERN_MODEL_VERSION,
+        displacementModelVersion: LOS_DISPLACEMENT_MODEL_VERSION,
         marketContextModelVersion: MARKET_CONTEXT_MODEL_VERSION,
         pricingGuidanceModelVersion: PRICING_GUIDANCE_MODEL_VERSION,
         physicalFeasibilityVersion: PHYSICAL_FEASIBILITY_VERSION,
@@ -154,6 +195,8 @@ export default function GroupQuoteCreatePage() {
         pricingGuidanceSnapshot,
         sourceAvailabilitySnapshot: { pmsSnapshotDate: sourceData.current.snapshotDate, pmsMaximumStayDateAvailable: sourceData.current.coverage?.maximumStayDateAvailable || null, pmsStatusByDate: Object.fromEntries(Object.entries(forecastData.byDate).map(([date, value]) => [date, value.pmsDataStatus])), lighthouseSnapshotDate: sourceData.lighthouse.snapshotDate, lighthouseMaximumStayDateAvailable: sourceData.lighthouse.coverage?.maximumStayDateAvailable || null, lighthouseStatusByDate: Object.fromEntries((marketContextSnapshot?.stayDates || []).map((date) => [date.stayDate, date.lighthouseDataStatus])), marketDateCoverage: marketContextSnapshot?.groupStaySummary?.marketDateCoverage ?? null },
         analysisContributionSnapshot: contribution && !contribution.validationError ? { economicFloorRateInclVat: contribution.economicFloorRateInclVat, economicFloorRateExVat: contribution.economicFloorRateExVat, economicFloorUnavailableReason: contribution.economicFloorUnavailableReason || null } : null,
+        legacyStayDateDisplacement: contribution?.legacyStayDateDisplacement || contribution?.scenarioTotals || null,
+        losNetworkDisplacement: contribution?.losNetworkDisplacement || losNetworkSnapshot,
       });
       navigate(`/revenue/group-quotes/${quoteId}`);
     } finally {
