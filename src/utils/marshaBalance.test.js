@@ -19,6 +19,13 @@ describe("MARSHA Balance", () => {
     expect(evaluateBalance({}, { QNK: 1, DBDB: 0 }, [rule]).status).toBe("unassessable");
   });
 
+  it("treats negative mapped room-type values as zero", () => {
+    const noReservationRule = { ...rule, reservedRooms: 0 };
+    const result = evaluateBalance({ GENR: -4 }, { QNK: -2, DBDB: -1 }, [noReservationRule]);
+    expect(result.status).toBe("ok");
+    expect(result.calculations[0]).toMatchObject({ marshaValue: 0, operaValue: 0, difference: 0 });
+  });
+
   it("does not allow the same Opera inventory in multiple active rules", () => {
     const rules = [rule, { ...rule, id: "two", marshaRoomType: "QNQN", operaRoomTypes: ["QNK"] }];
     expect(findOverlappingOperaTypes(rules)).toEqual(["QNK"]);
@@ -34,7 +41,7 @@ describe("MARSHA Balance", () => {
   it("does not let a passing directional rule inflate another rule's severity", () => {
     const maximumRule = { ...rule, comparisonMode: "upper", reservedRooms: 0 };
     const exactRule = { ...rule, id: "two", marshaRoomType: "KING", operaRoomTypes: ["DKL"], reservedRooms: 0 };
-    const result = evaluateBalance({ GENR: 26, KING: 0 }, { QNK: 1, DBDB: 1, DKL: -1 }, [maximumRule, exactRule]);
+    const result = evaluateBalance({ GENR: 26, KING: 0 }, { QNK: 1, DBDB: 1, DKL: 1 }, [maximumRule, exactRule]);
     expect(result.status).toBe("review");
     expect(result.calculations[0]).toMatchObject({ within: true, difference: -24, violation: 0 });
   });

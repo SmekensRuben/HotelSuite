@@ -62,10 +62,10 @@ export function evaluateBalance(marshaRooms, operaRooms, rules) {
     if (!marshaPresent || missingOperaTypes.length) return { rule, assessable: false, missingOperaTypes, marshaPresent };
     const marshaValue = isTotalRule
       ? Object.entries(marshaRooms).reduce((sum, [type, value]) => type.toLowerCase() === "total" ? sum : sum + value, 0)
-      : marshaRooms[rule.marshaRoomType];
+      : Math.max(0, marshaRooms[rule.marshaRoomType]);
     const operaValue = isTotalRule
       ? Object.entries(operaRooms).reduce((sum, [type, value]) => type.toLowerCase() === "total" ? sum : sum + value, 0)
-      : rule.operaRoomTypes.reduce((sum, type) => sum + operaRooms[type], 0);
+      : rule.operaRoomTypes.reduce((sum, type) => sum + Math.max(0, operaRooms[type]), 0);
     const reservedRooms = Number(rule.reservedRooms) || 0;
     const comparedOperaValue = operaValue - reservedRooms;
     const difference = comparedOperaValue - marshaValue;
