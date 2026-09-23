@@ -72,6 +72,10 @@ export default function FileImportTypeEditPage() {
                     importFormat: mapping?.importFormat || "",
                     targetFormat: mapping?.targetFormat || "",
                     listItemKeyField: mapping?.listItemKeyField || "",
+                    mapKeySourceField: mapping?.mapKeySourceField || "",
+                    mapValueSourceField: mapping?.mapValueSourceField || "",
+                    mapValueType: mapping?.mapValueType || "string",
+                    mapExcludedKeys: mapping?.mapExcludedKeys ?? "Total",
                     childMappings: Array.isArray(mapping?.childMappings)
                       ? mapping.childMappings.map(normalizeMapping)
                       : [],
@@ -118,6 +122,10 @@ export default function FileImportTypeEditPage() {
     importFormat: "",
     targetFormat: "",
     listItemKeyField: "",
+    mapKeySourceField: "",
+    mapValueSourceField: "",
+    mapValueType: "string",
+    mapExcludedKeys: "Total",
     childMappings: [],
   });
 
@@ -155,6 +163,7 @@ export default function FileImportTypeEditPage() {
         [field]: value,
         ...(field === 'targetType' && value === 'list' && prev.parserType === 'csv' ? { sourceField: '' } : {}),
         ...(field === 'targetType' && value !== 'list' ? { childMappings: [] } : {}),
+        ...(field === 'targetType' && value === 'map' ? { sourceField: '' } : {}),
       })),
     }));
   };

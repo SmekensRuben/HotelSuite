@@ -60,6 +60,10 @@ export default function FileImportTypeCreatePage() {
     importFormat: "",
     targetFormat: "",
     listItemKeyField: "",
+    mapKeySourceField: "",
+    mapValueSourceField: "",
+    mapValueType: "string",
+    mapExcludedKeys: "Total",
     childMappings: [],
   });
 
@@ -97,6 +101,7 @@ export default function FileImportTypeCreatePage() {
         [field]: value,
         ...(field === 'targetType' && value === 'list' && prev.parserType === 'csv' ? { sourceField: '' } : {}),
         ...(field === 'targetType' && value !== 'list' ? { childMappings: [] } : {}),
+        ...(field === 'targetType' && value === 'map' ? { sourceField: '' } : {}),
       })),
     }));
   };

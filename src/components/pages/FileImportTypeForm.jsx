@@ -9,6 +9,10 @@ const defaultMapping = {
   importFormat: "",
   targetFormat: "",
   listItemKeyField: "",
+  mapKeySourceField: "",
+  mapValueSourceField: "",
+  mapValueType: "string",
+  mapExcludedKeys: "Total",
   childMappings: [],
 };
 
@@ -30,6 +34,7 @@ const baseTargetTypeOptions = [
   { value: "number", label: "Number" },
   { value: "array", label: "Array" },
   { value: "date", label: "Date" },
+  { value: "map", label: "Map" },
 ];
 
 const separatorOptions = [
@@ -105,6 +110,7 @@ function MappingEditor({
         const rowKey = `mapping-${mappingPath.join("-")}`;
         const canRemove = mappings.length > 1;
         const isListMapping = mapping.targetType === "list";
+        const isMapMapping = mapping.targetType === "map";
         const childMappings = Array.isArray(mapping.childMappings) ? mapping.childMappings : [];
         const childDatabaseFieldOptions = childMappings
           .map((childMapping) => String(childMapping?.databaseField || "").trim())
@@ -127,7 +133,7 @@ function MappingEditor({
                   type="text"
                   value={mapping.sourceField ?? mapping.csvHeader ?? ""}
                   onChange={onMappingChange(mappingPath, "sourceField")}
-                  disabled={isListMapping && isCsvParser}
+                  disabled={(isListMapping && isCsvParser) || isMapMapping}
                   className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100"
                   placeholder={
                     isListMapping
@@ -141,14 +147,15 @@ function MappingEditor({
                 />
               </Field>
 
-              <Field label={isListMapping ? "Database List Field" : "Database Field"} htmlFor={`database-field-${mappingPath.join("-")}`}>
+              <Field label={isListMapping ? "Database List Field" : isMapMapping ? "Target Map Field" : "Database Field"} htmlFor={`database-field-${mappingPath.join("-")}`}>
                 <input
                   id={`database-field-${mappingPath.join("-")}`}
                   type="text"
                   value={mapping.databaseField}
                   onChange={onMappingChange(mappingPath, "databaseField")}
                   className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-                  placeholder={isListMapping ? "items" : "productSku"}
+                  placeholder={isListMapping ? "items" : isMapMapping ? "roomsByType" : "productSku"}
+                  required
                 />
               </Field>
 
@@ -245,6 +252,25 @@ function MappingEditor({
                 </button>
               </div>
             </div>
+
+            {isMapMapping ? (
+              <div className="grid gap-3 rounded-xl border border-dashed border-gray-300 bg-white p-4 md:grid-cols-2 xl:grid-cols-4">
+                <Field label="Key Source Field" htmlFor={`map-key-source-${mappingPath.join("-")}`} hint="Source column whose value becomes the map key.">
+                  <input id={`map-key-source-${mappingPath.join("-")}`} value={mapping.mapKeySourceField || ""} onChange={onMappingChange(mappingPath, "mapKeySourceField")} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="ROOM_TYPE" required />
+                </Field>
+                <Field label="Value Source Field" htmlFor={`map-value-source-${mappingPath.join("-")}`} hint="Source column whose value is stored under that key.">
+                  <input id={`map-value-source-${mappingPath.join("-")}`} value={mapping.mapValueSourceField || ""} onChange={onMappingChange(mappingPath, "mapValueSourceField")} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="NO_OF_ROOMS1" required />
+                </Field>
+                <Field label="Value Type" htmlFor={`map-value-type-${mappingPath.join("-")}`}>
+                  <select id={`map-value-type-${mappingPath.join("-")}`} value={mapping.mapValueType || "string"} onChange={onMappingChange(mappingPath, "mapValueType")} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                    {baseTargetTypeOptions.filter((option) => option.value !== "map").map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Excluded Keys" htmlFor={`map-excluded-keys-${mappingPath.join("-")}`} hint="Comma-separated, case-insensitive. Keep Total here and map its value separately.">
+                  <input id={`map-excluded-keys-${mappingPath.join("-")}`} value={mapping.mapExcludedKeys ?? "Total"} onChange={onMappingChange(mappingPath, "mapExcludedKeys")} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Total" />
+                </Field>
+              </div>
+            ) : null}
 
             {isListMapping ? (
               <div className="rounded-xl border border-dashed border-gray-300 bg-white p-4">

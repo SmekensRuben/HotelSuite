@@ -39,14 +39,18 @@ function renderMappingRows(mappings, level = 0) {
         <td className="px-4 py-3 text-sm text-gray-700">
           <span style={{ paddingLeft: `${level * 16}px` }}>
             {level > 0 ? "↳ " : ""}
-            {mapping.sourceField || mapping.csvHeader || "-"}
+            {mapping.targetType === "map"
+              ? `${mapping.mapKeySourceField || "-"} → ${mapping.mapValueSourceField || "-"}`
+              : mapping.sourceField || mapping.csvHeader || "-"}
           </span>
         </td>
         <td className="px-4 py-3 text-sm text-gray-700">
           {mapping.databaseField || "-"}
           {mapping.targetType === "list" && mapping.listItemKeyField ? ` (key: ${mapping.listItemKeyField})` : ""}
         </td>
-        <td className="px-4 py-3 text-sm text-gray-700">{mapping.targetType || "string"}</td>
+        <td className="px-4 py-3 text-sm text-gray-700">
+          {mapping.targetType === "map" ? `map<${mapping.mapValueType || "string"}>` : mapping.targetType || "string"}
+        </td>
         <td className="px-4 py-3 text-sm text-gray-700">
           {mapping.targetType === "array" ? formatSeparatorLabel(mapping.seperator) : "-"}
         </td>

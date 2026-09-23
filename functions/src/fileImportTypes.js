@@ -25,7 +25,12 @@ function normalizeLookupKey(value) {
 
 function normalizeTargetType(value) {
   const normalized = String(value || "string").trim().toLowerCase();
-  return ["string", "number", "array", "date", "list"].includes(normalized) ? normalized : "string";
+  return ["string", "number", "array", "date", "list", "map"].includes(normalized) ? normalized : "string";
+}
+
+function normalizeMapValueType(value) {
+  const normalized = String(value || "string").trim().toLowerCase();
+  return ["string", "number", "array", "date"].includes(normalized) ? normalized : "string";
 }
 
 function normalizeSeparator(value) {
@@ -46,6 +51,15 @@ function normalizeColumnMappings(fileImportType) {
     importFormat: String(mapping?.importFormat || "").trim(),
     targetFormat: String(mapping?.targetFormat || "").trim(),
     listItemKeyField: String(mapping?.listItemKeyField || "").trim(),
+    mapKeySourceField: String(mapping?.mapKeySourceField || "").trim(),
+    mapKeySourceFieldKey: normalizeLookupKey(mapping?.mapKeySourceField),
+    mapValueSourceField: String(mapping?.mapValueSourceField || "").trim(),
+    mapValueSourceFieldKey: normalizeLookupKey(mapping?.mapValueSourceField),
+    mapValueType: normalizeMapValueType(mapping?.mapValueType),
+    mapExcludedKeys: String(mapping?.mapExcludedKeys ?? "Total")
+      .split(",")
+      .map((key) => normalizeLookupKey(key))
+      .filter(Boolean),
     childMappings: Array.isArray(mapping?.childMappings)
       ? mapping.childMappings.map((childMapping) => normalizeMapping(childMapping))
       : [],
@@ -54,7 +68,11 @@ function normalizeColumnMappings(fileImportType) {
   return Array.isArray(fileImportType?.columnMappings)
     ? fileImportType.columnMappings
         .map((mapping) => normalizeMapping(mapping))
-        .filter((mapping) => mapping.databaseField && (mapping.targetType === "list" || mapping.sourceFieldKey))
+        .filter((mapping) => mapping.databaseField && (
+          mapping.targetType === "list"
+          || (mapping.targetType === "map" && mapping.mapKeySourceFieldKey && mapping.mapValueSourceFieldKey)
+          || mapping.sourceFieldKey
+        ))
     : [];
 }
 
@@ -196,6 +214,22 @@ function mapFlatObject(record, mappings) {
       mappedDocument[mapping.databaseField] = hasMappedValue(childItemResult.mappedDocument)
         ? [childItemResult.mappedDocument]
         : [];
+      return;
+    }
+
+    if (mapping.targetType === "map") {
+      const mapKey = String(record?.[mapping.mapKeySourceFieldKey] ?? "").trim();
+      const rawMapValue = record?.[mapping.mapValueSourceFieldKey];
+      if (!mapKey || mapping.mapExcludedKeys.includes(normalizeLookupKey(mapKey)) || String(rawMapValue ?? "").trim() === "") {
+        mappedDocument[mapping.databaseField] = {};
+        return;
+      }
+      const valueMapping = { ...mapping, targetType: mapping.mapValueType };
+      if (!isMappedValueValid(rawMapValue, valueMapping)) {
+        shouldSkip = true;
+        return;
+      }
+      mappedDocument[mapping.databaseField] = { [mapKey]: transformMappedValue(rawMapValue, valueMapping) };
       return;
     }
 
@@ -385,6 +419,22 @@ function mapXmlObject(recordNode, mappings) {
     if (shouldSkip) return;
 
     const resolvedValue = resolveXmlSourceValue(recordNode, mapping, flattenedRecord);
+
+    if (mapping.targetType === "map") {
+      const mapKey = String(flattenedRecord?.[mapping.mapKeySourceFieldKey] ?? "").trim();
+      const rawMapValue = flattenedRecord?.[mapping.mapValueSourceFieldKey];
+      if (!mapKey || mapping.mapExcludedKeys.includes(normalizeLookupKey(mapKey)) || String(rawMapValue ?? "").trim() === "") {
+        mappedDocument[mapping.databaseField] = {};
+        return;
+      }
+      const valueMapping = { ...mapping, targetType: mapping.mapValueType };
+      if (!isMappedValueValid(rawMapValue, valueMapping)) {
+        shouldSkip = true;
+        return;
+      }
+      mappedDocument[mapping.databaseField] = { [mapKey]: transformMappedValue(rawMapValue, valueMapping) };
+      return;
+    }
 
     if (mapping.targetType === "list") {
       const resolvedItems = Array.isArray(resolvedValue)
@@ -962,6 +1012,21 @@ function mergeMappedDocuments(existingDocument, incomingDocument, mappings) {
       return;
     }
 
+    if (mapping.targetType === "map") {
+      const existingMap = mergedDocument[fieldName] && typeof mergedDocument[fieldName] === "object" && !Array.isArray(mergedDocument[fieldName])
+        ? mergedDocument[fieldName]
+        : {};
+      const incomingMap = incomingDocument?.[fieldName] && typeof incomingDocument[fieldName] === "object" && !Array.isArray(incomingDocument[fieldName])
+        ? incomingDocument[fieldName]
+        : {};
+      const duplicateKey = Object.keys(incomingMap).find((key) => Object.prototype.hasOwnProperty.call(existingMap, key));
+      if (duplicateKey) {
+        throw new Error(`Duplicate map key "${duplicateKey}" for target field "${fieldName}" in the same target document`);
+      }
+      mergedDocument[fieldName] = { ...existingMap, ...incomingMap };
+      return;
+    }
+
     const incomingValue = incomingDocument?.[fieldName];
     if (incomingValue !== undefined && hasMappedValue(incomingValue)) {
       mergedDocument[fieldName] = incomingValue;
@@ -1443,5 +1508,10 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
 
 module.exports = {
   processImportedFileToFirestore,
+  parseImportedDocuments,
+  parseCsvDocuments,
   parseXmlDocuments,
+  normalizeColumnMappings,
+  mergeMappedDocuments,
+  aggregateMappedDocuments,
 };
