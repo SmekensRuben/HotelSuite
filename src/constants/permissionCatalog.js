@@ -11,6 +11,7 @@ export const PERMISSION_CATALOG = {
   auditUpsells: ["read", "settings"],
   groups: ["create", "read", "update", "delete"],
   groupquotes: ["create", "read", "update", "delete"],
+  marshaBalance: ["read", "update"],
 };
 
 export function listAllPermissionKeys() {
