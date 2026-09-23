@@ -31,6 +31,14 @@ describe("MARSHA Balance", () => {
     expect(evaluateBalance({ GENR: 6 }, { QNK: 3, DBDB: 2 }, [minimumRule]).status).not.toBe("ok");
   });
 
+  it("does not let a passing directional rule inflate another rule's severity", () => {
+    const maximumRule = { ...rule, comparisonMode: "upper", reservedRooms: 0 };
+    const exactRule = { ...rule, id: "two", marshaRoomType: "KING", operaRoomTypes: ["DKL"], reservedRooms: 0 };
+    const result = evaluateBalance({ GENR: 26, KING: 0 }, { QNK: 1, DBDB: 1, DKL: -1 }, [maximumRule, exactRule]);
+    expect(result.status).toBe("review");
+    expect(result.calculations[0]).toMatchObject({ within: true, difference: -24, violation: 0 });
+  });
+
   it("compares calculated physical-room totals without using imported Total", () => {
     const totalRule = { id: "total", enabled: true, ruleScope: "total", comparisonMode: "exact", reservedRooms: 0, allowedDeviation: 0 };
     const result = evaluateBalance({ GENR: 3, QNQN: 2, Total: 999 }, { QNK: 1, DBDB: 4, Total: -999 }, [totalRule]);

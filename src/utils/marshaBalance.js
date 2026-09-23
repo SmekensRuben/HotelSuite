@@ -78,10 +78,17 @@ export function evaluateBalance(marshaRooms, operaRooms, rules) {
       : mode === "range"
         ? difference >= -(Number(rule.lowerDeviation) || tolerance) && difference <= (Number(rule.upperDeviation) || tolerance)
         : Math.abs(difference) <= tolerance;
-    return { rule, assessable: true, marshaValue, operaValue, reservedRooms, comparedOperaValue, difference, tolerance, within };
+    const violation = mode === "upper"
+      ? Math.max(0, difference - tolerance)
+      : mode === "lower"
+        ? Math.max(0, -difference - tolerance)
+        : mode === "range"
+          ? Math.max(0, -(Number(rule.lowerDeviation) || tolerance) - difference, difference - (Number(rule.upperDeviation) || tolerance))
+          : Math.max(0, Math.abs(difference) - tolerance);
+    return { rule, assessable: true, marshaValue, operaValue, reservedRooms, comparedOperaValue, difference, tolerance, within, violation };
   });
   if (calculations.some((item) => !item.assessable)) return { status: "unassessable", label: "Cannot assess", calculations };
-  const worstDifference = Math.max(...calculations.map((item) => Math.abs(item.difference) - item.tolerance));
+  const worstDifference = Math.max(...calculations.map((item) => item.violation));
   if (calculations.every((item) => item.within)) return { status: "ok", label: "Balanced", calculations };
   if (worstDifference <= 2) return { status: "review", label: "Review", calculations };
   return { status: "critical", label: "Critical", calculations };
