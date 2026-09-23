@@ -10,7 +10,7 @@ export function getBrusselsDateString(date = new Date()) {
 }
 
 export function addCalendarDays(dateString, days) {
-  if (!DATE_FORMAT.test(dateString)) throw new Error("Ongeldige datum");
+  if (!DATE_FORMAT.test(dateString)) throw new Error("Invalid date");
   const [year, month, day] = dateString.split("-").map(Number);
   const result = new Date(Date.UTC(year, month - 1, day + Number(days)));
   return result.toISOString().slice(0, 10);
@@ -51,9 +51,9 @@ export function findOverlappingOperaTypes(rules) {
 
 export function evaluateBalance(marshaRooms, operaRooms, rules) {
   const activeRules = (rules || []).filter((rule) => rule.enabled);
-  if (!activeRules.length) return { status: "unconfigured", label: "Geen regels ingesteld", calculations: [] };
+  if (!activeRules.length) return { status: "unconfigured", label: "No rules configured", calculations: [] };
   const overlaps = findOverlappingOperaTypes(activeRules);
-  if (overlaps.length) return { status: "unassessable", label: "Niet te beoordelen", reason: `Opera-kamertype dubbel gebruikt: ${overlaps.join(", ")}`, calculations: [] };
+  if (overlaps.length) return { status: "unassessable", label: "Cannot assess", reason: `Opera room type used more than once: ${overlaps.join(", ")}`, calculations: [] };
 
   const calculations = activeRules.map((rule) => {
     const marshaPresent = Object.prototype.hasOwnProperty.call(marshaRooms, rule.marshaRoomType);
@@ -73,18 +73,18 @@ export function evaluateBalance(marshaRooms, operaRooms, rules) {
         : Math.abs(difference) <= tolerance;
     return { rule, assessable: true, marshaValue, operaValue, reservedRooms, comparedOperaValue, difference, tolerance, within };
   });
-  if (calculations.some((item) => !item.assessable)) return { status: "unassessable", label: "Niet te beoordelen", calculations };
+  if (calculations.some((item) => !item.assessable)) return { status: "unassessable", label: "Cannot assess", calculations };
   const worstDifference = Math.max(...calculations.map((item) => Math.abs(item.difference) - item.tolerance));
-  if (calculations.every((item) => item.within)) return { status: "ok", label: "Binnen regels", calculations };
-  if (worstDifference <= 2) return { status: "review", label: "Nakijken", calculations };
-  return { status: "critical", label: "Kritiek", calculations };
+  if (calculations.every((item) => item.within)) return { status: "ok", label: "Balanced", calculations };
+  if (worstDifference <= 2) return { status: "review", label: "Review", calculations };
+  return { status: "critical", label: "Critical", calculations };
 }
 
 export function getSourceState({ stayDocument, snapshotDate, today, metadata = {} }) {
-  if (snapshotDate > today) return { status: "expected", label: "Nog verwacht" };
-  if (!stayDocument) return { status: snapshotDate === today ? "expected" : "missing", label: snapshotDate === today ? "Nog verwacht" : "Ontbrekend" };
+  if (snapshotDate > today) return { status: "expected", label: "Expected" };
+  if (!stayDocument) return { status: snapshotDate === today ? "expected" : "missing", label: snapshotDate === today ? "Expected" : "Missing" };
   const completion = String(metadata.status || metadata.importStatus || "").toLowerCase();
-  if (["failed", "error", "incomplete"].includes(completion)) return { status: "missing", label: "Ontbrekend" };
-  if (snapshotDate < today) return { status: "stale", label: "Verouderd" };
-  return { status: "current", label: "Aanwezig en actueel" };
+  if (["failed", "error", "incomplete"].includes(completion)) return { status: "missing", label: "Missing" };
+  if (snapshotDate < today) return { status: "stale", label: "Outdated" };
+  return { status: "current", label: "Available and current" };
 }

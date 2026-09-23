@@ -82,11 +82,13 @@ import DemandCalendarEventDetailPage from "./components/pages/DemandCalendarEven
 import DemandCalendarCategoriesPage from "./components/pages/DemandCalendarCategoriesPage.jsx";
 import CommercialIntelligencePage from "./components/pages/CommercialIntelligencePage.jsx";
 import MarshaBalancePage from "./components/pages/MarshaBalancePage.jsx";
+import MarshaBalanceDetailPage from "./components/pages/MarshaBalanceDetailPage.jsx";
 
 export default function AppRouter() {
   return (
     <Routes>
       <Route path="/front-office/marsha-balance" element={<ProtectedRoute feature="marshaBalance" action="read"><MarshaBalancePage /></ProtectedRoute>} />
+      <Route path="/front-office/marsha-balance/:stayDate" element={<ProtectedRoute feature="marshaBalance" action="read"><MarshaBalanceDetailPage /></ProtectedRoute>} />
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/rooming-list/:token" element={<RoomingListPage />} />
