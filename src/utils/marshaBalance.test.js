@@ -1,94 +1,97 @@
 import { describe, expect, it } from "vitest";
-import { enumerateDates, evaluateOperationalBalance, getDefaultBalanceRange, normalizeRoomsByType, validateBalanceSettings } from "./marshaBalance";
+import { enumerateDates, evaluateSimplifiedBalance, extractMappedTotal, getDefaultBalanceRange, getSourceState, isWeekendStayDate, normalizeRoomsByType } from "./marshaBalance";
 
-const settings = (overrides = {}) => ({
-  operaRoomTypes: [
-    { code: "EXEC", classification: "physical", protectedRooms: 0, protectionMode: "hard" },
-    { code: "SUITE", classification: "physical", protectedRooms: 0, protectionMode: "hard" },
-  ],
-  salesCategories: [{ code: "EXEC", confirmed: true, allowedOperaTypes: ["EXEC", "SUITE"], releasePolicy: "strict", earlyReleaseLimit: 0, overbookingLimit: 0 }],
-  hotelOverbookingLimit: 0,
-  hotelOverbookingConfirmed: false,
-  hotelSalesLimit: null,
-  hotelSalesLimitConfirmed: false,
-  exceptions: [],
-  ...overrides,
-});
+const baseSettings = (overrides = {}) => ({ minimumGenr: 5, premiumCategories: [], weekendDbdbProtection: true, ...overrides });
+const evaluate = ({ marshaRooms = { GENR: 3 }, operaRooms = { DBDB: 0 }, marshaTotal = 3, operaTotal = 3, settings = baseSettings(), stayDate = "2026-09-24" } = {}) => evaluateSimplifiedBalance({ marshaRooms, operaRooms, marshaTotal, operaTotal, settings, stayDate });
 
-describe("MARSHA Balance operational assessment", () => {
+describe("MARSHA Balance simplified controls", () => {
   it("uses Brussels calendar boundaries and includes 31 days", () => {
     const range = getDefaultBalanceRange(new Date("2026-03-28T23:30:00Z"));
     expect(range.from).toBe("2026-03-29");
     expect(enumerateDates(range.from, range.to)).toHaveLength(31);
   });
 
-  it("preserves missing, zero, negative and Total values as distinct source data", () => {
-    expect(normalizeRoomsByType({ EXEC: 0, SUITE: -1, Total: 7, invalid: "2" })).toEqual({ EXEC: 0, SUITE: -1, Total: 7 });
+  it("reads the explicitly mapped total without summing room types", () => {
+    expect(extractMappedTotal({ total: 7, roomsByType: { GENR: 4, EXEC: 8 } })).toEqual({ value: 7, field: "total" });
+    expect(extractMappedTotal({ roomsByType: { GENR: 4, Total: 6 } })).toEqual({ value: 6, field: "roomsByType.Total" });
+    expect(normalizeRoomsByType({ GENR: 4, Total: 6 })).toEqual({ GENR: 4 });
   });
 
-  it("covers EXEC through an allowed suite upgrade", () => {
-    const result = evaluateOperationalBalance({ EXEC: 1 }, { EXEC: 0, SUITE: 1 }, settings(), "2026-09-25");
-    expect(result.code).toBe("upgrade");
-    expect(result.categories[0]).toMatchObject({ higherUsed: 1, uncovered: 0 });
+  it("caps the normal GENR minimum at the MARSHA total", () => {
+    const result = evaluate({ marshaRooms: { GENR: 2 }, operaRooms: { DBDB: 0 }, marshaTotal: 3, operaTotal: 3 });
+    expect(result.minimumGenr).toBe(3);
+    expect(result.alerts).toContainEqual(expect.objectContaining({ code: "genr_minimum", minimumGenr: 3, marshaGenr: 2 }));
   });
 
-  it("requires action for demonstrably uncovered availability", () => {
-    expect(evaluateOperationalBalance({ EXEC: 1 }, { EXEC: 0, SUITE: 0 }, settings(), "2026-09-25")).toMatchObject({ code: "action" });
-    expect(evaluateOperationalBalance({ EXEC: 2 }, { EXEC: 0, SUITE: 1 }, settings(), "2026-09-25").categories[0]).toMatchObject({ uncovered: 1, code: "action" });
+  it("uses Friday and Saturday from the stay date", () => {
+    expect(isWeekendStayDate("2026-09-25")).toBe(true);
+    expect(isWeekendStayDate("2026-09-26")).toBe(true);
+    expect(isWeekendStayDate("2026-09-27")).toBe(false);
   });
 
-  it("uses preferred rooms first and reports higher rooms and soft protection", () => {
-    const config = settings({
-      operaRoomTypes: [
-        { code: "QNK", classification: "physical", protectedRooms: 0, protectionMode: "hard" },
-        { code: "DBDB", classification: "physical", protectedRooms: 1, protectionMode: "soft" },
-      ],
-      salesCategories: [{ code: "GENR", confirmed: true, allowedOperaTypes: ["QNK", "DBDB"], releasePolicy: "strict", overbookingLimit: 0 }],
-    });
-    const result = evaluateOperationalBalance({ GENR: 6 }, { QNK: 4, DBDB: 3 }, config, "2026-09-25");
-    expect(result.categories[0].placements).toEqual([
-      { operaType: "QNK", rooms: 4, kind: "preferred", protectedUse: 0 },
-      { operaType: "DBDB", rooms: 2, kind: "upgrade", protectedUse: 0 },
-    ]);
-    expect(result.categories[0].code).toBe("upgrade");
+  it("does not allow legacy settings to disable weekend DBDB protection", () => {
+    const result = evaluate({ marshaRooms: { GENR: 8 }, operaRooms: { DBDB: 3 }, marshaTotal: 10, operaTotal: 10, stayDate: "2026-09-25", settings: baseSettings({ weekendDbdbProtection: false }) });
+    expect(result.alerts).toContainEqual(expect.objectContaining({ code: "weekend_limit", excess: 1 }));
   });
 
-  it("treats a closed premium category as an intentional sales choice", () => {
-    const config = settings({ salesCategories: [{ code: "SUITE", confirmed: true, allowedOperaTypes: ["SUITE"], releasePolicy: "strict", overbookingLimit: 0 }] });
-    expect(evaluateOperationalBalance({ SUITE: 0 }, { EXEC: 0, SUITE: 2 }, config, "2026-09-25")).toMatchObject({ code: "intentional" });
+  it("accepts GENR at the Friday DBDB boundary and rejects one above it", () => {
+    const safe = evaluate({ marshaRooms: { GENR: 7 }, operaRooms: { DBDB: 3 }, marshaTotal: 10, operaTotal: 10, stayDate: "2026-09-25" });
+    expect(safe.weekendMaximumGenr).toBe(7);
+    expect(safe.alerts.some((item) => item.code === "weekend_limit")).toBe(false);
+    const unsafe = evaluate({ marshaRooms: { GENR: 8 }, operaRooms: { DBDB: 3 }, marshaTotal: 10, operaTotal: 10, stayDate: "2026-09-25" });
+    expect(unsafe).toMatchObject({ code: "action", weekendMaximumGenr: 7 });
+    expect(unsafe.alerts).toContainEqual(expect.objectContaining({ code: "weekend_limit", excess: 1 }));
   });
 
-  it("marks shared suite capacity for review instead of counting it twice", () => {
-    const config = settings({ salesCategories: [
-      { code: "EXEC", confirmed: true, allowedOperaTypes: ["EXEC", "SUITE"], releasePolicy: "strict", overbookingLimit: 0 },
-      { code: "SUITE", confirmed: true, allowedOperaTypes: ["SUITE"], releasePolicy: "strict", overbookingLimit: 0 },
-    ] });
-    const result = evaluateOperationalBalance({ EXEC: 1, SUITE: 1 }, { EXEC: 0, SUITE: 1 }, config, "2026-09-25");
-    expect(result.code).toBe("review");
-    expect(result.categories.some((item) => item.sharedTypes.includes("SUITE"))).toBe(true);
+  it("aligns the Friday minimum and maximum when DBDB is protected", () => {
+    const result = evaluate({ marshaRooms: { GENR: 1 }, operaRooms: { DBDB: 3 }, marshaTotal: 4, operaTotal: 4, stayDate: "2026-09-25" });
+    expect(result).toMatchObject({ weekendMaximumGenr: 1, minimumGenr: 1 });
+    expect(result.alerts).toEqual([]);
   });
 
-  it("uses a confirmed hotel-wide sales limit", () => {
-    const config = settings({ hotelSalesLimitConfirmed: true, hotelSalesLimit: 0 });
-    expect(evaluateOperationalBalance({ EXEC: 1 }, { EXEC: 1, SUITE: 0 }, config, "2026-09-25")).toMatchObject({ code: "action", hotelLimitExceeded: true });
+  it("warns when a premium shortage is fully covered by a higher type", () => {
+    const settings = baseSettings({ minimumGenr: 0, premiumCategories: [{ marshaCode: "EXEC", operaType: "EXEC", allowedHigherOperaTypes: ["SUITE"] }] });
+    const result = evaluate({ marshaRooms: { GENR: 0, EXEC: 1 }, operaRooms: { EXEC: 0, SUITE: 1, DBDB: 0 }, marshaTotal: 1, operaTotal: 1, settings });
+    expect(result).toMatchObject({ code: "warning" });
+    expect(result.categories[0]).toMatchObject({ shortage: 1, coveredByHigher: 1, uncovered: 0, code: "warning" });
   });
 
-  it("uses a suite for an existing EXEC deficit before new availability", () => {
-    const result = evaluateOperationalBalance({ EXEC: 1 }, { EXEC: -1, SUITE: 1 }, settings(), "2026-09-25");
-    expect(result.placements).toContainEqual({ categoryCode: "EXEC", operaType: "SUITE", rooms: 1, purpose: "cover existing EXEC deficit" });
-    expect(result.categories[0]).toMatchObject({ uncovered: 1, code: "action" });
+  it("requires action for the uncovered part of a premium shortage", () => {
+    const settings = baseSettings({ minimumGenr: 0, premiumCategories: [{ marshaCode: "EXEC", operaType: "EXEC", allowedHigherOperaTypes: ["SUITE"] }] });
+    const result = evaluate({ marshaRooms: { GENR: 0, EXEC: 2 }, operaRooms: { EXEC: 0, SUITE: 1, DBDB: 0 }, marshaTotal: 2, operaTotal: 2, settings });
+    expect(result).toMatchObject({ code: "action" });
+    expect(result.categories[0]).toMatchObject({ shortage: 2, coveredByHigher: 1, uncovered: 1 });
   });
 
-  it("never treats unconfirmed categories as within rules", () => {
-    const config = settings({ salesCategories: [{ code: "EXEC", confirmed: false, allowedOperaTypes: [] }] });
-    expect(evaluateOperationalBalance({ EXEC: 0 }, { EXEC: 1, SUITE: 1 }, config, "2026-09-25").code).toBe("unconfigured");
+  it("does not flag a closed premium category", () => {
+    const settings = baseSettings({ premiumCategories: [{ marshaCode: "EXEC", operaType: "EXEC", allowedHigherOperaTypes: ["SUITE"] }] });
+    const result = evaluate({ marshaRooms: { GENR: 3, EXEC: 0 }, operaRooms: { EXEC: 2, SUITE: 1, DBDB: 0 }, settings });
+    expect(result.categories[0]).toMatchObject({ shortage: 0, code: "ok" });
   });
 
-  it("never treats an unclassified Opera code as within rules", () => {
-    expect(evaluateOperationalBalance({ EXEC: 0 }, { EXEC: 1, SUITE: 1, HOUSE: 4 }, settings(), "2026-09-25")).toMatchObject({ code: "unconfigured" });
+  it("reports total mismatch using only explicit totals", () => {
+    const result = evaluate({ marshaRooms: { GENR: 3 }, operaRooms: { DBDB: 0 }, marshaTotal: 8, operaTotal: 7 });
+    expect(result.alerts).toContainEqual(expect.objectContaining({ code: "total_mismatch", marshaTotal: 8, operaTotal: 7, difference: 1 }));
   });
 
-  it("validates that allowed types are confirmed physical Opera types", () => {
-    expect(validateBalanceSettings(settings({ salesCategories: [{ code: "EXEC", confirmed: true, allowedOperaTypes: ["VIRTUAL"] }] }))).toContain("VIRTUAL is not configured as a physical Opera room type.");
+  it("never reports missing totals or negative relevant values as safe", () => {
+    expect(evaluate({ marshaTotal: null }).code).toBe("unassessable");
+    expect(evaluate({ marshaRooms: { GENR: -1 } }).code).toBe("unreliable");
+    const premiumSettings = baseSettings({ premiumCategories: [{ marshaCode: "EXEC", operaType: "EXEC", allowedHigherOperaTypes: ["SUITE"] }] });
+    expect(evaluate({ marshaRooms: { GENR: 3, EXEC: 1 }, operaRooms: { EXEC: -1, SUITE: 1, DBDB: 0 }, settings: premiumSettings }).code).toBe("unreliable");
+  });
+
+  it("does not calculate a certain weekend boundary from mismatched totals or missing DBDB", () => {
+    const mismatch = evaluate({ marshaRooms: { GENR: 4 }, operaRooms: { DBDB: 3 }, marshaTotal: 5, operaTotal: 4, stayDate: "2026-09-25" });
+    expect(mismatch.weekendMaximumGenr).toBeNull();
+    expect(mismatch.alerts.some((item) => item.code === "weekend_data")).toBe(true);
+    const missing = evaluate({ marshaRooms: { GENR: 4 }, operaRooms: {}, marshaTotal: 5, operaTotal: 5, stayDate: "2026-09-25" });
+    expect(missing.weekendMaximumGenr).toBeNull();
+  });
+
+  it("marks stale, missing, and incomplete snapshot data as not current", () => {
+    expect(getSourceState({ stayDocument: {}, snapshotDate: "2026-09-24", today: "2026-09-25" }).status).toBe("stale");
+    expect(getSourceState({ stayDocument: null, snapshotDate: "2026-09-25", today: "2026-09-25" }).status).toBe("expected");
+    expect(getSourceState({ stayDocument: {}, snapshotDate: "2026-09-25", today: "2026-09-25", metadata: { status: "incomplete" } }).status).toBe("missing");
   });
 });

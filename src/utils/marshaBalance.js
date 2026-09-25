@@ -24,141 +24,124 @@ export function enumerateDates(from, to) {
 
 export function normalizeRoomsByType(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter(([, amount]) => typeof amount === "number" && Number.isFinite(amount)));
+  return Object.fromEntries(Object.entries(value).filter(([key, amount]) => key.toLowerCase() !== "total" && typeof amount === "number" && Number.isFinite(amount)));
+}
+
+const TOTAL_FIELD_KEYS = new Set(["total", "roomstotal", "totalrooms", "availabilitytotal", "totalavailability"]);
+
+export function extractMappedTotal(data) {
+  if (!data || typeof data !== "object") return { value: undefined, field: null };
+  const topLevel = Object.entries(data).find(([key]) => TOTAL_FIELD_KEYS.has(key.replace(/[^a-z0-9]/gi, "").toLowerCase()));
+  if (topLevel) return { value: topLevel[1], field: topLevel[0] };
+  const roomsTotal = Object.entries(data.roomsByType || {}).find(([key]) => key.toLowerCase() === "total");
+  return roomsTotal ? { value: roomsTotal[1], field: `roomsByType.${roomsTotal[0]}` } : { value: undefined, field: null };
 }
 
 export const createEmptyMarshaBalanceSettings = () => ({
-  operaRoomTypes: [],
-  salesCategories: [],
-  hotelOverbookingLimit: 0,
-  hotelOverbookingConfirmed: false,
-  hotelSalesLimit: null,
-  hotelSalesLimitConfirmed: false,
-  exceptions: [],
+  minimumGenr: 0,
+  premiumCategories: [],
+  weekendDbdbProtection: true,
 });
 
 export function validateBalanceSettings(settings) {
   const errors = [];
-  const physical = new Set((settings.operaRoomTypes || []).filter((item) => item.classification === "physical").map((item) => item.code));
-  const categoryCodes = new Set();
-  (settings.salesCategories || []).forEach((category) => {
-    if (!category.code) errors.push("Every sales category needs a MARSHA code.");
-    if (categoryCodes.has(category.code)) errors.push(`MARSHA category ${category.code} is configured more than once.`);
-    categoryCodes.add(category.code);
-    if (category.confirmed && !(category.allowedOperaTypes || []).length) errors.push(`${category.code || "A category"} needs at least one allowed physical Opera type.`);
-    (category.allowedOperaTypes || []).forEach((code) => {
-      if (!physical.has(code)) errors.push(`${code} is not configured as a physical Opera room type.`);
-    });
+  if (!Number.isInteger(Number(settings.minimumGenr)) || Number(settings.minimumGenr) < 0) errors.push("Desired minimum GENR must be a non-negative integer.");
+  const seen = new Set();
+  (settings.premiumCategories || []).forEach((category) => {
+    const marshaCode = String(category.marshaCode || "").trim().toUpperCase();
+    const operaType = String(category.operaType || "").trim().toUpperCase();
+    if (!marshaCode || !operaType) errors.push("Every premium control needs a MARSHA category and its corresponding Opera room type.");
+    if (seen.has(marshaCode)) errors.push(`MARSHA premium category ${marshaCode} is configured more than once.`);
+    seen.add(marshaCode);
+    if ((category.allowedHigherOperaTypes || []).includes(operaType)) errors.push(`${marshaCode}: the own Opera type cannot also be a higher type.`);
   });
   return [...new Set(errors)];
 }
 
-function activeException(settings, categoryCode, stayDate) {
-  return (settings.exceptions || []).find((item) => item.categoryCode === categoryCode && item.startDate <= stayDate && item.endDate >= stayDate && item.reason && item.responsible);
+export function isWeekendStayDate(stayDate) {
+  if (!DATE_FORMAT.test(stayDate)) return false;
+  const [year, month, day] = stayDate.split("-").map(Number);
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return weekday === 5 || weekday === 6;
 }
 
-function status(label, code, details = {}) {
-  return { label, code, ...details };
+function isReliableCount(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
-export function evaluateOperationalBalance(marshaRooms, operaRooms, settings, stayDate) {
-  const validationErrors = validateBalanceSettings(settings);
-  if (validationErrors.length) return { ...status("Not configured", "unconfigured"), reason: validationErrors.join(" "), categories: [], dataIssues: validationErrors };
+function alert(severity, code, title, message, details = {}) {
+  return { severity, code, title, message, ...details };
+}
 
-  const physicalConfig = (settings.operaRoomTypes || []).filter((item) => item.classification === "physical");
-  const physicalCodes = new Set(physicalConfig.map((item) => item.code));
-  const categories = settings.salesCategories || [];
-  const unclassifiedOpera = Object.keys(operaRooms).filter((code) => code.toLowerCase() !== "total" && !(settings.operaRoomTypes || []).some((item) => item.code === code && item.classification && item.classification !== "unclassified"));
-  if (unclassifiedOpera.length) return { ...status("Not configured", "unconfigured"), reason: `Opera room types need classification: ${unclassifiedOpera.join(", ")}.`, categories: [], dataIssues: [] };
-  const missingConfig = Object.keys(marshaRooms).filter((code) => code.toLowerCase() !== "total" && !categories.some((item) => item.code === code && item.confirmed));
-  if (missingConfig.length) return { ...status("Not configured", "unconfigured"), reason: `MARSHA categories need confirmation: ${missingConfig.join(", ")}.`, categories: [], dataIssues: [] };
-  if (!physicalConfig.length || !categories.length) return { ...status("Not configured", "unconfigured"), reason: "Physical Opera room types and MARSHA sales categories must be configured.", categories: [], dataIssues: [] };
+export function evaluateSimplifiedBalance({ marshaRooms, operaRooms, marshaTotal, operaTotal, settings, stayDate }) {
+  const configurationErrors = validateBalanceSettings(settings);
+  if (configurationErrors.length) return { code: "unconfigured", label: "Not configured", alerts: configurationErrors.map((message) => alert("unconfigured", "configuration", "Configuration required", message)), categories: [], isWeekend: isWeekendStayDate(stayDate) };
 
-  const missingOpera = [...physicalCodes].filter((code) => !Object.prototype.hasOwnProperty.call(operaRooms, code));
-  if (missingOpera.length) return { ...status("Cannot assess", "unassessable"), reason: `Physical Opera values are missing: ${missingOpera.join(", ")}.`, categories: [], dataIssues: missingOpera };
+  const alerts = [];
+  const categories = [];
+  const weekend = isWeekendStayDate(stayDate);
+  const totalsReliable = isReliableCount(marshaTotal) && isReliableCount(operaTotal);
+  if (!totalsReliable) {
+    alerts.push(alert("unassessable", "total_data", "Cannot assess", "Both explicitly mapped total fields must contain reliable non-negative numbers.", { marshaTotal, operaTotal }));
+  } else if (marshaTotal !== operaTotal) {
+    alerts.push(alert("action", "total_mismatch", "Total mismatch", `MARSHA total is ${marshaTotal}, Opera total is ${operaTotal}; difference ${marshaTotal - operaTotal}.`, { marshaTotal, operaTotal, difference: marshaTotal - operaTotal }));
+  }
 
-  const pools = Object.fromEntries(physicalConfig.map((item) => [item.code, Math.max(0, operaRooms[item.code])]));
-  const rawOpera = Object.fromEntries(physicalConfig.map((item) => [item.code, operaRooms[item.code]]));
-  const protection = Object.fromEntries(physicalConfig.map((item) => [item.code, { count: Math.max(0, Number(item.protectedRooms) || 0), mode: item.protectionMode || "hard" }]));
-  const placements = [];
-  const deficitIssues = [];
+  const marshaGenr = marshaRooms.GENR;
+  let weekendMaximumGenr = null;
+  let minimumGenr = totalsReliable ? Math.min(Number(settings.minimumGenr), marshaTotal) : null;
+  if (!isReliableCount(marshaGenr)) alerts.push(alert("unreliable", "genr_data", "Cannot reliably assess GENR", "MARSHA GENR is missing, non-numeric, or negative.", { marshaGenr }));
 
-  // A negative value is an existing type deficit. Its category's higher allowed types must absorb it first.
-  physicalConfig.filter((item) => operaRooms[item.code] < 0).forEach((item) => {
-    let deficit = Math.abs(operaRooms[item.code]);
-    const owner = categories.find((category) => category.confirmed && category.allowedOperaTypes?.[0] === item.code);
-    if (!owner) {
-      deficitIssues.push(`The meaning of ${item.code} ${operaRooms[item.code]} cannot be allocated because no confirmed category owns this type.`);
-      return;
+  if (weekend) {
+    const operaDbdb = operaRooms.DBDB;
+    if (!totalsReliable || marshaTotal !== operaTotal || !isReliableCount(operaDbdb) || !isReliableCount(marshaGenr)) {
+      minimumGenr = null;
+      alerts.push(alert("unreliable", "weekend_data", "Cannot reliably assess weekend DBDB protection", "Matching reliable totals, Opera DBDB, and MARSHA GENR are required before calculating a weekend boundary.", { marshaTotal, operaTotal, operaDbdb, marshaGenr }));
+    } else {
+      weekendMaximumGenr = operaTotal - operaDbdb;
+      if (weekendMaximumGenr < 0) {
+        minimumGenr = null;
+        alerts.push(alert("unreliable", "weekend_data", "Cannot reliably assess weekend DBDB protection", "Opera DBDB is greater than the explicit Opera total.", { operaTotal, operaDbdb }));
+        weekendMaximumGenr = null;
+      } else {
+        minimumGenr = Math.min(Number(settings.minimumGenr), marshaTotal, weekendMaximumGenr);
+        if (marshaGenr > weekendMaximumGenr) alerts.push(alert("action", "weekend_limit", "Action required", `MARSHA GENR exceeds the Friday/Saturday DBDB protection boundary by ${marshaGenr - weekendMaximumGenr}.`, { operaTotal, operaDbdb, weekendMaximumGenr, marshaGenr, excess: marshaGenr - weekendMaximumGenr }));
+      }
     }
-    for (const upgradeCode of owner.allowedOperaTypes.slice(1)) {
-      const available = Math.max(0, pools[upgradeCode] - (protection[upgradeCode]?.mode === "hard" ? protection[upgradeCode].count : 0));
-      const used = Math.min(deficit, available);
-      if (used) { pools[upgradeCode] -= used; deficit -= used; placements.push({ categoryCode: owner.code, operaType: upgradeCode, rooms: used, purpose: `cover existing ${item.code} deficit` }); }
+  }
+
+  if (minimumGenr !== null && isReliableCount(marshaGenr) && marshaGenr < minimumGenr) alerts.push(alert("warning", "genr_minimum", "GENR minimum warning", `Desired effective GENR is ${minimumGenr}, while MARSHA GENR is ${marshaGenr}.`, { configuredMinimumGenr: Number(settings.minimumGenr), minimumGenr, marshaGenr }));
+
+  const higherTypeUse = new Map();
+  (settings.premiumCategories || []).forEach((category) => {
+    const marshaCode = category.marshaCode.trim().toUpperCase();
+    const operaType = category.operaType.trim().toUpperCase();
+    const higherTypes = [...new Set((category.allowedHigherOperaTypes || []).map((code) => String(code).trim().toUpperCase()).filter(Boolean))];
+    const marshaValue = marshaRooms[marshaCode];
+    const ownOperaValue = operaRooms[operaType];
+    const values = higherTypes.map((code) => ({ code, value: operaRooms[code] }));
+    if (!isReliableCount(marshaValue) || !isReliableCount(ownOperaValue) || values.some((item) => !isReliableCount(item.value))) {
+      const result = { categoryCode: marshaCode, code: "unreliable", label: "Cannot reliably assess", marshaValue, operaType, ownOperaValue, higherTypes: values, reason: "A relevant premium or higher-room value is missing, non-numeric, or negative." };
+      categories.push(result); alerts.push(alert("unreliable", "premium_data", `${marshaCode}: Cannot reliably assess`, result.reason, result)); return;
     }
-    if (deficit) deficitIssues.push(`${deficit} existing ${item.code} deficit cannot be covered by confirmed higher room types.`);
-  });
-  if (deficitIssues.some((message) => message.includes("meaning"))) return { ...status("Cannot reliably assess", "unreliable"), reason: deficitIssues.join(" "), categories: [], dataIssues: deficitIssues };
-
-  const eligibleByType = {};
-  categories.filter((item) => item.confirmed).forEach((category) => (category.allowedOperaTypes || []).forEach((code) => { eligibleByType[code] = [...(eligibleByType[code] || []), category.code]; }));
-  let hotelOverbookingRemaining = settings.hotelOverbookingConfirmed ? Math.max(0, Number(settings.hotelOverbookingLimit) || 0) : 0;
-  const results = [];
-
-  categories.filter((item) => item.confirmed).forEach((category) => {
-    const offeredRaw = marshaRooms[category.code];
-    if (offeredRaw === undefined) { results.push({ categoryCode: category.code, ...status("Cannot assess", "unassessable"), reason: "MARSHA value is missing." }); return; }
-    const offered = Math.max(0, offeredRaw);
-    let remaining = offered;
-    let softProtectedUsed = 0;
-    let higherUsed = 0;
-    const categoryPlacements = [];
-    const allowed = category.allowedOperaTypes || [];
-    const higherAvailableBeforePlacement = allowed.slice(1).reduce((sum, code) => {
-      const protectedSetting = protection[code];
-      if (!protectedSetting) return sum;
-      return sum + (protectedSetting.mode === "soft" ? pools[code] : Math.max(0, pools[code] - protectedSetting.count));
-    }, 0);
-    const higherPotential = category.releasePolicy === "early"
-      ? Math.min(higherAvailableBeforePlacement, Math.max(0, Number(category.earlyReleaseLimit) || 0))
-      : Math.min(higherAvailableBeforePlacement, Math.max(0, offered - (pools[allowed[0]] || 0)));
-    allowed.forEach((code, index) => {
-      if (!physicalCodes.has(code) || remaining <= 0) return;
-      const protectedSetting = protection[code];
-      const freelyAvailable = index === 0 ? pools[code] : Math.max(0, pools[code] - protectedSetting.count);
-      let usable = freelyAvailable;
-      if (index === 0 || protectedSetting.mode === "soft") usable = pools[code];
-      const used = Math.min(remaining, usable);
-      if (!used) return;
-      const protectedUse = Math.max(0, used - freelyAvailable);
-      pools[code] -= used; remaining -= used; softProtectedUsed += protectedUse;
-      if (index > 0) higherUsed += used;
-      categoryPlacements.push({ operaType: code, rooms: used, kind: index === 0 ? "preferred" : "upgrade", protectedUse });
-    });
-    const exception = activeException(settings, category.code, stayDate);
-    const categoryOverbooking = Math.max(0, Number(category.overbookingLimit) || 0) + Math.max(0, Number(exception?.additionalOverbooking) || 0);
-    const approvedOverbooking = Math.min(remaining, categoryOverbooking + hotelOverbookingRemaining);
-    const fromHotel = Math.max(0, approvedOverbooking - categoryOverbooking);
-    hotelOverbookingRemaining -= fromHotel;
-    remaining -= approvedOverbooking;
-    const sharedTypes = allowed.filter((code) => (eligibleByType[code] || []).some((otherCode) => otherCode !== category.code && Math.max(0, marshaRooms[otherCode] || 0) > 0));
-    const sharedRisk = sharedTypes.length > 0 && !settings.hotelSalesLimitConfirmed;
-    let result;
-    if (remaining > 0 && !sharedRisk) result = status("Action required", "action");
-    else if (remaining > 0 || sharedRisk || softProtectedUsed > 0) result = status("Review", "review");
-    else if (higherUsed > 0) result = status("Covered via upgrade", "upgrade");
-    else if (offered === 0) result = status("Intentional sales choice", "intentional");
-    else result = status("Within rules", "ok");
-    results.push({ categoryCode: category.code, offeredRaw, offered, ownAvailable: rawOpera[allowed[0]], placements: categoryPlacements, higherPotential, higherUsed, softProtectedUsed, approvedOverbooking, uncovered: remaining, sharedTypes, exception: exception || null, ...result });
+    const shortage = Math.max(0, marshaValue - ownOperaValue);
+    if (shortage === 0) { categories.push({ categoryCode: marshaCode, code: "ok", label: marshaValue === 0 ? "Closed without issue" : "No own-type shortage", marshaValue, operaType, ownOperaValue, shortage: 0, higherTypes: values, higherAvailable: values.reduce((sum, item) => sum + item.value, 0), coveredByHigher: 0, uncovered: 0 }); return; }
+    const higherAvailable = values.reduce((sum, item) => sum + item.value, 0);
+    const coveredByHigher = Math.min(shortage, higherAvailable);
+    const uncovered = shortage - coveredByHigher;
+    values.forEach((item) => { if (item.value > 0) higherTypeUse.set(item.code, [...(higherTypeUse.get(item.code) || []), marshaCode]); });
+    const result = { categoryCode: marshaCode, code: uncovered > 0 ? "action" : "warning", label: uncovered > 0 ? "Action required" : "Upgrade may be required", marshaValue, operaType, ownOperaValue, shortage, higherTypes: values, higherAvailable, coveredByHigher, uncovered };
+    categories.push(result);
+    alerts.push(alert(uncovered > 0 ? "action" : "warning", uncovered > 0 ? "premium_uncovered" : "premium_upgrade", `${marshaCode}: ${result.label}`, uncovered > 0 ? `${uncovered} offered ${marshaCode} room(s) remain uncovered after ${coveredByHigher} of ${shortage} shortage room(s) can use configured higher types.` : `All ${shortage} shortage room(s) can use configured higher types, so an upgrade may be required.`, result));
   });
 
-  const rank = { action: 6, unreliable: 5, unassessable: 5, unconfigured: 5, review: 4, upgrade: 3, intentional: 2, ok: 1 };
-  const worst = results.reduce((current, item) => rank[item.code] > rank[current.code] ? item : current, status("Within rules", "ok"));
-  const totalOffered = categories.filter((item) => item.confirmed).reduce((sum, category) => sum + Math.max(0, marshaRooms[category.code] || 0), 0);
-  const totalApprovedOverbooking = results.reduce((sum, item) => sum + (item.approvedOverbooking || 0), 0);
-  const hotelLimitExceeded = settings.hotelSalesLimitConfirmed && totalOffered > Math.max(0, Number(settings.hotelSalesLimit) || 0) + totalApprovedOverbooking;
-  const urgent = Math.max(0, Math.ceil((new Date(`${stayDate}T00:00:00Z`) - new Date(`${getBrusselsDateString()}T00:00:00Z`)) / 86400000)) <= 3;
-  return { ...status(hotelLimitExceeded ? "Action required" : worst.label, hotelLimitExceeded ? "action" : worst.code), reason: hotelLimitExceeded ? `${totalOffered} rooms are offered across MARSHA categories, above the verified hotel-wide sales limit of ${settings.hotelSalesLimit} plus ${totalApprovedOverbooking} approved overbooking.` : worst.reason || "", categories: results, placements, deficitIssues, remainingPools: pools, totalOffered, hotelLimitExceeded, urgent, dataIssues: [] };
+  const sharedTypes = [...higherTypeUse.entries()].filter(([, categoryCodes]) => new Set(categoryCodes).size > 1);
+  sharedTypes.forEach(([roomType, categoryCodes]) => alerts.push(alert("review", "shared_upgrade", "Review shared upgrade inventory", `${roomType} is available as upgrade inventory for multiple categories (${[...new Set(categoryCodes)].join(", ")}) and is not guaranteed independently to each.`, { roomType, categoryCodes: [...new Set(categoryCodes)] })));
+
+  const priority = { unassessable: 6, unreliable: 5, action: 4, review: 3, warning: 2, ok: 1 };
+  const worst = alerts.reduce((current, item) => priority[item.severity] > priority[current] ? item.severity : current, "ok");
+  const labels = { unassessable: "Cannot assess", unreliable: "Cannot reliably assess", action: "Action required", review: "Review", warning: "Warning", ok: "Within rules" };
+  return { code: worst, label: labels[worst], alerts, categories, marshaTotal, operaTotal, marshaGenr, minimumGenr, weekendMaximumGenr, isWeekend: weekend };
 }
 
 export function getSourceState({ stayDocument, snapshotDate, today, metadata = {} }) {

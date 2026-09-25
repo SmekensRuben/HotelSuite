@@ -1,5 +1,5 @@
 import { collection, db, doc, documentId, getDoc, getDocs, limit, orderBy, query, setDoc } from "../firebaseConfig";
-import { createEmptyMarshaBalanceSettings, normalizeRoomsByType } from "../utils/marshaBalance";
+import { createEmptyMarshaBalanceSettings, extractMappedTotal, normalizeRoomsByType } from "../utils/marshaBalance";
 
 async function getLatestSnapshot(hotelUid, reportName, onOrBefore) {
   const snapshotsRef = collection(db, `hotels/${hotelUid}/reports/${reportName}/snapshotDates`);
@@ -15,7 +15,10 @@ async function loadSource(hotelUid, reportName, stayDates, today) {
   const documents = await Promise.all(stayDates.map(async (stayDate) => {
     const reference = doc(db, `hotels/${hotelUid}/reports/${reportName}/snapshotDates/${snapshot.snapshotDate}/stayDates`, stayDate);
     const result = await getDoc(reference);
-    return [stayDate, result.exists() ? { ...result.data(), roomsByType: normalizeRoomsByType(result.data()?.roomsByType) } : null];
+    if (!result.exists()) return [stayDate, null];
+    const data = result.data();
+    const mappedTotal = extractMappedTotal(data);
+    return [stayDate, { ...data, roomsByType: normalizeRoomsByType(data?.roomsByType), mappedTotal: mappedTotal.value, mappedTotalField: mappedTotal.field }];
   }));
   return { ...snapshot, stays: Object.fromEntries(documents) };
 }
