@@ -1,19 +1,13 @@
 const DATE_FORMAT = /^\d{4}-\d{2}-\d{2}$/;
 
 export function getBrusselsDateString(date = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Brussels",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Brussels", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 }
 
 export function addCalendarDays(dateString, days) {
   if (!DATE_FORMAT.test(dateString)) throw new Error("Invalid date");
   const [year, month, day] = dateString.split("-").map(Number);
-  const result = new Date(Date.UTC(year, month - 1, day + Number(days)));
-  return result.toISOString().slice(0, 10);
+  return new Date(Date.UTC(year, month - 1, day + Number(days))).toISOString().slice(0, 10);
 }
 
 export function getDefaultBalanceRange(now = new Date()) {
@@ -30,89 +24,141 @@ export function enumerateDates(from, to) {
 
 export function normalizeRoomsByType(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter(([key, amount]) =>
-    key.toLowerCase() !== "total" && typeof amount === "number" && Number.isFinite(amount)
-  ));
+  return Object.fromEntries(Object.entries(value).filter(([, amount]) => typeof amount === "number" && Number.isFinite(amount)));
 }
 
-export function findOverlappingOperaTypes(rules) {
-  const owner = new Map();
-  const overlaps = new Set();
-  rules.filter((rule) => rule.enabled && rule.ruleScope !== "total").forEach((rule) => {
-    (rule.operaRoomTypes || []).forEach((type) => {
-      const normalized = String(type).trim();
-      if (!normalized) return;
-      if (owner.has(normalized) && owner.get(normalized) !== rule.id) overlaps.add(normalized);
-      owner.set(normalized, rule.id);
+export const createEmptyMarshaBalanceSettings = () => ({
+  operaRoomTypes: [],
+  salesCategories: [],
+  hotelOverbookingLimit: 0,
+  hotelOverbookingConfirmed: false,
+  hotelSalesLimit: null,
+  hotelSalesLimitConfirmed: false,
+  exceptions: [],
+});
+
+export function validateBalanceSettings(settings) {
+  const errors = [];
+  const physical = new Set((settings.operaRoomTypes || []).filter((item) => item.classification === "physical").map((item) => item.code));
+  const categoryCodes = new Set();
+  (settings.salesCategories || []).forEach((category) => {
+    if (!category.code) errors.push("Every sales category needs a MARSHA code.");
+    if (categoryCodes.has(category.code)) errors.push(`MARSHA category ${category.code} is configured more than once.`);
+    categoryCodes.add(category.code);
+    if (category.confirmed && !(category.allowedOperaTypes || []).length) errors.push(`${category.code || "A category"} needs at least one allowed physical Opera type.`);
+    (category.allowedOperaTypes || []).forEach((code) => {
+      if (!physical.has(code)) errors.push(`${code} is not configured as a physical Opera room type.`);
     });
   });
-  return [...overlaps];
+  return [...new Set(errors)];
 }
 
-function getPhysicalRoomTotal(rooms) {
-  return Object.entries(rooms).reduce((sum, [type, value]) => (
-    type.toLowerCase() === "total" ? sum : sum + Math.max(0, value)
-  ), 0);
+function activeException(settings, categoryCode, stayDate) {
+  return (settings.exceptions || []).find((item) => item.categoryCode === categoryCode && item.startDate <= stayDate && item.endDate >= stayDate && item.reason && item.responsible);
 }
 
-export function isBalanceRuleApplicable(rule, marshaRooms, operaRooms) {
-  const condition = rule.activationCondition || "always";
-  if (condition === "always") return true;
-  const rooms = rule.activationSource === "opera" ? operaRooms : marshaRooms;
-  const total = getPhysicalRoomTotal(rooms);
-  const threshold = Number(rule.activationThreshold) || 0;
-  return condition === "totalAbove" ? total > threshold : total < threshold;
+function status(label, code, details = {}) {
+  return { label, code, ...details };
 }
 
-export function evaluateBalance(marshaRooms, operaRooms, rules) {
-  const activeRules = (rules || []).filter((rule) => rule.enabled);
-  if (!activeRules.length) return { status: "unconfigured", label: "No rules configured", calculations: [] };
-  const overlaps = findOverlappingOperaTypes(activeRules);
-  if (overlaps.length) return { status: "unassessable", label: "Cannot assess", reason: `Opera room type used more than once: ${overlaps.join(", ")}`, calculations: [] };
+export function evaluateOperationalBalance(marshaRooms, operaRooms, settings, stayDate) {
+  const validationErrors = validateBalanceSettings(settings);
+  if (validationErrors.length) return { ...status("Not configured", "unconfigured"), reason: validationErrors.join(" "), categories: [], dataIssues: validationErrors };
 
-  const calculations = activeRules.map((rule) => {
-    const applicable = isBalanceRuleApplicable(rule, marshaRooms, operaRooms);
-    if (!applicable) return { rule, applicable: false, assessable: true, within: true, violation: 0 };
-    const isTotalRule = rule.ruleScope === "total";
-    const marshaPresent = isTotalRule || Object.prototype.hasOwnProperty.call(marshaRooms, rule.marshaRoomType);
-    const missingOperaTypes = isTotalRule ? [] : (rule.operaRoomTypes || []).filter((type) => !Object.prototype.hasOwnProperty.call(operaRooms, type));
-    if (!marshaPresent || missingOperaTypes.length) return { rule, assessable: false, missingOperaTypes, marshaPresent };
-    const rawMarshaValue = isTotalRule ? null : marshaRooms[rule.marshaRoomType];
-    const rawOperaValue = isTotalRule ? null : rule.operaRoomTypes.reduce((sum, type) => sum + operaRooms[type], 0);
-    const marshaValue = isTotalRule
-      ? Object.entries(marshaRooms).reduce((sum, [type, value]) => type.toLowerCase() === "total" ? sum : sum + value, 0)
-      : Math.max(0, marshaRooms[rule.marshaRoomType]);
-    const operaValue = isTotalRule
-      ? Object.entries(operaRooms).reduce((sum, [type, value]) => type.toLowerCase() === "total" ? sum : sum + value, 0)
-      : rule.operaRoomTypes.reduce((sum, type) => sum + Math.max(0, operaRooms[type]), 0);
-    const reservedRooms = Number(rule.reservedRooms) || 0;
-    const comparedOperaValue = operaValue - reservedRooms;
-    const difference = comparedOperaValue - marshaValue;
-    const tolerance = Math.max(0, Number(rule.allowedDeviation) || 0);
-    const mode = rule.comparisonMode || "exact";
-    const within = mode === "upper"
-      ? difference <= tolerance
-      : mode === "lower"
-        ? difference >= -tolerance
-      : mode === "range"
-        ? difference >= -(Number(rule.lowerDeviation) || tolerance) && difference <= (Number(rule.upperDeviation) || tolerance)
-        : Math.abs(difference) <= tolerance;
-    const violation = mode === "upper"
-      ? Math.max(0, difference - tolerance)
-      : mode === "lower"
-        ? Math.max(0, -difference - tolerance)
-        : mode === "range"
-          ? Math.max(0, -(Number(rule.lowerDeviation) || tolerance) - difference, difference - (Number(rule.upperDeviation) || tolerance))
-          : Math.max(0, Math.abs(difference) - tolerance);
-    return { rule, applicable: true, assessable: true, rawMarshaValue, rawOperaValue, marshaValue, operaValue, reservedRooms, comparedOperaValue, difference, tolerance, within, violation };
+  const physicalConfig = (settings.operaRoomTypes || []).filter((item) => item.classification === "physical");
+  const physicalCodes = new Set(physicalConfig.map((item) => item.code));
+  const categories = settings.salesCategories || [];
+  const unclassifiedOpera = Object.keys(operaRooms).filter((code) => code.toLowerCase() !== "total" && !(settings.operaRoomTypes || []).some((item) => item.code === code && item.classification && item.classification !== "unclassified"));
+  if (unclassifiedOpera.length) return { ...status("Not configured", "unconfigured"), reason: `Opera room types need classification: ${unclassifiedOpera.join(", ")}.`, categories: [], dataIssues: [] };
+  const missingConfig = Object.keys(marshaRooms).filter((code) => code.toLowerCase() !== "total" && !categories.some((item) => item.code === code && item.confirmed));
+  if (missingConfig.length) return { ...status("Not configured", "unconfigured"), reason: `MARSHA categories need confirmation: ${missingConfig.join(", ")}.`, categories: [], dataIssues: [] };
+  if (!physicalConfig.length || !categories.length) return { ...status("Not configured", "unconfigured"), reason: "Physical Opera room types and MARSHA sales categories must be configured.", categories: [], dataIssues: [] };
+
+  const missingOpera = [...physicalCodes].filter((code) => !Object.prototype.hasOwnProperty.call(operaRooms, code));
+  if (missingOpera.length) return { ...status("Cannot assess", "unassessable"), reason: `Physical Opera values are missing: ${missingOpera.join(", ")}.`, categories: [], dataIssues: missingOpera };
+
+  const pools = Object.fromEntries(physicalConfig.map((item) => [item.code, Math.max(0, operaRooms[item.code])]));
+  const rawOpera = Object.fromEntries(physicalConfig.map((item) => [item.code, operaRooms[item.code]]));
+  const protection = Object.fromEntries(physicalConfig.map((item) => [item.code, { count: Math.max(0, Number(item.protectedRooms) || 0), mode: item.protectionMode || "hard" }]));
+  const placements = [];
+  const deficitIssues = [];
+
+  // A negative value is an existing type deficit. Its category's higher allowed types must absorb it first.
+  physicalConfig.filter((item) => operaRooms[item.code] < 0).forEach((item) => {
+    let deficit = Math.abs(operaRooms[item.code]);
+    const owner = categories.find((category) => category.confirmed && category.allowedOperaTypes?.[0] === item.code);
+    if (!owner) {
+      deficitIssues.push(`The meaning of ${item.code} ${operaRooms[item.code]} cannot be allocated because no confirmed category owns this type.`);
+      return;
+    }
+    for (const upgradeCode of owner.allowedOperaTypes.slice(1)) {
+      const available = Math.max(0, pools[upgradeCode] - (protection[upgradeCode]?.mode === "hard" ? protection[upgradeCode].count : 0));
+      const used = Math.min(deficit, available);
+      if (used) { pools[upgradeCode] -= used; deficit -= used; placements.push({ categoryCode: owner.code, operaType: upgradeCode, rooms: used, purpose: `cover existing ${item.code} deficit` }); }
+    }
+    if (deficit) deficitIssues.push(`${deficit} existing ${item.code} deficit cannot be covered by confirmed higher room types.`);
   });
-  const applicableCalculations = calculations.filter((item) => item.applicable !== false);
-  if (!applicableCalculations.length) return { status: "ok", label: "No applicable rules", calculations };
-  if (applicableCalculations.some((item) => !item.assessable)) return { status: "unassessable", label: "Cannot assess", calculations };
-  const worstDifference = Math.max(...applicableCalculations.map((item) => item.violation));
-  if (applicableCalculations.every((item) => item.within)) return { status: "ok", label: "Balanced", calculations };
-  if (worstDifference <= 2) return { status: "review", label: "Review", calculations };
-  return { status: "critical", label: "Critical", calculations };
+  if (deficitIssues.some((message) => message.includes("meaning"))) return { ...status("Cannot reliably assess", "unreliable"), reason: deficitIssues.join(" "), categories: [], dataIssues: deficitIssues };
+
+  const eligibleByType = {};
+  categories.filter((item) => item.confirmed).forEach((category) => (category.allowedOperaTypes || []).forEach((code) => { eligibleByType[code] = [...(eligibleByType[code] || []), category.code]; }));
+  let hotelOverbookingRemaining = settings.hotelOverbookingConfirmed ? Math.max(0, Number(settings.hotelOverbookingLimit) || 0) : 0;
+  const results = [];
+
+  categories.filter((item) => item.confirmed).forEach((category) => {
+    const offeredRaw = marshaRooms[category.code];
+    if (offeredRaw === undefined) { results.push({ categoryCode: category.code, ...status("Cannot assess", "unassessable"), reason: "MARSHA value is missing." }); return; }
+    const offered = Math.max(0, offeredRaw);
+    let remaining = offered;
+    let softProtectedUsed = 0;
+    let higherUsed = 0;
+    const categoryPlacements = [];
+    const allowed = category.allowedOperaTypes || [];
+    const higherAvailableBeforePlacement = allowed.slice(1).reduce((sum, code) => {
+      const protectedSetting = protection[code];
+      if (!protectedSetting) return sum;
+      return sum + (protectedSetting.mode === "soft" ? pools[code] : Math.max(0, pools[code] - protectedSetting.count));
+    }, 0);
+    const higherPotential = category.releasePolicy === "early"
+      ? Math.min(higherAvailableBeforePlacement, Math.max(0, Number(category.earlyReleaseLimit) || 0))
+      : Math.min(higherAvailableBeforePlacement, Math.max(0, offered - (pools[allowed[0]] || 0)));
+    allowed.forEach((code, index) => {
+      if (!physicalCodes.has(code) || remaining <= 0) return;
+      const protectedSetting = protection[code];
+      const freelyAvailable = index === 0 ? pools[code] : Math.max(0, pools[code] - protectedSetting.count);
+      let usable = freelyAvailable;
+      if (index === 0 || protectedSetting.mode === "soft") usable = pools[code];
+      const used = Math.min(remaining, usable);
+      if (!used) return;
+      const protectedUse = Math.max(0, used - freelyAvailable);
+      pools[code] -= used; remaining -= used; softProtectedUsed += protectedUse;
+      if (index > 0) higherUsed += used;
+      categoryPlacements.push({ operaType: code, rooms: used, kind: index === 0 ? "preferred" : "upgrade", protectedUse });
+    });
+    const exception = activeException(settings, category.code, stayDate);
+    const categoryOverbooking = Math.max(0, Number(category.overbookingLimit) || 0) + Math.max(0, Number(exception?.additionalOverbooking) || 0);
+    const approvedOverbooking = Math.min(remaining, categoryOverbooking + hotelOverbookingRemaining);
+    const fromHotel = Math.max(0, approvedOverbooking - categoryOverbooking);
+    hotelOverbookingRemaining -= fromHotel;
+    remaining -= approvedOverbooking;
+    const sharedTypes = allowed.filter((code) => (eligibleByType[code] || []).some((otherCode) => otherCode !== category.code && Math.max(0, marshaRooms[otherCode] || 0) > 0));
+    const sharedRisk = sharedTypes.length > 0 && !settings.hotelSalesLimitConfirmed;
+    let result;
+    if (remaining > 0 && !sharedRisk) result = status("Action required", "action");
+    else if (remaining > 0 || sharedRisk || softProtectedUsed > 0) result = status("Review", "review");
+    else if (higherUsed > 0) result = status("Covered via upgrade", "upgrade");
+    else if (offered === 0) result = status("Intentional sales choice", "intentional");
+    else result = status("Within rules", "ok");
+    results.push({ categoryCode: category.code, offeredRaw, offered, ownAvailable: rawOpera[allowed[0]], placements: categoryPlacements, higherPotential, higherUsed, softProtectedUsed, approvedOverbooking, uncovered: remaining, sharedTypes, exception: exception || null, ...result });
+  });
+
+  const rank = { action: 6, unreliable: 5, unassessable: 5, unconfigured: 5, review: 4, upgrade: 3, intentional: 2, ok: 1 };
+  const worst = results.reduce((current, item) => rank[item.code] > rank[current.code] ? item : current, status("Within rules", "ok"));
+  const totalOffered = categories.filter((item) => item.confirmed).reduce((sum, category) => sum + Math.max(0, marshaRooms[category.code] || 0), 0);
+  const totalApprovedOverbooking = results.reduce((sum, item) => sum + (item.approvedOverbooking || 0), 0);
+  const hotelLimitExceeded = settings.hotelSalesLimitConfirmed && totalOffered > Math.max(0, Number(settings.hotelSalesLimit) || 0) + totalApprovedOverbooking;
+  const urgent = Math.max(0, Math.ceil((new Date(`${stayDate}T00:00:00Z`) - new Date(`${getBrusselsDateString()}T00:00:00Z`)) / 86400000)) <= 3;
+  return { ...status(hotelLimitExceeded ? "Action required" : worst.label, hotelLimitExceeded ? "action" : worst.code), reason: hotelLimitExceeded ? `${totalOffered} rooms are offered across MARSHA categories, above the verified hotel-wide sales limit of ${settings.hotelSalesLimit} plus ${totalApprovedOverbooking} approved overbooking.` : worst.reason || "", categories: results, placements, deficitIssues, remainingPools: pools, totalOffered, hotelLimitExceeded, urgent, dataIssues: [] };
 }
 
 export function getSourceState({ stayDocument, snapshotDate, today, metadata = {} }) {

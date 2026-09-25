@@ -1,175 +1,135 @@
 # MARSHA Balance
 
-## Purpose and access
+## Purpose
 
-MARSHA Balance is a read-only Front Office control. It compares MARSHA availability with Opera availability and never writes availability back to either system.
+MARSHA Balance is a read-only operational control. It answers one question: **can every room currently offered in a MARSHA sales category be placed in a suitable physical Opera room, after confirmed placement policy, protected inventory, existing room-type deficits, and approved overbooking are applied?**
 
-Access is hotel-specific:
+A deliberate commercial choice is not an error. Closing a premium MARSHA category while Opera still has premium rooms is reported as **Intentional sales choice**. The page never changes availability in MARSHA or Opera.
 
-- `marshaBalance.read` grants access to the overview and detail pages.
-- `marshaBalance.update` allows a user to maintain comparison rules.
-
-Rules are stored in Firestore at:
+Access remains hotel-specific through `marshaBalance.read` and `marshaBalance.update`. Settings are stored in:
 
 ```text
 hotels/{hotelUid}/settings/marshaBalance
 ```
 
-The document contains a `rules` array. A rule only participates in an assessment when both `enabled` is `true` and its optional activation condition is met.
+## Source selection and data quality
 
-## Data selection
+The page retains the existing nightly snapshot paths and selects the newest snapshot on or before the current `Europe/Brussels` date. A requested `stayDate` is read from inside that snapshot; snapshot date and stay date are not interchangeable.
 
-For each source, the page reads snapshot documents from:
+An assessment requires both stay-date documents, the same snapshot date for both sources, and current/complete source states. Snapshot existence alone is insufficient. Missing, stale, failed, incomplete, or non-comparable data produces **Cannot assess** and cannot be hidden by a date exception.
 
-```text
-hotels/{hotelUid}/reports/marshaavailability/snapshotDates/{snapshotDate}
-hotels/{hotelUid}/reports/operaavailability/snapshotDates/{snapshotDate}
-```
+`roomsByType` retains missing keys, zero, and negative values as different source states. `Total` is never automatically classified as a physical room.
 
-It selects the newest available snapshot date on or before the current date in `Europe/Brussels`. It then reads every requested stay date from the selected snapshot:
+## Configuration model
 
-```text
-.../snapshotDates/{snapshotDate}/stayDates/{stayDate}
-```
+### Opera room types
 
-The snapshot date is therefore deliberately independent from the stay date. A future stay date is looked up inside the current nightly snapshot rather than under a snapshot with the future stay date.
+Every detected Opera code must be classified as one of:
 
-The overview defaults to today through 30 calendar days later, inclusive (31 dates), using Brussels calendar boundaries.
+- physical room;
+- virtual;
+- administrative;
+- total; or
+- not confirmed.
 
-A source is shown as:
+Only confirmed physical types provide placement capacity. Each physical type can have protected rooms:
 
-- **Available and current**: the stay-date document exists in today's snapshot and the snapshot metadata is not explicitly failed, errored, or incomplete.
-- **Outdated**: the stay-date document exists, but the selected snapshot is older than today.
-- **Expected**: today's selected snapshot does not yet contain the requested stay-date document, or the selected snapshot is future-dated.
-- **Missing**: an older snapshot does not contain the requested stay-date document, no snapshot exists, or its metadata explicitly reports a failed, error, or incomplete import.
+- **Hard protection:** protected rooms cannot host a lower MARSHA category.
+- **Soft protection:** the rooms can be used, but the conclusion becomes **Review**.
 
-The existence of the snapshot document alone is never enough: the required `stayDates/{stayDate}` document must also exist.
+Protected rooms remain usable by their own category when that Opera type is first in its preference list.
 
-## When a date can be assessed
+### MARSHA sales categories
 
-A stay date can only be evaluated when:
+Each MARSHA code needs an explicitly confirmed, directed placement mapping. The administrator answers “May this booking be placed in this Opera type?” and orders the selected physical Opera types by preference. The first type represents the own or lowest suitable type. No relationship is inferred from code names, price, or list position elsewhere.
 
-1. both the MARSHA and Opera stay-date documents exist;
-2. both sources use the same snapshot date; and
-3. active, applicable rules can be evaluated from the available room types.
+Mappings are directional. Allowing a suite to host an EXEC booking does not allow EXEC to host a suite booking.
 
-Otherwise the result is **Cannot assess**. If there are no enabled rules, the result is **No rules configured**. If rules are enabled but all their activation conditions are false, the result is **No applicable rules**.
+Release policy is configured per category:
 
-The overview row is green only when both sources are **Available and current** and the balance result has an `ok` status. Every other overview row is red. The detail page shows each mapping's own result independently, so a passing mapping is green even when another mapping makes the overall date fail.
+- **Strict:** use higher suitable types only after lower suitable inventory is exhausted.
+- **Early release allowed:** expose up to the configured number of higher rooms as potentially releasable before lower types are exhausted.
 
-## Room values
+The assessment always reports higher rooms actually used and higher rooms potentially available under the selected release policy.
 
-`roomsByType` is normalized without converting values to strings or booleans:
+### Approved overbooking
 
-- a missing key remains missing;
-- `0` remains present and is different from a missing key;
-- negative values remain available for display;
-- a field named `Total` (case-insensitive) is excluded and is never treated as a physical room type.
+Overbooking defaults to zero and unconfirmed. It can be confirmed separately at hotel level and per sales category. Category allowance is consumed before the shared hotel allowance. No limit is inferred from current negative availability.
 
-For an individual room-type mapping, negative MARSHA and Opera values are compared as `0`. The detail page still displays the original negative values and explains the normalized values used by the calculation.
+A verified hotel-wide sales limit can also be recorded. Until its meaning and value are confirmed, shared capacity between categories causes **Review**, not a certain green or red conclusion.
 
-For example, MARSHA `-1` and Opera `0` are displayed as `-1` and `0`, but are compared as `0` and `0`, so that difference does not make the mapping fail.
+### Date exceptions
 
-## Calculation used by a rule
+An exception contains a category, start and end stay date, reason, responsible person, and temporary additional overbooking allowance. It only applies inside its date period. It cannot suppress source-data or import problems.
 
-For a room-type mapping:
+### Preview
 
-```text
-MARSHA value = max(0, configured MARSHA room-type value)
-Opera value  = sum(max(0, each configured Opera room-type value))
-adjusted Opera value = Opera value - reserved rooms
-difference = adjusted Opera value - MARSHA value
-```
+Settings include a preview based on a real loaded stay date. It evaluates unsaved settings so an administrator can inspect category results, uncovered rooms, and higher-room use before saving.
 
-A required configured room-type key that is absent is not treated as zero. It makes the date **Cannot assess**.
+## Placement calculation
 
-The same Opera room type cannot be used in more than one enabled room-mapping rule. Settings validation rejects such overlaps so the same physical inventory cannot be counted fully more than once.
+The engine builds one shared pool for every configured physical Opera type. It never creates a separate copy of the same suite inventory for every eligible MARSHA category.
 
-## Rule types
+### Existing negative Opera values
 
-### Room type mapping
+A negative physical Opera value represents an existing type deficit and is not silently discarded. The engine first finds the confirmed category whose first preferred type is that Opera code. It then consumes that category's confirmed higher suitable room pools to cover the deficit. Those rooms are removed before new MARSHA availability is placed.
 
-Maps one MARSHA room type to one or more Opera room types. For example, `GENR` can be compared with the combined values of `QNK` and `ANK`. Codes are never matched automatically; only configured mappings are used.
+If ownership or placement meaning cannot be established from confirmed configuration, the result is **Cannot reliably assess** and explains what is missing.
 
-### All room totals
+### New MARSHA availability
 
-Compares the sum of all physical MARSHA room types with the sum of all physical Opera room types. The imported `Total` field is ignored rather than trusted or counted as a room type. A total rule is shown separately from room mappings on the detail page.
+For each confirmed category, the engine:
 
-## Comparison modes
+1. reads the raw MARSHA offered value;
+2. uses the first preferred Opera type;
+3. continues through allowed higher types in preference order;
+4. respects hard protection and flags use of soft protection;
+5. applies a valid date exception;
+6. applies category and then hotel approved overbooking;
+7. reports offered, placed, upgraded, overbooked, and uncovered rooms.
 
-The calculation uses `difference = adjusted Opera - MARSHA`.
+A missing required key is never converted to zero. A MARSHA value of zero is a valid closed sales choice. Multiple categories can reference the same higher type, but allocation uses a shared pool. If simultaneous shared sales cannot be proven safe without a verified hotel-wide limit, the result is **Review**.
 
-### Exact match
+## Results
 
-The rule passes when:
+There is no generic tolerance and no fixed “more than two rooms is critical” rule.
 
-```text
-absolute difference <= allowed difference
-```
+- **Within rules:** complete assessment, all offered rooms placed without higher types, protected inventory, or unapproved overbooking.
+- **Covered via upgrade:** one or more confirmed higher suitable room types are required and policy permits it.
+- **Intentional sales choice:** the MARSHA category is closed even though suitable Opera inventory may remain.
+- **Review:** shared capacity, soft protection, or missing hotel-wide limit information prevents a certain conclusion.
+- **Action required:** MARSHA demonstrably offers rooms that cannot be placed, outside approved overbooking.
+- **Cannot assess / Cannot reliably assess:** source data or confirmed placement meaning is insufficient.
+- **Not configured:** one or more MARSHA categories or necessary Opera classifications are not confirmed.
 
-With an allowed difference of `0`, the adjusted Opera and MARSHA values must be equal.
-
-### Maximum only
-
-Opera may not exceed MARSHA. The rule passes when:
-
-```text
-difference <= allowed difference
-```
-
-A large negative difference is valid for this rule. For example, MARSHA `26` and Opera `2` pass a Maximum-only rule with zero tolerance because Opera does not exceed MARSHA.
-
-### Minimum only
-
-MARSHA may not exceed adjusted Opera. The rule passes when:
-
-```text
-difference >= -allowed difference
-```
-
-### Allowed range
-
-The rule has separate **Allowed below** and **Allowed above** values. It passes when the difference is within those lower and upper bounds.
-
-## Reserved rooms and allowed differences
-
-**Reserved rooms** are deducted from the combined Opera value before comparing it with MARSHA. They are not deducted from the MARSHA value.
-
-The allowed difference acts as tolerance for Exact, Maximum, and Minimum rules. Range rules instead use their separate below and above values.
-
-## Conditional activation by remaining rooms
-
-Each rule can be configured to apply:
-
-- **Always**;
-- when there are **More than X rooms remaining**; or
-- when there are **Fewer than X rooms remaining**.
-
-The administrator chooses whether the activation total comes from MARSHA or Opera. The remaining-room total is calculated from all physical room-type values, ignores the imported `Total` field, and counts negative values as zero.
-
-The comparisons are strict: `More than X` uses `> X`, while `Fewer than X` uses `< X`. A total exactly equal to X satisfies neither conditional option.
-
-A rule whose condition is not met is neutral. It is displayed as **Not applicable** on the detail page and does not contribute to the date's severity.
-
-## Overall result and severity
-
-Only enabled and applicable rules contribute to the result:
-
-- **Balanced**: every applicable rule passes.
-- **Review**: at least one rule fails, but the largest amount outside its permitted boundary is at most 2 rooms.
-- **Critical**: at least one rule is more than 2 rooms outside its permitted boundary.
-- **No rules configured**: no rule is enabled.
-- **No applicable rules**: rules are enabled, but none meet their activation condition.
-- **Cannot assess**: required source documents, comparable snapshots, or mapped room-type values are missing, or enabled rules reuse the same Opera room type.
-
-Severity is based on the actual boundary violation, not the raw absolute difference. A passing directional rule can therefore never inflate another rule from Review to Critical.
+Near arrivals receive an urgency marker, but proximity never changes the arithmetic result.
 
 ## Detail page
 
-Clicking an overview row opens its stay-date detail page. It contains:
+The detail page separates data problems from sales risk and shows, per MARSHA category:
 
-1. the overall result;
-2. total controls in a compact summary;
-3. room mappings in the shared list/table layout, including raw values, normalized comparison information, difference, rule, and per-rule result;
-4. MARSHA and Opera room types that are not included in an enabled room mapping; and
-5. collapsible snapshot information with snapshot dates and available import metadata.
+- raw MARSHA rooms offered;
+- raw availability in the first preferred Opera type;
+- concrete room placements in preference order;
+- higher rooms used and potentially available;
+- protected rooms used;
+- approved overbooking;
+- uncovered rooms;
+- shared capacity and applicable exception information;
+- the category conclusion.
+
+It separately lists existing Opera deficits covered before new sales, raw source maps, and collapsible snapshot metadata.
+
+## Information that still requires source-system confirmation
+
+A fully certain hotel-wide simultaneous-sales assessment requires confirmation of:
+
+1. whether each Opera `roomsByType` value is independent physical availability or already overlaps another type;
+2. the exact business meaning of negative Opera values and whether they always represent a room-type deficit requiring upgrade placement;
+3. a verified hotel-wide remaining-sales limit for the stay date, rather than a sum inferred from room-type values;
+4. whether hotel and category overbooking limits are additive, and their unit and effective dates;
+5. whether existing reservations already include room-type upgrades that are also reflected in another room-type value;
+6. whether MARSHA category availability values can overlap each other rather than represent simultaneous sellable rooms;
+7. the authoritative source and lifecycle for protected inventory and temporary exceptions.
+
+Until these are confirmed in configuration or source metadata, the engine deliberately returns **Review**, **Cannot reliably assess**, or **Not configured** instead of **Within rules**.

@@ -1,69 +1,94 @@
 import { describe, expect, it } from "vitest";
-import { enumerateDates, evaluateBalance, findOverlappingOperaTypes, getDefaultBalanceRange, isBalanceRuleApplicable, normalizeRoomsByType } from "./marshaBalance";
+import { enumerateDates, evaluateOperationalBalance, getDefaultBalanceRange, normalizeRoomsByType, validateBalanceSettings } from "./marshaBalance";
 
-const rule = { id: "one", enabled: true, marshaRoomType: "GENR", operaRoomTypes: ["QNK", "DBDB"], comparisonMode: "exact", reservedRooms: 1, allowedDeviation: 0 };
+const settings = (overrides = {}) => ({
+  operaRoomTypes: [
+    { code: "EXEC", classification: "physical", protectedRooms: 0, protectionMode: "hard" },
+    { code: "SUITE", classification: "physical", protectedRooms: 0, protectionMode: "hard" },
+  ],
+  salesCategories: [{ code: "EXEC", confirmed: true, allowedOperaTypes: ["EXEC", "SUITE"], releasePolicy: "strict", earlyReleaseLimit: 0, overbookingLimit: 0 }],
+  hotelOverbookingLimit: 0,
+  hotelOverbookingConfirmed: false,
+  hotelSalesLimit: null,
+  hotelSalesLimitConfirmed: false,
+  exceptions: [],
+  ...overrides,
+});
 
-describe("MARSHA Balance", () => {
+describe("MARSHA Balance operational assessment", () => {
   it("uses Brussels calendar boundaries and includes 31 days", () => {
     const range = getDefaultBalanceRange(new Date("2026-03-28T23:30:00Z"));
     expect(range.from).toBe("2026-03-29");
     expect(enumerateDates(range.from, range.to)).toHaveLength(31);
   });
 
-  it("retains zero and negative values but excludes Total", () => {
-    expect(normalizeRoomsByType({ GENR: 0, QNQN: -1, Total: -1, invalid: "2" })).toEqual({ GENR: 0, QNQN: -1 });
+  it("preserves missing, zero, negative and Total values as distinct source data", () => {
+    expect(normalizeRoomsByType({ EXEC: 0, SUITE: -1, Total: 7, invalid: "2" })).toEqual({ EXEC: 0, SUITE: -1, Total: 7 });
   });
 
-  it("distinguishes a missing room type from zero", () => {
-    expect(evaluateBalance({ GENR: 0 }, { QNK: 1, DBDB: 0 }, [rule]).status).toBe("ok");
-    expect(evaluateBalance({}, { QNK: 1, DBDB: 0 }, [rule]).status).toBe("unassessable");
+  it("covers EXEC through an allowed suite upgrade", () => {
+    const result = evaluateOperationalBalance({ EXEC: 1 }, { EXEC: 0, SUITE: 1 }, settings(), "2026-09-25");
+    expect(result.code).toBe("upgrade");
+    expect(result.categories[0]).toMatchObject({ higherUsed: 1, uncovered: 0 });
   });
 
-  it("treats negative mapped room-type values as zero", () => {
-    const noReservationRule = { ...rule, reservedRooms: 0 };
-    const result = evaluateBalance({ GENR: -4 }, { QNK: -2, DBDB: -1 }, [noReservationRule]);
-    expect(result.status).toBe("ok");
-    expect(result.calculations[0]).toMatchObject({ rawMarshaValue: -4, rawOperaValue: -3, marshaValue: 0, operaValue: 0, difference: 0 });
+  it("requires action for demonstrably uncovered availability", () => {
+    expect(evaluateOperationalBalance({ EXEC: 1 }, { EXEC: 0, SUITE: 0 }, settings(), "2026-09-25")).toMatchObject({ code: "action" });
+    expect(evaluateOperationalBalance({ EXEC: 2 }, { EXEC: 0, SUITE: 1 }, settings(), "2026-09-25").categories[0]).toMatchObject({ uncovered: 1, code: "action" });
   });
 
-  it("applies rules above or below a configured remaining-room total", () => {
-    const rooms = { GENR: 3, KING: 2, Negative: -4, Total: 999 };
-    expect(isBalanceRuleApplicable({ activationCondition: "totalAbove", activationThreshold: 4 }, rooms, {})).toBe(true);
-    expect(isBalanceRuleApplicable({ activationCondition: "totalBelow", activationThreshold: 6 }, rooms, {})).toBe(true);
-    expect(isBalanceRuleApplicable({ activationCondition: "totalBelow", activationThreshold: 5 }, rooms, {})).toBe(false);
+  it("uses preferred rooms first and reports higher rooms and soft protection", () => {
+    const config = settings({
+      operaRoomTypes: [
+        { code: "QNK", classification: "physical", protectedRooms: 0, protectionMode: "hard" },
+        { code: "DBDB", classification: "physical", protectedRooms: 1, protectionMode: "soft" },
+      ],
+      salesCategories: [{ code: "GENR", confirmed: true, allowedOperaTypes: ["QNK", "DBDB"], releasePolicy: "strict", overbookingLimit: 0 }],
+    });
+    const result = evaluateOperationalBalance({ GENR: 6 }, { QNK: 4, DBDB: 3 }, config, "2026-09-25");
+    expect(result.categories[0].placements).toEqual([
+      { operaType: "QNK", rooms: 4, kind: "preferred", protectedUse: 0 },
+      { operaType: "DBDB", rooms: 2, kind: "upgrade", protectedUse: 0 },
+    ]);
+    expect(result.categories[0].code).toBe("upgrade");
   });
 
-  it("skips a comparison when its remaining-room condition is not met", () => {
-    const conditionalRule = { ...rule, activationCondition: "totalBelow", activationThreshold: 2 };
-    const result = evaluateBalance({ GENR: 10 }, { QNK: 0, DBDB: 0 }, [conditionalRule]);
-    expect(result).toMatchObject({ status: "ok", label: "No applicable rules" });
-    expect(result.calculations[0]).toMatchObject({ applicable: false, within: true });
+  it("treats a closed premium category as an intentional sales choice", () => {
+    const config = settings({ salesCategories: [{ code: "SUITE", confirmed: true, allowedOperaTypes: ["SUITE"], releasePolicy: "strict", overbookingLimit: 0 }] });
+    expect(evaluateOperationalBalance({ SUITE: 0 }, { EXEC: 0, SUITE: 2 }, config, "2026-09-25")).toMatchObject({ code: "intentional" });
   });
 
-  it("does not allow the same Opera inventory in multiple active rules", () => {
-    const rules = [rule, { ...rule, id: "two", marshaRoomType: "QNQN", operaRoomTypes: ["QNK"] }];
-    expect(findOverlappingOperaTypes(rules)).toEqual(["QNK"]);
-    expect(evaluateBalance({ GENR: 1, QNQN: 1 }, { QNK: 1, DBDB: 1 }, rules).status).toBe("unassessable");
+  it("marks shared suite capacity for review instead of counting it twice", () => {
+    const config = settings({ salesCategories: [
+      { code: "EXEC", confirmed: true, allowedOperaTypes: ["EXEC", "SUITE"], releasePolicy: "strict", overbookingLimit: 0 },
+      { code: "SUITE", confirmed: true, allowedOperaTypes: ["SUITE"], releasePolicy: "strict", overbookingLimit: 0 },
+    ] });
+    const result = evaluateOperationalBalance({ EXEC: 1, SUITE: 1 }, { EXEC: 0, SUITE: 1 }, config, "2026-09-25");
+    expect(result.code).toBe("review");
+    expect(result.categories.some((item) => item.sharedTypes.includes("SUITE"))).toBe(true);
   });
 
-  it("supports a minimum rule where MARSHA may not exceed Opera", () => {
-    const minimumRule = { ...rule, comparisonMode: "lower", reservedRooms: 0 };
-    expect(evaluateBalance({ GENR: 5 }, { QNK: 3, DBDB: 2 }, [minimumRule]).status).toBe("ok");
-    expect(evaluateBalance({ GENR: 6 }, { QNK: 3, DBDB: 2 }, [minimumRule]).status).not.toBe("ok");
+  it("uses a confirmed hotel-wide sales limit", () => {
+    const config = settings({ hotelSalesLimitConfirmed: true, hotelSalesLimit: 0 });
+    expect(evaluateOperationalBalance({ EXEC: 1 }, { EXEC: 1, SUITE: 0 }, config, "2026-09-25")).toMatchObject({ code: "action", hotelLimitExceeded: true });
   });
 
-  it("does not let a passing directional rule inflate another rule's severity", () => {
-    const maximumRule = { ...rule, comparisonMode: "upper", reservedRooms: 0 };
-    const exactRule = { ...rule, id: "two", marshaRoomType: "KING", operaRoomTypes: ["DKL"], reservedRooms: 0 };
-    const result = evaluateBalance({ GENR: 26, KING: 0 }, { QNK: 1, DBDB: 1, DKL: 1 }, [maximumRule, exactRule]);
-    expect(result.status).toBe("review");
-    expect(result.calculations[0]).toMatchObject({ within: true, difference: -24, violation: 0 });
+  it("uses a suite for an existing EXEC deficit before new availability", () => {
+    const result = evaluateOperationalBalance({ EXEC: 1 }, { EXEC: -1, SUITE: 1 }, settings(), "2026-09-25");
+    expect(result.placements).toContainEqual({ categoryCode: "EXEC", operaType: "SUITE", rooms: 1, purpose: "cover existing EXEC deficit" });
+    expect(result.categories[0]).toMatchObject({ uncovered: 1, code: "action" });
   });
 
-  it("compares calculated physical-room totals without using imported Total", () => {
-    const totalRule = { id: "total", enabled: true, ruleScope: "total", comparisonMode: "exact", reservedRooms: 0, allowedDeviation: 0 };
-    const result = evaluateBalance({ GENR: 3, QNQN: 2, Total: 999 }, { QNK: 1, DBDB: 4, Total: -999 }, [totalRule]);
-    expect(result.status).toBe("ok");
-    expect(result.calculations[0]).toMatchObject({ marshaValue: 5, operaValue: 5 });
+  it("never treats unconfirmed categories as within rules", () => {
+    const config = settings({ salesCategories: [{ code: "EXEC", confirmed: false, allowedOperaTypes: [] }] });
+    expect(evaluateOperationalBalance({ EXEC: 0 }, { EXEC: 1, SUITE: 1 }, config, "2026-09-25").code).toBe("unconfigured");
+  });
+
+  it("never treats an unclassified Opera code as within rules", () => {
+    expect(evaluateOperationalBalance({ EXEC: 0 }, { EXEC: 1, SUITE: 1, HOUSE: 4 }, settings(), "2026-09-25")).toMatchObject({ code: "unconfigured" });
+  });
+
+  it("validates that allowed types are confirmed physical Opera types", () => {
+    expect(validateBalanceSettings(settings({ salesCategories: [{ code: "EXEC", confirmed: true, allowedOperaTypes: ["VIRTUAL"] }] }))).toContain("VIRTUAL is not configured as a physical Opera room type.");
   });
 });

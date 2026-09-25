@@ -1,5 +1,5 @@
 import { collection, db, doc, documentId, getDoc, getDocs, limit, orderBy, query, setDoc } from "../firebaseConfig";
-import { normalizeRoomsByType } from "../utils/marshaBalance";
+import { createEmptyMarshaBalanceSettings, normalizeRoomsByType } from "../utils/marshaBalance";
 
 async function getLatestSnapshot(hotelUid, reportName, onOrBefore) {
   const snapshotsRef = collection(db, `hotels/${hotelUid}/reports/${reportName}/snapshotDates`);
@@ -30,9 +30,9 @@ export async function getMarshaBalanceData(hotelUid, stayDates, today) {
 
 export async function getMarshaBalanceSettings(hotelUid) {
   const result = await getDoc(doc(db, `hotels/${hotelUid}/settings`, "marshaBalance"));
-  return result.exists() ? result.data() : { rules: [] };
+  return result.exists() ? { ...createEmptyMarshaBalanceSettings(), ...result.data() } : createEmptyMarshaBalanceSettings();
 }
 
-export function saveMarshaBalanceSettings(hotelUid, rules) {
-  return setDoc(doc(db, `hotels/${hotelUid}/settings`, "marshaBalance"), { rules }, { merge: true });
+export function saveMarshaBalanceSettings(hotelUid, settings) {
+  return setDoc(doc(db, `hotels/${hotelUid}/settings`, "marshaBalance"), settings);
 }
