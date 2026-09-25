@@ -38,31 +38,78 @@ export function extractMappedTotal(data) {
 }
 
 export const createEmptyMarshaBalanceSettings = () => ({
-  minimumGenr: 0,
+  availabilityRules: [],
   premiumCategories: [],
-  weekendDbdbProtection: true,
 });
+
+export function migrateMarshaBalanceSettings(raw = {}) {
+  if (Array.isArray(raw.availabilityRules)) return { ...createEmptyMarshaBalanceSettings(), ...raw };
+  const hadLegacyGenr = raw.minimumGenr !== undefined || raw.weekendDbdbProtection !== undefined;
+  return {
+    availabilityRules: hadLegacyGenr ? [{
+      marshaCode: "GENR",
+      normalMinimum: Math.max(0, Number(raw.minimumGenr) || 0),
+      visibilityMinimum: null,
+      distributionStopsAtZeroConfirmed: false,
+      operaTypeRules: raw.weekendDbdbProtection === false ? [] : [{
+        operaType: "DBDB",
+        defaultCounts: true,
+        weekdayOverrides: { 5: false, 6: false },
+        dateOverrides: [],
+        independentPhysicalInventoryConfirmed: true,
+      }],
+    }] : [],
+    premiumCategories: Array.isArray(raw.premiumCategories) ? raw.premiumCategories : [],
+  };
+}
+
+function dateRangesOverlap(first, second) {
+  return first.startDate <= second.endDate && second.startDate <= first.endDate;
+}
 
 export function validateBalanceSettings(settings) {
   const errors = [];
-  if (!Number.isInteger(Number(settings.minimumGenr)) || Number(settings.minimumGenr) < 0) errors.push("Desired minimum GENR must be a non-negative integer.");
   const seen = new Set();
+  (settings.availabilityRules || []).forEach((rule) => {
+    const code = String(rule.marshaCode || "").trim().toUpperCase();
+    if (!code) errors.push("Every availability rule needs a MARSHA room type.");
+    if (seen.has(code)) errors.push(`MARSHA room type ${code} is configured more than once.`);
+    seen.add(code);
+    if (!Number.isInteger(Number(rule.normalMinimum)) || Number(rule.normalMinimum) < 0) errors.push(`${code}: normal minimum must be a non-negative integer.`);
+    if (rule.visibilityMinimum !== null && rule.visibilityMinimum !== "" && (!Number.isInteger(Number(rule.visibilityMinimum)) || Number(rule.visibilityMinimum) < 1)) errors.push(`${code}: visible minimum must be blank or a positive integer.`);
+    (rule.operaTypeRules || []).forEach((operaRule) => {
+      if (!String(operaRule.operaType || "").trim()) errors.push(`${code}: every Opera counting rule needs a room type.`);
+      const periods = operaRule.dateOverrides || [];
+      periods.forEach((period, index) => {
+        if (!DATE_FORMAT.test(period.startDate || "") || !DATE_FORMAT.test(period.endDate || "") || period.startDate > period.endDate) errors.push(`${code}/${operaRule.operaType}: date overrides need a valid inclusive start and end date.`);
+        if (periods.slice(index + 1).some((other) => dateRangesOverlap(period, other))) errors.push(`${code}/${operaRule.operaType}: overlapping date overrides are not allowed.`);
+      });
+    });
+  });
+  const premiumSeen = new Set();
   (settings.premiumCategories || []).forEach((category) => {
     const marshaCode = String(category.marshaCode || "").trim().toUpperCase();
     const operaType = String(category.operaType || "").trim().toUpperCase();
     if (!marshaCode || !operaType) errors.push("Every premium control needs a MARSHA category and its corresponding Opera room type.");
-    if (seen.has(marshaCode)) errors.push(`MARSHA premium category ${marshaCode} is configured more than once.`);
-    seen.add(marshaCode);
+    if (premiumSeen.has(marshaCode)) errors.push(`MARSHA premium category ${marshaCode} is configured more than once.`);
+    premiumSeen.add(marshaCode);
     if ((category.allowedHigherOperaTypes || []).includes(operaType)) errors.push(`${marshaCode}: the own Opera type cannot also be a higher type.`);
   });
   return [...new Set(errors)];
 }
 
-export function isWeekendStayDate(stayDate) {
-  if (!DATE_FORMAT.test(stayDate)) return false;
+export function getStayDateWeekday(stayDate) {
+  if (!DATE_FORMAT.test(stayDate)) return null;
   const [year, month, day] = stayDate.split("-").map(Number);
-  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-  return weekday === 5 || weekday === 6;
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+}
+
+export function resolveOperaCountingRule(rule, stayDate) {
+  const dateOverride = (rule.dateOverrides || []).find((item) => item.startDate <= stayDate && stayDate <= item.endDate);
+  if (dateOverride) return { counts: Boolean(dateOverride.counts), source: "date", description: `${dateOverride.startDate} through ${dateOverride.endDate} (inclusive)` };
+  const weekday = getStayDateWeekday(stayDate);
+  if (rule.weekdayOverrides && Object.prototype.hasOwnProperty.call(rule.weekdayOverrides, weekday)) return { counts: Boolean(rule.weekdayOverrides[weekday]), source: "weekday", description: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][weekday] };
+  return { counts: Boolean(rule.defaultCounts), source: "default", description: "Default" };
 }
 
 function isReliableCount(value) {
@@ -70,78 +117,88 @@ function isReliableCount(value) {
 }
 
 function alert(severity, code, title, message, details = {}) {
-  return { severity, code, title, message, ...details };
+  return { ...details, severity, code, title, message };
 }
 
 export function evaluateSimplifiedBalance({ marshaRooms, operaRooms, marshaTotal, operaTotal, settings, stayDate }) {
-  const configurationErrors = validateBalanceSettings(settings);
-  if (configurationErrors.length) return { code: "unconfigured", label: "Not configured", alerts: configurationErrors.map((message) => alert("unconfigured", "configuration", "Configuration required", message)), categories: [], isWeekend: isWeekendStayDate(stayDate) };
-
+  const migrated = migrateMarshaBalanceSettings(settings);
+  const configurationErrors = validateBalanceSettings(migrated);
+  if (configurationErrors.length) return { code: "unconfigured", label: "Not configured", alerts: configurationErrors.map((message) => alert("unconfigured", "configuration", "Configuration required", message)), categories: [], availabilityAssessments: [] };
   const alerts = [];
   const categories = [];
-  const weekend = isWeekendStayDate(stayDate);
+  const availabilityAssessments = [];
   const totalsReliable = isReliableCount(marshaTotal) && isReliableCount(operaTotal);
-  if (!totalsReliable) {
-    alerts.push(alert("unassessable", "total_data", "Cannot assess", "Both explicitly mapped total fields must contain reliable non-negative numbers.", { marshaTotal, operaTotal }));
-  } else if (marshaTotal !== operaTotal) {
-    alerts.push(alert("action", "total_mismatch", "Total mismatch", `MARSHA total is ${marshaTotal}, Opera total is ${operaTotal}; difference ${marshaTotal - operaTotal}.`, { marshaTotal, operaTotal, difference: marshaTotal - operaTotal }));
-  }
+  if (!totalsReliable) alerts.push(alert("unassessable", "total_data", "Cannot assess", "Both explicitly mapped total fields must contain reliable non-negative numbers.", { marshaTotal, operaTotal }));
+  else if (marshaTotal !== operaTotal) alerts.push(alert("action", "total_mismatch", "Total mismatch", `MARSHA total is ${marshaTotal}, Opera total is ${operaTotal}; difference ${marshaTotal - operaTotal}.`, { marshaTotal, operaTotal, difference: marshaTotal - operaTotal }));
 
-  const marshaGenr = marshaRooms.GENR;
-  let weekendMaximumGenr = null;
-  let minimumGenr = totalsReliable ? Math.min(Number(settings.minimumGenr), marshaTotal) : null;
-  if (!isReliableCount(marshaGenr)) alerts.push(alert("unreliable", "genr_data", "Cannot reliably assess GENR", "MARSHA GENR is missing, non-numeric, or negative.", { marshaGenr }));
-
-  if (weekend) {
-    const operaDbdb = operaRooms.DBDB;
-    if (!totalsReliable || marshaTotal !== operaTotal || !isReliableCount(operaDbdb) || !isReliableCount(marshaGenr)) {
-      minimumGenr = null;
-      alerts.push(alert("unreliable", "weekend_data", "Cannot reliably assess weekend DBDB protection", "Matching reliable totals, Opera DBDB, and MARSHA GENR are required before calculating a weekend boundary.", { marshaTotal, operaTotal, operaDbdb, marshaGenr }));
-    } else {
-      weekendMaximumGenr = operaTotal - operaDbdb;
-      if (weekendMaximumGenr < 0) {
-        minimumGenr = null;
-        alerts.push(alert("unreliable", "weekend_data", "Cannot reliably assess weekend DBDB protection", "Opera DBDB is greater than the explicit Opera total.", { operaTotal, operaDbdb }));
-        weekendMaximumGenr = null;
-      } else {
-        minimumGenr = Math.min(Number(settings.minimumGenr), marshaTotal, weekendMaximumGenr);
-        if (marshaGenr > weekendMaximumGenr) alerts.push(alert("action", "weekend_limit", "Action required", `MARSHA GENR exceeds the Friday/Saturday DBDB protection boundary by ${marshaGenr - weekendMaximumGenr}.`, { operaTotal, operaDbdb, weekendMaximumGenr, marshaGenr, excess: marshaGenr - weekendMaximumGenr }));
-      }
+  (migrated.availabilityRules || []).forEach((rule) => {
+    const marshaCode = rule.marshaCode.trim().toUpperCase();
+    const marshaValue = marshaRooms[marshaCode];
+    const appliedOperaRules = (rule.operaTypeRules || []).map((operaRule) => ({ ...operaRule, operaType: operaRule.operaType.trim().toUpperCase(), applied: resolveOperaCountingRule(operaRule, stayDate), value: operaRooms[operaRule.operaType.trim().toUpperCase()] }));
+    const excluded = appliedOperaRules.filter((item) => !item.applied.counts);
+    const included = appliedOperaRules.filter((item) => item.applied.counts);
+    const assessment = { marshaCode, marshaValue, normalMinimum: Number(rule.normalMinimum), visibilityMinimum: rule.visibilityMinimum === null || rule.visibilityMinimum === "" ? null : Number(rule.visibilityMinimum), distributionStopsAtZeroConfirmed: Boolean(rule.distributionStopsAtZeroConfirmed), appliedOperaRules, excludedOperaTypes: excluded.map((item) => ({ code: item.operaType, value: item.value, rule: item.applied })) };
+    if (!isReliableCount(marshaValue)) {
+      alerts.push(alert("unreliable", "availability_data", `${marshaCode}: Cannot reliably assess`, `${marshaCode} is missing, non-numeric, or negative.`, assessment));
+      availabilityAssessments.push({ ...assessment, code: "unreliable" }); return;
     }
-  }
-
-  if (minimumGenr !== null && isReliableCount(marshaGenr) && marshaGenr < minimumGenr) alerts.push(alert("warning", "genr_minimum", "GENR minimum warning", `Desired effective GENR is ${minimumGenr}, while MARSHA GENR is ${marshaGenr}.`, { configuredMinimumGenr: Number(settings.minimumGenr), minimumGenr, marshaGenr }));
+    if (!totalsReliable) { availabilityAssessments.push({ ...assessment, code: "unassessable" }); return; }
+    if (excluded.some((item) => !isReliableCount(item.value) || !item.independentPhysicalInventoryConfirmed)) {
+      alerts.push(alert("unreliable", "excluded_inventory_data", `${marshaCode}: Cannot reliably assess excluded inventory`, "Every excluded Opera type needs a reliable non-negative value and confirmation that it is independent physical inventory.", assessment));
+      availabilityAssessments.push({ ...assessment, code: "unreliable" }); return;
+    }
+    if (included.some((item) => !isReliableCount(item.value))) {
+      alerts.push(alert("unreliable", "included_inventory_data", `${marshaCode}: Cannot reliably assess suitable inventory`, "Every included Opera type needs a reliable non-negative value.", assessment));
+      availabilityAssessments.push({ ...assessment, code: "unreliable" }); return;
+    }
+    const excludedTotal = excluded.reduce((sum, item) => sum + item.value, 0);
+    const suitableInventory = operaTotal - excludedTotal;
+    const suitableRoomAvailable = included.some((item) => item.value > 0 && item.independentPhysicalInventoryConfirmed);
+    Object.assign(assessment, { excludedTotal, suitableInventory, suitableRoomAvailable });
+    if (suitableInventory < 0) {
+      alerts.push(alert("unreliable", "suitable_inventory_data", `${marshaCode}: Cannot reliably assess suitable inventory`, "Excluded independent inventory is greater than the explicit Opera total.", assessment));
+      availabilityAssessments.push({ ...assessment, code: "unreliable" }); return;
+    }
+    // Excluded/protected inventory always has priority over a low-total visibility exception.
+    if (excluded.length > 0 && marshaValue > suitableInventory) alerts.push(alert("action", "suitable_inventory_limit", `${marshaCode}: Action required`, `${marshaCode} exceeds demonstrably suitable inventory by ${marshaValue - suitableInventory}.`, { ...assessment, excess: marshaValue - suitableInventory }));
+    if (marshaTotal === 0) {
+      if (marshaValue > 0) alerts.push(alert("action", "zero_total_visibility", `${marshaCode}: Action required`, `MARSHA total is 0 but ${marshaCode} still shows ${marshaValue}.`, assessment));
+      availabilityAssessments.push({ ...assessment, effectiveMinimum: 0, code: marshaValue > 0 ? "action" : "ok" }); return;
+    }
+    const normalMinimum = Math.min(Number(rule.normalMinimum), marshaTotal);
+    let effectiveMinimum = normalMinimum;
+    const lowTotalVisibility = assessment.visibilityMinimum !== null && marshaTotal < assessment.visibilityMinimum;
+    if (lowTotalVisibility) effectiveMinimum = assessment.visibilityMinimum;
+    if (lowTotalVisibility && marshaValue > marshaTotal) {
+      if (!suitableRoomAvailable || !rule.distributionStopsAtZeroConfirmed) alerts.push(alert("review", "visibility_exception_review", `${marshaCode}: Review visibility exception`, !suitableRoomAvailable ? "Availability above the hotel total has no confirmed suitable Opera room available." : "Distribution stop-at-zero behavior is not confirmed, so availability above the hotel total is not presented as safe.", { ...assessment, effectiveMinimum }));
+    }
+    if (marshaValue < effectiveMinimum) alerts.push(alert("warning", "availability_minimum", `${marshaCode}: Minimum warning`, `Effective minimum is ${effectiveMinimum}, while MARSHA shows ${marshaValue}.`, { ...assessment, effectiveMinimum }));
+    availabilityAssessments.push({ ...assessment, effectiveMinimum, lowTotalVisibility, code: "ok" });
+  });
 
   const higherTypeUse = new Map();
-  (settings.premiumCategories || []).forEach((category) => {
+  (migrated.premiumCategories || []).forEach((category) => {
     const marshaCode = category.marshaCode.trim().toUpperCase();
     const operaType = category.operaType.trim().toUpperCase();
     const higherTypes = [...new Set((category.allowedHigherOperaTypes || []).map((code) => String(code).trim().toUpperCase()).filter(Boolean))];
     const marshaValue = marshaRooms[marshaCode];
     const ownOperaValue = operaRooms[operaType];
     const values = higherTypes.map((code) => ({ code, value: operaRooms[code] }));
-    if (!isReliableCount(marshaValue) || !isReliableCount(ownOperaValue) || values.some((item) => !isReliableCount(item.value))) {
-      const result = { categoryCode: marshaCode, code: "unreliable", label: "Cannot reliably assess", marshaValue, operaType, ownOperaValue, higherTypes: values, reason: "A relevant premium or higher-room value is missing, non-numeric, or negative." };
-      categories.push(result); alerts.push(alert("unreliable", "premium_data", `${marshaCode}: Cannot reliably assess`, result.reason, result)); return;
-    }
+    if (!isReliableCount(marshaValue) || !isReliableCount(ownOperaValue) || values.some((item) => !isReliableCount(item.value))) { const result = { categoryCode: marshaCode, code: "unreliable", label: "Cannot reliably assess", marshaValue, operaType, ownOperaValue, higherTypes: values }; categories.push(result); alerts.push(alert("unreliable", "premium_data", `${marshaCode}: Cannot reliably assess`, "A relevant premium or higher-room value is missing, non-numeric, or negative.", result)); return; }
     const shortage = Math.max(0, marshaValue - ownOperaValue);
-    if (shortage === 0) { categories.push({ categoryCode: marshaCode, code: "ok", label: marshaValue === 0 ? "Closed without issue" : "No own-type shortage", marshaValue, operaType, ownOperaValue, shortage: 0, higherTypes: values, higherAvailable: values.reduce((sum, item) => sum + item.value, 0), coveredByHigher: 0, uncovered: 0 }); return; }
+    if (!shortage) { categories.push({ categoryCode: marshaCode, code: "ok", label: "No own-type shortage", marshaValue, operaType, ownOperaValue, shortage: 0, higherTypes: values, coveredByHigher: 0, uncovered: 0 }); return; }
     const higherAvailable = values.reduce((sum, item) => sum + item.value, 0);
     const coveredByHigher = Math.min(shortage, higherAvailable);
     const uncovered = shortage - coveredByHigher;
     values.forEach((item) => { if (item.value > 0) higherTypeUse.set(item.code, [...(higherTypeUse.get(item.code) || []), marshaCode]); });
-    const result = { categoryCode: marshaCode, code: uncovered > 0 ? "action" : "warning", label: uncovered > 0 ? "Action required" : "Upgrade may be required", marshaValue, operaType, ownOperaValue, shortage, higherTypes: values, higherAvailable, coveredByHigher, uncovered };
-    categories.push(result);
-    alerts.push(alert(uncovered > 0 ? "action" : "warning", uncovered > 0 ? "premium_uncovered" : "premium_upgrade", `${marshaCode}: ${result.label}`, uncovered > 0 ? `${uncovered} offered ${marshaCode} room(s) remain uncovered after ${coveredByHigher} of ${shortage} shortage room(s) can use configured higher types.` : `All ${shortage} shortage room(s) can use configured higher types, so an upgrade may be required.`, result));
+    const result = { categoryCode: marshaCode, code: uncovered ? "action" : "warning", label: uncovered ? "Action required" : "Upgrade may be required", marshaValue, operaType, ownOperaValue, shortage, higherTypes: values, coveredByHigher, uncovered };
+    categories.push(result); alerts.push(alert(uncovered ? "action" : "warning", uncovered ? "premium_uncovered" : "premium_upgrade", `${marshaCode}: ${result.label}`, uncovered ? `${uncovered} offered room(s) remain uncovered.` : `All ${shortage} shortage room(s) can use configured higher types.`, result));
   });
-
-  const sharedTypes = [...higherTypeUse.entries()].filter(([, categoryCodes]) => new Set(categoryCodes).size > 1);
-  sharedTypes.forEach(([roomType, categoryCodes]) => alerts.push(alert("review", "shared_upgrade", "Review shared upgrade inventory", `${roomType} is available as upgrade inventory for multiple categories (${[...new Set(categoryCodes)].join(", ")}) and is not guaranteed independently to each.`, { roomType, categoryCodes: [...new Set(categoryCodes)] })));
-
-  const priority = { unassessable: 6, unreliable: 5, action: 4, review: 3, warning: 2, ok: 1 };
+  [...higherTypeUse.entries()].filter(([, codes]) => new Set(codes).size > 1).forEach(([roomType, codes]) => alerts.push(alert("review", "shared_upgrade", "Review shared upgrade inventory", `${roomType} is open to multiple categories (${[...new Set(codes)].join(", ")}).`, { roomType })));
+  const priority = { unassessable: 7, unreliable: 6, action: 5, review: 4, warning: 3, unconfigured: 2, ok: 1 };
   const worst = alerts.reduce((current, item) => priority[item.severity] > priority[current] ? item.severity : current, "ok");
   const labels = { unassessable: "Cannot assess", unreliable: "Cannot reliably assess", action: "Action required", review: "Review", warning: "Warning", ok: "Within rules" };
-  return { code: worst, label: labels[worst], alerts, categories, marshaTotal, operaTotal, marshaGenr, minimumGenr, weekendMaximumGenr, isWeekend: weekend };
+  return { code: worst, label: labels[worst], alerts, categories, availabilityAssessments, marshaTotal, operaTotal };
 }
 
 export function getSourceState({ stayDocument, snapshotDate, today, metadata = {} }) {

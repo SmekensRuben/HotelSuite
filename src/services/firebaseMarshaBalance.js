@@ -1,5 +1,5 @@
 import { collection, db, doc, documentId, getDoc, getDocs, limit, orderBy, query, setDoc } from "../firebaseConfig";
-import { createEmptyMarshaBalanceSettings, extractMappedTotal, normalizeRoomsByType } from "../utils/marshaBalance";
+import { createEmptyMarshaBalanceSettings, extractMappedTotal, migrateMarshaBalanceSettings, normalizeRoomsByType } from "../utils/marshaBalance";
 
 async function getLatestSnapshot(hotelUid, reportName, onOrBefore) {
   const snapshotsRef = collection(db, `hotels/${hotelUid}/reports/${reportName}/snapshotDates`);
@@ -33,7 +33,7 @@ export async function getMarshaBalanceData(hotelUid, stayDates, today) {
 
 export async function getMarshaBalanceSettings(hotelUid) {
   const result = await getDoc(doc(db, `hotels/${hotelUid}/settings`, "marshaBalance"));
-  return result.exists() ? { ...createEmptyMarshaBalanceSettings(), ...result.data() } : createEmptyMarshaBalanceSettings();
+  return result.exists() ? migrateMarshaBalanceSettings(result.data()) : createEmptyMarshaBalanceSettings();
 }
 
 export function saveMarshaBalanceSettings(hotelUid, settings) {

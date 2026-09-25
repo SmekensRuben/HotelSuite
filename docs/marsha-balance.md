@@ -1,147 +1,88 @@
 # MARSHA Balance
 
-## Purpose
+MARSHA Balance is a hotel-scoped, read-only Front Office control. It preserves the existing explicit-total comparison, premium shortage checks, snapshot-quality checks, preview, and detail findings. It never writes availability to MARSHA or Opera.
 
-MARSHA Balance is a read-only Front Office control. It compares current MARSHA and Opera availability through four focused controls plus Friday/Saturday DBDB protection. It never changes availability in either source.
+Settings are stored at `hotels/{hotelUid}/settings/marshaBalance` and now contain only:
 
-Access remains hotel-specific through `marshaBalance.read` and `marshaBalance.update`. Settings are stored at:
+- `availabilityRules`: configurable MARSHA room-type minimum and Opera counting rules;
+- `premiumCategories`: the existing premium shortage mappings.
 
-```text
-hotels/{hotelUid}/settings/marshaBalance
-```
+Legacy `minimumGenr` and `weekendDbdbProtection` settings are migrated on read. A legacy enabled weekend rule becomes a GENR rule where DBDB counts by default but is excluded on Friday and Saturday. Saving replaces the document with the new model, so legacy settings have no hidden effect.
 
-Only the current simplified fields are read and saved:
+## Data quality and totals
 
-- `minimumGenr`: non-negative integer X;
-- `premiumCategories`: MARSHA premium code, corresponding Opera type, and explicit allowed higher Opera types;
-- `weekendDbdbProtection`: stored as `true`; Friday/Saturday DBDB protection is always active.
+The content controls run only when both stay-date documents exist, use the same current snapshot date, and are complete. Otherwise the result is **Cannot assess**.
 
-Legacy hierarchy, protection, release, overbooking, tolerance, and exception fields have no effect. Saving the page replaces the settings document with only the simplified model.
+Both sources use their explicitly mapped total. The total is never reconstructed by adding room types. `Total` is not a room type. Missing, non-numeric, or negative totals produce **Cannot assess**. Missing and negative relevant room-type values produce **Cannot reliably assess**.
 
-## Source and snapshot requirements
+## Availability rule per MARSHA room type
 
-The existing snapshot selection remains unchanged. For each source, the newest snapshot on or before the current `Europe/Brussels` date is selected. The requested `stayDate` is read inside that snapshot.
+A rule contains:
 
-Content controls run only when:
+- `marshaCode`;
+- `normalMinimum`, a non-negative integer;
+- optional `visibilityMinimum`, a positive integer;
+- `distributionStopsAtZeroConfirmed`;
+- one or more Opera counting rules.
 
-1. both stay-date documents exist;
-2. MARSHA and Opera use the same snapshot date;
-3. both snapshots are current and not explicitly failed or incomplete.
-
-Otherwise the result is **Cannot assess**. A snapshot parent with `queryable: true` is not enough; the stay-date document itself is required.
-
-## Explicit mapped totals
-
-Both imports provide an explicit mapped total. The loader reads that total from the actual mapped total field and records its field path. Supported mapped names are `total`, `roomsTotal`, `totalRooms`, `availabilityTotal`, and `totalAvailability`; `roomsByType.Total` is also recognized when present in older/current documents.
-
-The hotel total is never reconstructed by summing room types. `Total` is removed from `roomsByType` before room-type controls run and is never treated as a room type. A missing, non-numeric, or negative explicit total produces **Cannot assess**.
-
-Missing room-type keys, zero, and negative values remain distinct. Relevant negative values produce **Cannot reliably assess** rather than being silently converted to zero.
-
-## Hotel settings
-
-### Desired minimum GENR
-
-`minimumGenr` is X, the desired commercial minimum for MARSHA GENR. Normally:
+Normally:
 
 ```text
-minimumGENR = min(X, MARSHA total)
+effectiveMinimum = min(normalMinimum, MARSHA total)
 ```
 
-If MARSHA GENR is below this value, the page shows a warning. This is a commercial warning, not proof of a physical placement failure.
+When the hotel total is positive and below `visibilityMinimum`, the effective minimum becomes the visibility minimum. Availability above the hotel total is only presented without a review when at least one included Opera type has positive availability and the distribution stop-at-zero behavior is confirmed.
 
-### Premium shortage controls
+At hotel total 0, the visibility minimum never applies. Any positive availability in the configured MARSHA type produces **Action required**.
 
-Each configured premium control contains:
+## Opera counting rules and precedence
 
-- the MARSHA premium category;
-- its corresponding Opera room type;
-- an explicit list of allowed higher Opera room types.
+For every Opera type linked to a MARSHA availability rule, settings define:
 
-No relationship is inferred from room names or ordering. A higher type is usable only when explicitly selected.
+- whether it counts by default;
+- optional per-weekday overrides based on the local calendar weekday of `stayDate`;
+- inclusive temporary date overrides;
+- whether the Opera code is confirmed as independent, non-overlapping physical inventory.
 
-### Weekend DBDB protection
+Precedence is:
 
-Protection always applies to stay dates that are Friday or Saturday in the Brussels calendar. It uses `stayDate`, never `snapshotDate`.
+1. matching temporary date override;
+2. weekday override;
+3. default choice.
 
-## Controls
+Overlapping inclusive date periods for the same MARSHA/Opera rule are rejected by settings validation.
 
-### 1. Explicit total comparison
+The detail page and preview show whether each Opera type counted or was excluded, whether the decision came from a date, weekday, or default rule, and the matching date period or weekday.
+
+## Excluded and protected inventory
+
+Excluded Opera inventory is subtracted from the explicit Opera total only when its value is a reliable non-negative number and the administrator confirmed that it is independent physical inventory. The result is:
 
 ```text
-difference = MARSHA total - Opera total
+suitableInventory = explicit Opera total - confirmed excluded Opera inventory
 ```
 
-Different totals create a **Total mismatch** finding showing both values and the difference.
+If excluded inventory is missing, negative, overlapping, or not confirmed as independent, the page returns **Cannot reliably assess** instead of claiming a safe boundary.
 
-### 2. Minimum GENR
+The suitable-inventory boundary is checked before any low-total visibility exception. If DBDB is excluded for GENR and GENR exceeds the demonstrably suitable remainder, the result is **Action required**, even when a visibility minimum would otherwise permit availability above the hotel total.
 
-Outside protected weekend nights:
+This replaces the former hardcoded Friday/Saturday implementation. The migrated default still excludes DBDB for GENR on Friday and Saturday, but administrators can now configure default, weekday, and temporary date behavior.
 
-```text
-minimumGENR = min(X, MARSHA total)
-```
+## Premium shortages
 
-MARSHA GENR below the effective minimum creates **GENR minimum warning**.
+Premium checks remain unchanged: MARSHA premium availability is compared with its corresponding Opera type. Explicitly allowed higher Opera types may cover the numerical shortage. Full higher-type coverage produces an upgrade warning; partial coverage produces **Action required** with the exact uncovered count. Missing or negative relevant values produce **Cannot reliably assess**.
 
-### 3/4. Premium shortage and higher-room coverage
+## Multiple findings and details
 
-For every configured premium category:
+The overview shows the most severe status. The detail page keeps total mismatches, availability minimums, suitable-inventory boundaries, premium shortages, and source-data problems as separate findings.
 
-```text
-shortage = max(0, MARSHA premium offered - corresponding Opera availability)
-higherAvailable = sum(explicitly allowed higher Opera values)
-coveredByHigher = min(shortage, higherAvailable)
-uncovered = shortage - coveredByHigher
-```
+For each MARSHA availability rule, details show:
 
-- No own-type shortage creates no finding.
-- Full higher-type coverage creates **Upgrade may be required**, including the types and quantities.
-- Partial or absent higher-type coverage creates **Action required** with the exact uncovered quantity.
-- A MARSHA premium value of zero creates no error merely because Opera still has that room type.
-- Missing, non-numeric, or negative relevant premium values create **Cannot reliably assess**.
+- explicit hotel totals;
+- MARSHA availability;
+- normal and effective minimum;
+- excluded Opera types and values;
+- calculated suitable inventory;
+- the exact default, weekday, or date rule applied to every Opera type.
 
-Allowed higher inventory that is configured for multiple categories is reported separately as **Review shared upgrade inventory**. It is not presented as independently guaranteed to every category.
-
-### 5. Friday/Saturday DBDB boundary
-
-On Friday and Saturday stay nights:
-
-```text
-weekendMaximumGENR = Opera total - Opera DBDB
-minimumGENR = min(X, MARSHA total, weekendMaximumGENR)
-```
-
-If MARSHA GENR exceeds the boundary, the page shows **Action required** with Opera total, Opera DBDB, the calculated boundary, MARSHA GENR, and the excess.
-
-This is only a DBDB protection boundary. It does not claim that every other room is suitable for GENR.
-
-No weekend boundary or weekend-adjusted minimum is calculated when totals differ, a total is unreliable, DBDB is missing/negative, GENR is missing/negative, or DBDB exceeds the Opera total. The data issue remains visible instead.
-
-## Results and multiple findings
-
-A date can contain several findings. The overview displays the most severe status while the detail page keeps every reason separate.
-
-Severity order is:
-
-1. **Cannot assess** — required total or source document/snapshot quality is insufficient;
-2. **Cannot reliably assess** — a relevant room value is missing, invalid, or negative;
-3. **Action required** — total mismatch, uncovered premium offer, or weekend GENR excess;
-4. **Review** — shared higher-room inventory is not independently guaranteed;
-5. **Warning** — commercial GENR minimum or a fully covered premium upgrade risk;
-6. **Within rules** — every applicable configured control completed without a finding.
-
-There is no generic tolerance, room hierarchy, protected inventory, release allocation, overbooking allowance, or date exception in this simplified model.
-
-## Preview and detail page
-
-The Settings preview runs the unsaved simplified configuration against a selected real stay date.
-
-The detail page shows:
-
-- every finding as a separate card;
-- explicit MARSHA and Opera totals and their mapped field paths;
-- MARSHA GENR, effective minimum, and weekend maximum;
-- premium offered values, corresponding Opera availability, each allowed higher value, shortage, covered quantity, and uncovered quantity;
-- raw room-type maps;
-- collapsible snapshot metadata.
+The Settings preview evaluates unsaved rules against a real stay date and immediately shows the same applied-rule sources and calculated boundaries.
