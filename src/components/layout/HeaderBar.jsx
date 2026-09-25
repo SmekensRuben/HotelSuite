@@ -23,6 +23,7 @@ export default function HeaderBar({ today, onLogout }) {
   const canManageAuditUpsells = usePermission("auditUpsells", "settings");
   const canViewGroups = usePermission("groups", "read");
   const canViewGroupQuotes = usePermission("groupquotes", "read");
+  const canViewMarshaBalance = usePermission("marshaBalance", "read");
   const [hotels, setHotels] = useState([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
@@ -108,6 +109,12 @@ export default function HeaderBar({ today, onLogout }) {
   ].filter((item) => item.visible !== false);
 
   const frontOfficeMenuItems = [
+    {
+      label: "MARSHA Balance",
+      action: () => navigate("/front-office/marsha-balance"),
+      icon: ClipboardList,
+      visible: canViewMarshaBalance,
+    },
     {
       label: "Arrivals",
       action: () => navigate("/front-office/arrivals"),
