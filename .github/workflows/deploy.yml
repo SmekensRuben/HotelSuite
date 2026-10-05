@@ -1,4 +1,4 @@
-name: Build & Deploy to GoDaddy
+name: Verify & Deploy to GoDaddy
 
 on:
   push:
@@ -13,14 +13,32 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
 
-      - name: Install deps
+      - name: Install frontend and tooling dependencies
         run: npm ci
 
+      - name: Install Functions dependencies
+        run: npm --prefix functions ci
+
+      - name: Frontend tests
+        run: npm test -- --run
+
+      - name: Functions tests
+        run: npm --prefix functions test
+
+      - name: Firestore and Storage security tests
+        run: npm run test:security
+
+      - name: Emulator backup and restore smoke test
+        run: npm run test:restore
+
+      - name: Dependency policy
+        run: npm run audit:policy
+
       - name: Build
-        run: npm run build   # pas aan als je build script/map anders is
+        run: npm run build
 
       - name: Deploy via FTPS
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5

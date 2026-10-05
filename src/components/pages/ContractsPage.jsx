@@ -23,7 +23,8 @@ export default function ContractsPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
   const canCreateContracts = usePermission("contracts", "create");
-  const canReadSettings = usePermission("settings", "read");
+  const canReadSettings = usePermission("contracts", "settings");
+  const canRunReminders = usePermission("contracts", "notify");
   const [contracts, setContracts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -47,7 +48,7 @@ export default function ContractsPage() {
   };
 
   const handleRunReminders = async () => {
-    if (!hotelUid || runningReminders) return;
+    if (!canRunReminders || !hotelUid || runningReminders) return;
 
     setRunningReminders(true);
     try {
@@ -120,9 +121,9 @@ export default function ContractsPage() {
             </button>
             <button
               onClick={handleRunReminders}
-              disabled={runningReminders}
+              disabled={!canRunReminders || runningReminders}
               className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold shadow ${
-                runningReminders
+                !canRunReminders || runningReminders
                   ? "bg-gray-300 text-gray-500"
                   : "bg-white text-[#b41f1f] border border-[#b41f1f] hover:bg-red-50"
               }`}

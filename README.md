@@ -9,7 +9,7 @@ A React + Vite application backed by Firebase. The repository also contains Clou
    npm install
    cd functions && npm install
    ```
-3. Create a `.env` file in the project root with your Firebase credentials (see below).
+3. Copy `.env.example` to `.env` and fill in the Firebase configuration for a non-production development project.
 4. Install the Firebase CLI if you want to run or deploy functions:
    ```bash
    npm install -g firebase-tools
@@ -32,7 +32,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
 ```
 
-You can use the provided `.env` file as an example and replace the values with your own Firebase configuration.
+Use the tracked `.env.example` as the variable-name template. `.env` is intentionally ignored and must never be committed. The browser Firebase configuration is not a server secret, but it still binds a build to a project; the Meilisearch key must be search-only and index-scoped.
 
 ## Firebase configuration
 Firebase settings are stored in `.firebaserc` and `firebase.json`. The default project alias is `test-breakfast`. Cloud Functions are located in the `functions` directory and run on Node 22.
@@ -44,6 +44,9 @@ Firebase settings are stored in `.firebaserc` and `firebase.json`. The default p
 - `npm run build` – create a production build of the app.
 - `npm run preview` – preview the production build locally.
 - `npm test` – run unit tests with Vitest.
+- `npm run test:security` – run tenant-isolation tests against local Firestore and Storage emulators.
+- `npm run test:restore` – export and restore fictional emulator data as a recovery smoke test.
+- `npm run audit:policy` – reject dependency findings above the temporary reviewed baseline.
 
 ### Cloud Functions (`functions` directory)
 - `npm run serve` – start the Firebase emulator for functions.
@@ -66,4 +69,3 @@ Deploy your Cloud Functions after logging in with Firebase:
 cd functions
 npm run deploy
 ```
-
