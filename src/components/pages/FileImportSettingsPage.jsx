@@ -12,7 +12,7 @@ import { usePermission } from "../../hooks/usePermission";
 export default function FileImportSettingsPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
-  const canCreateSettings = usePermission("settings", "create");
+  const canCreateSettings = usePermission("imports", "create");
   const [fileImportSettings, setFileImportSettings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");

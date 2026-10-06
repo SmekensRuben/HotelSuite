@@ -12,7 +12,7 @@ import { usePermission } from "../../hooks/usePermission";
 export default function OutletSettingsPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
-  const canCreateOutlets = usePermission("settings", "create");
+  const canCreateOutlets = usePermission("outlets", "create");
   const [outlets, setOutlets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");

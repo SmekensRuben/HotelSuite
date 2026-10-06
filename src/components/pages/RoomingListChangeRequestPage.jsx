@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Check, X } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
+import { usePermission } from "../../hooks/usePermission";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
@@ -27,6 +28,7 @@ const guestName = (reservation) =>
   "Unnamed guest";
 
 export default function RoomingListChangeRequestPage() {
+  const canApprove = usePermission("roominglists", "approve");
   const { groupId, requestId } = useParams();
   const navigate = useNavigate();
   const [roomingList, setRoomingList] = useState(null);
@@ -74,6 +76,7 @@ export default function RoomingListChangeRequestPage() {
   );
 
   const review = async (decision) => {
+    if (!canApprove) return;
     setSaving(true);
     setError("");
     try {
@@ -284,14 +287,14 @@ export default function RoomingListChangeRequestPage() {
                 </label>
                 <div className="mt-4 flex justify-end gap-3">
                   <button
-                    disabled={saving}
+                    disabled={!canApprove || saving}
                     onClick={() => setConfirmDecision("reject")}
                     className="inline-flex items-center gap-2 rounded-lg border border-red-300 px-4 py-2 font-semibold text-red-700"
                   >
                     <X className="h-4 w-4" /> Reject Change Request
                   </button>
                   <button
-                    disabled={saving}
+                    disabled={!canApprove || saving}
                     onClick={() => setConfirmDecision("approve")}
                     className="inline-flex items-center gap-2 rounded-lg bg-green-700 px-4 py-2 font-semibold text-white"
                   >
