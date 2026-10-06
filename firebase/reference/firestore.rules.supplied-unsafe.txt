@@ -1,0 +1,7 @@
+# Supplied current-configuration fragment — reference only, never deploy
+# Received for the permission audit on 2026-10-05.
+# The complete deployed ruleset was not supplied or retrievable in A00.
+
+match /{document=**} {
+  allow read, write: if true;
+}

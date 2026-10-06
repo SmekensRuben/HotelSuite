@@ -15,9 +15,9 @@ function sortByName(items) {
 
 export default function SettingsCatalogPage() {
   const { hotelUid } = useHotelContext();
-  const canCreateSettings = usePermission("settings", "create");
-  const canUpdateSettings = usePermission("settings", "update");
-  const canDeleteSettings = usePermission("settings", "delete");
+  const canCreateSettings = usePermission("catalogsettings", "create");
+  const canUpdateSettings = usePermission("catalogsettings", "update");
+  const canDeleteSettings = usePermission("catalogsettings", "delete");
   const [loading, setLoading] = useState(true);
   const [savingCategory, setSavingCategory] = useState(false);
   const [savingSubcategory, setSavingSubcategory] = useState(false);
