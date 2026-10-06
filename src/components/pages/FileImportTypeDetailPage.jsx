@@ -72,8 +72,8 @@ export default function FileImportTypeDetailPage() {
   const navigate = useNavigate();
   const { fileImportTypeId } = useParams();
   const { hotelUid } = useHotelContext();
-  const canUpdateSettings = usePermission("settings", "update");
-  const canDeleteSettings = usePermission("settings", "delete");
+  const canUpdateSettings = usePermission("imports", "update");
+  const canDeleteSettings = usePermission("imports", "delete");
   const [fileImportType, setFileImportType] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showDeleteModal, setShowDeleteModal] = useState(false);

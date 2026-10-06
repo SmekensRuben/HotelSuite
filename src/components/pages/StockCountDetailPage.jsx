@@ -9,6 +9,7 @@ import * as XLSX from "xlsx";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { finishStockCount, getStockCountById } from "../../services/firebaseStockCounts";
+import { usePermission } from "../../hooks/usePermission";
 
 function formatCurrency(value) {
   return new Intl.NumberFormat(undefined, {
@@ -51,6 +52,7 @@ function formatExportDate(value) {
 }
 
 export default function StockCountDetailPage() {
+  const canUpdateStockCounts = usePermission("stockcounts", "update");
   const { stockCountId } = useParams();
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
@@ -162,6 +164,7 @@ export default function StockCountDetailPage() {
   const canFinishStockCount = Boolean(stockCount) && allLocationsFinished && !isStockCountFinished;
 
   const handleFinishStockCount = async () => {
+    if (!canUpdateStockCounts) return;
     if (!hotelUid || !stockCountId || !canFinishStockCount) return;
     setSaving(true);
     setError("");
@@ -256,7 +259,7 @@ export default function StockCountDetailPage() {
                 <button
                   type="button"
                   onClick={handleFinishStockCount}
-                  disabled={saving || !canFinishStockCount}
+                  disabled={!canUpdateStockCounts || saving || !canFinishStockCount}
                   className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white hover:bg-[#961919] disabled:cursor-not-allowed disabled:opacity-60"
                   title={
                     isStockCountFinished

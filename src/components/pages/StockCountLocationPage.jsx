@@ -16,6 +16,7 @@ import {
 import { getSupplierProducts } from "../../services/firebaseProducts";
 import { getOutlets } from "../../services/firebaseSettings";
 import { matchesSearchTokensAcross } from "../../utils/search";
+import { usePermission } from "../../hooks/usePermission";
 
 function buildItemKey(item) {
   return `${String(item?.supplierProductId || "").trim()}::${String(item?.outletId || "").trim()}`;
@@ -52,6 +53,7 @@ function buildSupplierProductSnapshot(product = {}, outlet = {}) {
 }
 
 export default function StockCountLocationPage() {
+  const canUpdateStockCounts = usePermission("stockcounts", "update");
   const { stockCountId, locationId } = useParams();
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
@@ -260,6 +262,7 @@ export default function StockCountLocationPage() {
   };
 
   const handleSave = async () => {
+    if (!canUpdateStockCounts) return;
     if (!hotelUid || !stockCountId || !locationId || isFinished) return;
     setSaving(true);
     setError("");
@@ -281,6 +284,7 @@ export default function StockCountLocationPage() {
   };
 
   const handleFinishClick = () => {
+    if (!canUpdateStockCounts) return;
     if (isFinished) return;
     setSelectedTemplateAdditions(Object.fromEntries(addedRows.map((row) => [row.key, true])));
     setShowFinishModal(true);
@@ -501,7 +505,7 @@ export default function StockCountLocationPage() {
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={saving || isFinished}
+                  disabled={!canUpdateStockCounts || saving || isFinished}
                   className="px-4 py-2 rounded-lg border border-[#b41f1f] text-[#b41f1f] text-sm font-semibold hover:bg-red-50 disabled:opacity-60"
                 >
                   {saving ? "Saving..." : "Save Counts"}
@@ -509,7 +513,7 @@ export default function StockCountLocationPage() {
                 <button
                   type="button"
                   onClick={handleFinishClick}
-                  disabled={saving || isFinished}
+                  disabled={!canUpdateStockCounts || saving || isFinished}
                   className="px-4 py-2 rounded-lg bg-[#b41f1f] text-white text-sm font-semibold hover:bg-[#961919] disabled:opacity-60"
                 >
                   {saving ? "Finishing..." : "Set Finished"}

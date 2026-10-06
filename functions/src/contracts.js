@@ -1,4 +1,4 @@
-const { onDocumentCreated, onSchedule, logger, admin, Resend, React, RESEND_API_KEY, RESEND_FROM } = require("./config");
+const { onDocumentCreated, onSchedule, logger, admin, Resend, React, RESEND_API_KEY, RESEND_FROM, getAppBaseUrl } = require("./config");
 
 function toDateOnly(value) {
   const raw = String(value || "").trim();
@@ -238,7 +238,7 @@ async function sendContractReminderEmail({ to, hotelName, contractId, contractNa
 
   const resend = new Resend(resendApiKey);
 
-  const contractDetailUrl = `https://hoteltoolkit.eu/contracts/${contractId}`;
+  const contractDetailUrl = `${getAppBaseUrl()}/contracts/${encodeURIComponent(contractId)}`;
 
   await resend.emails.send({
     from,

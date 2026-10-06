@@ -7,10 +7,14 @@ import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { deleteNotificationList, getNotificationLists, saveNotificationList } from "../../services/firebaseNotificationLists";
+import { usePermission } from "../../hooks/usePermission";
 
 const emptyList = () => ({ title: "", contacts: [{ name: "", email: "" }] });
 
 export default function NotificationListsPage() {
+  const canCreate = usePermission("notifications", "create");
+  const canUpdate = usePermission("notifications", "update");
+  const canDelete = usePermission("notifications", "delete");
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
   const [lists, setLists] = useState([]);
@@ -27,6 +31,7 @@ export default function NotificationListsPage() {
   const updateContact = (index, field, value) => setForm((current) => ({ ...current, contacts: current.contacts.map((contact, i) => i === index ? { ...contact, [field]: value } : contact) }));
 
   const submit = async (event) => {
+    if ((editingId && !canUpdate) || (!editingId && !canCreate)) return;
     event.preventDefault(); setSaving(true); setError("");
     try {
       await saveNotificationList(hotelUid, { ...form, id: editingId }, auth.currentUser?.uid);
@@ -43,9 +48,9 @@ export default function NotificationListsPage() {
           <form onSubmit={submit} className="mt-4 space-y-4"><label className="block text-sm font-medium">Title<input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" /></label>
             {form.contacts.map((contact, index) => <div key={index} className="rounded-lg border border-gray-200 p-3"><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm font-medium">Name<input required value={contact.name} onChange={(e) => updateContact(index, "name", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" /></label><label className="text-sm font-medium">Email<input required type="email" value={contact.email} onChange={(e) => updateContact(index, "email", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" /></label></div>{form.contacts.length > 1 && <button type="button" onClick={() => setForm({ ...form, contacts: form.contacts.filter((_, i) => i !== index) })} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-red-700"><Trash2 className="h-3.5 w-3.5" /> Remove contact</button>}</div>)}
             <button type="button" onClick={() => setForm({ ...form, contacts: [...form.contacts, { name: "", email: "" }] })} className="inline-flex items-center gap-2 text-sm font-semibold text-[#b41f1f]"><UserPlus className="h-4 w-4" /> Add contact</button>
-            {error && <p className="text-sm font-semibold text-red-600">{error}</p>}<div className="flex gap-2"><button disabled={saving} className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white">{saving ? "Saving..." : "Save List"}</button>{editingId && <button type="button" onClick={() => { setEditingId(null); setForm(emptyList()); }} className="rounded-lg border px-4 py-2 text-sm font-semibold">Cancel</button>}</div>
+            {error && <p className="text-sm font-semibold text-red-600">{error}</p>}<div className="flex gap-2"><button disabled={saving || (editingId ? !canUpdate : !canCreate)} className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white disabled:bg-gray-400">{saving ? "Saving..." : "Save List"}</button>{editingId && <button type="button" onClick={() => { setEditingId(null); setForm(emptyList()); }} className="rounded-lg border px-4 py-2 text-sm font-semibold">Cancel</button>}</div>
           </form></Card>
-        <div className="space-y-4">{loading ? <p>Loading Notification Lists...</p> : lists.length === 0 ? <Card><p className="text-gray-600">No Notification Lists created yet.</p></Card> : lists.map((list) => <Card key={list.id}><div className="flex items-start justify-between"><div><h2 className="text-lg font-semibold">{list.title}</h2><p className="text-sm text-gray-500">{list.contacts?.length || 0} contact(s)</p></div><div className="flex gap-2"><button aria-label={`Edit ${list.title}`} onClick={() => { setEditingId(list.id); setForm({ title: list.title, contacts: list.contacts?.length ? list.contacts : [{ name: "", email: "" }] }); }} className="rounded-lg border p-2"><Pencil className="h-4 w-4" /></button><button aria-label={`Delete ${list.title}`} onClick={async () => { if (window.confirm(`Delete ${list.title}?`)) { await deleteNotificationList(hotelUid, list.id); await refresh(); } }} className="rounded-lg border p-2 text-red-700"><Trash2 className="h-4 w-4" /></button></div></div><div className="mt-3 divide-y">{list.contacts?.map((contact, i) => <div key={`${contact.email}-${i}`} className="flex justify-between gap-3 py-2 text-sm"><span className="font-medium">{contact.name}</span><a className="text-[#b41f1f]" href={`mailto:${contact.email}`}>{contact.email}</a></div>)}</div></Card>)}</div>
+        <div className="space-y-4">{loading ? <p>Loading Notification Lists...</p> : lists.length === 0 ? <Card><p className="text-gray-600">No Notification Lists created yet.</p></Card> : lists.map((list) => <Card key={list.id}><div className="flex items-start justify-between"><div><h2 className="text-lg font-semibold">{list.title}</h2><p className="text-sm text-gray-500">{list.contacts?.length || 0} contact(s)</p></div><div className="flex gap-2">{canUpdate && <button aria-label={`Edit ${list.title}`} onClick={() => { setEditingId(list.id); setForm({ title: list.title, contacts: list.contacts?.length ? list.contacts : [{ name: "", email: "" }] }); }} className="rounded-lg border p-2"><Pencil className="h-4 w-4" /></button>}{canDelete && <button aria-label={`Delete ${list.title}`} onClick={async () => { if (window.confirm(`Delete ${list.title}?`)) { await deleteNotificationList(hotelUid, list.id); await refresh(); } }} className="rounded-lg border p-2 text-red-700"><Trash2 className="h-4 w-4" /></button>}</div></div><div className="mt-3 divide-y">{list.contacts?.map((contact, i) => <div key={`${contact.email}-${i}`} className="flex justify-between gap-3 py-2 text-sm"><span className="font-medium">{contact.name}</span><a className="text-[#b41f1f]" href={`mailto:${contact.email}`}>{contact.email}</a></div>)}</div></Card>)}</div>
       </div>
     </PageContainer>
   </div>;

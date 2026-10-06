@@ -29,10 +29,10 @@ import { getSupplier, getSuppliers } from "./firebaseSuppliers";
 const productsIndexedCache = {};
 const entityProductsCache = {};
 
-const MEILI_HOST = (import.meta.env.VITE_MEILI_HOST || import.meta.env.NEXT_PUBLIC_MEILI_HOST || "")
+const MEILI_HOST = (import.meta.env.VITE_MEILI_HOST || "")
   .trim()
   .replace(/\/$/, "");
-const MEILI_SEARCH_KEY = (import.meta.env.VITE_MEILI_SEARCH_KEY || import.meta.env.NEXT_PUBLIC_MEILI_SEARCH_KEY || "")
+const MEILI_SEARCH_KEY = (import.meta.env.VITE_MEILI_SEARCH_KEY || "")
   .trim();
 const CATALOG_PRODUCTS_MEILI_INDEX = "catalogproducts";
 const SUPPLIER_PRODUCTS_MEILI_INDEX = "supplierproducts";

@@ -1,4 +1,4 @@
-const { onDocumentCreated, logger, admin, Resend, React, RESEND_API_KEY, RESEND_FROM } = require("./config");
+const { onDocumentCreated, logger, admin, Resend, React, RESEND_API_KEY, RESEND_FROM, getAppBaseUrl } = require("./config");
 const { resolveHotelName } = require("./contracts");
 
 function OrderApprovalRequestEmailTemplate({ hotelName, outletName, orderId, supplierName, deliveryDate, orderDetailUrl }) {
@@ -221,7 +221,7 @@ const sendOrderApprovalEmailToApprovers = onDocumentCreated(
 
     const hotelName = await resolveHotelName(hotelUid);
     const resend = new Resend(resendApiKey);
-    const orderDetailUrl = `https://hoteltoolkit.eu/orders/${orderId}`;
+    const orderDetailUrl = `${getAppBaseUrl()}/orders/${encodeURIComponent(orderId)}`;
 
     await resend.emails.send({
       from,
