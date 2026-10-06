@@ -1,5 +1,6 @@
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { HttpsError, onCall } = require("firebase-functions/v2/https");
+const { requireHotelPermission } = require("./authorization");
 const logger = require("firebase-functions/logger");
 
 const MODEL_VERSION = "stay-pattern-v1";
@@ -139,18 +140,12 @@ function combineMetrics(results, type) {
   return { comparedDates, authoritativeRooms, reconstructedRooms, sumAbsoluteError, signedErrorRooms, signedAggregateBias: signedErrorRooms, matchingDates, meanAbsoluteError: comparedDates ? sumAbsoluteError / comparedDates : null, medianAbsoluteError: median(absoluteErrors), wape, matchingDateShare, passes: comparedDates > 0 && wape !== null && wape <= DEFAULTS.maximumWape && matchingDateShare >= DEFAULTS.minimumMatchingDateShare };
 }
 
-async function userCanRebuildHotel(db, userUid, hotelUid) {
-  const user = await db.doc(`users/${userUid}`).get(), data = user.data() || {};
-  const hotelAccess = user.exists && Array.isArray(data.hotelUid) && data.hotelUid.includes(hotelUid);
-  const permissions = Array.isArray(data.permissions) ? data.permissions.map((permission) => String(permission).trim().toLowerCase()) : [];
-  return hotelAccess && (permissions.includes("groupquotes.update") || permissions.includes("groupquotes.*"));
-}
 const rebuildStayPatternModelCallable = onCall({ region: "us-west1", timeoutSeconds: 540, memory: "1GiB" }, async (request) => {
   if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Authentication is required.");
   const hotelUid = String(request.data?.hotelUid || "").trim(), requestedYear = request.data?.year == null ? null : Number(request.data.year), db = getFirestore();
   if (!hotelUid) throw new HttpsError("invalid-argument", "hotelUid is required.");
   if (requestedYear !== null && (!Number.isInteger(requestedYear) || requestedYear < 1900 || requestedYear > 2200)) throw new HttpsError("invalid-argument", "year must be a four-digit year.");
-  if (!(await userCanRebuildHotel(db, request.auth.uid, hotelUid))) throw new HttpsError("permission-denied", "Group Quote administration permission is required for this hotel.");
+  await requireHotelPermission(db, request, hotelUid, "groupquotes", "update");
   try {
     const result = await rebuildStayPatternModel({ hotelUid, years: requestedYear === null ? null : [requestedYear], trigger: "MANUAL", db });
     return { ...result, annualResults: result.annualResults.map((annual) => ({ year: annual.year, status: annual.status, sourceThroughDate: annual.sourceThroughDate, reconciliation: annual.reconciliation, quality: annual.quality, losCoverage: { TRANSIENT: annual.types.TRANSIENT.modeledRoomArrivalCoverage, GROUP: annual.types.GROUP.modeledRoomArrivalCoverage }, longStayRoomArrivalShare: { TRANSIENT: annual.types.TRANSIENT.longStayRoomArrivalShare, GROUP: annual.types.GROUP.longStayRoomArrivalShare } })) };

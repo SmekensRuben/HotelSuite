@@ -39,6 +39,8 @@ export function HotelProvider({ children }) {
   const [permissionsLoading, setPermissionsLoading] = useState(true);
   const [permissions, setPermissions] = useState([]);
   const [userData, setUserData] = useState(null);
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [authorizationSource, setAuthorizationSource] = useState("none");
   const [lightspeedShiftRolloverHour, setLightspeedShiftRolloverHour] = useState(4);
   const [posProvider, setPosProvider] = useState("lightspeed");
   const [orderMode, setOrderMode] = useState("ingredient");
@@ -50,15 +52,29 @@ export function HotelProvider({ children }) {
     }
   }, [language]);
 
-  const loadHotelSettings = async (uid, data) => {
+  const loadHotelSettings = async (uid, data, userUid = auth.currentUser?.uid) => {
     if (!uid) return;
     setPermissionsLoading(true);
-    setPermissions(Array.isArray(data?.permissions) ? data.permissions : []);
+    setPermissions([]);
+    setAuthorizationSource("none");
 
     try {
       const settingsRef = doc(db, `hotels/${uid}/settings`, uid);
-      const settingsSnap = await getDoc(settingsRef);
+      const membershipRef = userUid ? doc(db, `hotels/${uid}/members`, userUid) : null;
+      const [settingsSnap, membershipSnap] = await Promise.all([
+        getDoc(settingsRef),
+        membershipRef ? getDoc(membershipRef) : Promise.resolve(null),
+      ]);
       const settings = settingsSnap.exists() ? settingsSnap.data() : {};
+      const membership = membershipSnap?.exists() ? membershipSnap.data() : null;
+      if (membership) {
+        setPermissions(Array.isArray(membership.permissions) ? membership.permissions : []);
+        setAuthorizationSource("membership");
+      } else {
+        // Fail closed: global legacy permissions are not an authorization source.
+        setPermissions([]);
+        setAuthorizationSource("missing-membership");
+      }
 
       setHotelName(settings.hotelName || "Hotel");
       const preferredLanguage =
@@ -75,6 +91,8 @@ export function HotelProvider({ children }) {
       setHotelName("Hotel");
       setLanguage("nl");
       setLightspeedShiftRolloverHour(4);
+      setPermissions([]);
+      setAuthorizationSource("error");
     } finally {
       setPermissionsLoading(false);
     }
@@ -87,14 +105,19 @@ export function HotelProvider({ children }) {
         setPermissionsLoading(false);
         setHotelUids([]);
         setUserData(null);
+        setIsPlatformAdmin(false);
+        setAuthorizationSource("none");
         persistSelectedHotelUid(null);
         setLoading(false);
         return;
       }
 
       try {
-        const userRef = doc(db, "users", user.uid);
-        const userSnap = await getDoc(userRef);
+        const [userSnap, tokenResult] = await Promise.all([
+          getDoc(doc(db, "users", user.uid)),
+          user.getIdTokenResult(),
+        ]);
+        setIsPlatformAdmin(tokenResult?.claims?.platformAdmin === true);
 
         if (!userSnap.exists()) {
           console.error("Gebruikersprofiel niet gevonden in database.");
@@ -125,7 +148,7 @@ export function HotelProvider({ children }) {
         }
 
         setSelectedHotelUid(uid);
-        await loadHotelSettings(uid, data);
+        await loadHotelSettings(uid, data, user.uid);
         setLoading(false);
       } catch (err) {
         console.error("Fout bij laden van gebruikersgegevens:", err);
@@ -145,7 +168,7 @@ export function HotelProvider({ children }) {
     persistSelectedHotelUid(uid);
     setSelectedHotelUid(uid);
     const data = userData;
-    await loadHotelSettings(uid, data);
+    await loadHotelSettings(uid, data, auth.currentUser?.uid);
     setLoading(false);
   };
 
@@ -168,6 +191,8 @@ export function HotelProvider({ children }) {
         loading,
         permissionsLoading,
         permissions,
+        isPlatformAdmin,
+        authorizationSource,
         selectHotel,
         lightspeedShiftRolloverHour,
         posProvider,

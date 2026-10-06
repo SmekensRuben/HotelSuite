@@ -18,6 +18,10 @@ export function hasPermission(user, feature, action) {
   const permissionKey = `${normalizedFeature}.${normalizedAction}`;
   const wildcardKey = `${normalizedFeature}.*`;
 
+  if (user.permissions.some((permission) => String(permission || "").trim().toLowerCase() === "super.admin")) {
+    return true;
+  }
+
   return user.permissions.some((permission) => {
     const [permissionFeature, permissionAction] = String(permission || "")
       .trim()

@@ -1,15 +1,16 @@
+import React from "react";
 import { Navigate } from "react-router-dom";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { hasPermission } from "../../utils/permissions";
 import { auth } from "../../firebaseConfig";
 import { multiFactor } from "firebase/auth";
 
-export default function ProtectedRoute({ children, feature, action = "read", anyOf = [] }) {
-  const { hotelUid, loading, permissionsLoading, permissions } = useHotelContext();
+export default function ProtectedRoute({ children, feature, action = "read", anyOf = [], platformOnly = false }) {
+  const { hotelUid, loading, permissionsLoading, permissions, isPlatformAdmin } = useHotelContext();
   const permissionChecks = anyOf.length ? anyOf : feature ? [{ feature, action }] : [];
-  const hasAccess = permissionChecks.length
+  const hasAccess = isPlatformAdmin || (permissionChecks.length
     ? permissionChecks.some((permission) => hasPermission({ permissions }, permission.feature, permission.action || "read"))
-    : true;
+    : true);
 
   if (loading || permissionsLoading) {
     return (
@@ -29,6 +30,10 @@ export default function ProtectedRoute({ children, feature, action = "read", any
   }
 
   if (!hasAccess) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  if (platformOnly && !isPlatformAdmin) {
     return <Navigate to="/dashboard" replace />;
   }
 

@@ -1,0 +1,277 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isPlatformAdmin() {
+      return signedIn()
+        && 'platformAdmin' in request.auth.token
+        && request.auth.token.platformAdmin == true;
+    }
+
+    function membershipPath(hotelUid) {
+      return /databases/$(database)/documents/hotels/$(hotelUid)/members/$(request.auth.uid);
+    }
+
+    function isHotelMember(hotelUid) {
+      return isPlatformAdmin() || (signedIn() && exists(membershipPath(hotelUid)));
+    }
+
+    function memberPermissions(hotelUid) {
+      return get(membershipPath(hotelUid)).data.permissions;
+    }
+
+    function hasPermission(hotelUid, feature, action) {
+      return isPlatformAdmin()
+        || (isHotelMember(hotelUid)
+          && memberPermissions(hotelUid) is list
+          && (memberPermissions(hotelUid).hasAny(['super.admin'])
+            || memberPermissions(hotelUid).hasAny([feature + '.' + action])
+            || memberPermissions(hotelUid).hasAny([feature + '.*'])));
+    }
+
+    function mayRead(hotelUid, feature) {
+      return hasPermission(hotelUid, feature, 'read');
+    }
+
+    function mayWrite(hotelUid, feature, action) {
+      return hasPermission(hotelUid, feature, action);
+    }
+
+    function mayReadAnySettings(hotelUid) {
+      return mayRead(hotelUid, 'propertysettings')
+        || mayRead(hotelUid, 'catalogsettings')
+        || mayRead(hotelUid, 'integrations')
+        || mayRead(hotelUid, 'groupquotes')
+        || mayRead(hotelUid, 'auditUpsells');
+    }
+
+    function mayUpdateAnySettings(hotelUid) {
+      return mayWrite(hotelUid, 'propertysettings', 'update')
+        || mayWrite(hotelUid, 'catalogsettings', 'update')
+        || mayWrite(hotelUid, 'integrations', 'update')
+        || mayWrite(hotelUid, 'groupquotes', 'update')
+        || hasPermission(hotelUid, 'auditUpsells', 'settings');
+    }
+
+    match /users/{userUid} {
+      allow get: if isPlatformAdmin() || (signedIn() && request.auth.uid == userUid);
+      allow list, create, update, delete: if isPlatformAdmin();
+    }
+
+    match /hotels/{hotelUid} {
+      allow read: if isHotelMember(hotelUid);
+      allow create, update, delete: if isPlatformAdmin();
+
+      match /members/{memberUid} {
+        allow get: if isPlatformAdmin() || (signedIn() && request.auth.uid == memberUid)
+          || hasPermission(hotelUid, 'users', 'read');
+        allow list: if isPlatformAdmin() || hasPermission(hotelUid, 'users', 'read');
+        allow create: if isPlatformAdmin()
+          || (hasPermission(hotelUid, 'users', 'create')
+            && request.auth.uid != memberUid
+            && request.resource.data.permissions is list
+            && request.resource.data.permissions.hasOnly(memberPermissions(hotelUid)));
+        allow update: if isPlatformAdmin()
+          || (hasPermission(hotelUid, 'users', 'update')
+            && request.auth.uid != memberUid
+            && request.resource.data.permissions is list
+            && request.resource.data.permissions.hasOnly(memberPermissions(hotelUid)));
+        allow delete: if isPlatformAdmin()
+          || (hasPermission(hotelUid, 'users', 'delete') && request.auth.uid != memberUid);
+      }
+
+      match /catalogproducts/{document=**} {
+        allow read: if mayRead(hotelUid, 'catalogproducts');
+        allow create: if mayWrite(hotelUid, 'catalogproducts', 'create');
+        allow update: if mayWrite(hotelUid, 'catalogproducts', 'update');
+        allow delete: if mayWrite(hotelUid, 'catalogproducts', 'delete');
+      }
+      match /supplierproducts/{document=**} {
+        allow read: if mayRead(hotelUid, 'supplierproducts');
+        allow create: if mayWrite(hotelUid, 'supplierproducts', 'create');
+        allow update: if mayWrite(hotelUid, 'supplierproducts', 'update');
+        allow delete: if mayWrite(hotelUid, 'supplierproducts', 'delete');
+      }
+      match /suppliers/{document=**} {
+        allow read: if mayRead(hotelUid, 'suppliers');
+        allow create: if mayWrite(hotelUid, 'suppliers', 'create');
+        allow update: if mayWrite(hotelUid, 'suppliers', 'update');
+        allow delete: if mayWrite(hotelUid, 'suppliers', 'delete');
+      }
+      match /supplierOutletAccounts/{document=**} {
+        allow read: if mayRead(hotelUid, 'suppliers');
+        allow create, update, delete: if mayWrite(hotelUid, 'suppliers', 'update');
+      }
+      match /orders/{orderId} {
+        allow read: if mayRead(hotelUid, 'orders');
+        allow create: if mayWrite(hotelUid, 'orders', 'create');
+        allow update: if mayWrite(hotelUid, 'orders', 'update')
+          || (mayWrite(hotelUid, 'orders', 'approve')
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'dispatchRequestId', 'dispatchRequestedByEmail', 'dispatchStatus',
+              'dispatchProgress', 'dispatchStep', 'dispatchError', 'updatedAt', 'updatedBy'
+            ]));
+        allow delete: if mayWrite(hotelUid, 'orders', 'delete');
+      }
+      match /shoppingCarts/{document=**} {
+        allow read: if mayRead(hotelUid, 'orders');
+        allow create, update, delete: if mayWrite(hotelUid, 'orders', 'create');
+      }
+      match /contracts/{document=**} {
+        allow read: if mayRead(hotelUid, 'contracts');
+        allow create: if mayWrite(hotelUid, 'contracts', 'create');
+        allow update: if mayWrite(hotelUid, 'contracts', 'update');
+        allow delete: if mayWrite(hotelUid, 'contracts', 'delete');
+      }
+      match /contractReminderRuns/{runId} {
+        allow read: if mayRead(hotelUid, 'contracts');
+        allow create: if mayWrite(hotelUid, 'contracts', 'notify');
+        allow update, delete: if false;
+      }
+      match /stockCounts/{document=**} {
+        allow read: if mayRead(hotelUid, 'stockcounts');
+        allow create: if mayWrite(hotelUid, 'stockcounts', 'create');
+        allow update: if mayWrite(hotelUid, 'stockcounts', 'update');
+        allow delete: if mayWrite(hotelUid, 'stockcounts', 'delete');
+      }
+      match /locations/{document=**} {
+        allow read: if mayRead(hotelUid, 'locations');
+        allow create: if mayWrite(hotelUid, 'locations', 'create');
+        allow update: if mayWrite(hotelUid, 'locations', 'update');
+        allow delete: if mayWrite(hotelUid, 'locations', 'delete');
+      }
+      match /outlets/{document=**} {
+        allow read: if mayRead(hotelUid, 'outlets') || mayRead(hotelUid, 'orders');
+        allow create: if mayWrite(hotelUid, 'outlets', 'create');
+        allow update: if mayWrite(hotelUid, 'outlets', 'update');
+        allow delete: if mayWrite(hotelUid, 'outlets', 'delete');
+      }
+      match /quotes/{document=**} {
+        allow read: if mayRead(hotelUid, 'groupquotes');
+        allow create: if mayWrite(hotelUid, 'groupquotes', 'create');
+        allow update: if mayWrite(hotelUid, 'groupquotes', 'update');
+        allow delete: if mayWrite(hotelUid, 'groupquotes', 'delete');
+      }
+      match /competitorGroupQuotes/{document=**} {
+        allow read: if mayRead(hotelUid, 'commercialintelligence');
+        allow create: if mayWrite(hotelUid, 'commercialintelligence', 'create');
+        allow update: if mayWrite(hotelUid, 'commercialintelligence', 'update');
+        allow delete: if mayWrite(hotelUid, 'commercialintelligence', 'delete');
+      }
+      match /compset/{document=**} {
+        allow read: if mayRead(hotelUid, 'commercialintelligence') || mayRead(hotelUid, 'groupquotes');
+        allow write: if mayWrite(hotelUid, 'commercialintelligence', 'update');
+      }
+      match /groups/{document=**} {
+        allow read: if mayRead(hotelUid, 'groups');
+        allow create: if mayWrite(hotelUid, 'groups', 'create');
+        allow update: if mayWrite(hotelUid, 'groups', 'update');
+        allow delete: if mayWrite(hotelUid, 'groups', 'delete');
+      }
+      match /groupSettings/{document=**} {
+        allow read: if mayRead(hotelUid, 'groups');
+        allow write: if mayWrite(hotelUid, 'groups', 'update');
+      }
+      match /groupMarketSegments/{document=**} {
+        allow read: if mayRead(hotelUid, 'groups') || mayRead(hotelUid, 'groupquotes');
+        allow write: if mayWrite(hotelUid, 'groups', 'update');
+      }
+      match /subSegments/{document=**} {
+        allow read: if mayRead(hotelUid, 'groups') || mayRead(hotelUid, 'groupquotes');
+        allow write: if mayWrite(hotelUid, 'groups', 'update');
+      }
+      match /demandCalendarEvents/{document=**} {
+        allow read: if mayRead(hotelUid, 'demandcalendar');
+        allow create: if mayWrite(hotelUid, 'demandcalendar', 'create') || mayWrite(hotelUid, 'demandcalendar', 'import');
+        allow update: if mayWrite(hotelUid, 'demandcalendar', 'update') || mayWrite(hotelUid, 'demandcalendar', 'import');
+        allow delete: if mayWrite(hotelUid, 'demandcalendar', 'delete');
+      }
+      match /localEvents/{document=**} {
+        allow read: if mayRead(hotelUid, 'demandcalendar');
+        allow write: if mayWrite(hotelUid, 'demandcalendar', 'update');
+      }
+      match /upselling/{document=**} {
+        allow read: if hasPermission(hotelUid, 'auditUpsells', 'read') || hasPermission(hotelUid, 'auditUpsells', 'settings');
+        allow write: if hasPermission(hotelUid, 'auditUpsells', 'settings');
+      }
+      match /fileImportSettings/{document=**} {
+        allow read: if mayRead(hotelUid, 'imports');
+        allow create: if mayWrite(hotelUid, 'imports', 'create');
+        allow update: if mayWrite(hotelUid, 'imports', 'update');
+        allow delete: if mayWrite(hotelUid, 'imports', 'delete');
+      }
+      match /fileImportTypes/{document=**} {
+        allow read: if mayRead(hotelUid, 'imports');
+        allow create: if mayWrite(hotelUid, 'imports', 'create');
+        allow update: if mayWrite(hotelUid, 'imports', 'update');
+        allow delete: if mayWrite(hotelUid, 'imports', 'delete');
+      }
+      match /notificationLists/{document=**} {
+        allow read: if mayRead(hotelUid, 'notifications') || mayRead(hotelUid, 'groups');
+        allow create: if mayWrite(hotelUid, 'notifications', 'create');
+        allow update: if mayWrite(hotelUid, 'notifications', 'update');
+        allow delete: if mayWrite(hotelUid, 'notifications', 'delete');
+      }
+      match /settings/{settingsId} {
+        allow read: if isHotelMember(hotelUid);
+        allow create, update: if mayUpdateAnySettings(hotelUid);
+        allow delete: if isPlatformAdmin();
+      }
+      match /settings/propertySettings/{document=**} {
+        allow read: if mayRead(hotelUid, 'propertysettings');
+        allow create: if mayWrite(hotelUid, 'propertysettings', 'create');
+        allow update: if mayWrite(hotelUid, 'propertysettings', 'update');
+        allow delete: if mayWrite(hotelUid, 'propertysettings', 'delete');
+      }
+      match /settings/demandCalendarCategories/{document=**} {
+        allow read: if mayRead(hotelUid, 'demandcalendar');
+        allow create: if mayWrite(hotelUid, 'demandcalendar', 'create');
+        allow update: if mayWrite(hotelUid, 'demandcalendar', 'update');
+        allow delete: if mayWrite(hotelUid, 'demandcalendar', 'delete');
+      }
+      match /settings/upsells/{document=**} {
+        allow read: if hasPermission(hotelUid, 'auditUpsells', 'read') || hasPermission(hotelUid, 'auditUpsells', 'settings');
+        allow write: if hasPermission(hotelUid, 'auditUpsells', 'settings');
+      }
+      match /reports/{reportId}/{document=**} {
+        allow read: if (reportId in ['arrivalsdetailed', 'arrivalsmadeyesterday', 'ratecodeheader', 'reservationdetails', 'reservationbills', 'detailedfolio']
+            && mayRead(hotelUid, 'reservations'))
+          || (reportId in ['historyquotes', 'historyforecast', 'lightHouseData', 'stayPatternModel', 'staydatepattern']
+            && mayRead(hotelUid, 'groupquotes'));
+        allow write: if false;
+      }
+      match /{collectionName}/{document=**} {
+        allow read, write: if isPlatformAdmin();
+      }
+    }
+
+    match /roomingListLinks/{token} {
+      allow read: if isPlatformAdmin()
+        || (signedIn() && hasPermission(resource.data.hotelUid, 'roominglists', 'read'))
+        || (resource.data.publicAccessEnabled == true
+          && resource.data.publicAccessExpiresAt is timestamp
+          && resource.data.publicAccessExpiresAt > request.time);
+      allow create: if signedIn()
+        && hasPermission(request.resource.data.hotelUid, 'roominglists', 'create');
+      allow update, delete: if signedIn()
+        && hasPermission(resource.data.hotelUid, 'roominglists', 'update');
+
+      match /{document=**} {
+        allow read: if isPlatformAdmin()
+          || (signedIn()
+            && hasPermission(get(/databases/$(database)/documents/roomingListLinks/$(token)).data.hotelUid, 'roominglists', 'read'));
+        allow write: if isPlatformAdmin()
+          || (signedIn()
+            && hasPermission(get(/databases/$(database)/documents/roomingListLinks/$(token)).data.hotelUid, 'roominglists', 'approve'));
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

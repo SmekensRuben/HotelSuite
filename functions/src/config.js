@@ -2,7 +2,7 @@ const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/
 const { onRequest } = require("firebase-functions/v2/https");
 const { onObjectFinalized } = require("firebase-functions/v2/storage");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
-const { defineSecret } = require("firebase-functions/params");
+const { defineSecret, defineString } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
 const { Resend } = require("resend");
@@ -21,6 +21,14 @@ const MEILI_API_KEY = defineSecret("MEILI_API_KEY");
 const SUPPLIER_PRODUCTS_INDEX_UID = "supplierproducts";
 const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
 const RESEND_FROM = defineSecret("RESEND_FROM");
+const RESEND_WEBHOOK_SECRET = defineSecret("RESEND_WEBHOOK_SECRET");
+const APP_BASE_URL = defineString("APP_BASE_URL");
+
+function getAppBaseUrl() {
+  const value = String(APP_BASE_URL.value() || "").trim().replace(/\/$/, "");
+  if (!/^https:\/\//.test(value)) throw new Error("APP_BASE_URL must be an explicit HTTPS URL");
+  return value;
+}
 
 module.exports = {
   onDocumentCreated,
@@ -41,4 +49,7 @@ module.exports = {
   SUPPLIER_PRODUCTS_INDEX_UID,
   RESEND_API_KEY,
   RESEND_FROM,
+  RESEND_WEBHOOK_SECRET,
+  APP_BASE_URL,
+  getAppBaseUrl,
 };
