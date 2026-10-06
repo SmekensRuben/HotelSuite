@@ -93,6 +93,7 @@ export default function GroupDetailPage() {
   const { hotelUid } = useHotelContext();
   const canEditGroups = usePermission("groups", "update");
   const canDeleteGroups = usePermission("groups", "delete");
+  const canCreateRoomingLists = usePermission("roominglists", "create");
   const [group, setGroup] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -183,7 +184,7 @@ export default function GroupDetailPage() {
     }).length;
 
   const handleCreateRoomingList = async () => {
-    if (!hotelUid || !group || creatingRoomingList) return;
+    if (!canCreateRoomingLists || !hotelUid || !group || creatingRoomingList) return;
 
     setCreatingRoomingList(true);
     setError("");
@@ -521,7 +522,7 @@ export default function GroupDetailPage() {
                   type="button"
                   onClick={handleCreateRoomingList}
                   disabled={
-                    creatingRoomingList || Boolean(group.roomingListLink)
+                    !canCreateRoomingLists || creatingRoomingList || Boolean(group.roomingListLink)
                   }
                   className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:cursor-not-allowed disabled:bg-gray-300"
                 >

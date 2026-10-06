@@ -5,7 +5,8 @@ import {
   getDoc,
   getDocs,
   query,
-  updateDoc,
+  functions,
+  httpsCallable,
   where,
 } from "../firebaseConfig";
 
@@ -43,29 +44,27 @@ export async function getUserById(userId) {
   }
 }
 
-export async function updateUser(userId, payload) {
-  if (!userId) {
-    throw new Error("userId is required");
-  }
-
-  try {
-    const userRef = doc(db, "users", userId);
-    await updateDoc(userRef, payload);
-  } catch (error) {
-    console.error("Kon gebruiker niet bijwerken:", error);
-    throw error;
-  }
+export async function getUserMemberships(userId, hotelUids) {
+  if (!userId) throw new Error("userId is required");
+  const normalizedHotelUids = [...new Set((hotelUids || []).map((value) => String(value || "").trim()).filter(Boolean))];
+  const snapshots = await Promise.all(
+    normalizedHotelUids.map(async (hotelUid) => ({
+      hotelUid,
+      snapshot: await getDoc(doc(db, `hotels/${hotelUid}/members`, userId)),
+    })),
+  );
+  return Object.fromEntries(snapshots.map(({ hotelUid, snapshot }) => [
+    hotelUid,
+    snapshot.exists() && Array.isArray(snapshot.data()?.permissions)
+      ? snapshot.data().permissions
+      : [],
+  ]));
 }
 
-export async function updateUserPermissions(userId, permissions) {
-  const userRef = doc(db, "users", userId);
-
-  try {
-    await updateDoc(userRef, { permissions });
-  } catch (error) {
-    console.error("Kon gebruikerspermissies niet bijwerken:", error);
-    throw error;
-  }
+export async function updateUserWithMemberships(userId, profile, memberships, previousHotelUids = []) {
+  if (!userId) throw new Error("userId is required");
+  const updateAccess = httpsCallable(functions, "updateUserAccess");
+  await updateAccess({ userId, profile, memberships, previousHotelUids });
 }
 
 export async function getUserDisplayName(userIdentifier) {

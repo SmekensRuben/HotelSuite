@@ -1,0 +1,66 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isPlatformAdmin() {
+      return signedIn()
+        && 'platformAdmin' in request.auth.token
+        && request.auth.token.platformAdmin == true;
+    }
+
+    function isHotelMember(hotelUid) {
+      return isPlatformAdmin()
+        || (signedIn()
+          && 'hotelPermissions' in request.auth.token
+          && request.auth.token.hotelPermissions is map
+          && hotelUid in request.auth.token.hotelPermissions);
+    }
+
+    function hasPermission(hotelUid, feature, action) {
+      return isPlatformAdmin()
+        || (signedIn()
+          && isHotelMember(hotelUid)
+          && request.auth.token.hotelPermissions[hotelUid] is list
+          && (request.auth.token.hotelPermissions[hotelUid].hasAny([feature + '.' + action])
+            || request.auth.token.hotelPermissions[hotelUid].hasAny([feature + '.*'])));
+    }
+
+    match /hotels/{hotelUid}/contracts/{allPaths=**} {
+      allow read: if hasPermission(hotelUid, 'contracts', 'read');
+      allow create: if hasPermission(hotelUid, 'contracts', 'create');
+      allow update: if hasPermission(hotelUid, 'contracts', 'update');
+      allow delete: if hasPermission(hotelUid, 'contracts', 'delete');
+    }
+
+    match /hotels/{hotelUid}/catalogproducts/{allPaths=**} {
+      allow read: if hasPermission(hotelUid, 'catalogproducts', 'read');
+      allow create: if hasPermission(hotelUid, 'catalogproducts', 'create') || hasPermission(hotelUid, 'catalogproducts', 'update');
+      allow update: if hasPermission(hotelUid, 'catalogproducts', 'update');
+      allow delete: if hasPermission(hotelUid, 'catalogproducts', 'delete');
+    }
+
+    match /hotels/{hotelUid}/supplierproducts/{allPaths=**} {
+      allow read: if hasPermission(hotelUid, 'supplierproducts', 'read');
+      allow create: if hasPermission(hotelUid, 'supplierproducts', 'create') || hasPermission(hotelUid, 'supplierproducts', 'update');
+      allow update: if hasPermission(hotelUid, 'supplierproducts', 'update');
+      allow delete: if hasPermission(hotelUid, 'supplierproducts', 'delete');
+    }
+
+    match /hotels/{hotelUid}/{allPaths=**} {
+      allow read, write: if isPlatformAdmin();
+    }
+
+    match /imports/{hotelUid}/{allPaths=**} {
+      allow read: if hasPermission(hotelUid, 'imports', 'read');
+      allow write: if hasPermission(hotelUid, 'imports', 'execute');
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
