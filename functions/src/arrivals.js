@@ -2,6 +2,7 @@ const { getFirestore } = require("firebase-admin/firestore");
 const { HttpsError, onCall } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const logger = require("firebase-functions/logger");
+const { requireHotelPermission } = require("./authorization");
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const RATE_CODE_REPORT_PATH = "ratecodeheader";
@@ -22,26 +23,12 @@ async function getNonEmptyDateKeys(reportReference) {
     .sort((a, b) => b.localeCompare(a));
 }
 
-async function userCanAccessHotel(userUid, hotelUid) {
-  const userSnapshot = await getFirestore().doc(`users/${userUid}`).get();
-  const hotelUids = userSnapshot.exists && Array.isArray(userSnapshot.data()?.hotelUid)
-    ? userSnapshot.data().hotelUid
-    : [];
-  return hotelUids.includes(hotelUid);
-}
-
 exports.listArrivalDates = onCall(async (request) => {
-  if (!request.auth?.uid) {
-    throw new HttpsError("unauthenticated", "Authentication is required.");
-  }
-
   const hotelUid = String(request.data?.hotelUid || "").trim();
   if (!hotelUid) {
     throw new HttpsError("invalid-argument", "hotelUid is required.");
   }
-  if (!(await userCanAccessHotel(request.auth.uid, hotelUid))) {
-    throw new HttpsError("permission-denied", "You do not have access to this hotel.");
-  }
+  await requireHotelPermission(getFirestore(), request, hotelUid, "reservations", "read");
 
   const requestedReport = String(request.data?.report || "arrivalsdetailed").trim();
   if (!ARRIVAL_REPORT_PATHS.has(requestedReport)) {

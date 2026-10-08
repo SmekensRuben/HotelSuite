@@ -23,7 +23,8 @@
     "react": "^19.2.4",
     "resend": "^4.0.1",
     "sax": "^1.6.0",
-    "ssh2-sftp-client": "^11.0.0"
+    "ssh2-sftp-client": "^11.0.0",
+    "svix": "^1.99.1"
   },
   "devDependencies": {
     "firebase-functions-test": "^3.1.0"

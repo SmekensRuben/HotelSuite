@@ -9,20 +9,27 @@ import { usePermission } from "../../hooks/usePermission";
 export default function HeaderBar({ today, onLogout }) {
   const navigate = useNavigate();
   const { t } = useTranslation(["common", "reservations"]);
-  const { hotelUid, hotelUids = [], selectHotel } = useHotelContext();
+  const { hotelUid, hotelUids = [], selectHotel, isPlatformAdmin } = useHotelContext();
   const canViewCatalogProducts = usePermission("catalogproducts", "read");
   const canViewSupplierProducts = usePermission("supplierproducts", "read");
   const canViewSuppliers = usePermission("suppliers", "read");
   const canViewOrders = usePermission("orders", "read");
   const canViewContracts = usePermission("contracts", "read");
   const canViewStockCounts = usePermission("stockcounts", "read");
-  const canViewSettings = usePermission("settings", "read");
+  const canViewPropertySettings = usePermission("propertysettings", "read");
+  const canViewCatalogSettings = usePermission("catalogsettings", "read");
+  const canViewOutlets = usePermission("outlets", "read");
+  const canViewImports = usePermission("imports", "read");
+  const canViewIntegrations = usePermission("integrations", "read");
+  const canViewNotifications = usePermission("notifications", "read");
+  const canViewReservations = usePermission("reservations", "read");
   const canViewLocations = usePermission("locations", "read");
-  const canViewUsers = usePermission("users", "read");
   const canReadAuditUpsells = usePermission("auditUpsells", "read");
   const canManageAuditUpsells = usePermission("auditUpsells", "settings");
   const canViewGroups = usePermission("groups", "read");
   const canViewGroupQuotes = usePermission("groupquotes", "read");
+  const canViewDemandCalendar = usePermission("demandcalendar", "read");
+  const canViewCommercialIntelligence = usePermission("commercialintelligence", "read");
   const [hotels, setHotels] = useState([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
@@ -40,19 +47,19 @@ export default function HeaderBar({ today, onLogout }) {
       label: "Property Settings",
       action: () => navigate("/settings/property"),
       icon: Settings2,
-      visible: canViewSettings,
+      visible: canViewPropertySettings,
     },
     {
       label: "Catalog Settings",
       action: () => navigate("/settings/catalog"),
       icon: Settings2,
-      visible: canViewSettings,
+      visible: canViewCatalogSettings,
     },
     {
       label: "Outlet Settings",
       action: () => navigate("/settings/outlets"),
       icon: Settings2,
-      visible: canViewSettings,
+      visible: canViewOutlets,
     },
     {
       label: "Location Settings",
@@ -64,31 +71,31 @@ export default function HeaderBar({ today, onLogout }) {
       label: "File Import Settings",
       action: () => navigate("/settings/file-import"),
       icon: Settings2,
-      visible: canViewSettings,
+      visible: canViewImports,
     },
     {
       label: "File Import Types",
       action: () => navigate("/settings/file-import-types"),
       icon: Settings2,
-      visible: canViewSettings,
+      visible: canViewImports,
     },
     {
       label: "Opera Settings",
       action: () => navigate("/settings/opera"),
       icon: Settings2,
-      visible: canViewSettings,
+      visible: canViewIntegrations,
     },
     {
       label: "Notification Lists",
       action: () => navigate("/settings/notification-lists"),
       icon: BellRing,
-      visible: canViewSettings,
+      visible: canViewNotifications,
     },
     {
       label: "User Management",
       action: () => navigate("/settings/users"),
       icon: Users,
-      visible: canViewUsers,
+      visible: isPlatformAdmin,
     },
   ].filter((item) => item.visible !== false);
 
@@ -103,7 +110,7 @@ export default function HeaderBar({ today, onLogout }) {
       label: "Demand Calendar",
       action: () => navigate("/me/demand-calendar"),
       icon: CalendarDays,
-      visible: canViewGroups,
+      visible: canViewDemandCalendar,
     },
   ].filter((item) => item.visible !== false);
 
@@ -112,13 +119,13 @@ export default function HeaderBar({ today, onLogout }) {
       label: "Arrivals",
       action: () => navigate("/front-office/arrivals"),
       icon: BedDouble,
-      visible: true,
+      visible: canViewReservations,
     },
     {
       label: "Made Reservations",
       action: () => navigate("/front-office/made-reservations"),
       icon: ClipboardList,
-      visible: true,
+      visible: canViewReservations,
     },
     {
       label: "Upselling",
@@ -133,7 +140,7 @@ export default function HeaderBar({ today, onLogout }) {
       label: "Commercial Intelligence",
       action: () => navigate("/revenue/commercial-intelligence"),
       icon: TrendingUp,
-      visible: canViewGroupQuotes,
+      visible: canViewCommercialIntelligence,
     },
     {
       label: "Group Quotes",

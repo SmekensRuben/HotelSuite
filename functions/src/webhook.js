@@ -1,14 +1,35 @@
-const { onRequest, logger, admin, RESEND_API_KEY } = require("./config");
+const { Webhook } = require("svix");
+const { onRequest, logger, admin, RESEND_API_KEY, RESEND_WEBHOOK_SECRET } = require("./config");
 const { extractEmailAddress, toEmailList, getFirstAvailableImportAttachment, fetchResendAttachmentBuffer, normalizeFileType } = require("./common");
 
-const handleResendEmailReceivedWebhook = onRequest({ secrets: [RESEND_API_KEY] }, async (req, res) => {
+function verifyResendWebhook(req) {
+  const secret = String(RESEND_WEBHOOK_SECRET.value() || "").trim();
+  if (!secret) throw new Error("Missing RESEND_WEBHOOK_SECRET");
+  if (!req.rawBody) throw new Error("Missing raw webhook body");
+  return new Webhook(secret).verify(req.rawBody, {
+    "svix-id": req.get("svix-id") || "",
+    "svix-timestamp": req.get("svix-timestamp") || "",
+    "svix-signature": req.get("svix-signature") || "",
+  });
+}
+
+const handleResendEmailReceivedWebhook = onRequest({ secrets: [RESEND_API_KEY, RESEND_WEBHOOK_SECRET] }, async (req, res) => {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method Not Allowed" });
     return;
   }
 
+  let verifiedPayload;
   try {
-    const payload = req.body && typeof req.body === "object" ? req.body : {};
+    verifiedPayload = verifyResendWebhook(req);
+  } catch (error) {
+    logger.warn("Rejected Resend webhook", { message: error?.message || String(error) });
+    res.status(401).json({ error: "Invalid webhook signature" });
+    return;
+  }
+
+  try {
+    const payload = verifiedPayload && typeof verifiedPayload === "object" ? verifiedPayload : {};
     const emailData = payload?.data && typeof payload.data === "object" ? payload.data : payload;
     const fromEmail = extractEmailAddress(emailData.from || emailData.sender || emailData.fromEmail);
     const toCandidates = [
@@ -95,4 +116,4 @@ const handleResendEmailReceivedWebhook = onRequest({ secrets: [RESEND_API_KEY] }
   }
 });
 
-module.exports = { handleResendEmailReceivedWebhook };
+module.exports = { handleResendEmailReceivedWebhook, verifyResendWebhook };

@@ -21,6 +21,7 @@ const MEILI_API_KEY = defineSecret("MEILI_API_KEY");
 const SUPPLIER_PRODUCTS_INDEX_UID = "supplierproducts";
 const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
 const RESEND_FROM = defineSecret("RESEND_FROM");
+const RESEND_WEBHOOK_SECRET = defineSecret("RESEND_WEBHOOK_SECRET");
 
 module.exports = {
   onDocumentCreated,
@@ -41,4 +42,5 @@ module.exports = {
   SUPPLIER_PRODUCTS_INDEX_UID,
   RESEND_API_KEY,
   RESEND_FROM,
+  RESEND_WEBHOOK_SECRET,
 };
