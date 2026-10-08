@@ -1,0 +1,21 @@
+# This backend intentionally uses the existing hotel-toolkit data environment.
+# Web-app values come from Firebase's injected FIREBASE_WEBAPP_CONFIG, not secrets
+# or another hosting provider. Keep MFA aligned with the existing frontend policy.
+scripts:
+  buildCommand: npm run build:apphosting
+  runCommand: npm start
+runConfig:
+  minInstances: 0
+env:
+  - variable: VITE_DEPLOYMENT_ENV
+    value: production
+    availability: [BUILD]
+  - variable: VITE_AUTH_REQUIRE_MFA
+    value: "false"
+    availability: [BUILD]
+  - variable: EXPECTED_FIREBASE_PROJECT_ID
+    value: hotel-toolkit
+    availability: [BUILD]
+  - variable: PRODUCTION_FIREBASE_PROJECT_ID
+    value: hotel-toolkit
+    availability: [BUILD]

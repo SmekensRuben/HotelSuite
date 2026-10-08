@@ -2,6 +2,10 @@
 
 A React + Vite application backed by Firebase. The repository also contains Cloud Functions used for email notifications.
 
+All new development, interface copy, documentation and pull request descriptions must be in English. See `AGENTS.md` for the project conventions.
+
+For Firebase App Hosting configuration, verified rollout issues and manual hotel subscription activation, see [Firebase App Hosting and subscription setup](docs/firebase-app-hosting.md).
+
 ## Local setup
 1. Install [Node.js](https://nodejs.org/) (version 22 or later) and npm.
 2. Install project dependencies:

@@ -10,6 +10,8 @@
     "dev": "vite",
     "validate:env": "node scripts/validate-client-environment.mjs",
     "build": "npm run validate:env && vite build",
+    "build:apphosting": "node scripts/build-apphosting.mjs",
+    "start": "node scripts/serve-app.mjs",
     "build:test": "NODE_ENV=test npm run validate:env && vite build --mode test",
     "preview": "vite preview"
   },
