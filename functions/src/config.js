@@ -4,15 +4,24 @@ const { onObjectFinalized } = require("firebase-functions/v2/storage");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret, defineString } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
-const admin = require("firebase-admin");
+const { getApps, initializeApp } = require("firebase-admin/app");
+const { getFirestore, FieldValue, FieldPath, Timestamp } = require("firebase-admin/firestore");
+const { getAuth } = require("firebase-admin/auth");
+const { getStorage } = require("firebase-admin/storage");
+// Keep the existing module interface while using the modular Admin SDK v14 API.
+const admin = {
+  firestore: Object.assign(getFirestore, { FieldValue, FieldPath, Timestamp }),
+  auth: getAuth,
+  storage: getStorage,
+};
 const { Resend } = require("resend");
 const SftpClient = require("ssh2-sftp-client");
 const ExcelJS = require("exceljs");
 const PDFDocument = require("pdfkit");
 const React = require("react");
 
-if (!admin.apps.length) {
-  admin.initializeApp();
+if (!getApps().length) {
+  initializeApp();
 }
 
 const MEILI_HOST = defineSecret("MEILI_HOST");
