@@ -37,26 +37,30 @@ PRODUCTION_FIREBASE_PROJECT_ID=
 
 Use the tracked `.env.example` as the variable-name template. `.env` is intentionally ignored and must never be committed. The browser Firebase configuration is not a server secret, but it still binds a build to a project; Meilisearch credentials are server-only Firebase secrets and must never be bundled in the browser. `npm run build` fails when a required variable is absent or when `VITE_FIREBASE_PROJECT_ID` differs from `EXPECTED_FIREBASE_PROJECT_ID`; there is no production fallback.
 
-## Vercel preview and production separation
+## Vercel previews and Firebase project selection
 
-GitHub Actions verifies PRs and `main` without deploying. External Vercel/App Hosting integrations are independent: verify or disable their production auto-rollouts in their consoles before relying on a deployment freeze. The current external Vercel preview check is not passing; its environment setup still requires operator validation. Configure these variables in the Vercel project with scope **Preview only**:
+Vercel's hosting environment and the Firebase data environment are separate choices. The current intended setup uses Firebase project `hotel-toolkit` for both Vercel Preview and Production. Set `VITE_DEPLOYMENT_ENV=production` for both: a preview URL does not make its Firebase data a test environment. Changes made through either frontend use the same backend and data.
 
-| Variable | Preview value |
+Configure the matching Firebase web-app values for the Vercel scopes that should use that project:
+
+| Variable | Shared Firebase value |
 | --- | --- |
-| `VITE_DEPLOYMENT_ENV` | `test` |
-| `VITE_AUTH_REQUIRE_MFA` | `false` when MFA is disabled in the Firebase test project |
-| `VITE_FIREBASE_API_KEY` | Web API key from the Firebase test web app |
-| `VITE_FIREBASE_AUTH_DOMAIN` | Test-project auth domain, normally `<test-project-id>.firebaseapp.com` |
-| `VITE_FIREBASE_PROJECT_ID` | Exact Firebase test project ID |
-| `VITE_FIREBASE_STORAGE_BUCKET` | Exact test-project bucket from Firebase web-app settings |
-| `VITE_FIREBASE_MESSAGING_SENDER_ID` | Test web-app sender ID |
-| `VITE_FIREBASE_APP_ID` | Test Firebase web-app ID |
-| `EXPECTED_FIREBASE_PROJECT_ID` | Same exact test project ID |
-| `PRODUCTION_FIREBASE_PROJECT_ID` | Existing production project ID; build-only guard, not exposed by Vite |
+| `VITE_DEPLOYMENT_ENV` | `production` |
+| `VITE_AUTH_REQUIRE_MFA` | Match the actual Authentication policy of `hotel-toolkit` |
+| `VITE_FIREBASE_API_KEY` | Firebase web-app API key |
+| `VITE_FIREBASE_AUTH_DOMAIN` | Firebase web-app Auth domain |
+| `VITE_FIREBASE_PROJECT_ID` | `hotel-toolkit` |
+| `VITE_FIREBASE_STORAGE_BUCKET` | Exact bucket from the same web-app configuration |
+| `VITE_FIREBASE_MESSAGING_SENDER_ID` | Sender ID from the same web-app configuration |
+| `VITE_FIREBASE_APP_ID` | App ID from the same web-app configuration |
+| `EXPECTED_FIREBASE_PROJECT_ID` | `hotel-toolkit` |
+| `PRODUCTION_FIREBASE_PROJECT_ID` | `hotel-toolkit`; build-only test-environment guard |
 
-Do not copy production Firebase or search values into Vercel Preview. Add the stable Vercel preview/branch domain used for acceptance to the **test** Firebase project's Auth authorized domains. Firebase Auth does not infer authorization from this repository configuration.
+A preview may alternatively use a separate Firebase test project with `VITE_DEPLOYMENT_ENV=test` and all matching test web-app values. Test builds still reject the known production project and any configured production project. Every build requires complete Firebase values and an exact expected-project match.
 
-The current production Firebase project ID `hotel-toolkit` is explicitly rejected in Vercel Preview builds. User-management previews also require `functions:updateUserAccess` to be deployed to the selected test project before the frontend preview is built; see `docs/firebase-environments.md` for diagnosis and rollout order.
+Callables must be deployed to the same Firebase project as the selected browser configuration. Adding an Auth authorized domain is a separate project setting; build success alone does not configure sign-in redirects. See `docs/firebase-environments.md`.
+
+GitHub Actions performs verification without deployment. The Vercel Git integration currently deploys `main` automatically; the observed production deployment of `0650572` was Ready. External hosting auto-rollouts must be managed in their own consoles and cannot be frozen by removing a GitHub Actions deploy job.
 
 `.github/workflows/verify.yml` runs on pull requests and `main`, uses the tracked fictional `.env.test` fixture, and has no production-secret or deployment step. Production Firebase and FTPS secrets are no longer referenced by repository workflows and can be removed from GitHub repository settings after checking that no other workflow depends on them. See `docs/deployment-freeze.md` before restoring any production deployment.
 

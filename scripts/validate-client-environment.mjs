@@ -33,17 +33,16 @@ if (!['true', 'false'].includes(environment.VITE_AUTH_REQUIRE_MFA.trim().toLower
 if (projectId !== expectedProjectId) {
   throw new Error(`Build stopped: Firebase project ${projectId} does not match EXPECTED_FIREBASE_PROJECT_ID.`);
 }
-if (environment.VERCEL_ENV === "preview" && deploymentEnvironment !== "test") {
-  throw new Error("Build stopped: a Vercel preview must use VITE_DEPLOYMENT_ENV=test.");
-}
-if (environment.VERCEL_ENV === "preview" && projectId === "hotel-toolkit") {
-  throw new Error("Build stopped: a Vercel preview points at the known production Firebase project hotel-toolkit.");
-}
-if (environment.GITHUB_REF_NAME === "main" && process.env.NODE_ENV !== "test" && deploymentEnvironment !== "production") {
-  throw new Error("Build stopped: the main-branch production build must use VITE_DEPLOYMENT_ENV=production.");
+// Vercel's hosting target and the Firebase data environment are independent.
+// Previews may intentionally share the production backend, provided the build
+// declares production explicitly instead of labeling live data as test data.
+if ((environment.GITHUB_REF_NAME === "main" || environment.VERCEL_ENV === "production")
+  && process.env.NODE_ENV !== "test" && deploymentEnvironment !== "production") {
+  throw new Error("Build stopped: a production release build must use VITE_DEPLOYMENT_ENV=production.");
 }
 const productionProjectId = String(environment.PRODUCTION_FIREBASE_PROJECT_ID || "").trim();
-if (deploymentEnvironment === "test" && productionProjectId && projectId === productionProjectId) {
+if (deploymentEnvironment === "test"
+  && (projectId === "hotel-toolkit" || (productionProjectId && projectId === productionProjectId))) {
   throw new Error("Build stopped: a test build points at the production Firebase project.");
 }
 

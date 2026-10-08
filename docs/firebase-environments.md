@@ -1,6 +1,6 @@
 # Firebase environment audit
 
-Status: 2026-10-08. This document describes repository configuration only; no Vercel, Firebase or production setting was changed while preparing it.
+Status: 2026-10-08. Vercel inspection confirmed that its Git integration deploys `main` automatically. The user selected shared Firebase project `hotel-toolkit` for previews and production; `VITE_DEPLOYMENT_ENV` is therefore `production` for both. Firebase resources, Rules, Auth settings and Functions were not deployed in this correction.
 
 ## Initialization inventory
 
@@ -24,21 +24,21 @@ Status: 2026-10-08. This document describes repository configuration only; no Ve
 - `VITE_DEPLOYMENT_ENV` has no default and accepts only `test` or `production`.
 - `VITE_AUTH_REQUIRE_MFA` has no default and must explicitly match the Authentication policy of that Firebase project. Test environments may set `false`; environments that mandate enrollment set `true`.
 - `EXPECTED_FIREBASE_PROJECT_ID` must exactly match the selected client project.
-- Vercel Preview refuses `VITE_DEPLOYMENT_ENV=production`.
-- A main-branch production build refuses any environment other than `production`. The explicit `NODE_ENV=test` verification build uses the fictional test fixture and does not publish an artifact to a cloud environment.
-- When `PRODUCTION_FIREBASE_PROJECT_ID` is supplied, a test build refuses that project ID.
+- Vercel Preview may use either an explicitly declared test Firebase project or the intentionally shared production Firebase project. `VERCEL_ENV` identifies the hosting target, not the Firebase data environment.
+- A main-branch or Vercel production release build refuses any environment other than `production`. The explicit `NODE_ENV=test` verification build uses the fictional test fixture and does not publish an artifact to a cloud environment.
+- Test builds always reject the known production project `hotel-toolkit`, and also reject a separately configured `PRODUCTION_FIREBASE_PROJECT_ID`.
 - These checks prevent accidental fallback; they do not inspect remote Vercel settings. Verify the configured scopes in Vercel before approving the PR preview.
 - The Firebase Web SDK does not provide a supported client-side read of the project MFA enforcement setting, so repository code cannot infer it safely. Vercel and GitHub configuration are the explicit environment-to-project policy mapping.
 
 ## Callable troubleshooting
 
-Callable Functions and the browser Firebase app must use the same project. An endpoint such as `https://us-central1-hotel-toolkit.cloudfunctions.net/updateUserAccess` proves that the frontend was built for project `hotel-toolkit`; it is not a CORS configuration for the `test-breakfast` audit project. Vercel Preview builds now fail when they point at this known production project.
+Callable Functions and the browser Firebase app must use the same project. An endpoint such as `https://us-central1-hotel-toolkit.cloudfunctions.net/updateUserAccess` proves that the frontend was built for project `hotel-toolkit`; it is not a CORS configuration for the `test-breakfast` audit project. That project is now intentionally allowed in previews when `VITE_DEPLOYMENT_ENV=production` and the expected project matches.
 
 `updateUserAccess` is an `onCall` Function in `us-central1` with callable CORS handling explicitly enabled. A preflight response without `Access-Control-Allow-Origin` usually means the requested Function is absent, not publicly invokable at the transport layer, or deployed to another project/region. For the preview flow:
 
-1. set Vercel Preview `VITE_FIREBASE_PROJECT_ID` and `EXPECTED_FIREBASE_PROJECT_ID` to the test project (`test-breakfast` for the current repository alias);
-2. deploy `functions:updateUserAccess` to that same test project before opening User Detail;
+1. set Vercel Preview `VITE_FIREBASE_PROJECT_ID` and `EXPECTED_FIREBASE_PROJECT_ID` to the chosen Firebase project (`hotel-toolkit` for the current shared-backend setup), with `VITE_DEPLOYMENT_ENV=production`;
+2. deploy the matching `functions:updateUserAccess` release to that selected project before opening User Detail;
 3. verify the deployed Function is in `us-central1` and permits unauthenticated invocation at the Cloud Run transport layer—the callable itself still requires an authenticated `platformAdmin` token;
 4. redeploy the Vercel Preview so its bundled Firebase config changes.
 
-Do not solve this by adding the Vercel domain to a production Function or by weakening callable authorization.
+Keep callable authentication and authorization intact. A successful preview build does not prove that the new Functions or Rules have been deployed.
