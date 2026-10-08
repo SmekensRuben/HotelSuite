@@ -24,6 +24,11 @@ jobs:
           node-version: "22"
           cache: "npm"
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+
       - name: Install frontend and tooling dependencies
         run: npm ci
 

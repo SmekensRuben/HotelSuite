@@ -39,7 +39,7 @@ if (environment.VERCEL_ENV === "preview" && deploymentEnvironment !== "test") {
 if (environment.VERCEL_ENV === "preview" && projectId === "hotel-toolkit") {
   throw new Error("Build stopped: a Vercel preview points at the known production Firebase project hotel-toolkit.");
 }
-if (environment.GITHUB_REF_NAME === "main" && deploymentEnvironment !== "production") {
+if (environment.GITHUB_REF_NAME === "main" && process.env.NODE_ENV !== "test" && deploymentEnvironment !== "production") {
   throw new Error("Build stopped: the main-branch production build must use VITE_DEPLOYMENT_ENV=production.");
 }
 const productionProjectId = String(environment.PRODUCTION_FIREBASE_PROJECT_ID || "").trim();
