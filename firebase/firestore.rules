@@ -27,9 +27,23 @@ service cloud.firestore {
     function hasPermission(hotelUid, feature, action) {
       return isPlatformAdmin()
         || (isHotelMember(hotelUid)
+          && hasActiveSubscription(hotelUid)
           && memberPermissions(hotelUid) is list
           && (memberPermissions(hotelUid).hasAny([feature + '.' + action])
             || memberPermissions(hotelUid).hasAny([feature + '.*'])));
+    }
+
+    function hasActiveSubscription(hotelUid) {
+      let path = /databases/$(database)/documents/hotelSubscriptions/$(hotelUid);
+      return exists(path)
+        && get(path).data.status in ['active', 'trialing']
+        && ((get(path).data.status == 'active' && get(path).data.validUntil == null)
+          || (get(path).data.validUntil is timestamp && get(path).data.validUntil > request.time));
+    }
+
+    match /hotelSubscriptions/{hotelUid} {
+      allow read: if isPlatformAdmin() || isHotelMember(hotelUid);
+      allow write: if false;
     }
 
     function mayRead(hotelUid, feature) {
@@ -244,14 +258,16 @@ service cloud.firestore {
         allow write: if false;
       }
       match /{collectionName}/{document=**} {
-        allow read, write: if isPlatformAdmin();
+        allow read: if isPlatformAdmin();
+        allow write: if isPlatformAdmin() && collectionName != 'subscriptionAudit';
       }
     }
 
     match /roomingListLinks/{token} {
       allow read: if isPlatformAdmin()
         || (signedIn() && hasPermission(resource.data.hotelUid, 'roominglists', 'read'))
-        || (resource.data.publicAccessEnabled == true
+        || (hasActiveSubscription(resource.data.hotelUid)
+          && resource.data.publicAccessEnabled == true
           && resource.data.publicAccessExpiresAt is timestamp
           && resource.data.publicAccessExpiresAt > request.time);
       allow create: if signedIn()

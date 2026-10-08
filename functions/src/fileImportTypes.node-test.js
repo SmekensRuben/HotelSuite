@@ -7,12 +7,28 @@ process.env.FIREBASE_CONFIG = JSON.stringify({
 });
 
 const {
+  requireHotelImportTarget,
+  buildTemplateContext,
   aggregateMappedDocuments,
   mergeMappedDocuments,
   normalizeColumnMappings,
   parseCsvDocuments,
   parseXmlDocuments,
 } = require("./fileImportTypes");
+
+test("imports cannot write global data, another hotel or authorization/queue records", () => {
+  requireHotelImportTarget("hotels/hotel-a/reports/arrivals/2026-10-08/guest", "hotel-a");
+  for (const path of ["users/admin", "hotelSubscriptions/hotel-a", "hotels/hotel-b/reports/a", "hotels/hotel-a", "hotels/hotel-a/members/admin", "hotels/hotel-a/mailQueue/a", "hotels/hotel-a/settings/config", "hotels/hotel-a/reports/../members/admin"]) {
+    assert.throws(() => requireHotelImportTarget(path, "hotel-a"));
+  }
+});
+
+test("mapped import columns cannot override the trusted template tenant", () => {
+  const context = buildTemplateContext({ hotelUid: "hotel-a", fileType: "arrivals", fileImportType: {},
+    mappedRow: { hotelUid: "hotel-b", fileType: "forged" }, object: { name: "imports/hotel-a/a.csv" }, rowIndex: 0 });
+  assert.equal(context.hotelUid, "hotel-a");
+  assert.equal(context.fileType, "arrivals");
+});
 
 const fileImportType = {
   recordNodeName: "G_RESERVATION",
@@ -178,4 +194,12 @@ test("keeps existing scalar, array, date and list merge behavior", () => {
     ),
     { name: "new", count: 0, tags: ["new"], date: "2026-09-23", items: [{ id: "a" }, { id: "b" }] }
   );
+});
+
+test("import metadata cannot redirect an upload into another hotel's writes", () => {
+  const { importObjectMatchesHotel } = require("./fileImportTypes");
+  assert.equal(importObjectMatchesHotel("imports/hotel-a/manual/data.csv", "hotel-a"), true);
+  assert.equal(importObjectMatchesHotel("imports/hotel-a/manual/data.csv", "hotel-b"), false);
+  assert.equal(importObjectMatchesHotel("imports/manual/hotel-a/data.csv", "hotel-a"), false);
+  assert.equal(importObjectMatchesHotel("imports/hotel-a-b/data.csv", "hotel-a"), false);
 });

@@ -1,3 +1,4 @@
+const { subscribedHotels } = require("./subscriptions");
 const { onSchedule, logger, admin, Resend, RESEND_API_KEY, RESEND_FROM } = require("./config");
 
 const db = admin.firestore();
@@ -142,9 +143,9 @@ async function sendGuestIntelligenceMail({ firestore = db, ResendClass = Resend 
   }
 
   const configuration = configurationSnapshot.data() || {};
-  const hotelUids = sanitizeArray(configuration.hotelUid);
+  const hotelUids = await subscribedHotels(firestore, sanitizeArray(configuration.hotelUid));
+  if (!hotelUids.length) { logger.info("Guest intelligence mail skipped: no active subscriptions"); return; }
   const recipients = sanitizeArray(configuration.sendList);
-  if (!hotelUids.length) throw new Error("No hotelUid configuration found in scheduledMails/guestIntelligence");
   if (!recipients.length) throw new Error("No sendList configuration found in scheduledMails/guestIntelligence");
 
   const apiKey = String(RESEND_API_KEY.value() || "").trim();

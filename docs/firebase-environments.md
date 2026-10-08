@@ -14,7 +14,7 @@ Status: 2026-10-08. This document describes repository configuration only; no Ve
 
 ## External configuration inventory
 
-- Browser search uses only `VITE_MEILI_HOST` and `VITE_MEILI_SEARCH_KEY`. Both may be empty together to use the existing Firestore fallback; never give the browser an admin Meilisearch key.
+- Browser product search calls `searchHotelProducts` in the selected Firebase project. Meilisearch host/key/index are server-only secrets. The callable validates membership, permission and subscription, forces the tenant filter, and hydrates results from that hotel’s canonical Firestore documents. Unavailable search can fall back to authorized Firestore reads; permission errors never trigger fallback.
 - Cloud Functions use project-scoped Firebase secrets for Meilisearch, Resend and the Resend webhook. OpenAI is also server-side; its public API hostname is a vendor endpoint rather than an environment-specific HotelSuite URL.
 - Email links formerly hard-coded `https://hoteltoolkit.eu`. They now use the required Functions parameter `APP_BASE_URL`, independently configured in the test and production Firebase projects.
 - No hard-coded Firebase web project, bucket, Auth domain or Functions URL remains in application code. Vendor API URLs for OpenAI and Resend remain intentionally fixed.
@@ -25,7 +25,7 @@ Status: 2026-10-08. This document describes repository configuration only; no Ve
 - `VITE_AUTH_REQUIRE_MFA` has no default and must explicitly match the Authentication policy of that Firebase project. Test environments may set `false`; environments that mandate enrollment set `true`.
 - `EXPECTED_FIREBASE_PROJECT_ID` must exactly match the selected client project.
 - Vercel Preview refuses `VITE_DEPLOYMENT_ENV=production`.
-- A main-branch GitHub build refuses any environment other than `production`.
+- A main-branch production build refuses any environment other than `production`. The explicit `NODE_ENV=test` verification build uses the fictional test fixture and does not publish an artifact to a cloud environment.
 - When `PRODUCTION_FIREBASE_PROJECT_ID` is supplied, a test build refuses that project ID.
 - These checks prevent accidental fallback; they do not inspect remote Vercel settings. Verify the configured scopes in Vercel before approving the PR preview.
 - The Firebase Web SDK does not provide a supported client-side read of the project MFA enforcement setting, so repository code cannot infer it safely. Vercel and GitHub configuration are the explicit environment-to-project policy mapping.

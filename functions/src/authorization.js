@@ -1,4 +1,5 @@
 const { HttpsError } = require("firebase-functions/v2/https");
+const { requireDocumentId, requireHotelSubscription } = require("./subscriptions");
 
 function normalizedPermissions(value) {
   return Array.isArray(value)
@@ -17,6 +18,7 @@ async function requireHotelPermission(db, request, hotelUid, feature, action) {
   if (!request.auth?.uid) {
     throw new HttpsError("unauthenticated", "Authentication is required.");
   }
+  hotelUid = requireDocumentId(hotelUid, "hotelUid");
   if (request.auth.token?.platformAdmin === true) return;
 
   const membership = await db.doc(`hotels/${hotelUid}/members/${request.auth.uid}`).get();
@@ -24,6 +26,7 @@ async function requireHotelPermission(db, request, hotelUid, feature, action) {
   if (!membership.exists || !permissionAllows(permissions, feature, action)) {
     throw new HttpsError("permission-denied", `${feature}.${action} is required for this hotel.`);
   }
+  await requireHotelSubscription(db, hotelUid);
 }
 
 module.exports = { normalizedPermissions, permissionAllows, requireHotelPermission };

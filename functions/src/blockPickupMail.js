@@ -1,3 +1,4 @@
+const { hotelHasActiveSubscription } = require("./subscriptions");
 const { onSchedule, logger, admin, Resend, RESEND_API_KEY, RESEND_FROM } = require('./config');
 
 const db = admin.firestore();
@@ -245,6 +246,7 @@ async function sendScheduledBlockPickupReportHandler() {
   const hotelReports = [];
 
   for (const hotelUid of hotelUids) {
+    if (!await hotelHasActiveSubscription(db, hotelUid)) continue;
     const snapshotDate = await getLatestSnapshotDate(hotelUid);
     if (!snapshotDate) {
       logger.info('No group pickup snapshot dates found', { hotelUid });

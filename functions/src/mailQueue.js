@@ -1,4 +1,5 @@
 const { onDocumentCreated, logger, admin, Resend, ExcelJS, PDFDocument, RESEND_API_KEY, RESEND_FROM } = require("./config");
+const { hotelHasActiveSubscription } = require("./subscriptions");
 
 function buildOrderCsv(order = {}) {
   const rows = getOrderSupplierProductRows(order);
@@ -488,6 +489,14 @@ const processMailQueue = onDocumentCreated(
     const mail = event.data.data() || {};
     const status = String(mail.status || "").toLowerCase();
     if (status && status !== "queued") return;
+    if (!await hotelHasActiveSubscription(admin.firestore(), hotelUid)) {
+      await mailRef.update({ status: "blocked", error: "Hotel subscription is inactive." });
+      await finalizeOrderDispatchFromMailQueue(mail, {
+        dispatchStatus: "failed", dispatchProgress: 100,
+        dispatchStep: "Dispatch blocked", dispatchError: "Hotel subscription is inactive.",
+      });
+      return;
+    }
 
     const resendApiKey = String(RESEND_API_KEY.value() || "").trim();
     const from = String(RESEND_FROM.value() || "").trim();

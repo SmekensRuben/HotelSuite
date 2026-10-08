@@ -12,21 +12,20 @@ service firebase.storage {
         && request.auth.token.platformAdmin == true;
     }
 
-    function isHotelMember(hotelUid) {
-      return isPlatformAdmin()
-        || (signedIn()
-          && 'hotelPermissions' in request.auth.token
-          && request.auth.token.hotelPermissions is map
-          && hotelUid in request.auth.token.hotelPermissions);
+    function hasActiveSubscription(hotelUid) {
+      let subscription = firestore.get(/databases/(default)/documents/hotelSubscriptions/$(hotelUid)).data;
+      return subscription.status in ['active', 'trialing']
+        && ((subscription.status == 'active' && subscription.validUntil == null)
+          || (subscription.validUntil is timestamp && subscription.validUntil > request.time));
     }
 
     function hasPermission(hotelUid, feature, action) {
       return isPlatformAdmin()
         || (signedIn()
-          && isHotelMember(hotelUid)
-          && request.auth.token.hotelPermissions[hotelUid] is list
-          && (request.auth.token.hotelPermissions[hotelUid].hasAny([feature + '.' + action])
-            || request.auth.token.hotelPermissions[hotelUid].hasAny([feature + '.*'])));
+          && hasActiveSubscription(hotelUid)
+          && firestore.get(/databases/(default)/documents/hotels/$(hotelUid)/members/$(request.auth.uid)).data.permissions is list
+          && (firestore.get(/databases/(default)/documents/hotels/$(hotelUid)/members/$(request.auth.uid)).data.permissions.hasAny([feature + '.' + action])
+            || firestore.get(/databases/(default)/documents/hotels/$(hotelUid)/members/$(request.auth.uid)).data.permissions.hasAny([feature + '.*'])));
     }
 
     match /hotels/{hotelUid}/contracts/{allPaths=**} {

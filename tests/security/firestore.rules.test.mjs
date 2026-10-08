@@ -1,4 +1,8 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -8,6 +12,7 @@ import {
 } from "@firebase/rules-unit-testing";
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -16,7 +21,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 
-const projectId = "hotel-suite-a00";
+const projectId = "demo-hotel-suite-a00";
 let testEnvironment;
 
 const profiles = {
@@ -67,6 +72,7 @@ async function seedIsolatedHotels() {
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
     const database = context.firestore();
     await Promise.all([
+      ...["hotel-a", "hotel-b"].map((hotelUid) => setDoc(doc(database, "hotelSubscriptions", hotelUid), { status: "active", validUntil: null })),
       ...Object.values(profiles).map((actor) =>
         setDoc(doc(database, "users", actor.uid), actor.profile),
       ),
@@ -135,6 +141,50 @@ after(async () => {
 });
 
 describe("module and special-action boundaries", () => {
+  it("blocks module access when a subscription is suspended, expired or missing", async () => {
+    const database = databaseFor(profiles.employeeA);
+    const product = doc(database, "hotels/hotel-a/catalogproducts", "product-a");
+    for (const subscription of [{ status: "suspended", validUntil: null }, { status: "active", validUntil: Timestamp.fromMillis(1) }]) {
+      await testEnvironment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), "hotelSubscriptions", "hotel-a"), subscription));
+      await assertFails(getDoc(product));
+    }
+    await testEnvironment.withSecurityRulesDisabled((context) => deleteDoc(doc(context.firestore(), "hotelSubscriptions", "hotel-a")));
+    await assertFails(getDoc(product));
+  });
+
+  it("prevents a hotel member from changing their subscription", async () => {
+    await assertFails(setDoc(doc(databaseFor(profiles.hotelAdminA), "hotelSubscriptions", "hotel-a"), { status: "active", validUntil: null }));
+  });
+  it("requires backend mutations even for platform subscription and audit changes", async () => {
+    const database = databaseFor(profiles.platformAdmin);
+    await assertFails(setDoc(doc(database, "hotelSubscriptions", "hotel-a"), { status: "active", validUntil: null }));
+    await assertFails(setDoc(doc(database, "hotels/hotel-a/subscriptionAudit", "forged"), { status: "active" }));
+  });
+  it("bootstrap defaults to dry-run, preserves suspended subscriptions and safely reruns", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "hotel-subscription-bootstrap-"));
+    const file = join(directory, "hotels.json");
+    try {
+      await writeFile(file, JSON.stringify(["hotel-a", "hotel-b"]));
+      await testEnvironment.withSecurityRulesDisabled(async (context) => {
+        const database = context.firestore();
+        await deleteDoc(doc(database, "hotelSubscriptions", "hotel-a"));
+        await setDoc(doc(database, "hotelSubscriptions", "hotel-b"), { status: "suspended", revision: 4 });
+        const args = ["scripts/firebase/bootstrap-hotel-subscriptions.mjs", "--project", projectId,
+          "--hotel-file", file, "--operator", "fictional-operator"];
+        const execute = (extra = []) => promisify(execFile)(process.execPath, [...args, ...extra], { timeout: 30000 });
+        await execute();
+        assert.equal((await getDoc(doc(database, "hotelSubscriptions", "hotel-a"))).exists(), false);
+        await execute(["--apply"]);
+        await execute(["--apply"]);
+        const created = (await getDoc(doc(database, "hotelSubscriptions", "hotel-a"))).data();
+        assert.equal(created.status, "active");
+        assert.equal(created.billingMode, "manual");
+        assert.equal(created.revision, 1);
+        assert.equal((await getDoc(doc(database, "hotelSubscriptions", "hotel-b"))).data().status, "suspended");
+        assert.equal((await getDocs(collection(database, "hotels/hotel-a/subscriptionAudit"))).size, 1);
+      });
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
   it("denies reservation data without reservations.read", async () => {
     const database = databaseFor(profiles.noPermissionsA);
     await assertFails(getDoc(doc(database, "hotels/hotel-a/reports/arrivalsdetailed/2026-10-05", "arrival-a")));

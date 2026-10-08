@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { auth, db, doc, getDoc } from "../firebaseConfig";
+import { auth, db, doc, getDoc, onSnapshot } from "../firebaseConfig";
+import { subscriptionIsActive } from "../utils/subscription";
 import i18n from "../i18n";
 import {
   getSelectedHotelUid,
@@ -44,6 +45,19 @@ export function HotelProvider({ children }) {
   const [lightspeedShiftRolloverHour, setLightspeedShiftRolloverHour] = useState(4);
   const [posProvider, setPosProvider] = useState("lightspeed");
   const [orderMode, setOrderMode] = useState("ingredient");
+  const [subscription, setSubscription] = useState(null);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(true);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    setSubscription(null); setSubscriptionLoading(true);
+    if (!selectedHotelUid || !auth.currentUser) { setSubscriptionLoading(false); return; }
+    const stop = onSnapshot(doc(db, "hotelSubscriptions", selectedHotelUid), (snapshot) => {
+      setSubscription(snapshot.exists() ? snapshot.data() : null); setSubscriptionLoading(false);
+    }, () => { setSubscription(null); setSubscriptionLoading(false); });
+    const clock = setInterval(() => setNow(Date.now()), 30000);
+    return () => { stop(); clearInterval(clock); };
+  }, [selectedHotelUid, userData]);
 
   useEffect(() => {
     if (language) {
@@ -108,6 +122,7 @@ export function HotelProvider({ children }) {
         setIsPlatformAdmin(false);
         setAuthorizationSource("none");
         persistSelectedHotelUid(null);
+        setSelectedHotelUid(null);
         setLoading(false);
         return;
       }
@@ -193,6 +208,9 @@ export function HotelProvider({ children }) {
         permissions,
         isPlatformAdmin,
         authorizationSource,
+        subscription,
+        subscriptionLoading,
+        subscriptionActive: subscriptionIsActive(subscription, now),
         selectHotel,
         lightspeedShiftRolloverHour,
         posProvider,

@@ -1,4 +1,5 @@
 const { onSchedule, logger, admin } = require('./config');
+const { hotelHasActiveSubscription } = require('./subscriptions');
 
 const db = admin.firestore();
 const DEFAULT_TIMEZONE = 'Europe/Amsterdam';
@@ -502,6 +503,7 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
 
   for (const hotelDoc of hotelsSnap.docs) {
     const hotelUid = hotelDoc.id;
+    if (!await hotelHasActiveSubscription(db, hotelUid)) continue;
     const packageCodes = await getUpsellPackageCodes(hotelUid);
 
     if (packageCodes.length) {

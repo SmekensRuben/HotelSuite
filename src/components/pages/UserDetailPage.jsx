@@ -28,7 +28,7 @@ export default function UserDetailPage() {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [hotelUidsInput, setHotelUidsInput] = useState("");
-  const [originalHotelUids, setOriginalHotelUids] = useState([]);
+  const [accessRevision, setAccessRevision] = useState(0);
   const [selectedHotelUid, setSelectedHotelUid] = useState("");
   const [memberships, setMemberships] = useState({});
   const [message, setMessage] = useState("");
@@ -70,7 +70,7 @@ export default function UserDetailPage() {
 
       const hotelUids = Array.isArray(user.hotelUid) ? unique(user.hotelUid.filter(Boolean)) : [];
       setHotelUidsInput(hotelUids.join(", "));
-      setOriginalHotelUids(hotelUids);
+      setAccessRevision(user.accessRevision || 0);
       setSelectedHotelUid(hotelUids[0] || "");
       setMemberships(await getUserMemberships(userId, hotelUids));
 
@@ -112,17 +112,19 @@ export default function UserDetailPage() {
     };
 
     try {
-      await updateUserWithMemberships(userId, payload, memberships, originalHotelUids);
-      setOriginalHotelUids(hotelUids);
-      setMessage("Gebruikersprofiel en hotelpermissies opgeslagen. De gebruiker moet opnieuw inloggen om bestandsrechten te vernieuwen.");
+      const result = await updateUserWithMemberships(userId, payload, memberships, accessRevision);
+      setAccessRevision(result.accessRevision);
+      setMessage("Gebruikersprofiel en hotelpermissies opgeslagen.");
     } catch (error) {
       console.error(error);
       const unavailable = error?.code === "functions/not-found"
         || error?.code === "functions/internal"
         || /failed to fetch|cors/i.test(String(error?.message || ""));
-      setMessage(unavailable
+      setMessage(error?.code === "functions/aborted"
+        ? "Deze gebruikersrechten zijn ondertussen gewijzigd. Herlaad de pagina voor je opnieuw opslaat."
+        : unavailable
         ? "Opslaan mislukt: updateUserAccess is niet bereikbaar in dit Firebase-project. Controleer de Vercel project-ID en deploy eerst de Function naar dezelfde testomgeving."
-        : "Opslaan mislukt. Controleer de Functions-logs; membership- en tokenupdates kunnen opnieuw gesynchroniseerd moeten worden.");
+        : "Opslaan mislukt. Probeer opnieuw of neem contact op met de beheerder.");
     } finally {
       setSaving(false);
     }

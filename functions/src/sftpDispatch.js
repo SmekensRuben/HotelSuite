@@ -1,5 +1,6 @@
 const { onDocumentWritten, logger, admin, SftpClient, RESEND_API_KEY, RESEND_FROM } = require("./config");
 const { buildOrderSftpCsv, buildOrderExportBaseFilename, enqueueOrderEmail } = require("./mailQueue");
+const { hotelHasActiveSubscription } = require("./subscriptions");
 
 function resolveSftpConnectionOptions(supplier) {
   const rawAddress = String(supplier?.sftpAddress || "").trim();
@@ -137,6 +138,7 @@ const sendOrderedSupplierOrder = onDocumentWritten(
     if (!afterDispatchRequestId || afterDispatchRequestId === beforeDispatchRequestId) return;
 
     const { hotelUid, orderId } = event.params;
+    if (!await hotelHasActiveSubscription(admin.firestore(), hotelUid)) return;
     const orderRef = event.data.after.ref;
 
     const setProgress = async (progress, step, extra = {}) => {

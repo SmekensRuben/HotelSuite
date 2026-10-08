@@ -13,6 +13,7 @@ test("requireHotelPermission uses the selected hotel's membership", async () => 
     doc(path) {
       return {
         async get() {
+          if (path === "hotelSubscriptions/hotel-a") return { exists: true, data: () => ({ status: "active", validUntil: null }) };
           assert.equal(path, "hotels/hotel-a/members/user-a");
           return { exists: true, data: () => ({ permissions: ["reservations.read"] }) };
         },

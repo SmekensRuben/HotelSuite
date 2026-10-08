@@ -2,6 +2,8 @@
 
 Status: proposal only. Nothing in this document enables a deployment or changes a Firebase project.
 
+The per-hotel/manual-invoicing foundation is now implemented. Its migration and tested release order in `subscription-readiness.md` supersede the generic order below: subscriptions must exist before backend/rules enforcement is enabled. No cloud deployment was performed. External preview acceptance remains pending; a successful GitHub verification does not imply Vercel acceptance or disable an external production rollout.
+
 ## Recommendation
 
 Keep the current verification workflow as the mandatory quality gate and separate it from delivery. Use one Firebase project per environment and make every deployment name its project explicitly.

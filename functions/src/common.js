@@ -1,4 +1,9 @@
 const { RESEND_API_KEY, MEILI_HOST, MEILI_INDEX, MEILI_API_KEY } = require("./config");
+const { createHash } = require("node:crypto");
+
+function productSearchId(hotelUid, productId) {
+  return createHash("sha256").update(JSON.stringify([hotelUid, productId])).digest("hex");
+}
 
 function requireMeiliHost() {
   const host = (MEILI_HOST.value() || "").trim().replace(/\/$/, "");
@@ -156,7 +161,8 @@ function normalizeFileType(value) {
 
 function buildCatalogProductDocument(productId, hotelUid, productData = {}) {
   return {
-    id: productId,
+    id: productSearchId(hotelUid, productId),
+    documentId: productId,
     hotelUid,
     name: String(productData.name || "").trim(),
     brand: String(productData.brand || "").trim(),
@@ -175,7 +181,8 @@ function buildCatalogProductDocument(productId, hotelUid, productData = {}) {
 
 function buildSupplierProductDocument(productId, hotelUid, productData = {}) {
   return {
-    id: productId,
+    id: productSearchId(hotelUid, productId),
+    documentId: productId,
     hotelUid,
     active: productData.active !== false,
     baseUnit: String(productData.baseUnit || "").trim(),
@@ -199,6 +206,7 @@ async function meiliRequest(path, { method = "GET", body } = {}) {
   const apiKey = MEILI_API_KEY.value();
 
   const res = await fetch(`${host}${path}`, {
+    signal: AbortSignal.timeout(15000),
     method,
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -234,6 +242,7 @@ async function meiliJson(path, opts) {
 const ensuredIndexUids = new Set();
 
 module.exports = {
+  productSearchId,
   requireMeiliHost,
   getIndexUid,
   toNumberOrNull,

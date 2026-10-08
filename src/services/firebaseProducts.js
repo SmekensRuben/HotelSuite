@@ -20,7 +20,9 @@ import {
   storage,
   ref,
   uploadBytes,
-  getDownloadURL
+  getDownloadURL,
+  functions,
+  httpsCallable
 } from "../firebaseConfig";
 import { normalizeDocumentId } from "./productIdUtils";
 import { getSupplier, getSuppliers } from "./firebaseSuppliers";
@@ -29,13 +31,7 @@ import { getSupplier, getSuppliers } from "./firebaseSuppliers";
 const productsIndexedCache = {};
 const entityProductsCache = {};
 
-const MEILI_HOST = (import.meta.env.VITE_MEILI_HOST || "")
-  .trim()
-  .replace(/\/$/, "");
-const MEILI_SEARCH_KEY = (import.meta.env.VITE_MEILI_SEARCH_KEY || "")
-  .trim();
-const CATALOG_PRODUCTS_MEILI_INDEX = "catalogproducts";
-const SUPPLIER_PRODUCTS_MEILI_INDEX = "supplierproducts";
+
 
 export function clearProductsIndexedCache(hotelUid) {
   if (hotelUid) {
@@ -350,81 +346,24 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
   return products;
 }
 
+async function searchThroughBackend(hotelUid, entityCollection, criteria, pageSize, cursor, fallback) {
+  if (cursor?.ref) return fallback(hotelUid, criteria, pageSize, cursor);
+  try {
+    const result = await httpsCallable(functions, "searchHotelProducts")({
+      hotelUid, collection: entityCollection, criteria, pageSize, offset: cursor?.offset || 0,
+    });
+    if (!cursor && !result.data.products.length) return fallback(hotelUid, criteria, pageSize, null);
+    return result.data;
+  } catch (error) {
+    if (!cursor && ["functions/unavailable", "functions/not-found"].includes(error?.code)) {
+      return fallback(hotelUid, criteria, pageSize, null);
+    }
+    throw error;
+  }
+}
+
 async function searchSupplierProducts(hotelUid, criteria, pageSize, cursor) {
-  const searchTerm = String(criteria?.searchTerm || "").trim();
-  const supplierId = String(criteria?.supplierId || "").trim();
-  const active = criteria?.active;
-
-  if (!MEILI_HOST || !MEILI_SEARCH_KEY) {
-    return searchSupplierProductsWithFirestore(
-      hotelUid,
-      { searchTerm, supplierId, active },
-      pageSize,
-      cursor
-    );
-  }
-
-  const meiliFilters = [`hotelUid = \"${String(hotelUid).replace(/\"/g, "\\\\\"")}\"`];
-  if (supplierId) {
-    meiliFilters.push(`supplierId = \"${supplierId.replace(/\"/g, "\\\\\"")}\"`);
-  }
-  if (active === true || active === false) {
-    meiliFilters.push(`active = ${active}`);
-  }
-
-  const offset = Number(cursor?.offset || 0);
-  const response = await fetch(`${MEILI_HOST}/indexes/${encodeURIComponent(SUPPLIER_PRODUCTS_MEILI_INDEX)}/search`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${MEILI_SEARCH_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      q: searchTerm,
-      limit: pageSize,
-      offset,
-      filter: meiliFilters,
-      attributesToSearchOn: ["supplierName", "supplierSku", "supplierProductName"],
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Meili search failed (${response.status}): ${errorText}`);
-  }
-
-  const payload = await response.json();
-  const hits = Array.isArray(payload?.hits)
-    ? payload.hits
-    : Array.isArray(payload?.results)
-      ? payload.results
-      : [];
-  const products = hits
-    .map((hit) => {
-      const id = String(hit?.id || hit?.documentId || "").trim();
-      if (!id) return null;
-      return { id, ...hit };
-    })
-    .filter(Boolean);
-
-  const estimatedTotalHits = Number(payload?.estimatedTotalHits ?? payload?.total ?? 0);
-  const nextOffset = offset + products.length;
-  const hasMore = nextOffset < estimatedTotalHits;
-
-  if (offset === 0 && products.length === 0) {
-    return searchSupplierProductsWithFirestore(
-      hotelUid,
-      { searchTerm, supplierId, active },
-      pageSize,
-      null
-    );
-  }
-
-  return {
-    products,
-    cursor: hasMore ? { offset: nextOffset } : null,
-    hasMore,
-  };
+  return searchThroughBackend(hotelUid, "supplierproducts", criteria, pageSize, cursor, searchSupplierProductsWithFirestore);
 }
 
 async function searchSupplierProductsWithFirestore(hotelUid, criteria, pageSize, cursor) {
@@ -476,69 +415,7 @@ async function searchSupplierProductsWithFirestore(hotelUid, criteria, pageSize,
 }
 
 async function searchCatalogProductsWithMeili(hotelUid, criteria, pageSize, cursor) {
-  const searchTerm = String(criteria?.searchTerm || "").trim();
-  const category = String(criteria?.category || "").trim();
-  const subcategory = String(criteria?.subcategory || "").trim();
-
-  if (!MEILI_HOST || !MEILI_SEARCH_KEY) {
-    return searchCatalogProductsWithFirestore(hotelUid, {
-      searchTerm,
-      category,
-      subcategory,
-    }, pageSize, cursor);
-  }
-
-  const meiliFilters = [`hotelUid = \"${String(hotelUid).replace(/\"/g, "\\\\\"")}\"`];
-  if (category) {
-    meiliFilters.push(`category = \"${category.replace(/\"/g, "\\\\\"")}\"`);
-  }
-  if (subcategory) {
-    meiliFilters.push(`subcategory = \"${subcategory.replace(/\"/g, "\\\\\"")}\"`);
-  }
-
-  const offset = Number(cursor?.offset || 0);
-  const response = await fetch(`${MEILI_HOST}/indexes/${encodeURIComponent(CATALOG_PRODUCTS_MEILI_INDEX)}/search`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${MEILI_SEARCH_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      q: searchTerm,
-      limit: pageSize,
-      offset,
-      filter: meiliFilters,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Meili search failed (${response.status}): ${errorText}`);
-  }
-
-  const payload = await response.json();
-  const hits = Array.isArray(payload?.hits)
-    ? payload.hits
-    : Array.isArray(payload?.results)
-      ? payload.results
-      : [];
-  const products = hits
-    .map((hit) => {
-      const id = String(hit?.id || hit?.documentId || "").trim();
-      if (!id) return null;
-      return { id, ...hit };
-    })
-    .filter(Boolean);
-
-  const estimatedTotalHits = Number(payload?.estimatedTotalHits ?? payload?.total ?? 0);
-  const nextOffset = offset + products.length;
-  const hasMore = nextOffset < estimatedTotalHits;
-
-  return {
-    products,
-    cursor: hasMore ? { offset: nextOffset } : null,
-    hasMore,
-  };
+  return searchThroughBackend(hotelUid, "catalogproducts", criteria, pageSize, cursor, searchCatalogProductsWithFirestore);
 }
 
 async function searchCatalogProductsWithFirestore(hotelUid, criteria, pageSize, cursor) {

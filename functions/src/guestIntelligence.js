@@ -1,3 +1,4 @@
+const { hotelHasActiveSubscription } = require("./subscriptions");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const logger = require("firebase-functions/logger");
@@ -207,6 +208,7 @@ async function processNightlyGuestIntelligence() {
 
   for (const hotelUid of hotelUids) {
     try {
+      if (!await hotelHasActiveSubscription(db, hotelUid)) continue;
       const result = await processGuestIntelligenceForHotel(hotelUid, { db });
       logger.info("Guest intelligence completed", result);
     } catch (error) {

@@ -5,11 +5,11 @@ import {
   assertSucceeds,
   initializeTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, deleteDoc } from "firebase/firestore";
 import { getBytes, ref, uploadString } from "firebase/storage";
 
 let testEnvironment;
-const projectId = "hotel-suite-a00";
+const projectId = "demo-hotel-suite-a00";
 
 before(async () => {
   const [firestoreRules, storageRules] = await Promise.all([
@@ -32,6 +32,10 @@ beforeEach(async () => {
   await testEnvironment.clearStorage();
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
     await Promise.all([
+      ...["hotel-a", "hotel-b"].map((hotelUid) => setDoc(doc(context.firestore(), "hotelSubscriptions", hotelUid), { status: "active", validUntil: null })),
+      setDoc(doc(context.firestore(), "hotels/hotel-a/members", "admin-a"), { permissions: ["contracts.*", "imports.*"] }),
+      setDoc(doc(context.firestore(), "hotels/hotel-a/members", "employee-a"), { permissions: ["contracts.read"] }),
+      setDoc(doc(context.firestore(), "hotels/hotel-a/members", "catalog-a"), { permissions: ["catalogproducts.read", "catalogproducts.update"] }),
       setDoc(doc(context.firestore(), "users", "admin-a"), {
         hotelUid: ["hotel-a"],
         permissions: ["contracts.*", "settings.*"],
@@ -52,6 +56,19 @@ beforeEach(async () => {
 after(async () => testEnvironment.cleanup());
 
 describe("Storage tenant and action boundaries", () => {
+  it("revokes file access immediately even when an old ID token has hotel permissions", async () => {
+    const storage = testEnvironment.authenticatedContext("employee-a", { hotelPermissions: { "hotel-a": ["contracts.*"] } }).storage();
+    const file = ref(storage, "hotels/hotel-a/contracts/contract-a/file.pdf");
+    await assertSucceeds(getBytes(file));
+    await testEnvironment.withSecurityRulesDisabled((context) => deleteDoc(doc(context.firestore(), "hotels/hotel-a/members", "employee-a")));
+    await assertFails(getBytes(file));
+  });
+
+  it("blocks Storage access for suspended subscriptions", async () => {
+    const storage = testEnvironment.authenticatedContext("employee-a").storage();
+    await testEnvironment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), "hotelSubscriptions", "hotel-a"), { status: "suspended", validUntil: null }));
+    await assertFails(getBytes(ref(storage, "hotels/hotel-a/contracts/contract-a/file.pdf")));
+  });
   it("allows contract readers to download only their hotel's file", async () => {
     const storage = testEnvironment.authenticatedContext("employee-a", {
       hotelPermissions: { "hotel-a": ["contracts.read"] },

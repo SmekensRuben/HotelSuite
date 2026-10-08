@@ -31,17 +31,15 @@ VITE_FIREBASE_PROJECT_ID=
 VITE_FIREBASE_STORAGE_BUCKET=
 VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
-VITE_MEILI_HOST=
-VITE_MEILI_SEARCH_KEY=
 EXPECTED_FIREBASE_PROJECT_ID=
 PRODUCTION_FIREBASE_PROJECT_ID=
 ```
 
-Use the tracked `.env.example` as the variable-name template. `.env` is intentionally ignored and must never be committed. The browser Firebase configuration is not a server secret, but it still binds a build to a project; the Meilisearch key must be search-only and index-scoped. `npm run build` fails when a required variable is absent or when `VITE_FIREBASE_PROJECT_ID` differs from `EXPECTED_FIREBASE_PROJECT_ID`; there is no production fallback.
+Use the tracked `.env.example` as the variable-name template. `.env` is intentionally ignored and must never be committed. The browser Firebase configuration is not a server secret, but it still binds a build to a project; Meilisearch credentials are server-only Firebase secrets and must never be bundled in the browser. `npm run build` fails when a required variable is absent or when `VITE_FIREBASE_PROJECT_ID` differs from `EXPECTED_FIREBASE_PROJECT_ID`; there is no production fallback.
 
 ## Vercel preview and production separation
 
-During the SaaS hardening phase the release flow is PR → Vercel Preview → approval → merge to `main` → verification only. A merge does **not** deploy to production. Configure these variables in the Vercel project with scope **Preview only**:
+GitHub Actions verifies PRs and `main` without deploying. External Vercel/App Hosting integrations are independent: verify or disable their production auto-rollouts in their consoles before relying on a deployment freeze. The current external Vercel preview check is not passing; its environment setup still requires operator validation. Configure these variables in the Vercel project with scope **Preview only**:
 
 | Variable | Preview value |
 | --- | --- |
@@ -55,8 +53,6 @@ During the SaaS hardening phase the release flow is PR → Vercel Preview → ap
 | `VITE_FIREBASE_APP_ID` | Test Firebase web-app ID |
 | `EXPECTED_FIREBASE_PROJECT_ID` | Same exact test project ID |
 | `PRODUCTION_FIREBASE_PROJECT_ID` | Existing production project ID; build-only guard, not exposed by Vite |
-| `VITE_MEILI_HOST` | Test search endpoint, or empty to use the Firestore fallback |
-| `VITE_MEILI_SEARCH_KEY` | Test, search-only, hotel-filtered key, or empty with the host |
 
 Do not copy production Firebase or search values into Vercel Preview. Add the stable Vercel preview/branch domain used for acceptance to the **test** Firebase project's Auth authorized domains. Firebase Auth does not infer authorization from this repository configuration.
 
@@ -64,7 +60,7 @@ The current production Firebase project ID `hotel-toolkit` is explicitly rejecte
 
 `.github/workflows/verify.yml` runs on pull requests and `main`, uses the tracked fictional `.env.test` fixture, and has no production-secret or deployment step. Production Firebase and FTPS secrets are no longer referenced by repository workflows and can be removed from GitHub repository settings after checking that no other workflow depends on them. See `docs/deployment-freeze.md` before restoring any production deployment.
 
-The proposed next delivery model—including when to prefer Firebase Hosting over App Hosting and how to deploy Functions explicitly from Cloud Shell—is described in `docs/firebase-delivery-target.md`. It is a proposal and does not enable deployment.
+The Firebase Hosting and Cloud Shell release procedure is documented in `docs/firebase-delivery-target.md`. The implemented per-hotel subscription foundation, migration order and remaining sales blockers are in [docs/subscription-readiness.md](docs/subscription-readiness.md). No cloud deployment has been performed.
 
 Cloud Functions use the Firebase project selected at deployment and therefore do not use the browser `VITE_*` variables. Set the non-secret Functions parameter `APP_BASE_URL` independently in each Firebase project: use the accepted test/preview base URL in the test project and `https://hoteltoolkit.eu` in production. Keep `MEILI_HOST`, `MEILI_INDEX`, `MEILI_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM`, and `RESEND_WEBHOOK_SECRET` isolated per Firebase project.
 
@@ -99,9 +95,10 @@ npm run dev
 The application will be available at `http://localhost:5173` by default.
 
 ## Deploying functions
-Deploy your Cloud Functions after logging in with Firebase:
+Use the reviewed release SHA and an explicitly verified project from Cloud Shell:
 
 ```bash
-cd functions
-npm run deploy
+npx firebase deploy --only functions --project "$HOTELSUITE_PROJECT_ID"
 ```
+
+Before deploying this subscription release, provision subscriptions for the reviewed existing hotels and complete the rollout prerequisites in `docs/subscription-readiness.md`. Do not rely on the current default project alias.

@@ -19,15 +19,16 @@ test("updateUserAccess requires a platform administrator", async () => {
   );
 });
 
-test("updateUserAccess writes profiles, memberships and Storage token permissions", async () => {
+test("updateUserAccess writes profiles, memberships and server-owned membership removals", async () => {
   const operations = [];
   const firestore = {
     doc: (path) => ({ path }),
-    batch: () => ({
+    collection: () => ({ doc: () => ({ path: "userAccessAudit/event" }) }),
+    runTransaction: (callback) => callback({
+      get: async (reference) => ({ exists: true, data: () => reference.path === "users/user-a" ? { hotelUid: ["hotel-a", "hotel-b"], accessRevision: 0 } : {} }),
       update: (reference, data) => operations.push(["update", reference.path, data]),
       set: (reference, data) => operations.push(["set", reference.path, data]),
       delete: (reference) => operations.push(["delete", reference.path]),
-      commit: async () => operations.push(["commit"]),
     }),
   };
   let claims;
@@ -42,15 +43,25 @@ test("updateUserAccess writes profiles, memberships and Storage token permission
       userId: "user-a",
       profile: { firstName: " Ada ", lastName: "Lovelace", email: "ada@example.test", hotelUid: ["hotel-a"] },
       memberships: { "hotel-a": ["reservations.read"] },
-      previousHotelUids: ["hotel-a", "hotel-b"],
+      previousHotelUids: [], // The browser cannot choose which old memberships to retain.
+      expectedAccessRevision: 0,
     },
   }, { firestore, auth });
 
   assert.equal(operations.some(([type, path]) => type === "set" && path === "hotels/hotel-a/members/user-a"), true);
   assert.equal(operations.some(([type, path]) => type === "delete" && path === "hotels/hotel-b/members/user-a"), true);
-  assert.deepEqual(claims, {
-    uid: "user-a",
-    value: { platformAdmin: false, retained: true, hotelPermissions: { "hotel-a": ["reservations.read"] } },
-  });
-  assert.equal(result.tokenRefreshRequired, true);
+  assert.equal(claims, undefined);
+  assert.equal(result.accessRevision, 1);
+});
+
+test("stale user access saves cannot overwrite a more recent assignment", async () => {
+  const firestore = {
+    doc: (path) => ({ path }), collection: () => ({ doc: () => ({}) }),
+    runTransaction: (callback) => callback({ get: async () => ({ exists: true, data: () => ({ accessRevision: 3 }) }) }),
+  };
+  await assert.rejects(updateUserAccessHandler({
+    auth: { uid: "platform", token: { platformAdmin: true } },
+    data: { userId: "user-a", profile: { hotelUid: [] }, expectedAccessRevision: 2 },
+  }, { firestore, auth: { getUser: async () => ({}) } }), (error) => error.code === "aborted");
+
 });

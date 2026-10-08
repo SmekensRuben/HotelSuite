@@ -1,3 +1,17 @@
+const { hotelHasActiveSubscription } = require("./subscriptions");
+function importObjectMatchesHotel(objectName, hotelUid) {
+  return typeof hotelUid === "string" && hotelUid.length > 0
+    && objectName.split("/")[0] === "imports" && objectName.split("/")[1] === hotelUid;
+}
+function requireHotelImportTarget(path, hotelUid) {
+  const segments = String(path || "").split("/");
+  const protectedCollections = ["members", "settings", "mailQueue", "subscriptionAudit", "contractReminderRuns", "fileImportTypes", "fileImportSettings"];
+  if (segments.length < 3 || segments[0] !== "hotels" || segments[1] !== hotelUid
+    || segments.some((segment) => !segment || [".", ".."].includes(segment))
+    || protectedCollections.includes(segments[2])) {
+    throw new Error("Import target must be operational data within the authorized hotel.");
+  }
+}
 const { parse } = require("csv-parse/sync");
 const { parse: parseStream } = require("csv-parse");
 const { XMLParser } = require("fast-xml-parser");
@@ -916,12 +930,12 @@ function buildTemplateContext({ hotelUid, fileType, fileImportType, mappedRow, o
   const fallbackDocumentId = `${sourceBaseName}-${rowIndex + 1}`;
 
   return {
+    ...mappedRow,
     hotelUid,
     fileType,
     date: dateValue,
     documentId: buildDocumentId(mappedRow, fileImportType, fallbackDocumentId),
     sourceFileName: sourceName,
-    ...mappedRow,
   };
 }
 
@@ -1319,6 +1333,7 @@ async function processMappedDocumentStream({
         });
 
         const resolvedPath = resolveFirestorePath(fileImportType, context);
+        requireHotelImportTarget(resolvedPath, hotelUid);
         if (resolvedPath.toLowerCase().includes("staydatepattern")) {
           const pathDate = resolvedPath.match(/(?:^|\/)(\d{4})-\d{2}-\d{2}(?:\/|$)/)?.[1];
           collectArrivalYears(documentRow.mappedDocument, affectedStayPatternYears);
@@ -1326,6 +1341,7 @@ async function processMappedDocumentStream({
           if (Number.isInteger(pathYear) && pathYear > 1900) affectedStayPatternYears.add(pathYear);
         }
         const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
+        if (writeTarget.docPath) requireHotelImportTarget(writeTarget.docPath, hotelUid);
 
         return {
           aggregationKey: writeTarget.isExplicitDocument ? writeTarget.docPath : `${resolvedPath}#${documentRow.rowIndex}`,
@@ -1403,6 +1419,13 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
   }
 
   const db = admin.firestore();
+  // Storage authorization is scoped to the object path; metadata must never
+  // redirect an authorized upload into another hotel's Admin SDK writes.
+  if (!importObjectMatchesHotel(objectName, hotelUid)
+    || !await hotelHasActiveSubscription(db, hotelUid)) {
+    logger.warn("Import skipped: tenant mismatch or inactive subscription", { objectName });
+    return;
+  }
   const importTypeSnapshot = await db
     .collection("fileImportTypesIndex")
     .where("hotelUid", "==", hotelUid)
@@ -1507,6 +1530,9 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
 });
 
 module.exports = {
+  importObjectMatchesHotel,
+  requireHotelImportTarget,
+  buildTemplateContext,
   processImportedFileToFirestore,
   parseImportedDocuments,
   parseCsvDocuments,
