@@ -6,14 +6,13 @@
     "root": {
       "maximum": {
         "critical": 0,
-        "high": 10,
-        "moderate": 2,
+        "high": 5,
+        "moderate": 0,
         "low": 0,
-        "total": 12
+        "total": 5
       },
       "directPackagesRequiringRemediation": [
         "firebase",
-        "tailwindcss",
         "xlsx"
       ]
     },
