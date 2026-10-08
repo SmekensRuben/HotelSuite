@@ -47,17 +47,21 @@ export function HotelProvider({ children }) {
   const [orderMode, setOrderMode] = useState("ingredient");
   const [subscription, setSubscription] = useState(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
+  const [subscriptionError, setSubscriptionError] = useState(null);
+  const [subscriptionAttempt, setSubscriptionAttempt] = useState(0);
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
-    setSubscription(null); setSubscriptionLoading(true);
+    setSubscription(null); setSubscriptionLoading(true); setSubscriptionError(null);
     if (!selectedHotelUid || !auth.currentUser) { setSubscriptionLoading(false); return; }
     const stop = onSnapshot(doc(db, "hotelSubscriptions", selectedHotelUid), (snapshot) => {
       setSubscription(snapshot.exists() ? snapshot.data() : null); setSubscriptionLoading(false);
-    }, () => { setSubscription(null); setSubscriptionLoading(false); });
+    }, (error) => {
+      setSubscription(null); setSubscriptionError(error.code || "unavailable"); setSubscriptionLoading(false);
+    });
     const clock = setInterval(() => setNow(Date.now()), 30000);
     return () => { stop(); clearInterval(clock); };
-  }, [selectedHotelUid, userData]);
+  }, [selectedHotelUid, userData, subscriptionAttempt]);
 
   useEffect(() => {
     if (language) {
@@ -210,6 +214,8 @@ export function HotelProvider({ children }) {
         authorizationSource,
         subscription,
         subscriptionLoading,
+        subscriptionError,
+        retrySubscription: () => setSubscriptionAttempt((attempt) => attempt + 1),
         subscriptionActive: subscriptionIsActive(subscription, now),
         selectHotel,
         lightspeedShiftRolloverHour,

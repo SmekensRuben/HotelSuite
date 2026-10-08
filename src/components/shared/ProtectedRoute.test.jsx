@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ProtectedRoute from "./ProtectedRoute";
@@ -14,6 +14,7 @@ vi.mock("../../contexts/HotelContext", () => ({
 vi.mock("../../firebaseConfig", () => ({
   auth: { currentUser: { emailVerified: true } },
   authPolicy,
+  signOut: vi.fn(),
 }));
 vi.mock("firebase/auth", () => ({
   multiFactor: () => ({ enrolledFactors }),
@@ -36,6 +37,10 @@ describe("ProtectedRoute permissions", () => {
     enrolledFactors = [{ factorId: "phone" }];
     hotelContext = {
       hotelUid: "hotel-a",
+      hotelName: "Test Hotel",
+      hotelUids: ["hotel-a"],
+      retrySubscription: vi.fn(),
+      selectHotel: vi.fn(),
       subscriptionActive: true,
       subscriptionLoading: false,
       loading: false,
@@ -82,7 +87,27 @@ describe("ProtectedRoute permissions", () => {
   it("blocks protected content for inactive subscriptions", () => {
     hotelContext.subscriptionActive = false;
     renderProtected({ feature: "reservations", action: "read" });
-    expect(screen.getByText("Geen actief hotelabonnement")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "No active hotel subscription" })).toBeInTheDocument();
     expect(screen.queryByText("protected content")).not.toBeInTheDocument();
+  });
+
+  it("does not present a subscription read failure as an expired subscription", () => {
+    hotelContext.subscriptionActive = false;
+    hotelContext.subscriptionError = "permission-denied";
+    renderProtected();
+    expect(screen.getByRole("heading", { name: "We could not verify your hotel access" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "No active hotel subscription" })).not.toBeInTheDocument();
+    expect(screen.queryByText("protected content")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Check access again" }));
+    expect(hotelContext.retrySubscription).toHaveBeenCalledOnce();
+  });
+
+  it("offers only other hotels assigned to the user", () => {
+    hotelContext.subscriptionActive = false;
+    hotelContext.hotelUids = ["hotel-a", "hotel-b"];
+    renderProtected();
+    fireEvent.click(screen.getByRole("button", { name: "hotel-b" }));
+    expect(hotelContext.selectHotel).toHaveBeenCalledWith("hotel-b");
+    expect(screen.queryByRole("button", { name: "hotel-a" })).not.toBeInTheDocument();
   });
 });

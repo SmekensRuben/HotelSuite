@@ -52,3 +52,13 @@ jobs:
 
       - name: Build with non-production fixture
         run: npm run build:test
+
+      - name: Build App Hosting with non-production fixture
+        env:
+          NODE_ENV: test
+          VITE_DEPLOYMENT_ENV: test
+          VITE_AUTH_REQUIRE_MFA: "false"
+          EXPECTED_FIREBASE_PROJECT_ID: demo-hotel-suite-a00
+          FIREBASE_WEBAPP_CONFIG: >-
+            {"apiKey":"fictional-apphosting-key","authDomain":"demo-hotel-suite-a00.firebaseapp.com","projectId":"demo-hotel-suite-a00","storageBucket":"demo-hotel-suite-a00.appspot.com","messagingSenderId":"000000000000","appId":"fictional-apphosting-app"}
+        run: npm run build:apphosting

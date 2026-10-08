@@ -18,7 +18,7 @@
 - Follow the existing JavaScript/JSX style: ES modules in `src`, CommonJS in `functions`, PascalCase React component files, `firebase<Entity>.js` service modules, and `*.test.js(x)` / `*.node-test.js` tests.
 - Keep Firestore access in service modules and keep calculation-heavy domain logic in pure utilities with focused tests. Reuse layout components and permission hooks instead of duplicating them in pages.
 - Persist date-only hotel business dates as `YYYY-MM-DD`; do not parse them through an implicit browser timezone when calendar-day semantics matter. Use `serverTimestamp()` for Firestore audit timestamps where the surrounding model does so.
-- User-facing language is not yet fully standardized. Preserve the terminology of the flow being changed and use i18next in already-localized surfaces; do not introduce another synonym or a new hard-coded language without an explicit product decision.
+- All new development for HotelSuite must be in English: interface copy, validation messages, comments, documentation, tests and pull request descriptions. This is the owner's explicit product decision. Use i18next in already-localized surfaces; preserve existing translations unless a translation change is requested. Conversations with the owner may remain in Dutch.
 
 ## Tenant isolation and authorization
 
