@@ -5,15 +5,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import ProtectedRoute from "./ProtectedRoute";
 
 let hotelContext;
+const { authPolicy } = vi.hoisted(() => ({ authPolicy: { requireMfa: true } }));
+let enrolledFactors = [{ factorId: "phone" }];
 
 vi.mock("../../contexts/HotelContext", () => ({
   useHotelContext: () => hotelContext,
 }));
 vi.mock("../../firebaseConfig", () => ({
   auth: { currentUser: { emailVerified: true } },
+  authPolicy,
 }));
 vi.mock("firebase/auth", () => ({
-  multiFactor: () => ({ enrolledFactors: [{ factorId: "phone" }] }),
+  multiFactor: () => ({ enrolledFactors }),
 }));
 
 function renderProtected(props = {}) {
@@ -29,6 +32,8 @@ function renderProtected(props = {}) {
 
 describe("ProtectedRoute permissions", () => {
   beforeEach(() => {
+    authPolicy.requireMfa = true;
+    enrolledFactors = [{ factorId: "phone" }];
     hotelContext = {
       hotelUid: "hotel-a",
       loading: false,
@@ -57,5 +62,18 @@ describe("ProtectedRoute permissions", () => {
     hotelContext = { ...hotelContext, permissions: [], isPlatformAdmin: true };
     renderProtected({ platformOnly: true, feature: "users", action: "update" });
     expect(screen.getByText("protected content")).toBeInTheDocument();
+  });
+
+  it("does not require an enrolled factor when MFA is disabled", () => {
+    authPolicy.requireMfa = false;
+    enrolledFactors = [];
+    renderProtected({ feature: "reservations", action: "read" });
+    expect(screen.getByText("protected content")).toBeInTheDocument();
+  });
+
+  it("requires an enrolled factor when MFA is enabled", () => {
+    enrolledFactors = [];
+    renderProtected({ feature: "reservations", action: "read" });
+    expect(screen.queryByText("protected content")).not.toBeInTheDocument();
   });
 });

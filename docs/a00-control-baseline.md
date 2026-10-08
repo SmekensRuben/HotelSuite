@@ -27,7 +27,7 @@ This document separates observations that were verified from this checkout from 
 | Functions declared by this checkout | 19 exports: Meilisearch synchronizers, Resend webhook/mail queue, contract/order mail workflows, file import, scheduled occupancy/block/upsell/guest tasks, arrival callables and stay-pattern rebuild. | Source inventory only. Deployed names, regions, revisions, invoker policy and environment/secrets require authenticated listing. |
 | Incoming webhook | A Resend HTTP function exists in source. | Deployed URL, signature secret/configuration, delivery history and rate limiting are unverified. |
 | Databases and buckets | Code expects default Firestore and one Firebase Storage bucket. | Database IDs/regions, bucket list, lifecycle policies and CORS are unverified. |
-| Authentication | Code requires verified email and enrolled MFA for protected UI routes. | Enabled providers, password policy, authorized domains, MFA enforcement outside the UI, App Check and tenant settings are unverified. |
+| Authentication | Code requires verified email; MFA enrollment is enforced only when `VITE_AUTH_REQUIRE_MFA=true`, while Firebase-issued MFA challenges are always handled. | Enabled providers, password policy, authorized domains, the remote MFA policy, App Check and tenant settings are unverified. Keep the environment flag aligned with the selected project. |
 | Monitoring | Functions emit Cloud Logging entries. | Alert policies, error reporting, uptime checks, budgets, log retention and notification channels are unverified. |
 | Backup | No backup/export schedule was found in the repository. | Cloud schedules, retention and prior restore evidence are unverified. |
 

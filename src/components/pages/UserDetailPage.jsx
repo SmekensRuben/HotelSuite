@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { auth, signOut } from "../../firebaseConfig";
-import { getUserById, updateUser } from "../../services/firebaseUserManagement";
+import { getUserById, getUserMemberships, updateUserWithMemberships } from "../../services/firebaseUserManagement";
 import { listAllPermissionKeys, PERMISSION_CATALOG } from "../../constants/permissionCatalog";
 import { usePermission } from "../../hooks/usePermission";
 
@@ -28,8 +28,9 @@ export default function UserDetailPage() {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [hotelUidsInput, setHotelUidsInput] = useState("");
-  const [selectedPermissions, setSelectedPermissions] = useState([]);
-  const [customPermissionsInput, setCustomPermissionsInput] = useState("");
+  const [originalHotelUids, setOriginalHotelUids] = useState([]);
+  const [selectedHotelUid, setSelectedHotelUid] = useState("");
+  const [memberships, setMemberships] = useState({});
   const [message, setMessage] = useState("");
 
   const knownPermissionKeys = useMemo(() => listAllPermissionKeys(), []);
@@ -67,18 +68,11 @@ export default function UserDetailPage() {
       setLastName(user.lastName || "");
       setEmail(user.email || "");
 
-      const hotelUid = Array.isArray(user.hotelUid) ? user.hotelUid : [];
-      setHotelUidsInput(hotelUid.join(", "));
-
-      const loadedPermissions = Array.isArray(user.permissions) ? unique(user.permissions) : [];
-      setSelectedPermissions(
-        loadedPermissions.filter((permission) => knownPermissionKeys.includes(permission))
-      );
-      setCustomPermissionsInput(
-        loadedPermissions
-          .filter((permission) => !knownPermissionKeys.includes(permission))
-          .join(", ")
-      );
+      const hotelUids = Array.isArray(user.hotelUid) ? unique(user.hotelUid.filter(Boolean)) : [];
+      setHotelUidsInput(hotelUids.join(", "));
+      setOriginalHotelUids(hotelUids);
+      setSelectedHotelUid(hotelUids[0] || "");
+      setMemberships(await getUserMemberships(userId, hotelUids));
 
       setLoading(false);
     };
@@ -86,11 +80,20 @@ export default function UserDetailPage() {
     loadUser();
   }, [canUpdateUsers, knownPermissionKeys, userId]);
 
+  const hotelUids = normalizeCsvToArray(hotelUidsInput);
+  const selectedHotelPermissions = unique(memberships[selectedHotelUid] || []);
+  const selectedPermissions = selectedHotelPermissions.filter((permission) => knownPermissionKeys.includes(permission));
+
+  const setPermissionsForSelectedHotel = (permissions) => {
+    if (!selectedHotelUid) return;
+    setMemberships((previous) => ({ ...previous, [selectedHotelUid]: unique(permissions) }));
+  };
+
   const togglePermission = (permissionKey) => {
-    setSelectedPermissions((previous) =>
-      previous.includes(permissionKey)
-        ? previous.filter((permission) => permission !== permissionKey)
-        : [...previous, permissionKey]
+    setPermissionsForSelectedHotel(
+      selectedHotelPermissions.includes(permissionKey)
+        ? selectedHotelPermissions.filter((permission) => permission !== permissionKey)
+        : [...selectedHotelPermissions, permissionKey],
     );
   };
 
@@ -101,20 +104,28 @@ export default function UserDetailPage() {
     setSaving(true);
     setMessage("");
 
-    const hotelUid = normalizeCsvToArray(hotelUidsInput);
-    const customPermissions = normalizeCsvToArray(customPermissionsInput);
-
     const payload = {
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       email: email.trim(),
-      hotelUid,
-      permissions: unique([...selectedPermissions, ...customPermissions]),
+      hotelUid: hotelUids,
     };
 
-    await updateUser(userId, payload);
-    setSaving(false);
-    setMessage("Gebruiker opgeslagen.");
+    try {
+      await updateUserWithMemberships(userId, payload, memberships, originalHotelUids);
+      setOriginalHotelUids(hotelUids);
+      setMessage("Gebruikersprofiel en hotelpermissies opgeslagen. De gebruiker moet opnieuw inloggen om bestandsrechten te vernieuwen.");
+    } catch (error) {
+      console.error(error);
+      const unavailable = error?.code === "functions/not-found"
+        || error?.code === "functions/internal"
+        || /failed to fetch|cors/i.test(String(error?.message || ""));
+      setMessage(unavailable
+        ? "Opslaan mislukt: updateUserAccess is niet bereikbaar in dit Firebase-project. Controleer de Vercel project-ID en deploy eerst de Function naar dezelfde testomgeving."
+        : "Opslaan mislukt. Controleer de Functions-logs; membership- en tokenupdates kunnen opnieuw gesynchroniseerd moeten worden.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -125,7 +136,7 @@ export default function UserDetailPage() {
           <div>
             <h1 className="text-3xl font-semibold">User Detail</h1>
             <p className="text-gray-600 mt-1">
-              Werk gebruikersgegevens, hotelUid en permissies bij.
+              Werk het globale gebruikersprofiel en de permissies per hotel bij.
             </p>
           </div>
           <button
@@ -181,14 +192,33 @@ export default function UserDetailPage() {
               <input
                 type="text"
                 value={hotelUidsInput}
-                onChange={(event) => setHotelUidsInput(event.target.value)}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  const nextHotelUids = normalizeCsvToArray(value);
+                  setHotelUidsInput(value);
+                  if (!nextHotelUids.includes(selectedHotelUid)) setSelectedHotelUid(nextHotelUids[0] || "");
+                }}
                 placeholder="hotel-a, hotel-b"
                 className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
               />
             </label>
 
-            <div className="space-y-3 rounded-lg border border-gray-200 p-4">
-              <h2 className="text-sm font-semibold text-gray-800">Permissions per entity</h2>
+            {hotelUids.length > 0 && (
+              <label className="block text-sm font-medium text-gray-700">
+                Hotel waarvoor je permissies bewerkt
+                <select
+                  value={hotelUids.includes(selectedHotelUid) ? selectedHotelUid : ""}
+                  onChange={(event) => setSelectedHotelUid(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="" disabled>Selecteer een hotel</option>
+                  {hotelUids.map((hotelUid) => <option key={hotelUid} value={hotelUid}>{hotelUid}</option>)}
+                </select>
+              </label>
+            )}
+
+            {selectedHotelUid && hotelUids.includes(selectedHotelUid) && <div className="space-y-3 rounded-lg border border-gray-200 p-4">
+              <h2 className="text-sm font-semibold text-gray-800">Permissions voor {selectedHotelUid}</h2>
               {Object.entries(PERMISSION_CATALOG).map(([feature, actions]) => (
                 <div key={feature} className="space-y-2">
                   <p className="text-sm font-medium capitalize text-gray-700">{feature}</p>
@@ -215,18 +245,7 @@ export default function UserDetailPage() {
                   </div>
                 </div>
               ))}
-            </div>
-
-            <label className="block text-sm font-medium text-gray-700">
-              Extra permissions (optioneel, comma separated)
-              <input
-                type="text"
-                value={customPermissionsInput}
-                onChange={(event) => setCustomPermissionsInput(event.target.value)}
-                placeholder="feature.action"
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
-              />
-            </label>
+            </div>}
 
             <div className="flex items-center gap-3">
               <button

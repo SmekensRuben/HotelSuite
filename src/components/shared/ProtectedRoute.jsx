@@ -2,7 +2,7 @@ import React from "react";
 import { Navigate } from "react-router-dom";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { hasPermission } from "../../utils/permissions";
-import { auth } from "../../firebaseConfig";
+import { auth, authPolicy } from "../../firebaseConfig";
 import { multiFactor } from "firebase/auth";
 
 export default function ProtectedRoute({ children, feature, action = "read", anyOf = [], platformOnly = false }) {
@@ -22,7 +22,7 @@ export default function ProtectedRoute({ children, feature, action = "read", any
 
   const user = auth.currentUser;
   const authenticationComplete = Boolean(
-    user?.emailVerified && multiFactor(user).enrolledFactors.length,
+    user?.emailVerified && (!authPolicy.requireMfa || multiFactor(user).enrolledFactors.length),
   );
 
   if (!hotelUid || !authenticationComplete) {

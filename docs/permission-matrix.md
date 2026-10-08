@@ -1,13 +1,13 @@
 # Permission matrix
 
-Status date: 2026-10-05. This matrix describes the policy implemented in this branch; it is not evidence that the rules are deployed. The exact tested rules are `firebase/firestore.rules` and `firebase/storage.rules`, both referenced by `firebase.json`.
+Status date: 2026-10-06. This matrix describes the policy implemented in this branch; it is not evidence that the rules are deployed. The exact tested rules are `firebase/firestore.rules` and `firebase/storage.rules`, both referenced by `firebase.json`.
 
 ## Policy model
 
 - Platform administration is a Firebase custom claim: `platformAdmin == true`. It is not a Firestore field a user can edit.
-- Hotel access is authoritative only through `hotels/{hotelUid}/members/{uid}`. Each membership contains its own `permissions` list, so one user can have different rights in hotels A and B.
-- The legacy `users/{uid}.hotelUid` list remains temporarily useful for hotel discovery in the UI, but does not authorize Firestore or callable access.
-- Permission keys are `feature.action`; `feature.*` grants all catalogued actions for that feature. There is no `users.manage` alias. User administration uses `users.read/create/update/delete` and is currently additionally restricted to platform administrators in the routes because the existing client reads the global `users` collection.
+- Hotel access is authoritative only through `hotels/{hotelUid}/members/{uid}`. Each membership contains its own `permissions` list, so one user can have different rights in hotels A and B. A missing membership or missing permissions fail closed in the UI and backend.
+- The legacy `users/{uid}.hotelUid` list remains temporarily useful for hotel discovery in the UI, but neither it nor its legacy permissions authorize Firestore, Storage, routes or callable access.
+- Permission keys are `feature.action`; `feature.*` grants all actions for one feature. Platform-wide access uses only the `platformAdmin` Firebase custom claim; `super.admin` is not a supported permission. There is no `users.manage` alias.
 - A hidden menu or button is only UX. Routes, Firestore, Storage and callable functions independently enforce access.
 
 ## Route and page matrix
@@ -25,7 +25,7 @@ Status date: 2026-10-05. This matrix describes the policy implemented in this br
 | Imports | `/settings/file-import/**`, `/settings/file-import-types/**`; JSON import/export and upload execution | `fileImportSettings/**`, `fileImportTypes/**`, Storage `imports/{hotelUid}/**`, import Storage trigger | `imports.read/create/update/delete`; `imports.execute` for uploading source files | Broad `settings.*`; Admin trigger trusted metadata | Menu + routes + Firestore + Storage; `execute` rollout requires upload UI migration |
 | Integrations | `/settings/opera`; mapping CRUD | mixed settings document | `integrations.read/create/update/delete` | Broad `settings.*` | Menu + route + UI hooks; mixed-settings limitation |
 | Notifications | `/settings/notification-lists`; list CRUD | `notificationLists/**` | `notifications.read/create/update/delete` | Broad `settings.read`; read users could mutate in UI | Route + action buttons + Firestore |
-| Platform users | `/settings/users`, `/settings/users/:userId`; global profile update | `users/**`, future memberships | `users.read/update` **plus platform admin** | Global collection read; hotel admin could potentially cross tenants | Menu + platform-only routes + Firestore default deny; existing UI deliberately unavailable to hotel admins |
+| Platform users | `/settings/users`, `/settings/users/:userId`; profile, hotel assignments and per-hotel permissions | `users/**`, `hotels/*/members/**`, Auth `hotelPermissions` claims, `updateUserAccess` callable | `platformAdmin` custom claim | Previous form wrote ineffective root permissions and did not synchronize Storage claims | Platform-only UI + callable; memberships are authoritative and root profiles retain identity/discovery fields |
 | Arrivals | `/front-office/arrivals` | reports `arrivalsdetailed`, `ratecodeheader`; `listArrivalDates` callable | `reservations.read` | Route required only authentication; callable checked hotel list but no feature | Menu + route + reports rules + callable membership/permission |
 | Made reservations | `/front-office/made-reservations` | reports `arrivalsmadeyesterday`, settings/segments | `reservations.read` | Route required only authentication | Menu + route + reports rules |
 | Upsell audit | `/front-office/upselling/**`; validate/create/settings | `upselling/**`, `settings/upsells/**`, reservation reports | `auditUpsells.read` or special `auditUpsells.settings` | Special action already existed; report dependencies were broad | Menu + routes + Firestore; report allowlist must be checked against live data paths |
@@ -76,7 +76,7 @@ The supplied fragment is intentionally not deployable. Both deployed rule files 
 8. Deploy the frontend with per-hotel permission loading and the updated routes/actions.
 9. Run emulator tests, audit-project smoke tests for every matrix row used by the pilot, then deploy indexes followed by Storage Rules and Firestore Rules.
 10. Monitor denied requests, Functions errors and order/import queues. Roll back to the captured secure ruleset, never to the supplied `allow true` fragment.
-11. Remove the legacy global-permission fallback from `HotelContext` only after every active membership is verified.
+11. Verify that every active account has the intended membership; the client intentionally has no legacy global-permission fallback.
 
 ## Remaining limitations and blocked verification
 

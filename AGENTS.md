@@ -10,7 +10,7 @@
 
 - Frontend: React 18, Vite 4, React Router, Tailwind CSS, Firebase Web SDK, i18next and Vitest. Backend: Firebase Functions v2 on Node 22, Admin SDK and Node's test runner.
 - Use Node 22 or later. Install with `npm ci` and `npm --prefix functions ci`.
-- Run `npm test -- --run` for frontend tests, `npm --prefix functions test` for function tests, `npm run test:security` for emulator rules tests, `npm run test:restore` for the recovery smoke test, `npm run audit:policy` for the dependency gate, and `npm run build` for a production build. There is currently no configured lint or type-check command.
+- Run `npm test -- --run` for frontend tests, `npm --prefix functions test` for function tests, `npm run test:security` for emulator rules tests, `npm run test:restore` for the recovery smoke test, `npm run audit:policy` for the dependency gate, `npm run build:test` for a non-production CI build, and `npm run build` only with an explicit target environment. There is currently no configured lint or type-check command.
 - Firebase resources use the project selected in `.firebaserc`; never deploy, mutate production data or commit credentials as part of a routine task. Frontend configuration belongs in an untracked `.env` using the variable names documented in `README.md`.
 
 ## Code and naming conventions
@@ -29,7 +29,7 @@
 
 ## Confirmed domain rules
 
-- Login requires a verified email address and an enrolled Firebase second factor before protected routes are available.
+- Login requires a verified email address. A Firebase second factor is additionally required only when the environment's `VITE_AUTH_REQUIRE_MFA` policy is `true`; keep that value aligned with the selected Firebase project's Authentication policy.
 - Orders use `Created`, `Ordered`, `Received`, `Finalized` and `Canceled`; only `Created` orders may be edited or deleted, and moving to `Ordered` must use the confirm/send workflow.
 - Contract cancellation dates are the end date minus the non-negative whole termination period in days; reminder days are unique non-negative whole days.
 - Hotel stays use checkout-exclusive nights (`arrival <= stay date < departure`). Rooming-list reservations must fit the snapshotted room-type capacity for every occupied night.

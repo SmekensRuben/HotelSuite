@@ -2,17 +2,26 @@ const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/
 const { onRequest } = require("firebase-functions/v2/https");
 const { onObjectFinalized } = require("firebase-functions/v2/storage");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
-const { defineSecret } = require("firebase-functions/params");
+const { defineSecret, defineString } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
-const admin = require("firebase-admin");
+const { getApps, initializeApp } = require("firebase-admin/app");
+const { getFirestore, FieldValue, FieldPath, Timestamp } = require("firebase-admin/firestore");
+const { getAuth } = require("firebase-admin/auth");
+const { getStorage } = require("firebase-admin/storage");
+// Keep the existing module interface while using the modular Admin SDK v14 API.
+const admin = {
+  firestore: Object.assign(getFirestore, { FieldValue, FieldPath, Timestamp }),
+  auth: getAuth,
+  storage: getStorage,
+};
 const { Resend } = require("resend");
 const SftpClient = require("ssh2-sftp-client");
 const ExcelJS = require("exceljs");
 const PDFDocument = require("pdfkit");
 const React = require("react");
 
-if (!admin.apps.length) {
-  admin.initializeApp();
+if (!getApps().length) {
+  initializeApp();
 }
 
 const MEILI_HOST = defineSecret("MEILI_HOST");
@@ -22,6 +31,13 @@ const SUPPLIER_PRODUCTS_INDEX_UID = "supplierproducts";
 const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
 const RESEND_FROM = defineSecret("RESEND_FROM");
 const RESEND_WEBHOOK_SECRET = defineSecret("RESEND_WEBHOOK_SECRET");
+const APP_BASE_URL = defineString("APP_BASE_URL");
+
+function getAppBaseUrl() {
+  const value = String(APP_BASE_URL.value() || "").trim().replace(/\/$/, "");
+  if (!/^https:\/\//.test(value)) throw new Error("APP_BASE_URL must be an explicit HTTPS URL");
+  return value;
+}
 
 module.exports = {
   onDocumentCreated,
@@ -43,4 +59,6 @@ module.exports = {
   RESEND_API_KEY,
   RESEND_FROM,
   RESEND_WEBHOOK_SECRET,
+  APP_BASE_URL,
+  getAppBaseUrl,
 };

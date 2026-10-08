@@ -55,6 +55,8 @@ export function HotelProvider({ children }) {
   const loadHotelSettings = async (uid, data, userUid = auth.currentUser?.uid) => {
     if (!uid) return;
     setPermissionsLoading(true);
+    setPermissions([]);
+    setAuthorizationSource("none");
 
     try {
       const settingsRef = doc(db, `hotels/${uid}/settings`, uid);
@@ -69,10 +71,9 @@ export function HotelProvider({ children }) {
         setPermissions(Array.isArray(membership.permissions) ? membership.permissions : []);
         setAuthorizationSource("membership");
       } else {
-        // Temporary read-only migration compatibility. Security Rules use
-        // per-hotel membership documents and never trust this global fallback.
-        setPermissions(Array.isArray(data?.permissions) ? data.permissions : []);
-        setAuthorizationSource("legacy-user-profile");
+        // Fail closed: global legacy permissions are not an authorization source.
+        setPermissions([]);
+        setAuthorizationSource("missing-membership");
       }
 
       setHotelName(settings.hotelName || "Hotel");
@@ -90,6 +91,8 @@ export function HotelProvider({ children }) {
       setHotelName("Hotel");
       setLanguage("nl");
       setLightspeedShiftRolloverHour(4);
+      setPermissions([]);
+      setAuthorizationSource("error");
     } finally {
       setPermissionsLoading(false);
     }

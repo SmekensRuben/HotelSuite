@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { useHotelContext } from "contexts/HotelContext";
+import { useHotelContext } from "../../contexts/HotelContext";
 import { db, doc, getDoc } from "../../firebaseConfig";
 import { BedDouble, BellRing, BriefcaseBusiness, CalendarDays, ClipboardList, FileText, Package, Settings2, ShoppingBasket, Sparkles, TrendingUp, Truck, Users } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";

@@ -53,6 +53,11 @@ const profiles = {
     claims: {},
     profile: { hotelUid: ["hotel-a"], permissions: [] },
   },
+  noPermissionsA: {
+    uid: "no-permissions-a",
+    claims: {},
+    profile: { hotelUid: ["hotel-a"], permissions: [] },
+  },
 };
 
 const databaseFor = (actor) =>
@@ -85,6 +90,9 @@ async function seedIsolatedHotels() {
           "reservations.read", "demandcalendar.*", "orders.read", "orders.approve",
           "contracts.read", "contracts.notify", "roominglists.read", "roominglists.approve",
         ],
+      }),
+      setDoc(doc(database, "hotels/hotel-a/members", profiles.noPermissionsA.uid), {
+        permissions: [],
       }),
       setDoc(doc(database, "hotels", "hotel-a"), { hotelName: "Fictional Hotel A" }),
       setDoc(doc(database, "hotels", "hotel-b"), { hotelName: "Fictional Hotel B" }),
@@ -127,6 +135,11 @@ after(async () => {
 });
 
 describe("module and special-action boundaries", () => {
+  it("denies reservation data without reservations.read", async () => {
+    const database = databaseFor(profiles.noPermissionsA);
+    await assertFails(getDoc(doc(database, "hotels/hotel-a/reports/arrivalsdetailed/2026-10-05", "arrival-a")));
+  });
+
   it("permits reservation report reads but never client report writes", async () => {
     const database = databaseFor(profiles.specialistA);
     const arrival = doc(database, "hotels/hotel-a/reports/arrivalsdetailed/2026-10-05", "arrival-a");

@@ -13,7 +13,7 @@ function runAudit(prefix) {
     ? ["--prefix", prefix, "audit", "--omit=dev", "--json"]
     : ["audit", "--omit=dev", "--json"];
   try {
-    return JSON.parse(execFileSync("npm", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }));
+    return JSON.parse(execFileSync("npm", args, { encoding: "utf8", timeout: 60000, stdio: ["ignore", "pipe", "inherit"] }));
   } catch (error) {
     if (!error.stdout) throw error;
     return JSON.parse(String(error.stdout));
@@ -23,6 +23,9 @@ function runAudit(prefix) {
 let failed = false;
 for (const [scope, prefix] of [["root", ""], ["functions", "functions"]]) {
   const audit = runAudit(prefix);
+  if (audit.error || !audit.metadata?.vulnerabilities || !audit.vulnerabilities) {
+    throw new Error(`${scope}: npm audit did not return a valid report. Dependency verification cannot proceed.`);
+  }
   const actual = audit.metadata?.vulnerabilities || {};
   const maximum = policy.scopes[scope].maximum;
   for (const severity of ["critical", "high", "moderate", "low", "total"]) {
@@ -39,6 +42,17 @@ for (const [scope, prefix] of [["root", ""], ["functions", "functions"]]) {
   if (unexpectedDirect.length) {
     console.error(`${scope}: unreviewed vulnerable direct dependencies: ${unexpectedDirect.join(", ")}`);
     failed = true;
+  }
+
+  for (const [name, vulnerability] of Object.entries(audit.vulnerabilities)) {
+    if (!vulnerability.isDirect && vulnerability.severity !== "critical") continue;
+    console.log(`${scope} remediation: ${JSON.stringify({
+      name,
+      severity: vulnerability.severity,
+      range: vulnerability.range,
+      fix: vulnerability.fixAvailable,
+      advisories: vulnerability.via.filter((item) => typeof item === "object").map((item) => ({ title: item.title, url: item.url, range: item.range })),
+    })}`);
   }
 
   console.log(`${scope}: ${JSON.stringify(actual)} (temporary baseline; review by ${policy.reviewBy})`);

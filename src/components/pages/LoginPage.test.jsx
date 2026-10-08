@@ -13,10 +13,12 @@ const authMocks = vi.hoisted(() => ({
   recaptchaConstructor: vi.fn(),
   recaptchaClear: vi.fn(),
   getMultiFactorResolver: vi.fn(),
+  authPolicy: { requireMfa: true },
 }));
 
 vi.mock("../../firebaseConfig", () => ({
   auth: { currentUser: null },
+  authPolicy: authMocks.authPolicy,
   signInWithEmailAndPassword: authMocks.signIn,
 }));
 
@@ -59,6 +61,7 @@ describe("LoginPage authentication steps", () => {
     vi.clearAllMocks();
     localStorage.clear();
     authMocks.sendEmailVerification.mockResolvedValue();
+    authMocks.authPolicy.requireMfa = true;
   });
 
   it("shows the email verification screen and sends a verification email", async () => {
@@ -106,6 +109,19 @@ describe("LoginPage authentication steps", () => {
       "recaptcha-container",
       { size: "normal" },
     );
+  });
+
+  it("logs in without enrollment when MFA is disabled for the Firebase environment", async () => {
+    authMocks.authPolicy.requireMfa = false;
+    const user = { email: "user@example.com", emailVerified: true };
+    authMocks.signIn.mockResolvedValue({ user });
+
+    render(<LoginPage />);
+    submitCredentials();
+
+    await waitFor(() => expect(authMocks.signIn).toHaveBeenCalled());
+    expect(authMocks.multiFactor).not.toHaveBeenCalled();
+    expect(screen.queryByText("enroll-2faTitle")).not.toBeInTheDocument();
   });
 
   it("normalizes a human-readable E.164 number before sending it to Firebase", async () => {

@@ -11,7 +11,7 @@ import {
   signOut,
   TotpMultiFactorGenerator,
 } from "firebase/auth";
-import { auth, signInWithEmailAndPassword } from "../../firebaseConfig";
+import { auth, authPolicy, signInWithEmailAndPassword } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { useTranslation } from "react-i18next";
 
@@ -208,7 +208,7 @@ export default function LoginPage() {
       return;
     }
 
-    if (!hasSecondFactor(user)) {
+    if (authPolicy.requireMfa && !hasSecondFactor(user)) {
       await startEnrollment(user);
       return;
     }
@@ -266,8 +266,8 @@ export default function LoginPage() {
         setNotice(t("emailStillNotVerified"));
         return;
       }
-      setNotice(t("emailVerified"));
-      await startEnrollment(user);
+      setNotice(t(authPolicy.requireMfa ? "emailVerified" : "emailVerifiedNoMfa"));
+      await continueAfterPrimaryLogin(user, false);
     } catch (err) {
       console.error(err);
       setError(t("verificationCheckError"));
