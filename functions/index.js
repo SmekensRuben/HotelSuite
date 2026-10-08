@@ -13,6 +13,8 @@ const { processNightlyGuestIntelligence } = require("./src/guestIntelligence");
 const { sendScheduledGuestIntelligenceMail } = require("./src/guestIntelligenceMail");
 const { rebuildStayPatternModelCallable } = require("./src/stayPatternModel");
 const { updateUserAccess } = require("./src/userAccess");
+const { setHotelSubscription } = require("./src/subscriptions");
+const { searchHotelProducts } = require("./src/productSearch");
 
 exports.syncCatalogProductsToMeili = syncCatalogProductsToMeili;
 exports.syncSupplierProductsToMeili = syncSupplierProductsToMeili;
@@ -38,3 +40,5 @@ exports.processNightlyGuestIntelligence = processNightlyGuestIntelligence;
 exports.sendScheduledGuestIntelligenceMail = sendScheduledGuestIntelligenceMail;
 exports.rebuildStayPatternModel = rebuildStayPatternModelCallable;
 exports.updateUserAccess = updateUserAccess;
+exports.setHotelSubscription = setHotelSubscription;
+exports.searchHotelProducts = searchHotelProducts;

@@ -1,19 +1,31 @@
 {
   "reviewBy": "2026-11-02",
   "owner": "platform",
-  "rationale": "Temporary A00 baseline only. The application already contains these findings; CI must prevent the counts or severity from increasing while direct dependencies are upgraded or replaced.",
+  "rationale": "Runtime dependencies were remediated during SaaS integration. Fail on any regression from this reduced, expiring baseline; remaining findings must be eliminated before subscription sales.",
   "scopes": {
     "root": {
-      "maximum": { "critical": 6, "high": 42, "moderate": 16, "low": 5, "total": 69 },
+      "maximum": {
+        "critical": 0,
+        "high": 5,
+        "moderate": 0,
+        "low": 0,
+        "total": 5
+      },
       "directPackagesRequiringRemediation": [
-        "firebase", "firebase-admin", "fuse", "jspdf", "postcss",
-        "react-router-dom", "tailwindcss", "tailwindcss-animate", "vite", "xlsx"
+        "firebase",
+        "xlsx"
       ]
     },
     "functions": {
-      "maximum": { "critical": 3, "high": 10, "moderate": 13, "low": 1, "total": 27 },
+      "maximum": {
+        "critical": 0,
+        "high": 0,
+        "moderate": 2,
+        "low": 0,
+        "total": 2
+      },
       "directPackagesRequiringRemediation": [
-        "csv-parse", "exceljs", "fast-xml-parser", "firebase-admin"
+        "exceljs"
       ]
     }
   }

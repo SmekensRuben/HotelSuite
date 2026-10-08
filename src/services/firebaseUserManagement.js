@@ -61,10 +61,11 @@ export async function getUserMemberships(userId, hotelUids) {
   ]));
 }
 
-export async function updateUserWithMemberships(userId, profile, memberships, previousHotelUids = []) {
+export async function updateUserWithMemberships(userId, profile, memberships, expectedAccessRevision = 0) {
   if (!userId) throw new Error("userId is required");
   const updateAccess = httpsCallable(functions, "updateUserAccess");
-  await updateAccess({ userId, profile, memberships, previousHotelUids });
+  const result = await updateAccess({ userId, profile, memberships, expectedAccessRevision });
+  return result.data;
 }
 
 export async function getUserDisplayName(userIdentifier) {

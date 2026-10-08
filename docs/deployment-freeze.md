@@ -1,16 +1,16 @@
 # Production deployment freeze
 
-Status: active from 2026-10-08 while the SaaS security and subscription work is incomplete.
+Status: repository deployment jobs removed from 2026-10-08 while SaaS work is incomplete. This is not proof that external hosting auto-rollouts are disabled.
 
 ## Current behavior
 
-- Pull requests create the existing Vercel Preview outside GitHub Actions.
+- The Vercel integration reports preview checks outside GitHub Actions; the current preview check fails. Its actual build environment and any production auto-rollout remain unverified.
 - Pull requests and pushes to `main` run `.github/workflows/verify.yml`.
 - Verification installs dependencies, runs frontend/Functions/security/restore/dependency checks and builds with `.env.test`.
 - No GitHub Actions workflow deploys the frontend, Functions, Firebase Rules, indexes, Storage Rules or data.
 - Repository workflows do not reference production Firebase, Meilisearch or FTPS secrets.
 
-Removing unused production secrets from GitHub repository settings is recommended after confirming there are no external/reusable workflows that consume them. Removing a secret is defense in depth; the primary safety control is that no workflow contains a deployment job.
+Removing unused production secrets from GitHub repository settings is recommended after confirming there are no external/reusable workflows that consume them. Removing a secret is defense in depth; the repository safety control is that no workflow contains a deployment job. Inspect Vercel/App Hosting separately: external integrations can still deploy after a merge to `main`.
 
 ## Restoring production deployment
 

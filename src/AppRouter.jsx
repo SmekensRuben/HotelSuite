@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from "react-router-dom";
+import SubscriptionsPage from "./components/pages/SubscriptionsPage.jsx";
 
 import LandingPage from "./components/pages/LandingPage.jsx";
 import LoginPage from "./components/pages/LoginPage.jsx";
@@ -518,6 +519,10 @@ export default function AppRouter() {
             <CreateBlockPage mode="edit" />
           </ProtectedRoute>
         }
+      />
+      <Route
+        path="/settings/subscriptions"
+        element={<ProtectedRoute platformOnly><SubscriptionsPage /></ProtectedRoute>}
       />
       <Route
         path="/settings/users"

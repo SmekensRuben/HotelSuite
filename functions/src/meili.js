@@ -1,5 +1,5 @@
 const { onDocumentWritten, logger, admin, MEILI_API_KEY, MEILI_HOST, MEILI_INDEX, SUPPLIER_PRODUCTS_INDEX_UID } = require("./config");
-const { getIndexUid, buildCatalogProductDocument, buildSupplierProductDocument, meiliRequest, meiliJson } = require("./common");
+const { getIndexUid, buildCatalogProductDocument, buildSupplierProductDocument, productSearchId, meiliRequest, meiliJson } = require("./common");
 
 const ensuredIndexUids = new Set();
 
@@ -48,7 +48,7 @@ const syncCatalogProductsToMeili = onDocumentWritten(
     // Deleted
     if (!event.data?.after?.exists) {
       const delRes = await meiliRequest(
-        `/indexes/${encodeURIComponent(indexUid)}/documents/${encodeURIComponent(productId)}`,
+        `/indexes/${encodeURIComponent(indexUid)}/documents/${productSearchId(hotelUid, productId)}`,
         { method: "DELETE" }
       );
 
@@ -94,7 +94,7 @@ const syncSupplierProductsToMeili = onDocumentWritten(
 
     if (!event.data?.after?.exists) {
       const delRes = await meiliRequest(
-        `/indexes/${encodeURIComponent(indexUid)}/documents/${encodeURIComponent(productId)}`,
+        `/indexes/${encodeURIComponent(indexUid)}/documents/${productSearchId(hotelUid, productId)}`,
         { method: "DELETE" }
       );
 

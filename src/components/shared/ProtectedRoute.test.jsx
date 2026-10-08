@@ -36,6 +36,8 @@ describe("ProtectedRoute permissions", () => {
     enrolledFactors = [{ factorId: "phone" }];
     hotelContext = {
       hotelUid: "hotel-a",
+      subscriptionActive: true,
+      subscriptionLoading: false,
       loading: false,
       permissionsLoading: false,
       permissions: ["reservations.read"],
@@ -74,6 +76,13 @@ describe("ProtectedRoute permissions", () => {
   it("requires an enrolled factor when MFA is enabled", () => {
     enrolledFactors = [];
     renderProtected({ feature: "reservations", action: "read" });
+    expect(screen.queryByText("protected content")).not.toBeInTheDocument();
+  });
+
+  it("blocks protected content for inactive subscriptions", () => {
+    hotelContext.subscriptionActive = false;
+    renderProtected({ feature: "reservations", action: "read" });
+    expect(screen.getByText("Geen actief hotelabonnement")).toBeInTheDocument();
     expect(screen.queryByText("protected content")).not.toBeInTheDocument();
   });
 });

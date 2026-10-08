@@ -1,3 +1,4 @@
+const { hotelHasActiveSubscription } = require("./subscriptions");
 const { onDocumentCreated, onSchedule, logger, admin, Resend, React, RESEND_API_KEY, RESEND_FROM, getAppBaseUrl } = require("./config");
 
 function toDateOnly(value) {
@@ -276,6 +277,7 @@ async function processContractCancellationReminders({ hotelUidFilter } = {}) {
     const contract = contractDoc.data() || {};
     const pathSegments = contractDoc.ref.path.split("/");
     const hotelUid = hotelUidFilter || pathSegments[1] || "unknown-hotel";
+    if (!await hotelHasActiveSubscription(admin.firestore(), hotelUid)) continue;
     const hotelName = await resolveHotelName(hotelUid);
     const cancelBefore = toDateOnly(contract.cancelBefore);
 

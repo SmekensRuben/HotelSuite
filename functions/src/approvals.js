@@ -1,5 +1,6 @@
 const { onDocumentCreated, logger, admin, Resend, React, RESEND_API_KEY, RESEND_FROM, getAppBaseUrl } = require("./config");
 const { resolveHotelName } = require("./contracts");
+const { hotelHasActiveSubscription } = require("./subscriptions");
 
 function OrderApprovalRequestEmailTemplate({ hotelName, outletName, orderId, supplierName, deliveryDate, orderDetailUrl }) {
   return React.createElement(
@@ -198,6 +199,7 @@ const sendOrderApprovalEmailToApprovers = onDocumentCreated(
     if (!event.data?.exists) return;
 
     const { hotelUid, orderId } = event.params;
+    if (!await hotelHasActiveSubscription(admin.firestore(), hotelUid)) return;
     const order = event.data.data() || {};
     const outletId = String(order.outletId || "").trim();
     if (!outletId) return;

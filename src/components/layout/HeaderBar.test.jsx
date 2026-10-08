@@ -10,6 +10,7 @@ vi.mock("../../contexts/HotelContext", () => ({
   useHotelContext: () => ({
     hotelUid: "hotel-a",
     hotelUids: [],
+      subscriptionActive: true,
     permissions,
     isPlatformAdmin: false,
     selectHotel: vi.fn(),

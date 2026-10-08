@@ -40,7 +40,7 @@ Firebase CLI 15.32.1 is installed as a pinned development dependency, but this e
 Before A00, `firebase.json` referenced neither Firestore nor Storage rules or indexes. A00 adds:
 
 - `firebase/firestore.rules`: proposed fail-closed tenant and permission baseline;
-- `firebase/storage.rules`: proposed tenant-aware contract/import boundary using a server-issued per-hotel `hotelPermissions` custom-claim map (claims provisioning is required before deployment);
+- `firebase/storage.rules`: tenant-aware contract/import boundary; the subscription follow-up replaces the original claim map with live default-database membership/subscription reads (cross-service IAM authorization is required before deployment);
 - `firebase/firestore.indexes.json`: an explicitly empty **local** composite-index baseline;
 - emulator configuration and security tests.
 

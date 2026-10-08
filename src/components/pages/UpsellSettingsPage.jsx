@@ -246,7 +246,7 @@ export default function UpsellSettingsPage() {
 
     try {
       const safeName = manualImportForm.file.name.replace(/[^a-zA-Z0-9._-]+/g, "_");
-      const storagePath = `imports/manual/${hotelUid}/${Date.now()}-${safeName}`;
+      const storagePath = `imports/${hotelUid}/manual/${Date.now()}-${safeName}`;
       const fileRef = ref(storage, storagePath);
 
       await uploadBytes(fileRef, manualImportForm.file, {

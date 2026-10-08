@@ -1,4 +1,5 @@
 const { onDocumentCreated, onSchedule, logger, admin, Resend, ExcelJS, PDFDocument, RESEND_API_KEY, RESEND_FROM } = require('./config');
+const { subscribedHotels } = require('./subscriptions');
 
 const db = admin.firestore();
 const SCHEDULED_MAIL_DOC_PATH = 'scheduledMails/scheduledOccupancyMail';
@@ -894,9 +895,9 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
 }
 
 async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', triggerId = null }) {
-  const hotelUids = sanitizeHotelUids(scheduleConfig?.hotelUid);
+  const hotelUids = await subscribedHotels(db, sanitizeHotelUids(scheduleConfig?.hotelUid));
+  if (!hotelUids.length) { logger.info('Occupancy mail skipped: no active subscriptions'); return; }
   const to = sanitizeEmails(scheduleConfig?.mailto);
-  if (!hotelUids.length) throw new Error('No hotelUid configuration found in scheduledOccupancyMail');
   if (!to.length) throw new Error('No valid mailto addresses found in scheduledOccupancyMail');
 
   const resendApiKey = String(RESEND_API_KEY.value() || '').trim();
