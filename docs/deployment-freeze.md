@@ -4,7 +4,7 @@ Status: repository deployment jobs removed from 2026-10-08 while SaaS work is in
 
 ## Current behavior
 
-- The Vercel integration reports preview checks outside GitHub Actions; the current preview check fails. Its actual build environment and any production auto-rollout remain unverified.
+- The Vercel integration reports preview checks outside GitHub Actions; the current preview check fails. Inspection subsequently confirmed an automatic production deployment of main commit `0650572` with status Ready. The preview correction intentionally shares Firebase project `hotel-toolkit`; see `firebase-environments.md`.
 - Pull requests and pushes to `main` run `.github/workflows/verify.yml`.
 - Verification installs dependencies, runs frontend/Functions/security/restore/dependency checks and builds with `.env.test`.
 - No GitHub Actions workflow deploys the frontend, Functions, Firebase Rules, indexes, Storage Rules or data.
