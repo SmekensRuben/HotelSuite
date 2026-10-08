@@ -1,0 +1,49 @@
+name: Verify HotelSuite
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install frontend and tooling dependencies
+        run: npm ci
+
+      - name: Install Functions dependencies
+        run: npm --prefix functions ci
+
+      - name: Frontend tests
+        run: npm test -- --run
+
+      - name: Functions tests
+        run: npm --prefix functions test
+
+      - name: Firestore and Storage security tests
+        run: npm run test:security
+
+      - name: Emulator backup and restore smoke test
+        run: npm run test:restore
+
+      - name: Dependency policy
+        run: npm run audit:policy
+
+      - name: Build with non-production fixture
+        run: npm run build:test

@@ -39,9 +39,9 @@ function toMappingObject(mappings) {
 
 export default function OperaSettingsPage() {
   const { hotelUid } = useHotelContext();
-  const canCreateSettings = usePermission("settings", "create");
-  const canUpdateSettings = usePermission("settings", "update");
-  const canDeleteSettings = usePermission("settings", "delete");
+  const canCreateSettings = usePermission("integrations", "create");
+  const canUpdateSettings = usePermission("integrations", "update");
+  const canDeleteSettings = usePermission("integrations", "delete");
   const [mappings, setMappings] = useState([]);
   const [operaUser, setOperaUser] = useState("");
   const [employeeName, setEmployeeName] = useState("");

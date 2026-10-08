@@ -13,7 +13,7 @@ export default function OutletDetailPage() {
   const navigate = useNavigate();
   const { outletId } = useParams();
   const { hotelUid } = useHotelContext();
-  const canEditOutlets = usePermission("settings", "update");
+  const canEditOutlets = usePermission("outlets", "update");
   const [outlet, setOutlet] = useState(null);
   const [approvers, setApprovers] = useState([]);
   const [loading, setLoading] = useState(true);

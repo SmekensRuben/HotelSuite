@@ -12,6 +12,7 @@ const { linkLatestArrivalDescriptions, listArrivalDates } = require("./src/arriv
 const { processNightlyGuestIntelligence } = require("./src/guestIntelligence");
 const { sendScheduledGuestIntelligenceMail } = require("./src/guestIntelligenceMail");
 const { rebuildStayPatternModelCallable } = require("./src/stayPatternModel");
+const { updateUserAccess } = require("./src/userAccess");
 
 exports.syncCatalogProductsToMeili = syncCatalogProductsToMeili;
 exports.syncSupplierProductsToMeili = syncSupplierProductsToMeili;
@@ -36,3 +37,4 @@ exports.linkLatestArrivalDescriptions = linkLatestArrivalDescriptions;
 exports.processNightlyGuestIntelligence = processNightlyGuestIntelligence;
 exports.sendScheduledGuestIntelligenceMail = sendScheduledGuestIntelligenceMail;
 exports.rebuildStayPatternModel = rebuildStayPatternModelCallable;
+exports.updateUserAccess = updateUserAccess;

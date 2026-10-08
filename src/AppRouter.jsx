@@ -99,15 +99,15 @@ export default function AppRouter() {
       <Route
         path="/settings/general"
         element={
-          <ProtectedRoute feature="settings" action="read">
+          <ProtectedRoute feature="propertysettings" action="read">
             <GeneralSettingsPage />
           </ProtectedRoute>
         }
       />
-      <Route path="/settings/property" element={<ProtectedRoute feature="settings" action="read"><GeneralSettingsPage /></ProtectedRoute>} />
-      <Route path="/settings/property/room-types" element={<ProtectedRoute feature="settings" action="read"><RoomTypesPage /></ProtectedRoute>} />
-      <Route path="/settings/property/rate-codes" element={<ProtectedRoute feature="settings" action="read"><RateCodesPage /></ProtectedRoute>} />
-      <Route path="/settings/property/market-segments" element={<ProtectedRoute feature="settings" action="read"><MarketSegmentsPage /></ProtectedRoute>} />
+      <Route path="/settings/property" element={<ProtectedRoute feature="propertysettings" action="read"><GeneralSettingsPage /></ProtectedRoute>} />
+      <Route path="/settings/property/room-types" element={<ProtectedRoute feature="propertysettings" action="read"><RoomTypesPage /></ProtectedRoute>} />
+      <Route path="/settings/property/rate-codes" element={<ProtectedRoute feature="propertysettings" action="read"><RateCodesPage /></ProtectedRoute>} />
+      <Route path="/settings/property/market-segments" element={<ProtectedRoute feature="propertysettings" action="read"><MarketSegmentsPage /></ProtectedRoute>} />
       <Route
         path="/catalog/products"
         element={
@@ -255,7 +255,7 @@ export default function AppRouter() {
       <Route
         path="/settings/catalog"
         element={
-          <ProtectedRoute feature="settings" action="read">
+          <ProtectedRoute feature="catalogsettings" action="read">
             <SettingsCatalogPage />
           </ProtectedRoute>
         }
@@ -263,7 +263,7 @@ export default function AppRouter() {
       <Route
         path="/settings/outlets"
         element={
-          <ProtectedRoute feature="settings" action="read">
+          <ProtectedRoute feature="outlets" action="read">
             <OutletSettingsPage />
           </ProtectedRoute>
         }
@@ -271,7 +271,7 @@ export default function AppRouter() {
       <Route
         path="/settings/outlets/new"
         element={
-          <ProtectedRoute feature="settings" action="create">
+          <ProtectedRoute feature="outlets" action="create">
             <OutletCreatePage />
           </ProtectedRoute>
         }
@@ -279,7 +279,7 @@ export default function AppRouter() {
       <Route
         path="/settings/outlets/:outletId"
         element={
-          <ProtectedRoute feature="settings" action="read">
+          <ProtectedRoute feature="outlets" action="read">
             <OutletDetailPage />
           </ProtectedRoute>
         }
@@ -287,7 +287,7 @@ export default function AppRouter() {
       <Route
         path="/settings/outlets/:outletId/edit"
         element={
-          <ProtectedRoute feature="settings" action="update">
+          <ProtectedRoute feature="outlets" action="update">
             <OutletEditPage />
           </ProtectedRoute>
         }
@@ -335,7 +335,7 @@ export default function AppRouter() {
       <Route
         path="/settings/file-import"
         element={
-          <ProtectedRoute feature="settings" action="read">
+          <ProtectedRoute feature="imports" action="read">
             <FileImportSettingsPage />
           </ProtectedRoute>
         }
@@ -343,7 +343,7 @@ export default function AppRouter() {
       <Route
         path="/settings/file-import/new"
         element={
-          <ProtectedRoute feature="settings" action="create">
+          <ProtectedRoute feature="imports" action="create">
             <FileImportSettingCreatePage />
           </ProtectedRoute>
         }
@@ -351,7 +351,7 @@ export default function AppRouter() {
       <Route
         path="/settings/file-import/:fileImportSettingId"
         element={
-          <ProtectedRoute feature="settings" action="read">
+          <ProtectedRoute feature="imports" action="read">
             <FileImportSettingDetailPage />
           </ProtectedRoute>
         }
@@ -359,7 +359,7 @@ export default function AppRouter() {
       <Route
         path="/settings/file-import/:fileImportSettingId/edit"
         element={
-          <ProtectedRoute feature="settings" action="update">
+          <ProtectedRoute feature="imports" action="update">
             <FileImportSettingEditPage />
           </ProtectedRoute>
         }
@@ -367,7 +367,7 @@ export default function AppRouter() {
       <Route
         path="/settings/file-import-types"
         element={
-          <ProtectedRoute feature="settings" action="read">
+          <ProtectedRoute feature="imports" action="read">
             <FileImportTypesPage />
           </ProtectedRoute>
         }
@@ -375,7 +375,7 @@ export default function AppRouter() {
       <Route
         path="/settings/file-import-types/new"
         element={
-          <ProtectedRoute feature="settings" action="create">
+          <ProtectedRoute feature="imports" action="create">
             <FileImportTypeCreatePage />
           </ProtectedRoute>
         }
@@ -383,7 +383,7 @@ export default function AppRouter() {
       <Route
         path="/settings/file-import-types/:fileImportTypeId"
         element={
-          <ProtectedRoute feature="settings" action="read">
+          <ProtectedRoute feature="imports" action="read">
             <FileImportTypeDetailPage />
           </ProtectedRoute>
         }
@@ -391,7 +391,7 @@ export default function AppRouter() {
       <Route
         path="/settings/file-import-types/:fileImportTypeId/edit"
         element={
-          <ProtectedRoute feature="settings" action="update">
+          <ProtectedRoute feature="imports" action="update">
             <FileImportTypeEditPage />
           </ProtectedRoute>
         }
@@ -399,24 +399,24 @@ export default function AppRouter() {
       <Route
         path="/settings/opera"
         element={
-          <ProtectedRoute feature="settings" action="read">
+          <ProtectedRoute feature="integrations" action="read">
             <OperaSettingsPage />
           </ProtectedRoute>
         }
       />
       <Route
         path="/front-office/arrivals"
-        element={<ProtectedRoute><ArrivalsPage /></ProtectedRoute>}
+        element={<ProtectedRoute feature="reservations" action="read"><ArrivalsPage /></ProtectedRoute>}
       />
       <Route
         path="/front-office/made-reservations"
-        element={<ProtectedRoute><MadeReservationsPage /></ProtectedRoute>}
+        element={<ProtectedRoute feature="reservations" action="read"><MadeReservationsPage /></ProtectedRoute>}
       />
       <Route
         path="/revenue/group-quotes"
         element={<ProtectedRoute feature="groupquotes" action="read"><GroupQuotesPage /></ProtectedRoute>}
       />
-      <Route path="/revenue/commercial-intelligence" element={<ProtectedRoute feature="groupquotes" action="read"><CommercialIntelligencePage /></ProtectedRoute>} />
+      <Route path="/revenue/commercial-intelligence" element={<ProtectedRoute feature="commercialintelligence" action="read"><CommercialIntelligencePage /></ProtectedRoute>} />
       <Route
         path="/revenue/group-quotes/new"
         element={<ProtectedRoute feature="groupquotes" action="create"><GroupQuoteCreatePage /></ProtectedRoute>}
@@ -475,7 +475,7 @@ export default function AppRouter() {
       />
       <Route
         path="/settings/notification-lists"
-        element={<ProtectedRoute feature="settings" action="read"><NotificationListsPage /></ProtectedRoute>}
+        element={<ProtectedRoute feature="notifications" action="read"><NotificationListsPage /></ProtectedRoute>}
       />
       <Route
         path="/me/groups"
@@ -485,11 +485,11 @@ export default function AppRouter() {
           </ProtectedRoute>
         }
       />
-      <Route path="/me/demand-calendar" element={<ProtectedRoute feature="groups" action="read"><DemandCalendarPage /></ProtectedRoute>} />
-      <Route path="/me/demand-calendar/new" element={<ProtectedRoute feature="groups" action="create"><DemandCalendarEventEditorPage /></ProtectedRoute>} />
-      <Route path="/me/demand-calendar/categories" element={<ProtectedRoute feature="groups" action="update"><DemandCalendarCategoriesPage /></ProtectedRoute>} />
-      <Route path="/me/demand-calendar/:eventId" element={<ProtectedRoute feature="groups" action="read"><DemandCalendarEventDetailPage /></ProtectedRoute>} />
-      <Route path="/me/demand-calendar/:eventId/edit" element={<ProtectedRoute feature="groups" action="update"><DemandCalendarEventEditorPage /></ProtectedRoute>} />
+      <Route path="/me/demand-calendar" element={<ProtectedRoute feature="demandcalendar" action="read"><DemandCalendarPage /></ProtectedRoute>} />
+      <Route path="/me/demand-calendar/new" element={<ProtectedRoute feature="demandcalendar" action="create"><DemandCalendarEventEditorPage /></ProtectedRoute>} />
+      <Route path="/me/demand-calendar/categories" element={<ProtectedRoute feature="demandcalendar" action="update"><DemandCalendarCategoriesPage /></ProtectedRoute>} />
+      <Route path="/me/demand-calendar/:eventId" element={<ProtectedRoute feature="demandcalendar" action="read"><DemandCalendarEventDetailPage /></ProtectedRoute>} />
+      <Route path="/me/demand-calendar/:eventId/edit" element={<ProtectedRoute feature="demandcalendar" action="update"><DemandCalendarEventEditorPage /></ProtectedRoute>} />
       <Route
         path="/me/groups/new"
         element={
@@ -510,7 +510,7 @@ export default function AppRouter() {
           </ProtectedRoute>
         }
       />
-      <Route path="/me/groups/:groupId/rooming-list-change-request/:requestId" element={<ProtectedRoute feature="groups" action="read"><RoomingListChangeRequestPage /></ProtectedRoute>} />
+      <Route path="/me/groups/:groupId/rooming-list-change-request/:requestId" element={<ProtectedRoute feature="roominglists" action="approve"><RoomingListChangeRequestPage /></ProtectedRoute>} />
       <Route
         path="/me/groups/:groupId/edit"
         element={
@@ -522,7 +522,7 @@ export default function AppRouter() {
       <Route
         path="/settings/users"
         element={
-          <ProtectedRoute feature="users" action="read">
+          <ProtectedRoute platformOnly feature="users" action="read">
             <UserManagementPage />
           </ProtectedRoute>
         }
@@ -578,7 +578,7 @@ export default function AppRouter() {
       <Route
         path="/contracts/settings"
         element={
-          <ProtectedRoute feature="settings" action="read">
+          <ProtectedRoute feature="contracts" action="settings">
             <ContractSettingsPage />
           </ProtectedRoute>
         }
@@ -610,7 +610,7 @@ export default function AppRouter() {
       <Route
         path="/settings/users/:userId"
         element={
-          <ProtectedRoute feature="users" action="update">
+          <ProtectedRoute platformOnly feature="users" action="update">
             <UserDetailPage />
           </ProtectedRoute>
         }

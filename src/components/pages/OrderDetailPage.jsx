@@ -13,6 +13,7 @@ import { getOutletApprovers } from "../../services/firebaseSettings";
 import { getUserDisplayName } from "../../services/firebaseUserManagement";
 import { getSupplier } from "../../services/firebaseSuppliers";
 import { StickyNote } from "lucide-react";
+import { usePermission } from "../../hooks/usePermission";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -24,6 +25,9 @@ function formatContent(item) {
 }
 
 export default function OrderDetailPage() {
+  const canUpdateOrders = usePermission("orders", "update");
+  const canDeleteOrders = usePermission("orders", "delete");
+  const canApproveOrders = usePermission("orders", "approve");
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { orderId } = useParams();
@@ -125,8 +129,10 @@ export default function OrderDetailPage() {
     if (result?.outletId && currentUid) {
       const approvers = await getOutletApprovers(hotelUid, result.outletId);
       const isAllowed = approvers.some((approver) => String(approver.id || "").trim() === currentUid);
-      setCanConfirmOrder(isAllowed);
-      if (!isAllowed) {
+      setCanConfirmOrder(isAllowed && canApproveOrders);
+      if (!canApproveOrders) {
+        setApproverWarning("You do not have permission to approve orders.");
+      } else if (!isAllowed) {
         setApproverWarning("Only outlet approvers can confirm this order.");
       } else {
         setApproverWarning("");
@@ -148,7 +154,7 @@ export default function OrderDetailPage() {
     };
 
     loadOrder();
-  }, [hotelUid, orderId]);
+  }, [hotelUid, orderId, canApproveOrders]);
 
   useEffect(() => {
     if (!showOrderConfirmModal) return undefined;
@@ -357,20 +363,20 @@ export default function OrderDetailPage() {
             </button>
             {isCreated && (
               <>
-                <button
+                {canUpdateOrders && <button
                   type="button"
                   onClick={() => navigate(`/orders/${orderId}/edit`)}
                   className="px-4 py-2 border border-gray-300 rounded font-semibold hover:bg-gray-100"
                 >
                   Edit
-                </button>
-                <button
+                </button>}
+                {canDeleteOrders && <button
                   type="button"
                   onClick={() => setShowDeleteModal(true)}
                   className="px-4 py-2 border border-red-300 text-red-700 rounded font-semibold hover:bg-red-50"
                 >
                   Delete
-                </button>
+                </button>}
               </>
             )}
             <button
@@ -529,6 +535,7 @@ export default function OrderDetailPage() {
             disabled={busy}
             onClick={async () => {
               setBusy(true);
+              if (!canDeleteOrders) return;
               await deleteOrder(hotelUid, orderId);
               setBusy(false);
               navigate("/orders");
