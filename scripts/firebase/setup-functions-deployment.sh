@@ -57,6 +57,7 @@ fi
 
 gcloud services enable iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com \
   cloudresourcemanager.googleapis.com serviceusage.googleapis.com firebase.googleapis.com \
+  cloudbilling.googleapis.com firebaseextensions.googleapis.com \
   cloudfunctions.googleapis.com cloudbuild.googleapis.com run.googleapis.com \
   artifactregistry.googleapis.com eventarc.googleapis.com pubsub.googleapis.com \
   cloudscheduler.googleapis.com secretmanager.googleapis.com compute.googleapis.com \
