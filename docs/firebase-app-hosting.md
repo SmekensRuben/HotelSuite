@@ -15,7 +15,7 @@ This is a frontend/backend rollout mismatch, not evidence of an unpaid invoice. 
 
 ## App Hosting frontend
 
-On 2026-10-09 the live Firebase backend confirmed **Release succeeded** for main commit `5fc6be6`. App Hosting now successfully builds and serves the frontend. Functions automation is a separate setup; see [functions-continuous-deployment.md](functions-continuous-deployment.md). Cloud Shell and Google Cloud IAM returned **Site Unavailable** in the agent browser, so no Google-side setup or first Functions deployment is claimed.
+On 2026-10-09 the live Firebase backend confirmed **Release succeeded** for main commit `5fc6be6`. App Hosting now successfully builds and serves the frontend. The owner completed Google setup in Cloud Shell. Functions run `37956475706` (attempt 3) succeeded for main `adf7fb6`, including inventory verification of all 23 then-exported Functions. Subsequent verified main merges deploy Functions automatically; see [functions-continuous-deployment.md](functions-continuous-deployment.md). The agent browser could not access Cloud Shell or Google Cloud IAM; operator commands were executed by the owner.
 
 `apphosting.yaml` explicitly selects production data in `hotel-toolkit`. Its MFA setting matches the inspected existing Vercel value (`false`); update both hosting configurations if the project's enrollment policy changes.
 
@@ -39,7 +39,7 @@ After the backend rollout is complete:
 4. Set **Status** to **Active**, **Plan** to `standard`, and leave **First day without access** empty for ongoing access. A trial instead requires a future end date.
 5. Click **Save subscription**. This invokes the authenticated `setHotelSubscription` callable, updates `hotelSubscriptions/testhotel` and appends an audit entry atomically. It does not collect money.
 
-Hotel discovery and subscription reads are separate. If subscription reads fail, the administrator page can display discovered hotels but disables editing because their current revisions are unknown. Regular users see an access-verification error rather than a false expiry notice and can retry. Subscription changes also update live.
+The administrator overview now reads hotels and their subscriptions through `listHotelSubscriptions`, a platform-admin-only callable with bounded pages and selected response fields. It no longer depends on client access to the subscription collection, so it can operate while the deployed Rules await migration. A failed page rejects the overview instead of enabling edits with unknown revisions. Regular users still read their own hotel's live status through Firestore and require the matching subscription Rules; they see an access-verification error rather than a false expiry notice when those reads fail.
 
 ## Required backend rollout
 
@@ -64,4 +64,4 @@ For the activation endpoint specifically, the deploy command is:
 npx firebase deploy --only functions:setHotelSubscription --project hotel-toolkit
 ```
 
-That single endpoint deployment is not the full backend migration. The matching Firestore Rules must also allow subscription reads; the full release requires canonical user memberships and matching gated callables. Use the complete rollout sequence rather than copying an isolated permissive rule into production. Refresh the overview after deployment, and sign in again if the administrator claim was changed.
+That single endpoint deployment is not the full backend migration. Both `listHotelSubscriptions` and `setHotelSubscription` are required for platform management. The matching Firestore Rules must allow regular users to read their assigned hotel's subscription; the full release requires canonical user memberships and matching gated callables. Use the complete rollout sequence rather than copying an isolated permissive rule into production. Refresh the overview after deployment, and sign in again if the administrator claim was changed.

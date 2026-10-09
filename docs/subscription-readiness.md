@@ -1,10 +1,12 @@
 # Per-hotel subscription foundation
 
-Status: 2026-10-08. Frontend is deployed through Vercel; the inspected `hotel-toolkit` backend has no deployed Functions and its older Rules do not allow subscription reads. The subscription backend rollout is incomplete and not certified ready for paid customers. See [the live inspection and setup guide](firebase-app-hosting.md). Commercial choices: subscription per hotel, manual invoicing initially. The system controls access after an operator handles invoicing; it does not generate invoices, collect payments or automatically reconcile them. The owner can activate internal hotels manually without a payment.
+Status: 2026-10-09. App Hosting and Vercel serve the frontend. Functions release `adf7fb6` completed successfully in GitHub run `37956475706` (attempt 3), with all 23 then-exported Functions listed. The inspected live Firestore Rules still date from October 6 and lack subscription reads and operational subscription gates. The full subscription rollout is not certified ready for paid customers. See [the live inspection and setup guide](firebase-app-hosting.md). Commercial choices: subscription per hotel, manual invoicing initially. The system controls access after an operator handles invoicing; it does not generate invoices, collect payments or automatically reconcile them. The owner can activate internal hotels manually without a payment.
 
 ## Implemented behavior
 
-`/settings/subscriptions` is platform-only. `setHotelSubscription` validates the administrator, hotel, plan, status, expiry and expected revision, then updates the subscription and appends an audit record in one transaction. Concurrent edits fail instead of silently overwriting each other. Clients cannot write subscription records or audit events directly.
+`/settings/subscriptions` is platform-only. The overview uses `listHotelSubscriptions`, which checks the server-issued `platformAdmin === true` claim before reading any data, pages hotels by document ID in batches of 50, and reads only their matching subscription documents. It returns selected management fields and expiry milliseconds, excluding audit metadata and private hotel fields. The client restores Timestamp semantics and rejects incomplete or corrupt responses before enabling editing. This permits platform subscription management during the Rules migration without granting wider client database access.
+
+`setHotelSubscription` validates the administrator, hotel, plan, status, expiry and expected revision, then updates the subscription and appends an audit record in one transaction. Concurrent edits fail instead of silently overwriting each other. Clients cannot write subscription records or audit events directly. Regular hotel users still require the reviewed subscription-read Rules for their live access status; the admin callable does not replace tenant Rules or complete that migration.
 
 | Field | Meaning |
 | --- | --- |
