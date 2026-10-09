@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { requireFunctionsConfiguration, requireFunctionsRelease, FUNCTIONS_PROVIDER, FUNCTIONS_DEPLOY_ACCOUNT } from "../../scripts/firebase/functions-release-policy.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -44,6 +44,41 @@ describe("Functions environment authorization", () => {
 });
 
 describe("Cloud Shell setup boundaries", () => {
+  it("uses the verified Storage identity even when gcloud prints an indented address", () => {
+    const directory = mkdtempSync(join(tmpdir(), "hotelsuite-storage-"));
+    try {
+      const calls = join(directory, "calls.jsonl");
+      writeFileSync(join(directory, "gcloud"), `#!/bin/bash
+case "$*" in
+  "projects describe hotel-toolkit --format=value(projectNumber)") echo 358734544002 ;;
+  "auth list "*) echo operator@example.com ;;
+  "builds get-default-service-account "*) echo 358734544002-compute@developer.gserviceaccount.com ;;
+  "storage service-agent "*) printf '\\n  service-358734544002@gs-project-accounts.iam.gserviceaccount.com\\n' ;;
+  "secrets versions describe "*) echo ENABLED ;;
+  "projects add-iam-policy-binding "*)
+    for argument in "$@"; do
+      if [[ "$argument" == --member=* ]] && [[ "$argument" == *$'\\n'* || "$argument" == *' '* ]]; then
+        echo "Invalid IAM member: whitespace" >&2; exit 99
+      fi
+    done
+    ;;
+esac
+printf '%s\\n' "$*" >> "$GCLOUD_CALLS"
+`, { mode: 0o700 });
+      const result = spawnSync("bash", ["scripts/firebase/setup-functions-deployment.sh", "--apply"], {
+        encoding: "utf8", env: { PATH: `${directory}:/usr/bin:/bin`, GCLOUD_CALLS: calls },
+      });
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Google Cloud setup completed");
+      const commands = readFileSync(calls, "utf8").trim().split("\n");
+      const initialize = commands.findIndex(command => command.startsWith("storage service-agent "));
+      const grant = commands.findIndex(command => command.includes("--role=roles/pubsub.publisher"));
+      expect(initialize).toBeGreaterThan(-1);
+      expect(grant).toBeGreaterThan(initialize);
+      expect(commands[grant]).toContain("--member=serviceAccount:service-358734544002@gs-project-accounts.iam.gserviceaccount.com");
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
   it("prints the trust plan without executing gcloud by default", () => {
     const result = execFileSync("bash", ["scripts/firebase/setup-functions-deployment.sh"], { encoding: "utf8", env: { PATH: "/usr/bin:/bin" } });
     expect(result).toContain("Dry-run only");
