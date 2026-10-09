@@ -6,6 +6,8 @@ All new development, interface copy, documentation and pull request descriptions
 
 For Firebase App Hosting configuration, verified rollout issues and manual hotel subscription activation, see [Firebase App Hosting and subscription setup](docs/firebase-app-hosting.md).
 
+For automatic Functions deployment after successful main-branch verification and the one-time keyless Cloud Shell setup, see [Functions continuous deployment](docs/functions-continuous-deployment.md).
+
 ## Local setup
 1. Install [Node.js](https://nodejs.org/) (version 22 or later) and npm.
 2. Install project dependencies:
@@ -64,13 +66,13 @@ A preview may alternatively use a separate Firebase test project with `VITE_DEPL
 
 Callables must be deployed to the same Firebase project as the selected browser configuration. Adding an Auth authorized domain is a separate project setting; build success alone does not configure sign-in redirects. See `docs/firebase-environments.md`.
 
-GitHub Actions performs verification without deployment. The Vercel Git integration currently deploys `main` automatically; the observed production deployment of `0650572` was Ready. External hosting auto-rollouts must be managed in their own consoles and cannot be frozen by removing a GitHub Actions deploy job.
+GitHub verification remains separate from deployment. The owner authorized a dedicated Functions workflow for verified merges to `main`, explicitly targeting `hotel-toolkit` with temporary Workload Identity credentials. One-time Google setup and the activation variable must be completed before it can deploy. Vercel and Firebase App Hosting independently deploy the frontend; App Hosting released `5fc6be6` successfully. External frontend rollouts do not deploy Functions or Rules.
 
-`.github/workflows/verify.yml` runs on pull requests and `main`, uses the tracked fictional `.env.test` fixture, and has no production-secret or deployment step. Production Firebase and FTPS secrets are no longer referenced by repository workflows and can be removed from GitHub repository settings after checking that no other workflow depends on them. See `docs/deployment-freeze.md` before restoring any production deployment.
+`.github/workflows/verify.yml` runs on pull requests and `main`, uses the tracked fictional `.env.test` fixture, and has no production-secret or deployment step. `.github/workflows/deploy-functions.yml` waits for successful push verification, skips stale releases and keeps runtime secrets in Google Secret Manager. See [the activation and recovery guide](docs/functions-continuous-deployment.md).
 
-The Firebase Hosting and Cloud Shell release procedure is documented in `docs/firebase-delivery-target.md`. The implemented per-hotel subscription foundation, migration order and remaining sales blockers are in [docs/subscription-readiness.md](docs/subscription-readiness.md). No cloud deployment has been performed.
+The Firebase Hosting and Cloud Shell release procedure is documented in `docs/firebase-delivery-target.md`. The implemented per-hotel subscription foundation, migration order and remaining sales blockers are in [docs/subscription-readiness.md](docs/subscription-readiness.md). Functions automation does not publish Rules, provision subscriptions or migrate memberships.
 
-Cloud Functions use the Firebase project selected at deployment and therefore do not use the browser `VITE_*` variables. Set the non-secret Functions parameter `APP_BASE_URL` independently in each Firebase project: use the accepted test/preview base URL in the test project and `https://hoteltoolkit.eu` in production. Keep `MEILI_HOST`, `MEILI_INDEX`, `MEILI_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM`, and `RESEND_WEBHOOK_SECRET` isolated per Firebase project.
+Cloud Functions use the Firebase project selected at deployment and therefore do not use the browser `VITE_*` variables. Set the public Functions parameter `APP_BASE_URL` independently in each Firebase project: the deployment workflow uses the configured `FUNCTIONS_APP_BASE_URL` HTTPS origin, currently `https://hotel-suite-neon.vercel.app`. Update it when the canonical domain changes. Keep `MEILI_HOST`, `MEILI_INDEX`, `MEILI_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM`, and `RESEND_WEBHOOK_SECRET` isolated per Firebase project.
 
 Firebase's browser SDK does not expose the project's MFA enforcement policy to this application. Keep `VITE_AUTH_REQUIRE_MFA` aligned with each Firebase project's Authentication setting: `false` for the MFA-free test project and `true` only where every verified user must enroll a second factor. Firebase can still return `auth/multi-factor-auth-required` for an account that already has a factor; that challenge is always handled regardless of this enrollment policy.
 

@@ -2,6 +2,9 @@ node_modules
 dist
 *.log
 .env
+.env.*
+!.env.test
+gha-creds-*.json
 build
 src/importexport/serviceAccountKey.json
 src/importexport/dataMigration.js

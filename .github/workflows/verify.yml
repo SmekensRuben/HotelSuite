@@ -41,6 +41,11 @@ jobs:
       - name: Functions tests
         run: npm --prefix functions test
 
+      - name: Validate Functions deployment scripts
+        run: |
+          bash -n scripts/firebase/setup-functions-deployment.sh scripts/firebase/check-functions-runtime.sh
+          node --check scripts/firebase/check-functions-release.mjs
+
       - name: Firestore and Storage security tests
         run: npm run test:security
 

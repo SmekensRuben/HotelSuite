@@ -10,7 +10,7 @@ Status: 2026-10-08. Vercel inspection confirmed that its Git integration deploys
 | Cloud Functions | Single guarded Admin SDK initialization in `functions/src/config.js`. | The Firebase/GCP project into which Functions are deployed; it does not consume browser variables. |
 | Restore smoke test | Isolated Admin SDK app in `scripts/firebase/emulator-backup-smoke.mjs`. | Fixed demo project plus `FIRESTORE_EMULATOR_HOST`; it cannot contact a real Firebase project. |
 
-`.firebaserc` selects `test-breakfast` only for Firebase CLI commands. Vercel and Vite do not read `.firebaserc`; a preview is bound solely by its Vercel environment variables. GitHub Actions currently performs verification only and builds against the fictional `.env.test` fixture; it has no production deployment or production-secret references. See `docs/deployment-freeze.md`.
+`.firebaserc` selects `test-breakfast` only for Firebase CLI commands. Vercel and Vite do not read `.firebaserc`; a preview is bound solely by its Vercel environment variables. GitHub verification builds against the fictional `.env.test` fixture without production credentials. The separate Functions deployment workflow explicitly names `hotel-toolkit` and uses temporary Workload Identity credentials after successful verification and one-time activation. See `docs/functions-continuous-deployment.md`.
 
 ## External configuration inventory
 

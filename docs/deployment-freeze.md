@@ -1,8 +1,10 @@
-# Production deployment freeze
+# Deployment activation and historical freeze
 
-Status: repository deployment jobs removed from 2026-10-08 while SaaS work is incomplete. This is not proof that external hosting auto-rollouts are disabled.
+Status: 2026-10-09. The owner explicitly authorized automatic Functions deployment after a merge to `main`. This supersedes the 2026-10-08 Functions freeze and its manual-only recommendation below. The separate workflow waits for successful verification of the exact current main commit, then deploys only Functions to `hotel-toolkit` using temporary Workload Identity credentials. Its activation variable remains `false` until the Google setup and runtime secrets are ready. Cloud Shell/IAM were inaccessible in the agent browser; prepared GitHub variables do not prove a backend deployment. See [functions-continuous-deployment.md](functions-continuous-deployment.md).
 
-## Current behavior
+Rules, indexes, Storage Rules and application-data migrations remain separate reviewed operations. The following sections preserve the historical freeze and earlier manual-release proposal; their Functions-only restrictions are superseded by the explicit 2026-10-09 decision. They do not require another approval for this authorized setup.
+
+## Historical behavior on 2026-10-08
 
 - The Vercel integration reports preview checks outside GitHub Actions; the current preview check fails. Inspection subsequently confirmed an automatic production deployment of main commit `0650572` with status Ready. The preview correction intentionally shares Firebase project `hotel-toolkit`; see `firebase-environments.md`.
 - Pull requests and pushes to `main` run `.github/workflows/verify.yml`.
@@ -12,7 +14,7 @@ Status: repository deployment jobs removed from 2026-10-08 while SaaS work is in
 
 Removing unused production secrets from GitHub repository settings is recommended after confirming there are no external/reusable workflows that consume them. Removing a secret is defense in depth; the repository safety control is that no workflow contains a deployment job. Inspect Vercel/App Hosting separately: external integrations can still deploy after a merge to `main`.
 
-## Restoring production deployment
+## Historical manual-release proposal
 
 Do not add deployment back to the verification workflow. Create a separate production workflow only after the pilot blockers are resolved. It should:
 
