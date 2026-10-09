@@ -72,6 +72,9 @@ printf '%s\\n' "$*" >> "$GCLOUD_CALLS"
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("Google Cloud setup completed");
       const commands = readFileSync(calls, "utf8").trim().split("\n");
+      const enableApis = commands.find(command => command.startsWith("services enable "));
+      expect(enableApis).toContain("cloudbilling.googleapis.com");
+      expect(enableApis).toContain("firebaseextensions.googleapis.com");
       const initialize = commands.findIndex(command => command.startsWith("storage service-agent "));
       const grant = commands.findIndex(command => command.includes("--role=roles/pubsub.publisher"));
       expect(initialize).toBeGreaterThan(-1);
