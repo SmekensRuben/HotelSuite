@@ -118,8 +118,10 @@ for region in us-central1 us-west1; do
 done
 gcloud beta services identity create --service=pubsub.googleapis.com --project="$project_id" --quiet >/dev/null
 grant_project_role "service-${project_number}@gcp-sa-pubsub.iam.gserviceaccount.com" roles/iam.serviceAccountTokenCreator
-storage_agent=$(gcloud storage service-agent --project="$project_id")
-[[ "$storage_agent" == *@gs-project-accounts.iam.gserviceaccount.com ]] || { echo "Cannot identify the Storage service agent." >&2; exit 1; }
+# Ensure the agent exists, but do not use human-formatted CLI output as an IAM member.
+# Eventarc documents this address using the project number verified above.
+gcloud storage service-agent --project="$project_id" >/dev/null
+storage_agent="service-${project_number}@gs-project-accounts.iam.gserviceaccount.com"
 grant_project_role "$storage_agent" roles/pubsub.publisher
 
 missing=()
