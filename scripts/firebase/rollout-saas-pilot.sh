@@ -67,7 +67,9 @@ if [[ "$storage_access" != true ]]; then
     echo "Review this exact grant and rerun with --grant-storage-rules-access. No Rules or data were changed." >&2
     exit 1
   fi
-  gcloud iam service-accounts describe "$storage_agent" --project=hotel-toolkit --format='value(email)' >/dev/null
+  # Grant against our project policy, as the Firebase CLI does. Inspecting this
+  # Google-managed account requires unrelated iam.serviceAccounts.get access.
+  # A failed policy update stops the rollout before any Rules or data changes.
   gcloud projects add-iam-policy-binding hotel-toolkit --member="serviceAccount:$storage_agent" --role="$storage_role" --condition=None >/dev/null
 fi
 # Recheck current main immediately before changes. No CI/runtime account receives Rules admin access.
