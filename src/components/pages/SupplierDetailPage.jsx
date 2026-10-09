@@ -216,10 +216,10 @@ export default function SupplierDetailPage() {
               <h2 className="text-lg font-semibold mb-3">Webshop Access</h2>
               <div className="grid gap-4 sm:grid-cols-2">
                 <DetailField label="Webshop URL" value={supplier.webshopUrl} />
-                <DetailField label="Username" value={supplier.username} />
+                <DetailField label="Private credentials" value={supplier.credentialsConfigured ? "Configured" : "Not configured"} />
                 <DetailField
                   label="Password"
-                  value={canViewSupplierPassword ? supplier.password : "••••••••"}
+                  value="Stored privately · update in Edit Supplier"
                 />
               </div>
             </Card>

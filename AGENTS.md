@@ -25,7 +25,7 @@
 - Operational hotel data belongs below `hotels/{hotelUid}/...`. Obtain the selected hotel from `HotelContext`; never hard-code a hotel ID or accept a route/payload hotel ID without checking that the authenticated user is assigned to it.
 - UI hiding and `ProtectedRoute` are usability controls, not security boundaries. Every Firestore and Storage read/write must also be enforced by deployed Security Rules, and every callable/HTTP function must validate authentication, hotel membership and the required action permission server-side. Admin SDK code bypasses Security Rules, so these checks are mandatory in functions.
 - Do not add global collection scans or cross-hotel indexes containing customer data unless access, retention and tenant filtering are explicitly designed. User-management queries and mutations must be scoped so a hotel administrator cannot view or modify users of another hotel.
-- Permissions use `feature.action` keys with `read`, `create`, `update`, `delete` and the explicitly catalogued special actions. Add new permissions to `src/constants/permissionCatalog.js` and enforce the same permission at every backend boundary.
+- Permissions use `feature.action` keys with `read`, `create`, `update`, `delete` and the explicitly catalogued special actions. The authoritative catalog is `functions/src/permissionCatalog.json`; `src/constants/permissionCatalog.js` imports it. Add new permissions there and enforce the same permission at every backend boundary.
 
 ## Confirmed domain rules
 

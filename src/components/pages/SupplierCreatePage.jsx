@@ -6,10 +6,12 @@ import { Card } from "../layout/Card";
 import SupplierFormFields from "./SupplierFormFields";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
+import { usePermission } from "../../hooks/usePermission";
 import { createSupplier } from "../../services/firebaseSuppliers";
 
 export default function SupplierCreatePage() {
   const navigate = useNavigate();
+  const canManageCredentials = usePermission("suppliers", "password");
   const { hotelUid } = useHotelContext();
 
   const today = useMemo(
@@ -45,6 +47,7 @@ export default function SupplierCreatePage() {
 
         <Card>
           <SupplierFormFields
+            canManageCredentials={canManageCredentials}
             onSubmit={handleCreate}
             savingLabel="Creating supplier..."
             submitLabel="Create Supplier"

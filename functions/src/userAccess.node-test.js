@@ -38,7 +38,7 @@ test("updateUserAccess writes profiles, memberships and server-owned membership 
   };
 
   const result = await updateUserAccessHandler({
-    auth: { uid: "platform", token: { platformAdmin: true } },
+    auth: { uid: "platform", token: { platformAdmin: true, email_verified: true } },
     data: {
       userId: "user-a",
       profile: { firstName: " Ada ", lastName: "Lovelace", email: "ada@example.test", hotelUid: ["hotel-a"] },
@@ -60,7 +60,7 @@ test("stale user access saves cannot overwrite a more recent assignment", async 
     runTransaction: (callback) => callback({ get: async () => ({ exists: true, data: () => ({ accessRevision: 3 }) }) }),
   };
   await assert.rejects(updateUserAccessHandler({
-    auth: { uid: "platform", token: { platformAdmin: true } },
+    auth: { uid: "platform", token: { platformAdmin: true, email_verified: true } },
     data: { userId: "user-a", profile: { hotelUid: [] }, expectedAccessRevision: 2 },
   }, { firestore, auth: { getUser: async () => ({}) } }), (error) => error.code === "aborted");
 

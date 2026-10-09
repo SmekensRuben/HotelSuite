@@ -6,7 +6,7 @@ import { Card } from "../layout/Card";
 import SupplierFormFields from "./SupplierFormFields";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getSupplier, updateSupplier } from "../../services/firebaseSuppliers";
+import { getSupplier, getSupplierConnection, updateSupplier } from "../../services/firebaseSuppliers";
 import { usePermission } from "../../hooks/usePermission";
 
 export default function SupplierEditPage() {
@@ -16,6 +16,7 @@ export default function SupplierEditPage() {
   const canViewSupplierPassword = usePermission("suppliers", "password");
   const [supplier, setSupplier] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   const today = useMemo(
     () =>
@@ -38,12 +39,11 @@ export default function SupplierEditPage() {
       if (!hotelUid || !supplierId) return;
       setLoading(true);
       const data = await getSupplier(hotelUid, supplierId);
-      const sanitizedSupplier =
-        !data || canViewSupplierPassword ? data : { ...data, password: "" };
-      setSupplier(sanitizedSupplier);
+      const connection = data && canViewSupplierPassword ? await getSupplierConnection(hotelUid, supplierId) : {};
+      setSupplier(data ? { ...data, ...connection } : null);
       setLoading(false);
     };
-    loadSupplier();
+    loadSupplier().catch((error) => { setLoadError(error.message || "Unable to load supplier settings."); setLoading(false); });
   }, [hotelUid, supplierId, canViewSupplierPassword]);
 
   const handleUpdate = async (payload) => {
@@ -61,6 +61,7 @@ export default function SupplierEditPage() {
           <h1 className="text-3xl font-semibold">Edit Supplier</h1>
         </div>
 
+        {loadError && <p role="alert" className="rounded-lg bg-red-50 p-4 text-red-800">{loadError}</p>}
         {loading ? (
           <p className="text-gray-600">Loading supplier...</p>
         ) : !supplier ? (
@@ -71,6 +72,7 @@ export default function SupplierEditPage() {
           <Card>
             <SupplierFormFields
               initialValues={supplier}
+              canManageCredentials={canViewSupplierPassword}
               onSubmit={handleUpdate}
               savingLabel="Saving supplier..."
               submitLabel="Save Supplier"

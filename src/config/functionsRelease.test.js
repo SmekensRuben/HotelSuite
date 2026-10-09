@@ -11,7 +11,7 @@ const verified = { name: "Verify HotelSuite", head_sha: sha, head_branch: "main"
 const release = () => ({ eventName: "workflow_run", event: { workflow_run: structuredClone(verified) }, repository: "SmekensRuben/HotelSuite",
   ref: "refs/heads/main", checkedOutSha: sha, mainSha: sha, verifiedRuns: [structuredClone(verified)] });
 const env = () => ({ FIREBASE_PROJECT_ID: "hotel-toolkit", FIREBASE_WORKLOAD_IDENTITY_PROVIDER: FUNCTIONS_PROVIDER,
-  FIREBASE_DEPLOY_SERVICE_ACCOUNT: FUNCTIONS_DEPLOY_ACCOUNT, FUNCTIONS_APP_BASE_URL: "https://hotel-suite-neon.vercel.app" });
+  FIREBASE_DEPLOY_SERVICE_ACCOUNT: FUNCTIONS_DEPLOY_ACCOUNT, FUNCTIONS_APP_BASE_URL: "https://hotel-toolkit--hotel-toolkit.europe-west4.hosted.app" });
 
 describe("Functions release authorization", () => {
   it("allows a successful push verification for the exact current main commit", () => expect(requireFunctionsRelease(release())).toBe(true));
@@ -34,7 +34,7 @@ describe("Functions release authorization", () => {
 });
 
 describe("Functions environment authorization", () => {
-  it("accepts the reviewed keyless production identity and public HTTPS origin", () => expect(requireFunctionsConfiguration(env())).toBe("https://hotel-suite-neon.vercel.app"));
+  it("accepts the reviewed keyless production identity and public HTTPS origin", () => expect(requireFunctionsConfiguration(env())).toBe("https://hotel-toolkit--hotel-toolkit.europe-west4.hosted.app"));
   it.each(["FIREBASE_PROJECT_ID", "FIREBASE_WORKLOAD_IDENTITY_PROVIDER", "FIREBASE_DEPLOY_SERVICE_ACCOUNT"])("rejects missing or different %s", key => {
     expect(() => requireFunctionsConfiguration({ ...env(), [key]: "different" })).toThrow();
   });

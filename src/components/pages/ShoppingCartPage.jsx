@@ -313,7 +313,7 @@ export default function ShoppingCartPage() {
               setErrorMessage("");
               try {
                 const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-                const result = await createOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, actor);
+                const result = await createOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, actor, shoppingCart?.revision || 0);
                 const adjustments = Array.isArray(result?.deliveryDateAdjustments)
                   ? result.deliveryDateAdjustments
                   : [];

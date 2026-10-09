@@ -191,6 +191,16 @@ export function HotelProvider({ children }) {
     setLoading(false);
   };
 
+  const refreshHotelAssignments = async () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    const profile = await getDoc(doc(db, "users", uid));
+    if (auth.currentUser?.uid !== uid || !profile.exists()) return;
+    const data = profile.data();
+    setUserData(data);
+    setHotelUids(Array.isArray(data.hotelUid) ? data.hotelUid : []);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-blue-600 text-xl">
@@ -218,6 +228,7 @@ export function HotelProvider({ children }) {
         retrySubscription: () => setSubscriptionAttempt((attempt) => attempt + 1),
         subscriptionActive: subscriptionIsActive(subscription, now),
         selectHotel,
+        refreshHotelAssignments,
         lightspeedShiftRolloverHour,
         posProvider,
         setPosProvider,

@@ -35,7 +35,8 @@ jobs:
       FIREBASE_PROJECT_ID: hotel-toolkit
       FIREBASE_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.FIREBASE_WORKLOAD_IDENTITY_PROVIDER }}
       FIREBASE_DEPLOY_SERVICE_ACCOUNT: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
-      FUNCTIONS_APP_BASE_URL: ${{ vars.FUNCTIONS_APP_BASE_URL }}
+      # Public canonical origin is versioned with the reviewed release.
+      FUNCTIONS_APP_BASE_URL: https://hotel-toolkit--hotel-toolkit.europe-west4.hosted.app
       FIREBASE_FUNCTIONS_DEPLOY_ENABLED: ${{ vars.FIREBASE_FUNCTIONS_DEPLOY_ENABLED }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

@@ -59,7 +59,7 @@ export default function UserDetailPage() {
       const user = await getUserById(userId);
 
       if (!user) {
-        setMessage("Gebruiker niet gevonden.");
+        setMessage("User not found.");
         setLoading(false);
         return;
       }
@@ -81,7 +81,7 @@ export default function UserDetailPage() {
   }, [canUpdateUsers, knownPermissionKeys, userId]);
 
   const hotelUids = normalizeCsvToArray(hotelUidsInput);
-  const selectedHotelPermissions = unique(memberships[selectedHotelUid] || []);
+  const selectedHotelPermissions = unique((memberships[selectedHotelUid] || []).map((key) => key.trim().toLowerCase()));
   const selectedPermissions = selectedHotelPermissions.filter((permission) => knownPermissionKeys.includes(permission));
 
   const setPermissionsForSelectedHotel = (permissions) => {
@@ -114,17 +114,17 @@ export default function UserDetailPage() {
     try {
       const result = await updateUserWithMemberships(userId, payload, memberships, accessRevision);
       setAccessRevision(result.accessRevision);
-      setMessage("Gebruikersprofiel en hotelpermissies opgeslagen.");
+      setMessage("User profile and hotel permissions saved.");
     } catch (error) {
       console.error(error);
       const unavailable = error?.code === "functions/not-found"
         || error?.code === "functions/internal"
         || /failed to fetch|cors/i.test(String(error?.message || ""));
       setMessage(error?.code === "functions/aborted"
-        ? "Deze gebruikersrechten zijn ondertussen gewijzigd. Herlaad de pagina voor je opnieuw opslaat."
+        ? "These permissions changed. Reload before saving again."
         : unavailable
-        ? "Opslaan mislukt: updateUserAccess is niet bereikbaar in dit Firebase-project. Controleer de Vercel project-ID en deploy eerst de Function naar dezelfde testomgeving."
-        : "Opslaan mislukt. Probeer opnieuw of neem contact op met de beheerder.");
+        ? "Saving failed: the user access service is unavailable. Check the Functions deployment before retrying."
+        : "Saving failed. Retry or contact the platform operator.");
     } finally {
       setSaving(false);
     }
@@ -138,7 +138,7 @@ export default function UserDetailPage() {
           <div>
             <h1 className="text-3xl font-semibold">User Detail</h1>
             <p className="text-gray-600 mt-1">
-              Werk het globale gebruikersprofiel en de permissies per hotel bij.
+              Update the user profile and assign permissions separately for each hotel.
             </p>
           </div>
           <button
@@ -146,12 +146,12 @@ export default function UserDetailPage() {
             onClick={() => navigate("/settings/users")}
             className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"
           >
-            Terug naar lijst
+            Back to users
           </button>
         </div>
 
         {loading ? (
-          <p className="text-gray-600">Gebruiker laden...</p>
+          <p className="text-gray-600">Loading user...</p>
         ) : (
           <form
             onSubmit={handleSave}
@@ -184,9 +184,10 @@ export default function UserDetailPage() {
               <input
                 type="email"
                 value={email}
-                onChange={(event) => setEmail(event.target.value)}
+                readOnly
                 className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
               />
+              <span className="mt-1 block text-xs text-gray-500">The sign-in email is managed by Firebase Authentication.</span>
             </label>
 
             <label className="block text-sm font-medium text-gray-700">
@@ -207,25 +208,28 @@ export default function UserDetailPage() {
 
             {hotelUids.length > 0 && (
               <label className="block text-sm font-medium text-gray-700">
-                Hotel waarvoor je permissies bewerkt
+                Hotel to manage
                 <select
                   value={hotelUids.includes(selectedHotelUid) ? selectedHotelUid : ""}
                   onChange={(event) => setSelectedHotelUid(event.target.value)}
                   className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 >
-                  <option value="" disabled>Selecteer een hotel</option>
+                  <option value="" disabled>Choose a hotel</option>
                   {hotelUids.map((hotelUid) => <option key={hotelUid} value={hotelUid}>{hotelUid}</option>)}
                 </select>
               </label>
             )}
 
             {selectedHotelUid && hotelUids.includes(selectedHotelUid) && <div className="space-y-3 rounded-lg border border-gray-200 p-4">
-              <h2 className="text-sm font-semibold text-gray-800">Permissions voor {selectedHotelUid}</h2>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-sm font-semibold text-gray-800">Permissions for {selectedHotelUid}</h2>
+                <button type="button" className="text-sm font-semibold text-red-700" onClick={() => setPermissionsForSelectedHotel([])}>Remove all permissions for this hotel</button>
+              </div>
               {Object.entries(PERMISSION_CATALOG).map(([feature, actions]) => (
                 <div key={feature} className="space-y-2">
                   <p className="text-sm font-medium capitalize text-gray-700">{feature}</p>
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                    {actions.map((action) => {
+                    {[...actions, "*"].map((action) => {
                       const permissionKey = `${feature}.${action}`;
                       const isChecked = selectedPermissions.includes(permissionKey);
 
@@ -240,7 +244,7 @@ export default function UserDetailPage() {
                             onChange={() => togglePermission(permissionKey)}
                             className="h-4 w-4 rounded border-gray-300 text-[#b41f1f] focus:ring-[#b41f1f]/30"
                           />
-                          <span>{action}</span>
+                          <span>{action === "*" ? "All actions" : action}</span>
                         </label>
                       );
                     })}
@@ -255,7 +259,7 @@ export default function UserDetailPage() {
                 disabled={!canUpdateUsers || saving}
                 className="inline-flex items-center rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:cursor-not-allowed disabled:opacity-70"
               >
-                {saving ? "Opslaan..." : "Opslaan"}
+                {saving ? "Saving..." : "Save"}
               </button>
               {message && <p className="text-sm text-gray-600">{message}</p>}
             </div>

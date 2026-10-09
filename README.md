@@ -72,7 +72,7 @@ GitHub verification remains separate from deployment. The owner authorized a ded
 
 The Firebase Hosting and Cloud Shell release procedure is documented in `docs/firebase-delivery-target.md`. The implemented per-hotel subscription foundation, migration order and remaining sales blockers are in [docs/subscription-readiness.md](docs/subscription-readiness.md). Functions automation does not publish Rules, provision subscriptions or migrate memberships.
 
-Cloud Functions use the Firebase project selected at deployment and therefore do not use the browser `VITE_*` variables. Set the public Functions parameter `APP_BASE_URL` independently in each Firebase project: the deployment workflow uses the configured `FUNCTIONS_APP_BASE_URL` HTTPS origin, currently `https://hotel-suite-neon.vercel.app`. Update it when the canonical domain changes. Keep `MEILI_HOST`, `MEILI_INDEX`, `MEILI_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM`, and `RESEND_WEBHOOK_SECRET` isolated per Firebase project.
+Cloud Functions use the Firebase project selected at deployment and therefore do not use the browser `VITE_*` variables. Set the public Functions parameter `APP_BASE_URL` independently in each Firebase project: the deployment workflow versions the canonical HTTPS origin, currently `https://hotel-toolkit--hotel-toolkit.europe-west4.hosted.app`. Update `.github/workflows/deploy-functions.yml` when the canonical domain changes. Keep `MEILI_HOST`, `MEILI_INDEX`, `MEILI_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM`, and `RESEND_WEBHOOK_SECRET` isolated per Firebase project.
 
 Firebase's browser SDK does not expose the project's MFA enforcement policy to this application. Keep `VITE_AUTH_REQUIRE_MFA` aligned with each Firebase project's Authentication setting: `false` for the MFA-free test project and `true` only where every verified user must enroll a second factor. Firebase can still return `auth/multi-factor-auth-required` for an account that already has a factor; that challenge is always handled regardless of this enrollment policy.
 
@@ -112,3 +112,7 @@ npx firebase deploy --only functions --project "$HOTELSUITE_PROJECT_ID"
 ```
 
 Before deploying this subscription release, provision subscriptions for the reviewed existing hotels and complete the rollout prerequisites in `docs/subscription-readiness.md`. Do not rely on the current default project alias.
+
+## SaaS procurement pilot
+
+Hotel onboarding, role invitations, subscriptions and authoritative procurement are documented in [the SaaS pilot guide](docs/saas-procurement-pilot.md). The one-time Rules and credential rollout uses a single uploadable Cloud Shell script, without a Git clone. New writes remain paused until the operator verifies and activates the release.

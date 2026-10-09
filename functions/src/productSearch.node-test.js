@@ -16,7 +16,7 @@ function fixture() {
   } }) };
   return { firestore, reads, records };
 }
-const request = { auth: { uid: "employee-a", token: {} }, data: { hotelUid: "hotel-a", collection: "catalogproducts", criteria: {}, pageSize: 20 } };
+const request = { auth: { uid: "employee-a", token: { email_verified: true } }, data: { hotelUid: "hotel-a", collection: "catalogproducts", criteria: {}, pageSize: 20 } };
 
 test("search uses tenant filters with quoted values and bounded pagination", () => {
   const query = buildSearchRequest({ ...request.data, criteria: { category: 'x" OR hotelUid = "hotel-b' } });

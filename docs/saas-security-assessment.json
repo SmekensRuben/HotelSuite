@@ -1,0 +1,46 @@
+{
+  "score": 2,
+  "scale": "1 = critical exposure; 2 = major issues remain; 3 = moderate issues; 4 = minor issues; 5 = no issues identified within the reviewed scope",
+  "scope": "Firestore and Storage Rules, SaaS onboarding and procurement mutation/delivery boundaries. This is not a certification of all application modules or deployed IAM.",
+  "summary": "The controlled procurement pilot now enforces verified identity, canonical per-hotel membership, subscription validity, backend-managed approvals and bounded transactional order creation. Browser access to supplier credentials and operational outboxes is denied. Duplicate events cannot automatically resend an external order. Public rooming-list enumeration, recursive parent-write overlap and tenant reassignment are closed. Remaining private-file access and business-schema issues must be addressed before broad commercial rollout.",
+  "reviewed_controls": [
+    "Authentication, current membership, permission keys and active/trial subscription authority",
+    "Create/update distinctions and server-only ownership of subscriptions, memberships, approvals, carts, orders, outboxes and private credentials",
+    "Explicit supplier projections and denial of protected import destinations",
+    "Order quantities, line/group counts, canonical prices, accounts, revision checks and frozen delivery snapshots",
+    "Private dispatch/outbox claims, provider acknowledgement and restricted audited recovery",
+    "Storage tenant/action checks and nonempty 20 MiB upload limits",
+    "Public-token get versus list permission and immutable root tenant assignment",
+    "Rules release backup, compilation before publication, content verification and delayed activation"
+  ],
+  "findings": [
+    {
+      "id": "PRIVATE_FILE_URLS",
+      "severity": "high",
+      "location": "src/services/firebaseContracts.js: uploadContractFile; firebase/storage.rules",
+      "problem": "Private contract uploads persist getDownloadURL bearer links. A previously obtained token URL is not equivalent to a fresh authenticated Storage read, so the demonstrated membership/subscription revocation checks do not revoke that URL.",
+      "impact": "A copied contract URL can remain usable after hotel access is removed or a subscription is suspended.",
+      "recommendation": "Serve private files through a backend that checks current access and returns a short-lived URL or streams the file. Review and revoke existing persistent download tokens during the migration.",
+      "status": "Existing behavior outside this procurement milestone; not changed or claimed to be covered by Rules tests."
+    },
+    {
+      "id": "OTHER_MODULE_SCHEMAS_AND_QUOTAS",
+      "severity": "medium",
+      "location": "firebase/firestore.rules: catalog products, contracts, groups and general settings; corresponding frontend services",
+      "problem": "Most non-procurement collections enforce tenant/action permissions but do not yet impose complete allowed-field, type, list-size, reference and business-transition validation. Per-hotel creation and processing quotas are also absent.",
+      "impact": "An authorized hotel user can submit malformed business records or generate excessive storage, indexing and processing work.",
+      "recommendation": "Move high-impact transitions to validated backend transactions, define explicit schemas and allowed fields for remaining client CRUD, and add per-hotel quotas before opening those modules to customers.",
+      "status": "Procurement mutation limits implemented; other modules require separate domain work."
+    },
+    {
+      "id": "PUBLIC_ROOMING_SUBMISSION",
+      "severity": "medium",
+      "location": "src/services/firebaseRoomingLists.js; firebase/firestore.rules: roomingListLinks",
+      "problem": "The public rooming-list UI still attempts direct reservation and change-request writes. The reviewed Rules intentionally allow anonymous reads of a valid token only, so public submission does not have a secure working backend path. Capacity checks remain in frontend code.",
+      "impact": "Guest submission cannot be treated as a complete sellable workflow, and restoring broad anonymous writes would expose guest data and approval state.",
+      "recommendation": "Add a bounded token-scoped backend submission endpoint that validates expiry, subscription, room capacity and reservation schema transactionally, and stores internal approval history separately.",
+      "status": "Anonymous discovery and tenant/write bypasses fixed; public submission backend deferred."
+    }
+  ],
+  "validation_limits": "Auth/Firestore/Storage emulator checks and fake external providers establish the reviewed code boundaries. Live Rules propagation, operator IAM and real supplier import/acceptance require the explicit production rollout and supervised pilot. Existing download URLs are not exercised by Storage SDK Rules tests."
+}

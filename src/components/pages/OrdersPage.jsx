@@ -126,7 +126,7 @@ export default function OrdersPage() {
       setSupplierNameMap(map);
     };
 
-    loadSupplierNames();
+    loadSupplierNames().catch(() => setSupplierNameMap({}));
   }, [hotelUid]);
 
   useEffect(() => {

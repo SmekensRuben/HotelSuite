@@ -43,3 +43,13 @@ exports.updateUserAccess = updateUserAccess;
 exports.setHotelSubscription = setHotelSubscription;
 exports.listHotelSubscriptions = listHotelSubscriptions;
 exports.searchHotelProducts = searchHotelProducts;
+
+// Protected SaaS onboarding and procurement boundaries.
+const onboarding = require("./src/onboarding");
+const suppliers = require("./src/suppliers");
+const orders = require("./src/orders");
+for (const name of ["createHotel", "inviteHotelUser", "listHotelUsers", "getHotelOnboardingStatus"]) exports[name] = onboarding[name];
+for (const name of ["listSuppliers", "getSupplierConnection", "saveSupplier", "deleteSupplier", "migrateSupplierCredentials"]) exports[name] = suppliers[name];
+for (const name of ["createOrdersFromCart", "updateHotelOrder", "deleteHotelOrder", "confirmHotelOrder", "setHotelOutletApprovers", "saveSupplierOutletAccount"]) exports[name] = orders[name];
+exports.mutateHotelShoppingCart = require("./src/shoppingCarts").mutateHotelShoppingCart;
+exports.reviewHotelOrderDelivery = require("./src/deliveryRecovery").reviewHotelOrderDelivery;

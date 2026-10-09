@@ -6,7 +6,7 @@ import {
   initializeTestEnvironment,
 } from "@firebase/rules-unit-testing";
 import { doc, setDoc, deleteDoc } from "firebase/firestore";
-import { getBytes, ref, uploadString } from "firebase/storage";
+import { getBytes, ref, uploadString, uploadBytes } from "firebase/storage";
 
 let testEnvironment;
 const projectId = "demo-hotel-suite-a00";
@@ -56,8 +56,15 @@ beforeEach(async () => {
 after(async () => testEnvironment.cleanup());
 
 describe("Storage tenant and action boundaries", () => {
+  it("rejects unverified identities and empty or oversized uploads, including platform administrators", async () => {
+    const unverified = testEnvironment.authenticatedContext("admin-a", { email_verified: false }).storage();
+    await assertFails(getBytes(ref(unverified, "hotels/hotel-a/contracts/contract-a/file.pdf")));
+    const storage = testEnvironment.authenticatedContext("platform", { email_verified: true, platformAdmin: true }).storage();
+    await assertFails(uploadString(ref(storage, "hotels/hotel-a/contracts/empty.pdf"), ""));
+    await assertFails(uploadBytes(ref(storage, "hotels/hotel-a/contracts/oversized.pdf"), new Uint8Array(20 * 1024 * 1024 + 1)));
+  });
   it("revokes file access immediately even when an old ID token has hotel permissions", async () => {
-    const storage = testEnvironment.authenticatedContext("employee-a", { hotelPermissions: { "hotel-a": ["contracts.*"] } }).storage();
+    const storage = testEnvironment.authenticatedContext("employee-a", { email_verified: true, hotelPermissions: { "hotel-a": ["contracts.*"] } }).storage();
     const file = ref(storage, "hotels/hotel-a/contracts/contract-a/file.pdf");
     await assertSucceeds(getBytes(file));
     await testEnvironment.withSecurityRulesDisabled((context) => deleteDoc(doc(context.firestore(), "hotels/hotel-a/members", "employee-a")));
@@ -65,12 +72,12 @@ describe("Storage tenant and action boundaries", () => {
   });
 
   it("blocks Storage access for suspended subscriptions", async () => {
-    const storage = testEnvironment.authenticatedContext("employee-a").storage();
+    const storage = testEnvironment.authenticatedContext("employee-a", { email_verified: true }).storage();
     await testEnvironment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), "hotelSubscriptions", "hotel-a"), { status: "suspended", validUntil: null }));
     await assertFails(getBytes(ref(storage, "hotels/hotel-a/contracts/contract-a/file.pdf")));
   });
   it("allows contract readers to download only their hotel's file", async () => {
-    const storage = testEnvironment.authenticatedContext("employee-a", {
+    const storage = testEnvironment.authenticatedContext("employee-a", { email_verified: true,
       hotelPermissions: { "hotel-a": ["contracts.read"] },
     }).storage();
     await assertSucceeds(getBytes(ref(storage, "hotels/hotel-a/contracts/contract-a/file.pdf")));
@@ -78,12 +85,12 @@ describe("Storage tenant and action boundaries", () => {
   });
 
   it("requires a write permission for contract uploads", async () => {
-    const employeeStorage = testEnvironment.authenticatedContext("employee-a", {
+    const employeeStorage = testEnvironment.authenticatedContext("employee-a", { email_verified: true,
       hotelPermissions: { "hotel-a": ["contracts.read"] },
     }).storage();
     await assertFails(uploadString(ref(employeeStorage, "hotels/hotel-a/contracts/new/file.pdf"), "denied"));
 
-    const adminStorage = testEnvironment.authenticatedContext("admin-a", {
+    const adminStorage = testEnvironment.authenticatedContext("admin-a", { email_verified: true,
       hotelPermissions: { "hotel-a": ["contracts.*", "imports.*"] },
     }).storage();
     await assertSucceeds(uploadString(ref(adminStorage, "hotels/hotel-a/contracts/new/file.pdf"), "allowed"));
@@ -95,7 +102,7 @@ describe("Storage tenant and action boundaries", () => {
   });
 
   it("uses product permissions and preserves hotel boundaries for product images", async () => {
-    const storage = testEnvironment.authenticatedContext("catalog-a", {
+    const storage = testEnvironment.authenticatedContext("catalog-a", { email_verified: true,
       hotelPermissions: { "hotel-a": ["catalogproducts.read", "catalogproducts.update"], "hotel-b": ["catalogproducts.read"] },
     }).storage();
     await assertSucceeds(getBytes(ref(storage, "hotels/hotel-a/catalogproducts/product-a/images/file.jpg")));

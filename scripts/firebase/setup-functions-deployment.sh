@@ -177,7 +177,6 @@ done
 if [[ "$configure_github" == true ]]; then
   gh variable set FIREBASE_WORKLOAD_IDENTITY_PROVIDER --repo "$repository" --body "$provider"
   gh variable set FIREBASE_DEPLOY_SERVICE_ACCOUNT --repo "$repository" --body "$deploy_account"
-  gh variable set FUNCTIONS_APP_BASE_URL --repo "$repository" --body https://hotel-suite-neon.vercel.app
 fi
 if (( ${#missing[@]} )); then
   printf 'IAM setup completed; deployment remains disabled. Provision real Secret Manager values for: %s\n' "${missing[*]}" >&2
@@ -192,7 +191,7 @@ else
 Google Cloud setup completed. Configure these GitHub Actions variables:
 FIREBASE_WORKLOAD_IDENTITY_PROVIDER=$provider
 FIREBASE_DEPLOY_SERVICE_ACCOUNT=$deploy_account
-FUNCTIONS_APP_BASE_URL=https://hotel-suite-neon.vercel.app
+APP_BASE_URL is tracked in .github/workflows/deploy-functions.yml
 FIREBASE_FUNCTIONS_DEPLOY_ENABLED=true
 Then start Deploy Firebase Functions on main.
 New Eventarc permissions may need a few minutes to propagate before the first deploy.

@@ -95,7 +95,7 @@ function buildOrderSftpCsv(order = {}, supplier = {}) {
   const rows = Array.isArray(order.products) ? order.products : [];
   const deliveryDate = formatDeliveryDateForSftp(order.deliveryDate);
   const accountNumber = resolveOrderAccountNumber(order, supplier);
-  const supplierOrderReference = buildSupplierOrderReference(supplier?.name);
+  const supplierOrderReference = order.supplierOrderReference || order.id || buildSupplierOrderReference(supplier?.name);
   const userEmail = resolveOrderUserEmail(order);
 
   const escapeCell = (value) => {
@@ -412,7 +412,7 @@ function buildOrderExportBaseFilename(order = {}, supplier = {}, hotel = {}) {
 
 async function buildOrderEmailPayload(order, supplier, hotel) {
   const to = String(supplier?.orderEmail || "").trim();
-  if (!to) throw new Error("Supplier heeft geen orderEmail");
+  if (!to) throw new Error("Configure the supplier order email.");
 
   const accountNumber = resolveOrderAccountNumber(order, supplier);
   const hotelName = String(hotel?.hotelName || "").trim();
@@ -422,153 +422,147 @@ async function buildOrderEmailPayload(order, supplier, hotel) {
 
   const notesOverview = buildOrderNotesOverview(order);
 
-  const cc = sanitizeEmails(supplier?.orderEmailCC);
+  const cc = sanitizeEmails(supplier?.orderEmailCc || supplier?.orderEmailCC);
 
   return {
     to: [to],
     cc,
     subject: `${accountNumber} - ${hotelName} - Outlet ${outletName || "-"} - Order ${supplierName} - Delivery ${deliveryDate}`,
-    text: `Beste ${supplier?.name || "supplier"},
+    text: `Dear ${supplier?.name || "supplier"},
 
-In bijlage vind je de order voor:
+Please find the order attached:
 - Hotel: ${hotelName || "-"}
 - Outlet: ${outletName || "-"}
-- Accountnummer: ${accountNumber || "-"}
-- Leverdatum: ${deliveryDate || "-"}${notesOverview}
+- Account number: ${accountNumber || "-"}
+- Delivery date: ${deliveryDate || "-"}${notesOverview}
 
-Met vriendelijke groeten`,
+Kind regards`,
     attachments: await buildOrderEmailAttachments(order, supplier, hotel),
   };
 }
 
-async function enqueueOrderEmail({ hotelUid, orderId, dispatchRequestId, order, supplier, supplierId, hotel }) {
-  const mailQueueRef = admin.firestore().collection(`hotels/${hotelUid}/mailQueue`).doc();
+async function enqueueOrderEmail({ hotelUid, orderId, dispatchRequestId, order, supplier, supplierId, hotel }, services = {}) {
+  const db = services.firestore || admin.firestore();
+  const { digest } = require("./validation");
+  const ref = db.doc(`hotels/${hotelUid}/mailQueue/order-${digest(orderId, dispatchRequestId)}`);
+  if ((await ref.get()).exists) return ref.id;
   const payload = await buildOrderEmailPayload(order, supplier, hotel);
-  await mailQueueRef.set({
-    type: "order-confirmation",
-    hotelUid,
-    orderId,
-    supplierId,
-    dispatchRequestId,
-    orderRefPath: `hotels/${hotelUid}/orders/${orderId}`,
-    status: "queued",
-    queuedAt: admin.firestore.FieldValue.serverTimestamp(),
-    payload,
+  await db.runTransaction(async (tx) => {
+    const dispatchRef = db.doc(`hotels/${hotelUid}/dispatches/${dispatchRequestId}`);
+    const [current, dispatch, currentOrder] = await Promise.all([tx.get(ref), tx.get(dispatchRef), tx.get(db.doc(`hotels/${hotelUid}/orders/${orderId}`))]);
+    if (current.exists) return;
+    if (!dispatch.exists || dispatch.data().status !== "processing" || dispatch.data().orderId !== orderId
+      || currentOrder.data()?.dispatchRequestId !== dispatchRequestId) throw new Error("This delivery is no longer awaiting email preparation.");
+    // Queue state and outbox creation commit together. A fast mail worker must
+    // never have its processing state overwritten by the dispatch trigger.
+    tx.update(dispatchRef, { status: "queued" });
+    tx.create(ref, { type: "order-confirmation", hotelUid, orderId, supplierId,
+      dispatchRequestId, status: "queued", queuedAt: admin.firestore.FieldValue.serverTimestamp(), payload });
   });
-
-  return mailQueueRef.id;
+  return ref.id;
 }
 
-async function finalizeOrderDispatchFromMailQueue(mail = {}, updates = {}) {
-  const orderRefPath = String(mail.orderRefPath || "").trim();
-  const dispatchRequestId = String(mail.dispatchRequestId || "").trim();
-  if (!orderRefPath || !dispatchRequestId) return;
-
-  const orderRef = admin.firestore().doc(orderRefPath);
-  const orderSnap = await orderRef.get();
-  if (!orderSnap.exists) return;
-
-  const order = orderSnap.data() || {};
-  const currentDispatchRequestId = String(order.dispatchRequestId || "").trim();
-  const currentDispatchStatus = String(order.dispatchStatus || "").toLowerCase();
-  if (currentDispatchRequestId !== dispatchRequestId || currentDispatchStatus !== "processing") return;
-
-  await orderRef.update(updates);
-}
-
-const processMailQueue = onDocumentCreated(
-  {
-    document: "hotels/{hotelUid}/mailQueue/{mailId}",
-    secrets: [RESEND_API_KEY, RESEND_FROM],
-  },
-  async (event) => {
-    if (!event.data?.exists) return;
-
-    const { hotelUid, mailId } = event.params;
-    const mailRef = event.data.ref;
-    const mail = event.data.data() || {};
-    const status = String(mail.status || "").toLowerCase();
-    if (status && status !== "queued") return;
-    if (!await hotelHasActiveSubscription(admin.firestore(), hotelUid)) {
-      await mailRef.update({ status: "blocked", error: "Hotel subscription is inactive." });
-      await finalizeOrderDispatchFromMailQueue(mail, {
-        dispatchStatus: "failed", dispatchProgress: 100,
-        dispatchStep: "Dispatch blocked", dispatchError: "Hotel subscription is inactive.",
-      });
-      return;
+async function processMailQueueHandler(event, services = {}) {
+  if (!event.data?.exists) return;
+  const { hotelUid, mailId } = event.params;
+  const db = services.firestore || admin.firestore();
+  const ref = db.doc(`hotels/${hotelUid}/mailQueue/${mailId}`);
+  const { subscriptionIsActive } = require("./subscriptions");
+  const { completeDispatch } = require("./deliveryState");
+  const { digest } = require("./validation");
+  const mail = await db.runTransaction(async (tx) => {
+    const [current, subscription] = await Promise.all([tx.get(ref), tx.get(db.doc(`hotelSubscriptions/${hotelUid}`))]);
+    if (!current.exists || current.data().status !== "queued") return null;
+    const data = current.data();
+    let permitted = data.hotelUid === hotelUid;
+    if (data.type === "hotel-invitation") {
+      const { requireDocumentId } = require("./subscriptions");
+      try {
+        requireDocumentId(data.uid, "Invitee UID");
+        const member = await tx.get(db.doc(`hotels/${hotelUid}/members/${data.uid}`));
+        const user = await (services.auth || admin.auth()).getUser(data.uid);
+        permitted = permitted && member.exists && !user.disabled && data.payload?.to?.length === 1 && data.payload.to[0] === user.email;
+      } catch { permitted = false; }
     }
-
-    const resendApiKey = String(RESEND_API_KEY.value() || "").trim();
-    const from = String(RESEND_FROM.value() || "").trim();
-    if (!resendApiKey) throw new Error("Missing RESEND_API_KEY secret");
-    if (!from) throw new Error("Missing RESEND_FROM secret");
-
-    const payload = mail.payload || {};
-    const to = Array.isArray(payload.to) ? payload.to.filter(Boolean) : [];
-    if (!to.length) throw new Error(`mailQueue/${mailId} heeft geen geldige ontvanger(s)`);
-
-    await mailRef.update({
-      status: "processing",
-      processingAt: admin.firestore.FieldValue.serverTimestamp(),
-      error: admin.firestore.FieldValue.delete(),
-    });
-
-    const resend = new Resend(resendApiKey);
-
-    try {
-      const response = await resend.emails.send({
-        from,
-        to,
-        cc: Array.isArray(payload.cc) ? payload.cc.filter(Boolean) : undefined,
-        bcc: Array.isArray(payload.bcc) ? payload.bcc.filter(Boolean) : undefined,
-        replyTo: payload.replyTo || undefined,
-        subject: payload.subject || "",
-        text: payload.text || undefined,
-        html: payload.html || undefined,
-        attachments: Array.isArray(payload.attachments) ? payload.attachments : undefined,
-      });
-
-      await mailRef.update({
-        status: "sent",
-        sentAt: admin.firestore.FieldValue.serverTimestamp(),
-        provider: "resend",
-        providerId: String(response?.data?.id || "").trim() || null,
-      });
-
-      await finalizeOrderDispatchFromMailQueue(mail, {
-        status: "Ordered",
-        dispatchStatus: "sent",
-        dispatchProgress: 100,
-        dispatchStep: "Dispatch completed",
-        dispatchedVia: "email",
-        dispatchedAt: admin.firestore.FieldValue.serverTimestamp(),
-        dispatchError: admin.firestore.FieldValue.delete(),
-      });
-
-      logger.info("mailQueue item sent", { hotelUid, mailId, provider: "resend", toCount: to.length });
-    } catch (error) {
-      await mailRef.update({
-        status: "failed",
-        failedAt: admin.firestore.FieldValue.serverTimestamp(),
-        error: String(error?.message || error),
-      });
-
-      await finalizeOrderDispatchFromMailQueue(mail, {
-        dispatchStatus: "failed",
-        dispatchProgress: 100,
-        dispatchStep: "Dispatch failed",
-        dispatchError: String(error?.message || error),
-        dispatchedVia: admin.firestore.FieldValue.delete(),
-        dispatchedAt: admin.firestore.FieldValue.delete(),
-      });
-      throw error;
+    if (data.type === "order-approval") {
+      const { permissionAllows, normalizedPermissions } = require("./authorization");
+      const { requireDocumentId } = require("./subscriptions");
+      try {
+        if (!Array.isArray(data.recipientUids) || !data.recipientUids.length || data.recipientUids.length > 20) permitted = false;
+        else {
+          const ids = data.recipientUids.map((id) => requireDocumentId(id, "Approver UID"));
+          const members = await tx.getAll(...ids.map((id) => db.doc(`hotels/${hotelUid}/members/${id}`)));
+          const users = await Promise.all(ids.map((id) => (services.auth || admin.auth()).getUser(id)));
+          permitted = permitted && members.every((m) => m.exists && permissionAllows(normalizedPermissions(m.data().permissions), "orders", "approve"))
+            && users.every((u) => !u.disabled && u.emailVerified && data.payload.to.includes(u.email));
+        }
+      } catch { permitted = false; }
     }
+    if (!["hotel-invitation", "order-approval", "order-confirmation"].includes(data.type)) permitted = false;
+    if (data.type === "order-confirmation") {
+      const { requireDocumentId } = require("./subscriptions");
+      try {
+        requireDocumentId(data.orderId, "Order ID"); requireDocumentId(data.dispatchRequestId, "Dispatch ID");
+        const dispatch = await tx.get(db.doc(`hotels/${hotelUid}/dispatches/${data.dispatchRequestId}`));
+        const order = await tx.get(db.doc(`hotels/${hotelUid}/orders/${data.orderId}`));
+        permitted = permitted && dispatch.exists && dispatch.data().orderId === data.orderId
+          && ["processing", "queued"].includes(dispatch.data().status) && order.data()?.dispatchRequestId === data.dispatchRequestId;
+        if (permitted) {
+          const { permissionAllows, normalizedPermissions } = require("./authorization");
+          const member = await tx.get(db.doc(`hotels/${hotelUid}/members/${dispatch.data().actorUid}`));
+          const approver = await tx.get(db.doc(`hotels/${hotelUid}/outlets/${dispatch.data().order.outletId}/approvers/${dispatch.data().actorUid}`));
+          permitted = member.exists && approver.exists && permissionAllows(normalizedPermissions(member.data().permissions), "orders", "approve");
+        }
+      } catch { permitted = false; }
+    }
+    if (!permitted || !subscription.exists || !subscriptionIsActive(subscription.data())) {
+      tx.update(ref, { status: "blocked", error: "Hotel subscription or delivery authorization is no longer valid." });
+      return { ...data, blocked: true };
+    }
+    tx.update(ref, { status: "processing", processingAt: admin.firestore.FieldValue.serverTimestamp() });
+    if (data.type === "order-confirmation") {
+      tx.update(db.doc(`hotels/${hotelUid}/dispatches/${data.dispatchRequestId}`), {
+        status: "processing", processingAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+    return data;
+  });
+  if (!mail) return;
+  const finishOrder = (status, detail) => mail.type === "order-confirmation" && mail.orderId && mail.dispatchRequestId
+    ? completeDispatch(db, hotelUid, mail.orderId, mail.dispatchRequestId, status, detail) : Promise.resolve();
+  if (mail.blocked) {
+    await finishOrder("blocked", { error: "Hotel subscription is inactive." });
+    return;
   }
-);
+  let externalAttempt = false;
+  try {
+    const from = services.from || String(RESEND_FROM.value() || "").trim();
+    const apiKey = services.send ? "test-transport" : String(RESEND_API_KEY.value() || "").trim();
+    if (!from || !apiKey) throw new Error("Email configuration is incomplete.");
+    const payload = mail.payload || {};
+    const to = sanitizeEmails(payload.to);
+    if (!to.length || to.length > 20) throw new Error("Invalid email recipients.");
+    const send = services.send || ((data, options) => new Resend(apiKey).emails.send(data, options));
+    externalAttempt = true;
+    const response = await send({ ...payload, from, to }, { idempotencyKey: `hotelsuite/${digest(hotelUid, mailId)}` });
+    if (response?.error || !response?.data?.id) throw new Error("Provider did not acknowledge delivery.");
+    await db.runTransaction(async (tx) => {
+      const current = await tx.get(ref);
+      if (current.data()?.status !== "processing") return;
+      tx.update(ref, { status: "sent", sentAt: admin.firestore.FieldValue.serverTimestamp(), provider: "resend", providerId: response.data.id });
+    });
+    await finishOrder("sent", { via: "email", providerId: response.data.id });
+    logger.info("Email delivery accepted", { hotelUid, mailId });
+  } catch {
+    const status = externalAttempt ? "needs-review" : "failed";
+    const error = externalAttempt ? "Email delivery is unconfirmed. Check the provider before any recovery." : "Review email configuration before recovery.";
+    await ref.update({ status, error, failedAt: admin.firestore.FieldValue.serverTimestamp() });
+    await finishOrder(status, { error, externalAttempt });
+    logger.error("Email delivery requires review", { hotelUid, mailId, externalAttempt });
+  }
+}
 
-module.exports = {
-  buildOrderSftpCsv,
-  buildOrderExportBaseFilename,
-  processMailQueue,
-  enqueueOrderEmail,
-};
+const processMailQueue = onDocumentCreated({ document: "hotels/{hotelUid}/mailQueue/{mailId}", secrets: [RESEND_API_KEY, RESEND_FROM] }, processMailQueueHandler);
+
+module.exports = { buildOrderSftpCsv, buildOrderExportBaseFilename, buildOrderEmailPayload, processMailQueue,
+  processMailQueueHandler, enqueueOrderEmail };

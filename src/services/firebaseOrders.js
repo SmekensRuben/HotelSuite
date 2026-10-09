@@ -1,16 +1,12 @@
+import { functions, httpsCallable } from "../firebaseConfig";
 import {
   db,
   collection,
   doc,
-  addDoc,
   getDoc,
   getDocs,
   query,
-  where,
   orderBy,
-  serverTimestamp,
-  updateDoc,
-  deleteDoc,
 } from "../firebaseConfig";
 
 const ORDER_STATUSES = ["Created", "Ordered", "Received", "Finalized", "Canceled"];
@@ -30,7 +26,7 @@ function normalizeOrder(docSnap) {
     createdAtDate: normalizeTimestamp(data.createdAt),
     updatedAtDate: normalizeTimestamp(data.updatedAt),
     deliveryDate: data.deliveryDate || "",
-    status: ORDER_STATUSES.includes(data.status) ? data.status : "Created",
+    status: ORDER_STATUSES.includes(data.status) ? data.status : "Unknown",
     products: Array.isArray(data.products) ? data.products : [],
     totalAmount: Number(data.totalAmount || 0),
     supplierId: data.supplierId || "",
@@ -41,52 +37,6 @@ function normalizeOrder(docSnap) {
   };
 }
 
-
-function parseIsoDateOnly(value) {
-  const rawValue = String(value || "").trim();
-  if (!rawValue) return null;
-  const date = new Date(`${rawValue}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function toIsoDateOnly(dateValue) {
-  const year = dateValue.getFullYear();
-  const month = String(dateValue.getMonth() + 1).padStart(2, "0");
-  const day = String(dateValue.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function normalizeLookupValue(value) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function resolveSupplierDeliveryDate(requestedDate, supplierDeliveryDays) {
-  if (!Array.isArray(supplierDeliveryDays) || supplierDeliveryDays.length === 0) {
-    return requestedDate;
-  }
-
-  const allowedDays = new Set(
-    supplierDeliveryDays
-      .map((day) => Number(day))
-      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
-  );
-
-  if (allowedDays.size === 0) return requestedDate;
-
-  const baseDate = parseIsoDateOnly(requestedDate);
-  if (!baseDate) return requestedDate;
-
-  const candidateDate = new Date(baseDate);
-  for (let offset = 0; offset <= 7; offset += 1) {
-    const weekday = candidateDate.getDay();
-    if (allowedDays.has(weekday)) {
-      return toIsoDateOnly(candidateDate);
-    }
-    candidateDate.setDate(candidateDate.getDate() + 1);
-  }
-
-  return requestedDate;
-}
 
 export function listOrderStatuses() {
   return ORDER_STATUSES;
@@ -110,258 +60,37 @@ export async function getOrderById(hotelUid, orderId) {
   return normalizeOrder(snap);
 }
 
-export async function updateOrder(hotelUid, orderId, payload, actor) {
-  if (!hotelUid || !orderId) throw new Error("hotelUid en orderId zijn verplicht");
-
-  const orderRef = doc(db, `hotels/${hotelUid}/orders`, orderId);
-  const snap = await getDoc(orderRef);
-  if (!snap.exists()) throw new Error("Order niet gevonden");
-
-  const current = snap.data() || {};
-  if (String(current.status || "") !== "Created") {
-    throw new Error("Enkel orders met status Created kunnen bewerkt worden");
-  }
-
-  if (String(payload?.status || "") === "Ordered") {
-    throw new Error("Gebruik Confirm Order om verzending te starten; status wordt pas Ordered na succesvolle verzending");
-  }
-
-  const nextPayload = {
-    ...payload,
-    updatedAt: serverTimestamp(),
-    updatedBy: actor || "unknown",
-  };
-
-  if (Array.isArray(payload?.products)) {
-    const totalAmount = payload.products.reduce(
-      (sum, item) => sum + Number(item.pricePerPurchaseUnit || 0) * Number(item.qtyPurchaseUnits || 0),
-      0
-    );
-    nextPayload.totalAmount = totalAmount;
-    nextPayload.currency = payload.products[0]?.currency || current.currency || "EUR";
-  }
-
-  await updateDoc(orderRef, nextPayload);
+export async function updateOrder(hotelUid, orderId, payload, actor, expectedRevision) {
+  if (expectedRevision === undefined) expectedRevision = (await getOrderById(hotelUid, orderId))?.revision || 0;
+  return (await httpsCallable(functions, "updateHotelOrder")({ hotelUid, orderId, payload, expectedRevision })).data;
 }
 
 export async function deleteOrder(hotelUid, orderId) {
-  if (!hotelUid || !orderId) throw new Error("hotelUid en orderId zijn verplicht");
-
-  const orderRef = doc(db, `hotels/${hotelUid}/orders`, orderId);
-  const snap = await getDoc(orderRef);
-  if (!snap.exists()) throw new Error("Order niet gevonden");
-
-  const current = snap.data() || {};
-  if (String(current.status || "") !== "Created") {
-    throw new Error("Enkel orders met status Created kunnen verwijderd worden");
-  }
-
-  await deleteDoc(orderRef);
+  return (await httpsCallable(functions, "deleteHotelOrder")({ hotelUid, orderId })).data;
 }
 
-export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor) {
-  if (!hotelUid || !shoppingCartId || !deliveryDate) {
-    throw new Error("hotelUid, shoppingCartId en deliveryDate zijn verplicht");
-  }
-
-  const cartRef = doc(db, `hotels/${hotelUid}/shoppingCarts`, shoppingCartId);
-  const cartSnap = await getDoc(cartRef);
-
-  if (!cartSnap.exists()) {
-    throw new Error("Shopping cart niet gevonden");
-  }
-
-  const cartData = cartSnap.data() || {};
-  const items = Array.isArray(cartData.items) ? cartData.items : [];
-  if (items.length === 0) {
-    throw new Error("Shopping cart is leeg");
-  }
-
-  const itemsWithoutOutlet = items.filter((item) => !String(item.outletId || "").trim());
-  if (itemsWithoutOutlet.length > 0) {
-    throw new Error("Selecteer een outlet voor alle supplierproducten in de shopping cart");
-  }
-
-  const suppliersSnap = await getDocs(collection(db, `hotels/${hotelUid}/suppliers`));
-  const suppliersById = {};
-  const suppliersByName = {};
-  suppliersSnap.forEach((supplierDoc) => {
-    const supplierData = supplierDoc.data() || {};
-    const supplierRecord = {
-      id: supplierDoc.id,
-      ...supplierData,
-    };
-    suppliersById[supplierDoc.id] = supplierRecord;
-
-    const nameKey = normalizeLookupValue(supplierData.name);
-    if (nameKey && !suppliersByName[nameKey]) {
-      suppliersByName[nameKey] = supplierRecord;
-    }
-  });
-
-  const resolveSupplier = (supplierValue) => {
-    const directId = String(supplierValue || "").trim();
-    if (directId && suppliersById[directId]) return suppliersById[directId];
-    const byName = suppliersByName[normalizeLookupValue(supplierValue)];
-    return byName || null;
-  };
-
-  const outletsSnap = await getDocs(collection(db, `hotels/${hotelUid}/outlets`));
-  const outletsById = {};
-  outletsSnap.forEach((outletDoc) => {
-    const outletData = outletDoc.data() || {};
-    const outletId = String(outletData.id || outletDoc.id || "").trim();
-    if (!outletId) return;
-    outletsById[outletId] = {
-      id: outletId,
-      name: String(outletData.name || outletId).trim() || outletId,
-    };
-  });
-
-  const supplierOutletAccountsSnap = await getDocs(collection(db, `hotels/${hotelUid}/supplierOutletAccounts`));
-  const supplierOutletAccountsByKey = {};
-  supplierOutletAccountsSnap.forEach((accountDoc) => {
-    const accountData = accountDoc.data() || {};
-    const supplierId = String(accountData.supplierId || "").trim();
-    const outletId = String(accountData.outletId || "").trim();
-    if (!supplierId || !outletId) return;
-    const linkedSupplier = suppliersById[supplierId] || resolveSupplier(supplierId) || {};
-    supplierOutletAccountsByKey[`${supplierId}__${outletId}`] = {
-      ...accountData,
-      supplierId,
-      supplierName: String(accountData.supplierName || linkedSupplier.name || "").trim() || supplierId,
-      outletId,
-      accountNumber: String(accountData.accountNumber || "").trim(),
-    };
-  });
-
-  const uniqueSupplierProductIds = [...new Set(items
-    .map((item) => String(item?.supplierProductId || "").trim())
-    .filter(Boolean))];
-
-  const supplierProductsById = {};
-  if (uniqueSupplierProductIds.length > 0) {
-    const chunkSize = 10;
-    for (let index = 0; index < uniqueSupplierProductIds.length; index += chunkSize) {
-      const productChunk = uniqueSupplierProductIds.slice(index, index + chunkSize);
-      const supplierProductsQuery = query(
-        collection(db, `hotels/${hotelUid}/supplierproducts`),
-        where("__name__", "in", productChunk)
-      );
-      const supplierProductsSnap = await getDocs(supplierProductsQuery);
-      supplierProductsSnap.forEach((productDoc) => {
-        supplierProductsById[productDoc.id] = { id: productDoc.id, ...(productDoc.data() || {}) };
-      });
-    }
-  }
-
-  const normalizedCartItems = items.map((item) => {
-    const cartSupplierValue = String(item.supplierId || "").trim();
-    const resolvedSupplier = resolveSupplier(cartSupplierValue);
-    const resolvedSupplierId = resolvedSupplier?.id || cartSupplierValue || "Onbekend";
-
-    const supplierProductId = String(item.supplierProductId || "").trim();
-    const supplierProduct = supplierProductsById[supplierProductId];
-    if (!supplierProduct) {
-      throw new Error(`Supplier product niet gevonden in catalogus: ${supplierProductId}`);
-    }
-
-    const productSupplierValue = String(supplierProduct.supplierId || "").trim();
-    const productSupplier = resolveSupplier(productSupplierValue);
-    const productResolvedSupplierId = productSupplier?.id || productSupplierValue;
-
-    if (!productResolvedSupplierId || productResolvedSupplierId !== resolvedSupplierId) {
-      throw new Error(
-        `Supplier product ${supplierProductId} hoort niet bij supplier ${cartSupplierValue || resolvedSupplierId || "Onbekend"}`
-      );
-    }
-
-    const outletId = String(item.outletId || "").trim();
-    const outletName = String(outletsById[outletId]?.name || outletId).trim();
-
-    return {
-      ...item,
-      supplierId: resolvedSupplierId,
-      outletId,
-      outletName,
-    };
-  });
-
-  const groupedBySupplierAndOutlet = normalizedCartItems.reduce((acc, item) => {
-    const supplierId = String(item.supplierId || "Onbekend").trim() || "Onbekend";
-    const outletId = String(item.outletId || "").trim();
-    const key = `${supplierId}__${outletId}`;
-
-    if (!acc[key]) {
-      acc[key] = { supplierId, outletId, items: [] };
-    }
-
-    acc[key].items.push(item);
-    return acc;
-  }, {});
-
-  const ordersCol = collection(db, `hotels/${hotelUid}/orders`);
-  const createdOrderIds = [];
-  const deliveryDateAdjustments = [];
-
-  for (const group of Object.values(groupedBySupplierAndOutlet)) {
-    const supplierId = String(group.supplierId || "").trim();
-    const outletId = String(group.outletId || "").trim();
-    const supplierItems = Array.isArray(group.items) ? group.items : [];
-    const totalAmount = supplierItems.reduce(
-      (sum, item) => sum + (Number(item.pricePerPurchaseUnit || 0) * Number(item.qtyPurchaseUnits || 0)),
-      0
-    );
-
-    const supplier = resolveSupplier(supplierId) || suppliersById[supplierId] || {};
-    const resolvedDeliveryDate = resolveSupplierDeliveryDate(deliveryDate, supplier.deliveryDays);
-    const outletName = String(outletsById[outletId]?.name || supplierItems[0]?.outletName || outletId).trim();
-    const supplierOutletAccount = supplierOutletAccountsByKey[`${supplierId}__${outletId}`] || null;
-    const resolvedAccountNumber =
-      String(supplierOutletAccount?.accountNumber || "").trim() || String(supplier.accountNumber || "").trim();
-
-    if (resolvedDeliveryDate !== deliveryDate) {
-      deliveryDateAdjustments.push({
-        supplierId,
-        supplierName: String(supplier.name || "").trim() || supplierId,
-        requestedDeliveryDate: deliveryDate,
-        resolvedDeliveryDate,
-      });
-    }
-
-    const orderPayload = {
-      status: "Created",
-      deliveryDate: resolvedDeliveryDate,
-      shoppingCartId,
-      supplierId,
-      supplierName: String(supplier.name || "").trim() || supplierId,
-      outletId,
-      outletName,
-      accountNumber: resolvedAccountNumber,
-      createdBy: actor || "unknown",
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      products: supplierItems,
-      totalAmount,
-      currency: supplierItems[0]?.currency || "EUR",
-    };
-
-    const orderRef = await addDoc(ordersCol, orderPayload);
-    createdOrderIds.push(orderRef.id);
-  }
-
-  await updateDoc(cartRef, {
-    items: [],
-    updatedAt: serverTimestamp(),
-  });
-
-  return {
-    orderIds: createdOrderIds,
-    deliveryDateAdjustments,
-  };
+export async function confirmOrder(hotelUid, orderId, expectedRevision, requestId) {
+  return (await httpsCallable(functions, "confirmHotelOrder")({ hotelUid, orderId, expectedRevision, requestId })).data;
 }
 
-export async function createOrderFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor) {
-  const result = await createOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor);
+export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor, expectedCartRevision) {
+  if (expectedCartRevision === undefined) throw new Error("Refresh and review the cart before submitting.");
+  const storageKey = `order-request:${hotelUid}:${shoppingCartId}:${deliveryDate}:${expectedCartRevision}`;
+  let requestId = sessionStorage.getItem(storageKey);
+  if (!requestId) {
+    requestId = crypto.randomUUID();
+    sessionStorage.setItem(storageKey, requestId);
+  }
+  const result = (await httpsCallable(functions, "createOrdersFromCart")({ hotelUid, shoppingCartId, deliveryDate, requestId, expectedCartRevision })).data;
+  sessionStorage.removeItem(storageKey);
+  return result;
+}
+
+export async function createOrderFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor, expectedCartRevision) {
+  const result = await createOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor, expectedCartRevision);
   return result?.orderIds?.[0] || null;
+}
+
+export async function reviewOrderDelivery(input) {
+  return (await httpsCallable(functions, "reviewHotelOrderDelivery")(input)).data;
 }
