@@ -35,6 +35,8 @@ Enables deployment APIs and grants Functions deployment, Scheduler, secret metad
 and Firebase discovery permissions. Grants runtime data/Auth/Storage permissions,
 build permissions and existing runtime-secret access. No service-account key,
 application data, subscriptions, Rules, indexes or frontend deployment is created.
+Bootstraps the Google-managed Eventarc agent and regional Functions artifact
+repositories. New artifact retention policies are preview-only: no images are deleted.
 PLAN
 if [[ "$apply" != true ]]; then
   echo "Dry-run only. Add --apply to configure Google Cloud. Add --configure-github to enable the configured workflow using an already authenticated gh CLI."
@@ -119,11 +121,48 @@ for region in us-central1 us-west1; do
 done
 gcloud beta services identity create --service=pubsub.googleapis.com --project="$project_id" --quiet >/dev/null
 grant_project_role "service-${project_number}@gcp-sa-pubsub.iam.gserviceaccount.com" roles/iam.serviceAccountTokenCreator
+gcloud beta services identity create --service=eventarc.googleapis.com --project="$project_id" --quiet >/dev/null
+grant_project_role "service-${project_number}@gcp-sa-eventarc.iam.gserviceaccount.com" roles/eventarc.serviceAgent
 # Ensure the agent exists, but do not use human-formatted CLI output as an IAM member.
 # Eventarc documents this address using the project number verified above.
 gcloud storage service-agent --project="$project_id" >/dev/null
 storage_agent="service-${project_number}@gs-project-accounts.iam.gserviceaccount.com"
 grant_project_role "$storage_agent" roles/pubsub.publisher
+
+# Prepare artifact policy before CI deploys, without granting CI repository-admin
+# permissions or using firebase deploy --force (which can also delete functions).
+# Preview the 30-day policy first; keep the five newest versions of each package.
+# Existing repository policies and opt-outs remain authoritative.
+policy_file=$(mktemp)
+trap 'rm -f "$policy_file"' EXIT
+cat > "$policy_file" <<'POLICY'
+[
+  {"name":"firebase-functions-cleanup","action":{"type":"Delete"},"condition":{"tagState":"any","olderThan":"30d"}},
+  {"name":"hotelsuite-keep-recent","action":{"type":"Keep"},"mostRecentVersions":{"keepCount":5}}
+]
+POLICY
+for region in us-central1 us-west1 europe-west1; do
+  expected_repository="projects/${project_id}/locations/${region}/repositories/gcf-artifacts"
+  artifact_repository=$(gcloud artifacts repositories list --project="$project_id" --location="$region" \
+    --filter="name=$expected_repository" --format='value(name)')
+  if [[ -z "$artifact_repository" ]]; then
+    gcloud artifacts repositories create gcf-artifacts --project="$project_id" --location="$region" \
+      --repository-format=docker --description="Cloud Functions deployment artifacts" --quiet >/dev/null
+  elif [[ "$artifact_repository" != "$expected_repository" ]]; then
+    echo "Unexpected artifact repository; refusing policy changes." >&2; exit 1
+  fi
+  existing_policies=$(gcloud artifacts repositories describe gcf-artifacts --project="$project_id" \
+    --location="$region" --format='value(cleanupPolicies)')
+  cleanup_opt_out=$(gcloud artifacts repositories describe gcf-artifacts --project="$project_id" \
+    --location="$region" --format='value(labels.firebase-functions-cleanup-opted-out)')
+  if [[ -z "$existing_policies" && "$cleanup_opt_out" != true ]]; then
+    gcloud artifacts repositories set-cleanup-policies gcf-artifacts --project="$project_id" \
+      --location="$region" --policy="$policy_file" --dry-run --quiet >/dev/null
+    echo "Configured preview-only artifact retention in $region; no images will be deleted."
+  else
+    echo "Preserved existing artifact retention settings in $region."
+  fi
+done
 
 missing=()
 for secret in MEILI_HOST MEILI_INDEX MEILI_API_KEY RESEND_API_KEY RESEND_FROM RESEND_WEBHOOK_SECRET; do
@@ -156,5 +195,7 @@ FIREBASE_DEPLOY_SERVICE_ACCOUNT=$deploy_account
 FUNCTIONS_APP_BASE_URL=https://hotel-suite-neon.vercel.app
 FIREBASE_FUNCTIONS_DEPLOY_ENABLED=true
 Then start Deploy Firebase Functions on main.
+New Eventarc permissions may need a few minutes to propagate before the first deploy.
+New artifact retention policies are preview-only; review them before activating deletion.
 VARIABLES
 fi

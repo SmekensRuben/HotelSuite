@@ -8,7 +8,7 @@ The owner authorized automatic Functions deployments on 2026-10-09. This decisio
 
 Deployments are serialized without cancelling an in-flight Firebase release. The workflow checks the current `main` SHA before setup and immediately before deployment; queued stale releases are skipped. Firebase CLI is installed from the repository lockfile, runs non-interactively and deploys only Functions. Function removal is not forced. A successful release lists the deployed functions and records its SHA in the job summary.
 
-On 2026-10-09 live Firebase inspection confirmed that App Hosting successfully released `5fc6be6`. Cloud Shell and Google Cloud IAM displayed **Site Unavailable** in the agent browser. GitHub Actions variables could be prepared, but Google-side setup and a first Functions deployment have not been verified. `FIREBASE_FUNCTIONS_DEPLOY_ENABLED=false` keeps deployment pending until that setup is complete; the job summary explicitly states that no Functions were deployed.
+On 2026-10-09 App Hosting successfully released `5fc6be6`; the owner executed the Google setup in Cloud Shell and enabled deployment. Automatic run `37954932649` for `debdde8` authenticated through Workload Identity, validated all six secrets and created 13 Functions, including `setHotelSubscription` and `updateUserAccess`. Ten event-triggered Functions failed with Eventarc service-agent permissions, and missing artifact retention configuration also prevented a successful release. This is a partial deployment, not a verified complete release. Rerun the updated operator setup to bootstrap Eventarc and artifact repositories, allow Google IAM propagation, then retry the verified current main release. The agent browser could not access Cloud Shell or Google Cloud IAM to perform these operator steps itself.
 
 ## Authentication and configuration
 
@@ -27,18 +27,18 @@ Runtime secrets remain in Google Secret Manager: `MEILI_HOST`, `MEILI_INDEX`, `M
 
 ## One-time Cloud Shell setup
 
-Open Cloud Shell with the existing project operator and check out `main`. The setup script names the verified project ID and number; it refuses a project-number mismatch before changing IAM.
+Open Cloud Shell with the existing project operator. The setup script is standalone: uploading only `setup-functions-deployment.sh` into the home directory is sufficient; no checkout or package install is needed. The script names the verified project ID and number and refuses a mismatch before changing IAM.
 
 ```bash
-git clone https://github.com/SmekensRuben/HotelSuite.git HotelSuite-deployment
-cd HotelSuite-deployment
-bash scripts/firebase/setup-functions-deployment.sh
-bash scripts/firebase/setup-functions-deployment.sh --apply
+bash ~/setup-functions-deployment.sh
+bash ~/setup-functions-deployment.sh --apply
 ```
 
 The first script command prints a plan without executing `gcloud`. The `--apply` command enables the required APIs; creates or updates the dedicated pool/provider and deployment account; grants deployment and exact service-account impersonation permissions; and configures the existing runtime/build/service-agent roles. Project permissions for the deployment account are Cloud Functions Admin, Cloud Scheduler Admin, Firebase Viewer, Service Usage Consumer and Secret Manager Viewer. Runtime data/Auth/Storage and secret access belong to the existing runtime account, not the CI account. No Owner/Editor grant or service-account key is added.
 
 The script never creates subscriptions, canonical memberships, application data, secrets, database rules, indexes or frontend releases. It requires the existing default runtime/App Engine accounts and checks the selected build accounts. Existing IAM members are preserved. Preserve Cloud Audit Logs and use the release order in [subscription-readiness.md](subscription-readiness.md) for the separate subscription migration.
+
+The operator setup enables Cloud Billing and Firebase Extensions API prerequisites, provisions the Google-managed Eventarc service agent and grants `roles/eventarc.serviceAgent` only to that agent. It prepares `gcf-artifacts` repositories in `us-central1`, `us-west1` and `europe-west1`. Repositories without a retention policy or opt-out receive a **dry-run** policy for images older than 30 days with the five latest versions kept. Existing policies and opt-outs are preserved. This satisfies the Firebase CLI's policy prerequisite without granting CI Artifact Registry administration or using `firebase deploy --force`. Dry-run does not delete images or reduce storage usage; review its results before separately activating cleanup. IAM propagation can delay first event-trigger creation by a few minutes.
 
 If a real required secret is missing, the script lists its name and exits without enabling deployment. Provision its real value in Secret Manager using its normal owner-controlled configuration process, then rerun the setup; values must not be pasted into chat or repository files. The script grants the runtime account access only to the six named secrets.
 
@@ -48,7 +48,7 @@ If an authenticated GitHub CLI is available in Cloud Shell, the setup can update
 
 ```bash
 # Authenticate gh through its secure interactive flow first, if needed.
-bash scripts/firebase/setup-functions-deployment.sh --apply --configure-github
+bash ~/setup-functions-deployment.sh --apply --configure-github
 ```
 
 This option validates the numeric repository ID and disables deployment while changing setup. It enables deployment only after all required secret versions are present and runtime access was granted. No GitHub secret is read or copied.

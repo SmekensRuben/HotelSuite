@@ -44,7 +44,7 @@ describe("Functions environment authorization", () => {
 });
 
 describe("Cloud Shell setup boundaries", () => {
-  it("uses the verified Storage identity even when gcloud prints an indented address", () => {
+  it.each([[false, false], [true, false], [false, true]])("bootstraps agents and preserves policy=%s / opt-out=%s with indented Storage output", (existingRetention, cleanupOptOut) => {
     const directory = mkdtempSync(join(tmpdir(), "hotelsuite-storage-"));
     try {
       const calls = join(directory, "calls.jsonl");
@@ -55,6 +55,13 @@ case "$*" in
   "builds get-default-service-account "*) echo 358734544002-compute@developer.gserviceaccount.com ;;
   "storage service-agent "*) printf '\\n  service-358734544002@gs-project-accounts.iam.gserviceaccount.com\\n' ;;
   "secrets versions describe "*) echo ENABLED ;;
+  "artifacts repositories list "*)
+    for argument in "$@"; do
+      if [[ "$argument" == --filter=name=* ]]; then echo "\${argument#--filter=name=}"; fi
+    done ;;
+  "artifacts repositories describe "*)
+    if [[ "$*" == *'--format=value(cleanupPolicies)' ]]; then ${existingRetention ? "echo existing-policy" : ":"}; fi
+    if [[ "$*" == *'--format=value(labels.firebase-functions-cleanup-opted-out)' ]]; then ${cleanupOptOut ? "echo true" : ":"}; fi ;;
   "projects add-iam-policy-binding "*)
     for argument in "$@"; do
       if [[ "$argument" == --member=* ]] && [[ "$argument" == *$'\\n'* || "$argument" == *' '* ]]; then
@@ -80,6 +87,18 @@ printf '%s\\n' "$*" >> "$GCLOUD_CALLS"
       expect(initialize).toBeGreaterThan(-1);
       expect(grant).toBeGreaterThan(initialize);
       expect(commands[grant]).toContain("--member=serviceAccount:service-358734544002@gs-project-accounts.iam.gserviceaccount.com");
+      const eventarcInitialize = commands.findIndex(command => command.includes("identity create --service=eventarc.googleapis.com"));
+      const eventarcGrant = commands.findIndex(command => command.includes("--role=roles/eventarc.serviceAgent"));
+      expect(eventarcInitialize).toBeGreaterThan(-1);
+      expect(eventarcGrant).toBeGreaterThan(eventarcInitialize);
+      expect(commands[eventarcGrant]).toContain("--member=serviceAccount:service-358734544002@gcp-sa-eventarc.iam.gserviceaccount.com");
+      const retentionCommands = commands.filter(command => command.startsWith("artifacts repositories set-cleanup-policies "));
+      expect(retentionCommands).toHaveLength(existingRetention || cleanupOptOut ? 0 : 3);
+      for (const command of retentionCommands) {
+        expect(command).toContain("gcf-artifacts --project=hotel-toolkit");
+        expect(command).toContain("--dry-run");
+        expect(command).not.toContain("--no-dry-run");
+      }
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
   it("prints the trust plan without executing gcloud by default", () => {
