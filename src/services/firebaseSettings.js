@@ -1,3 +1,4 @@
+import { functions, httpsCallable } from "../firebaseConfig";
 // src/services/firebaseSettings.js
 import {
   collection,
@@ -189,41 +190,9 @@ export async function getOutletApprovers(hotelUid, outletId) {
 }
 
 export async function setOutletApprovers(hotelUid, outletId, approvers) {
-  if (!hotelUid || !outletId) throw new Error("hotelUid en outletId zijn verplicht");
-
-  const approversCol = collection(db, `hotels/${hotelUid}/outlets/${outletId}/approvers`);
-  const existingSnapshot = await getDocs(approversCol);
-  const incomingIds = new Set(
-    (Array.isArray(approvers) ? approvers : [])
-      .map((approver) => String(approver?.id || "").trim())
-      .filter(Boolean)
-  );
-
-  const batch = writeBatch(db);
-
-  existingSnapshot.forEach((docSnap) => {
-    if (!incomingIds.has(docSnap.id)) {
-      batch.delete(docSnap.ref);
-    }
-  });
-
-  (Array.isArray(approvers) ? approvers : []).forEach((approver) => {
-    const approverId = String(approver?.id || "").trim();
-    if (!approverId) return;
-    const approverRef = doc(db, `hotels/${hotelUid}/outlets/${outletId}/approvers`, approverId);
-    batch.set(approverRef, {
-      email: String(approver?.email || "").trim(),
-      firstName: String(approver?.firstName || "").trim(),
-      lastName: String(approver?.lastName || "").trim(),
-      displayName: String(approver?.displayName || "").trim(),
-      updatedAt: new Date(),
-    });
-  });
-
-  await batch.commit();
+  return (await httpsCallable(functions, "setHotelOutletApprovers")({ hotelUid, outletId,
+    userIds: (Array.isArray(approvers) ? approvers : []).map((a) => a.id) })).data;
 }
-
-
 
 export async function getLocations(hotelUid) {
   if (!hotelUid) return [];

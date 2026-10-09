@@ -1,5 +1,6 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { admin } = require("./config");
+const { requireVerifiedUser } = require("./validation");
 
 const SUBSCRIPTION_STATUSES = ["trialing", "active", "suspended", "canceled"];
 
@@ -18,8 +19,9 @@ function subscriptionIsActive(subscription, now = Date.now()) {
   return Number.isFinite(expiry) && expiry > now;
 }
 
-async function requireHotelSubscription(db, hotelUid) {
-  const snapshot = await db.doc(`hotelSubscriptions/${hotelUid}`).get();
+async function requireHotelSubscription(db, hotelUid, transaction) {
+  const ref = db.doc(`hotelSubscriptions/${hotelUid}`);
+  const snapshot = transaction ? await transaction.get(ref) : await ref.get();
   if (!snapshot.exists || !subscriptionIsActive(snapshot.data())) {
     throw new HttpsError("permission-denied", "An active hotel subscription is required.");
   }
@@ -36,7 +38,7 @@ async function subscribedHotels(db, hotelUids) {
 }
 
 function requirePlatformAdministrator(request) {
-  if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Authentication is required.");
+  requireVerifiedUser(request);
   if (request.auth.token?.platformAdmin !== true) {
     throw new HttpsError("permission-denied", "Platform administrator access is required.");
   }
@@ -123,4 +125,4 @@ async function setHotelSubscriptionHandler(request, services = {}) {
 
 const setHotelSubscription = onCall({ region: "us-central1", cors: true }, setHotelSubscriptionHandler);
 const listHotelSubscriptions = onCall({ region: "us-central1", cors: true }, listHotelSubscriptionsHandler);
-module.exports = { requireDocumentId, subscriptionIsActive, requireHotelSubscription, hotelHasActiveSubscription, subscribedHotels, setHotelSubscriptionHandler, setHotelSubscription, listHotelSubscriptionsHandler, listHotelSubscriptions };
+module.exports = { requirePlatformAdministrator, requireDocumentId, subscriptionIsActive, requireHotelSubscription, hotelHasActiveSubscription, subscribedHotels, setHotelSubscriptionHandler, setHotelSubscription, listHotelSubscriptionsHandler, listHotelSubscriptions };

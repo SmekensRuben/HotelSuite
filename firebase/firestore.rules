@@ -6,8 +6,12 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function verified() {
+      return signedIn() && request.auth.token.email_verified == true;
+    }
+
     function isPlatformAdmin() {
-      return signedIn()
+      return verified()
         && 'platformAdmin' in request.auth.token
         && request.auth.token.platformAdmin == true;
     }
@@ -26,11 +30,11 @@ service cloud.firestore {
 
     function hasPermission(hotelUid, feature, action) {
       return isPlatformAdmin()
-        || (isHotelMember(hotelUid)
+        || (verified() && isHotelMember(hotelUid)
           && hasActiveSubscription(hotelUid)
           && memberPermissions(hotelUid) is list
-          && (memberPermissions(hotelUid).hasAny([feature + '.' + action])
-            || memberPermissions(hotelUid).hasAny([feature + '.*'])));
+          && (memberPermissions(hotelUid).hasAny([feature.lower() + '.' + action])
+            || memberPermissions(hotelUid).hasAny([feature.lower() + '.*'])));
     }
 
     function hasActiveSubscription(hotelUid) {
@@ -72,29 +76,20 @@ service cloud.firestore {
 
     match /users/{userUid} {
       allow get: if isPlatformAdmin() || (signedIn() && request.auth.uid == userUid);
-      allow list, create, update, delete: if isPlatformAdmin();
+      allow list: if isPlatformAdmin();
+      allow create, update, delete: if false;
     }
 
     match /hotels/{hotelUid} {
       allow read: if isHotelMember(hotelUid);
-      allow create, update, delete: if isPlatformAdmin();
+      allow update: if isPlatformAdmin();
+      allow create, delete: if false;
 
       match /members/{memberUid} {
         allow get: if isPlatformAdmin() || (signedIn() && request.auth.uid == memberUid)
           || hasPermission(hotelUid, 'users', 'read');
         allow list: if isPlatformAdmin() || hasPermission(hotelUid, 'users', 'read');
-        allow create: if isPlatformAdmin()
-          || (hasPermission(hotelUid, 'users', 'create')
-            && request.auth.uid != memberUid
-            && request.resource.data.permissions is list
-            && request.resource.data.permissions.hasOnly(memberPermissions(hotelUid)));
-        allow update: if isPlatformAdmin()
-          || (hasPermission(hotelUid, 'users', 'update')
-            && request.auth.uid != memberUid
-            && request.resource.data.permissions is list
-            && request.resource.data.permissions.hasOnly(memberPermissions(hotelUid)));
-        allow delete: if isPlatformAdmin()
-          || (hasPermission(hotelUid, 'users', 'delete') && request.auth.uid != memberUid);
+        allow create, update, delete: if false;
       }
 
       match /catalogproducts/{document=**} {
@@ -109,30 +104,23 @@ service cloud.firestore {
         allow update: if mayWrite(hotelUid, 'supplierproducts', 'update');
         allow delete: if mayWrite(hotelUid, 'supplierproducts', 'delete');
       }
-      match /suppliers/{document=**} {
-        allow read: if mayRead(hotelUid, 'suppliers');
-        allow create: if mayWrite(hotelUid, 'suppliers', 'create');
-        allow update: if mayWrite(hotelUid, 'suppliers', 'update');
-        allow delete: if mayWrite(hotelUid, 'suppliers', 'delete');
+      match /suppliers/{supplierId} {
+        // Safe supplier views are returned by the authorized backend, including
+        // while an operator is relocating legacy credential fields.
+        allow read: if false;
+        allow write: if false;
       }
-      match /supplierOutletAccounts/{document=**} {
+      match /supplierOutletAccounts/{accountId} {
         allow read: if mayRead(hotelUid, 'suppliers');
-        allow create, update, delete: if mayWrite(hotelUid, 'suppliers', 'update');
+        allow write: if false;
       }
       match /orders/{orderId} {
         allow read: if mayRead(hotelUid, 'orders');
-        allow create: if mayWrite(hotelUid, 'orders', 'create');
-        allow update: if mayWrite(hotelUid, 'orders', 'update')
-          || (mayWrite(hotelUid, 'orders', 'approve')
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'dispatchRequestId', 'dispatchRequestedByEmail', 'dispatchStatus',
-              'dispatchProgress', 'dispatchStep', 'dispatchError', 'updatedAt', 'updatedBy'
-            ]));
-        allow delete: if mayWrite(hotelUid, 'orders', 'delete');
+        allow write: if false;
       }
-      match /shoppingCarts/{document=**} {
+      match /shoppingCarts/{cartId} {
         allow read: if mayRead(hotelUid, 'orders');
-        allow create, update, delete: if mayWrite(hotelUid, 'orders', 'create');
+        allow write: if false;
       }
       match /contracts/{document=**} {
         allow read: if mayRead(hotelUid, 'contracts');
@@ -157,11 +145,15 @@ service cloud.firestore {
         allow update: if mayWrite(hotelUid, 'locations', 'update');
         allow delete: if mayWrite(hotelUid, 'locations', 'delete');
       }
-      match /outlets/{document=**} {
+      match /outlets/{outletId} {
         allow read: if mayRead(hotelUid, 'outlets') || mayRead(hotelUid, 'orders');
         allow create: if mayWrite(hotelUid, 'outlets', 'create');
         allow update: if mayWrite(hotelUid, 'outlets', 'update');
         allow delete: if mayWrite(hotelUid, 'outlets', 'delete');
+      }
+      match /outlets/{outletId}/approvers/{uid} {
+        allow read: if mayRead(hotelUid, 'outlets') || mayRead(hotelUid, 'orders');
+        allow write: if false;
       }
       match /quotes/{document=**} {
         allow read: if mayRead(hotelUid, 'groupquotes');
@@ -258,24 +250,30 @@ service cloud.firestore {
         allow write: if false;
       }
       match /{collectionName}/{document=**} {
-        allow read: if isPlatformAdmin();
-        allow write: if isPlatformAdmin() && collectionName != 'subscriptionAudit';
+        allow read: if isPlatformAdmin() && !(collectionName in ['suppliers', 'supplierSecrets', 'mailQueue', 'dispatches', 'orderOperations', 'cartOperations', 'invitations']);
+        allow write: if isPlatformAdmin() && !(collectionName in ['members', 'suppliers', 'supplierSecrets', 'supplierOutletAccounts', 'orders', 'shoppingCarts', 'outlets', 'subscriptionAudit', 'supplierAudit', 'orderAudit', 'accessAudit', 'mailQueue', 'dispatches', 'orderOperations', 'cartOperations', 'invitations']);
       }
     }
 
     match /roomingListLinks/{token} {
-      allow read: if isPlatformAdmin()
+      allow get: if isPlatformAdmin()
         || (signedIn() && hasPermission(resource.data.hotelUid, 'roominglists', 'read'))
         || (hasActiveSubscription(resource.data.hotelUid)
           && resource.data.publicAccessEnabled == true
           && resource.data.publicAccessExpiresAt is timestamp
           && resource.data.publicAccessExpiresAt > request.time);
+      // Public links authorize one token, never discovery of other hotel links.
+      allow list: if isPlatformAdmin()
+        || (signedIn() && hasPermission(resource.data.hotelUid, 'roominglists', 'read'));
       allow create: if signedIn()
         && hasPermission(request.resource.data.hotelUid, 'roominglists', 'create');
-      allow update, delete: if signedIn()
+      allow update: if signedIn()
+        && hasPermission(resource.data.hotelUid, 'roominglists', 'update')
+        && request.resource.data.hotelUid == resource.data.hotelUid;
+      allow delete: if signedIn()
         && hasPermission(resource.data.hotelUid, 'roominglists', 'update');
 
-      match /{document=**} {
+      match /{collection}/{document=**} {
         allow read: if isPlatformAdmin()
           || (signedIn()
             && hasPermission(get(/databases/$(database)/documents/roomingListLinks/$(token)).data.hotelUid, 'roominglists', 'read'));

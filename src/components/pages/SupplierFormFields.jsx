@@ -2,13 +2,13 @@ import React, { useMemo, useState } from "react";
 
 const ORDER_SYSTEM_OPTIONS = ["Email", "SFTP csv"];
 const DELIVERY_DAY_OPTIONS = [
-  { value: 1, label: "Maandag" },
-  { value: 2, label: "Dinsdag" },
-  { value: 3, label: "Woensdag" },
-  { value: 4, label: "Donderdag" },
-  { value: 5, label: "Vrijdag" },
-  { value: 6, label: "Zaterdag" },
-  { value: 0, label: "Zondag" },
+  { value: 1, label: "Monday" },
+  { value: 2, label: "Tuesday" },
+  { value: 3, label: "Wednesday" },
+  { value: 4, label: "Thursday" },
+  { value: 5, label: "Friday" },
+  { value: 6, label: "Saturday" },
+  { value: 0, label: "Sunday" },
 ];
 
 const EMPTY_FORM = {
@@ -30,10 +30,12 @@ const EMPTY_FORM = {
   sftpPort: "22",
   sftpUser: "",
   sftpPassword: "",
+  sftpHostKey: "",
 };
 
 export default function SupplierFormFields({
   initialValues,
+  canManageCredentials = false,
   onSubmit,
   submitLabel = "Save",
   savingLabel = "Saving...",
@@ -52,6 +54,7 @@ export default function SupplierFormFields({
 
   const [formValues, setFormValues] = useState(baseValues);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   const setValue = (fieldName, fieldValue) => {
     setFormValues((currentValues) => ({
@@ -84,7 +87,7 @@ export default function SupplierFormFields({
 
     setSaving(true);
     const payload = Object.entries(formValues).reduce((accumulator, [key, value]) => {
-      accumulator[key] = typeof value === "string" ? value.trim() : value;
+      accumulator[key] = typeof value === "string" && !["password", "sftpPassword"].includes(key) ? value.trim() : value;
       return accumulator;
     }, {});
 
@@ -93,12 +96,18 @@ export default function SupplierFormFields({
       .map((emailAddress) => emailAddress.trim())
       .filter(Boolean);
 
-    await onSubmit(payload);
-    setSaving(false);
+    if (!canManageCredentials) {
+      for (const field of ["username", "password", "sftpAddress", "sftpProtocol", "sftpPort", "sftpUser", "sftpPassword", "sftpHostKey"]) delete payload[field];
+    }
+    setError("");
+    try { await onSubmit(payload); }
+    catch (failure) { setError(failure.message || "The supplier could not be saved."); }
+    finally { setSaving(false); }
   };
 
   return (
     <form className="space-y-6" onSubmit={handleSubmit}>
+      {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
       <section className="space-y-4">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">General</h2>
@@ -126,7 +135,7 @@ export default function SupplierFormFields({
           placeholder="finance@example.com, purchasing@example.com"
         />
         <div className="text-xs text-gray-500 -mt-2">
-          Voeg meerdere adressen toe, gescheiden door komma's, puntkomma's of een nieuwe regel.
+          Separate multiple addresses with commas, semicolons or a new line.
         </div>
         <TextAreaField label="Notes" value={formValues.notes} onChange={(value) => setValue("notes", value)} />
       </section>
@@ -144,34 +153,35 @@ export default function SupplierFormFields({
             onChange={(value) => setValue("orderSystem", value)}
           />
         </div>
-        {formValues.orderSystem === "SFTP csv" && (
+        {formValues.orderSystem === "SFTP csv" && canManageCredentials && (
           <div className="grid gap-4 md:grid-cols-2">
             <InputField
-              label="sftp-address"
+              label="SFTP address"
               value={formValues.sftpAddress}
               onChange={(value) => setValue("sftpAddress", value)}
               placeholder="sftp.example.com/incoming"
             />
             <InputField
-              label="protocol"
+              label="Protocol"
               value={formValues.sftpProtocol}
               onChange={(value) => setValue("sftpProtocol", value)}
               placeholder="sftp"
             />
             <InputField
-              label="port"
+              label="Port"
               type="number"
               value={formValues.sftpPort}
               onChange={(value) => setValue("sftpPort", value)}
               placeholder="22"
             />
             <InputField
-              label="user"
+              label="Username"
               value={formValues.sftpUser}
               onChange={(value) => setValue("sftpUser", value)}
             />
+            <InputField label="Verified host key" value={formValues.sftpHostKey} onChange={(value) => setValue("sftpHostKey", value)} placeholder="SHA256:..." required />
             <InputField
-              label="password"
+              label="SFTP password · leave blank to keep"
               type="password"
               value={formValues.sftpPassword}
               onChange={(value) => setValue("sftpPassword", value)}
@@ -179,8 +189,8 @@ export default function SupplierFormFields({
           </div>
         )}
         <div>
-          <p className="text-sm font-medium text-gray-700">Leverdagen</p>
-          <p className="text-xs text-gray-500 mt-1">Selecteer de dagen waarop deze supplier levert.</p>
+          <p className="text-sm font-medium text-gray-700">Delivery days</p>
+          <p className="text-xs text-gray-500 mt-1">Select the weekdays on which this supplier delivers.</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 md:grid-cols-3">
             {DELIVERY_DAY_OPTIONS.map((dayOption) => {
               const selectedDays = Array.isArray(formValues.deliveryDays)
@@ -221,7 +231,7 @@ export default function SupplierFormFields({
         </div>
       </section>
 
-      <section className="space-y-4 border-t border-gray-200 pt-6">
+      {canManageCredentials && <section className="space-y-4 border-t border-gray-200 pt-6">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Webshop access</h2>
           <p className="text-sm text-gray-600">Optional credentials for external supplier portals.</p>
@@ -235,13 +245,14 @@ export default function SupplierFormFields({
           />
           <InputField label="Username" value={formValues.username} onChange={(value) => setValue("username", value)} />
           <InputField
-            label="Password"
+            label="Password · leave blank to keep"
             type="password"
             value={formValues.password}
             onChange={(value) => setValue("password", value)}
           />
         </div>
-      </section>
+      </section>}
+      <p className="text-xs leading-5 text-gray-500">Passwords are stored privately and are never displayed. SFTP requires a verified server host key obtained from your supplier.</p>
 
       <div className="flex justify-end">
         <button

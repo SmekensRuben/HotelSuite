@@ -97,6 +97,7 @@ export default function HeaderBar({ today, onLogout }) {
       icon: Users,
       visible: isPlatformAdmin,
     },
+    { label: "Hotel onboarding", action: () => navigate("/settings/hotels"), icon: Users, visible: isPlatformAdmin },
     { label: "Subscriptions", action: () => navigate("/settings/subscriptions"), icon: FileText, visible: isPlatformAdmin },
   ].filter((item) => item.visible !== false);
 

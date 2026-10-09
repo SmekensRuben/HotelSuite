@@ -8,7 +8,7 @@ import DataListTable from "../shared/DataListTable";
 import { useTranslation } from "react-i18next";
 import { auth, db, doc, getDoc, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { deleteOrder, getOrderById, updateOrder } from "../../services/firebaseOrders";
+import { deleteOrder, getOrderById, confirmOrder, reviewOrderDelivery } from "../../services/firebaseOrders";
 import { getOutletApprovers } from "../../services/firebaseSettings";
 import { getUserDisplayName } from "../../services/firebaseUserManagement";
 import { getSupplier } from "../../services/firebaseSuppliers";
@@ -31,7 +31,7 @@ export default function OrderDetailPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { orderId } = useParams();
-  const { hotelUid, hotelName } = useHotelContext();
+  const { hotelUid, hotelName, isPlatformAdmin } = useHotelContext();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [createdByName, setCreatedByName] = useState("-");
@@ -49,6 +49,8 @@ export default function OrderDetailPage() {
   const [canConfirmOrder, setCanConfirmOrder] = useState(false);
   const [approverWarning, setApproverWarning] = useState("");
   const [openNoteRowId, setOpenNoteRowId] = useState("");
+  const [recoveryEvidence, setRecoveryEvidence] = useState("");
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
 
   const today = useMemo(
     () =>
@@ -66,32 +68,9 @@ export default function OrderDetailPage() {
     window.location.href = "/login";
   };
 
-  const closeConfirmModal = async () => {
-    if ((dispatchStatus === "processing" || ordering) && String(order?.status || "") === "Created") {
-      try {
-        const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-        await updateOrder(
-          hotelUid,
-          orderId,
-          {
-            dispatchStatus: "failed",
-            dispatchProgress: 100,
-            dispatchStep: "Dispatch cancelled by user (modal closed)",
-            dispatchError: "Dispatch cancelled because confirmation modal was closed while processing",
-            dispatchRequestId: "",
-          },
-          actor
-        );
-        await refreshOrder();
-      } catch (error) {
-        setActionError(error?.message || "Could not update dispatch status when closing modal");
-      }
-    }
-
+  const closeConfirmModal = () => {
+    // Delivery continues independently of the browser and the confirmation dialog.
     setShowOrderConfirmModal(false);
-    setConfirmSubmitted(false);
-    setConfirmStartedAt(0);
-    setProgressMessage("");
   };
 
   const refreshOrder = async () => {
@@ -104,7 +83,9 @@ export default function OrderDetailPage() {
     }
 
     if (result?.supplierId) {
-      const supplier = await getSupplier(hotelUid, result.supplierId);
+      let supplier;
+      try { supplier = await getSupplier(hotelUid, result.supplierId); }
+      catch { supplier = { name: result.supplierName, orderSystem: result.dispatchedVia === "sftp" ? "SFTP csv" : "Supplier configuration" }; }
       setSupplierName(String(supplier?.name || "").trim() || result.supplierId);
       setSupplierOrderSystem(String(supplier?.orderSystem || "Email").trim() || "Email");
     } else {
@@ -149,8 +130,9 @@ export default function OrderDetailPage() {
     const loadOrder = async () => {
       if (!hotelUid || !orderId) return;
       setLoading(true);
-      await refreshOrder();
-      setLoading(false);
+      try { await refreshOrder(); }
+      catch (error) { setActionError(error.message || "Unable to load this order."); }
+      finally { setLoading(false); }
     };
 
     loadOrder();
@@ -160,7 +142,9 @@ export default function OrderDetailPage() {
     if (!showOrderConfirmModal) return undefined;
 
     const interval = setInterval(async () => {
-      const latestOrder = await refreshOrder();
+      let latestOrder;
+      try { latestOrder = await refreshOrder(); }
+      catch { setProgressMessage("Unable to refresh delivery. Reopen the order to check its status."); return; }
       const dispatchStatus = String(latestOrder?.dispatchStatus || "").toLowerCase();
       const latestStatus = String(latestOrder?.status || "");
 
@@ -181,32 +165,14 @@ export default function OrderDetailPage() {
         return;
       }
 
-      if (confirmSubmitted && latestStatus === "Created" && dispatchStatus === "failed") {
-        const details = String(latestOrder?.dispatchError || "").trim();
-        setProgressMessage(
-          details
-            ? `Order stayed in Created because dispatch failed: ${details}`
-            : "Order stayed in Created because dispatch did not succeed."
-        );
-      }
-
-      const elapsedMs = confirmStartedAt > 0 ? Date.now() - confirmStartedAt : 0;
-      if (confirmSubmitted && elapsedMs > 30000 && dispatchStatus === "processing") {
-        const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-        await updateOrder(
-          hotelUid,
-          orderId,
-          {
-            dispatchStatus: "failed",
-            dispatchProgress: 100,
-            dispatchStep: "Dispatch timeout after 30 seconds",
-            dispatchError: "Dispatch timed out after 30 seconds",
-            dispatchRequestId: "",
-          },
-          actor
-        );
-        setProgressMessage("Dispatch was automatically failed after 30 seconds without a result.");
+      if (["blocked", "needs-review"].includes(dispatchStatus)) {
+        setProgressMessage("Delivery needs operator review. Check the provider before any recovery.");
         clearInterval(interval);
+        return;
+      }
+      const elapsedMs = confirmStartedAt > 0 ? Date.now() - confirmStartedAt : 0;
+      if (confirmSubmitted && elapsedMs > 30000 && ["pending", "processing"].includes(dispatchStatus)) {
+        setProgressMessage("Delivery is still running. You can close this dialog and check the order later.");
       }
     }, 2500);
 
@@ -237,13 +203,13 @@ export default function OrderDetailPage() {
     );
   }
 
-  const isCreated = order.status === "Created";
+  const isCreated = order.status === "Created" && !order.dispatchRequestId;
   const dispatchStatus = String(order.dispatchStatus || "").toLowerCase();
   const dispatchError = String(order.dispatchError || "").trim();
   const dispatchedVia = String(order.dispatchedVia || "").toLowerCase();
   const dispatchStep = String(order.dispatchStep || "").trim();
   const dispatchProgress = Number(order.dispatchProgress || 0);
-  const expectedDeliveryMethod = supplierOrderSystem === "SFTP csv" ? "SFTP csv" : "Email";
+  const expectedDeliveryMethod = supplierOrderSystem === "SFTP csv" ? "SFTP csv" : supplierOrderSystem === "Email" ? "Email" : "the supplier’s configured method";
 
   const items = Array.isArray(order.products) ? order.products : [];
 
@@ -490,7 +456,7 @@ export default function OrderDetailPage() {
           </button>
           <button
             type="button"
-            disabled={ordering || order.status !== "Created" || dispatchStatus === "processing" || !canConfirmOrder}
+            disabled={ordering || order.status !== "Created" || Boolean(order.dispatchRequestId) || !canConfirmOrder}
             onClick={async () => {
               setOrdering(true);
               setActionError("");
@@ -498,20 +464,10 @@ export default function OrderDetailPage() {
               setConfirmStartedAt(Date.now());
               setProgressMessage("Confirmation started. Waiting for dispatch result...");
               try {
-                const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-                await updateOrder(
-                  hotelUid,
-                  orderId,
-                  {
-                    dispatchRequestId: `${Date.now()}`,
-                    dispatchRequestedByEmail: auth.currentUser?.email || "",
-                    dispatchStatus: "processing",
-                    dispatchProgress: 5,
-                    dispatchStep: "Dispatch requested",
-                    dispatchError: "",
-                  },
-                  actor
-                );
+                const key = `confirm-request:${hotelUid}:${orderId}`;
+                let requestId = sessionStorage.getItem(key);
+                if (!requestId) { requestId = crypto.randomUUID(); sessionStorage.setItem(key, requestId); }
+                await confirmOrder(hotelUid, orderId, order.revision || 0, requestId);
                 await refreshOrder();
               } catch (error) {
                 setActionError(error?.message || "Could not confirm and dispatch order");
@@ -525,6 +481,23 @@ export default function OrderDetailPage() {
           </button>
         </div>
       </Modal>
+
+      {isPlatformAdmin && ["failed", "blocked", "needs-review", "processing"].includes(dispatchStatus) && <PageContainer>
+        <Card>
+          <h2 className="text-lg font-semibold">Delivery review</h2>
+          <p className="mt-2 text-sm leading-6 text-gray-600">Check the email provider or supplier's SFTP receipt before recording delivery. An unconfirmed delivery cannot be resent. Preparation can be retried only when the backend confirms that no external send was attempted.</p>
+          <label className="mt-4 block text-sm font-medium">Provider receipt or configuration review<textarea value={recoveryEvidence} onChange={(event) => setRecoveryEvidence(event.target.value)} maxLength={1000} className="mt-2 w-full rounded-lg border border-gray-300 p-3" /></label>
+          <div className="mt-4 flex flex-wrap gap-3">{[["record-receipt", "Record verified delivery"], ["retry-preparation", "Retry preparation only"]].map(([action, label]) => <button key={action} disabled={recoveryBusy || !recoveryEvidence.trim()} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold disabled:opacity-50" onClick={async () => {
+            setRecoveryBusy(true); setActionError("");
+            try {
+              await reviewOrderDelivery({ hotelUid, orderId, expectedRevision: order.revision || 0, requestId: crypto.randomUUID(), action, evidence: recoveryEvidence });
+              await refreshOrder(); setRecoveryEvidence("");
+            } catch (error) { setActionError(error.message || "This delivery needs operator review."); }
+            finally { setRecoveryBusy(false); }
+          }}>{label}</button>)}</div>
+          {actionError && <p role="alert" className="mt-3 text-sm text-red-700">{actionError}</p>}
+        </Card>
+      </PageContainer>}
 
       <Modal open={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete order">
         <p className="text-sm text-gray-700">Are you sure you want to delete this order?</p>

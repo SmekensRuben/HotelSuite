@@ -20,9 +20,9 @@ test("requireHotelPermission uses the selected hotel's membership", async () => 
       };
     },
   };
-  await assert.doesNotReject(requireHotelPermission(db, { auth: { uid: "user-a", token: {} } }, "hotel-a", "reservations", "read"));
+  await assert.doesNotReject(requireHotelPermission(db, { auth: { uid: "user-a", token: { email_verified: true } } }, "hotel-a", "reservations", "read"));
   await assert.rejects(
-    requireHotelPermission(db, { auth: { uid: "user-a", token: {} } }, "hotel-a", "reservations", "update"),
+    requireHotelPermission(db, { auth: { uid: "user-a", token: { email_verified: true } } }, "hotel-a", "reservations", "update"),
     (error) => error.code === "permission-denied",
   );
 });
@@ -30,6 +30,6 @@ test("requireHotelPermission uses the selected hotel's membership", async () => 
 test("platform administrators bypass hotel membership", async () => {
   const db = { doc: () => { throw new Error("membership should not be read"); } };
   await assert.doesNotReject(requireHotelPermission(db, {
-    auth: { uid: "platform", token: { platformAdmin: true } },
+    auth: { uid: "platform", token: { platformAdmin: true, email_verified: true } },
   }, "hotel-b", "users", "update"));
 });

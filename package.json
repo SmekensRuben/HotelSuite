@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "test": "vitest src",
-    "test:security": "firebase emulators:exec --project demo-hotel-suite-a00 --only firestore,storage \"node --test --test-concurrency=1 tests/security/*.test.mjs\"",
+    "test:security": "firebase emulators:exec --project demo-hotel-suite-a00 --only auth,firestore,storage \"node --test --test-concurrency=1 tests/security/*.test.mjs\"",
     "test:restore": "bash scripts/firebase/emulator-restore-smoke.sh",
     "audit:policy": "node scripts/check-dependency-audit.mjs",
     "dev": "vite",

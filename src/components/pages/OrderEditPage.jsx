@@ -23,6 +23,7 @@ export default function OrderEditPage() {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [createdByName, setCreatedByName] = useState("-");
   const [deliveryDate, setDeliveryDate] = useState("");
   const [editableItems, setEditableItems] = useState([]);
@@ -82,7 +83,7 @@ export default function OrderEditPage() {
     );
   }
 
-  if (order.status !== "Created") {
+  if (order.status !== "Created" || order.dispatchRequestId) {
     return (
       <div className="min-h-screen bg-gray-50 text-gray-900">
         <HeaderBar today={today} onLogout={handleLogout} />
@@ -138,7 +139,7 @@ export default function OrderEditPage() {
     { key: "subtotal", label: "Subtotaal" },
     {
       key: "actions",
-      label: "Acties",
+      label: "Actions",
       sortable: false,
       render: (row) => (
         <button
@@ -146,7 +147,7 @@ export default function OrderEditPage() {
           onClick={() => setEditableItems((prev) => prev.filter((_, i) => i !== row.rowIndex))}
           className="text-xs font-semibold text-red-700 hover:text-red-900"
         >
-          Verwijder regel
+          Remove line
         </button>
       ),
     },
@@ -156,6 +157,7 @@ export default function OrderEditPage() {
     <div className="min-h-screen bg-gray-50 text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
+        {saveError && <p role="alert" className="rounded-lg bg-red-50 p-4 text-red-800">{saveError}</p>}
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-3xl font-semibold">Edit order detail</h1>
           <div className="flex items-center gap-2">
@@ -164,10 +166,13 @@ export default function OrderEditPage() {
               onClick={async () => {
                 if (!deliveryDate || editableItems.length === 0) return;
                 setBusy(true);
-                const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-                await updateOrder(hotelUid, orderId, { deliveryDate, products: editableItems }, actor);
-                setBusy(false);
-                navigate(`/orders/${orderId}`);
+                setSaveError("");
+                try {
+                  const actor = auth.currentUser?.uid || "unknown";
+                  await updateOrder(hotelUid, orderId, { deliveryDate, products: editableItems }, actor, order.revision || 0);
+                  navigate(`/orders/${orderId}`);
+                } catch (error) { setSaveError(error.message || "Reload and review the order before saving."); }
+                finally { setBusy(false); }
               }}
               disabled={!deliveryDate || editableItems.length === 0 || busy}
               className="px-4 py-2 rounded bg-[#b41f1f] text-white font-semibold hover:bg-[#961919] disabled:opacity-50"

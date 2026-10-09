@@ -1,3 +1,4 @@
+import HotelOnboardingPage from "./components/pages/HotelOnboardingPage.jsx";
 import { Routes, Route, Navigate } from "react-router-dom";
 import SubscriptionsPage from "./components/pages/SubscriptionsPage.jsx";
 
@@ -519,6 +520,10 @@ export default function AppRouter() {
             <CreateBlockPage mode="edit" />
           </ProtectedRoute>
         }
+      />
+      <Route
+        path="/settings/hotels"
+        element={<ProtectedRoute platformOnly><HotelOnboardingPage /></ProtectedRoute>}
       />
       <Route
         path="/settings/subscriptions"

@@ -18,7 +18,6 @@ GitHub obtains temporary Application Default Credentials through the official Go
 | --- | --- |
 | `FIREBASE_WORKLOAD_IDENTITY_PROVIDER` | `projects/358734544002/locations/global/workloadIdentityPools/hotelsuite-github/providers/main-deploy` |
 | `FIREBASE_DEPLOY_SERVICE_ACCOUNT` | `github-functions-deploy@hotel-toolkit.iam.gserviceaccount.com` |
-| `FUNCTIONS_APP_BASE_URL` | `https://hotel-suite-neon.vercel.app` |
 | `FIREBASE_FUNCTIONS_DEPLOY_ENABLED` | `false` until Google setup and real runtime configuration are ready, then `true` |
 
 The project is fixed explicitly in the workflow; `.firebaserc` is not used to select the deployment target. `APP_BASE_URL` is a public HTTPS origin written into an ignored `functions/.env.hotel-toolkit` during deployment. Update it when the canonical application domain changes.
@@ -60,3 +59,5 @@ Confirm a successful Firebase deploy step and inspect **Functions** in the Fireb
 To pause deployments, set `FIREBASE_FUNCTIONS_DEPLOY_ENABLED=false`. To recover a code release, revert the problematic commit through a reviewed PR; the verified revert on `main` uses the same deployment path. A Rules/data migration requires its own rollback procedure and is not reversed by this workflow.
 
 References: [Firebase CLI CI authentication](https://firebase.google.com/docs/cli#cli-ci-systems), [GitHub Workload Identity Federation](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines), [Functions IAM permissions](https://firebase.google.com/docs/projects/iam/permissions#cloud-functions-for-firebase-permissions).
+
+The canonical public `FUNCTIONS_APP_BASE_URL` is versioned in `.github/workflows/deploy-functions.yml`: `https://hotel-toolkit--hotel-toolkit.europe-west4.hosted.app`. A historical GitHub variable with that name is no longer used. This keeps invitation and approval links aligned with the reviewed Firebase App Hosting release.

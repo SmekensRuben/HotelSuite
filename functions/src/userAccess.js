@@ -1,5 +1,7 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { admin } = require("./config");
+const { requireVerifiedUser } = require("./validation");
+const catalog = require("./permissionCatalog.json");
 const { requireDocumentId } = require("./subscriptions");
 
 function normalizeStrings(values) {
@@ -11,12 +13,12 @@ function normalizeStrings(values) {
 function normalizeMemberships(hotelUids, memberships) {
   return Object.fromEntries(hotelUids.map((hotelUid) => [
     hotelUid,
-    normalizeStrings(memberships?.[hotelUid]),
+    normalizeStrings(memberships?.[hotelUid]).map((key) => key.toLowerCase()),
   ]));
 }
 
 async function updateUserAccessHandler(request, services = {}) {
-  if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Authentication is required.");
+  requireVerifiedUser(request);
   if (request.auth.token?.platformAdmin !== true) {
     throw new HttpsError("permission-denied", "Platform administrator access is required.");
   }
@@ -29,15 +31,16 @@ async function updateUserAccessHandler(request, services = {}) {
   const expectedRevision = request.data?.expectedAccessRevision;
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new HttpsError("invalid-argument", "expectedAccessRevision is required.");
   const memberships = normalizeMemberships(hotelUids, request.data?.memberships || {});
+  const validPermissions = new Set(Object.entries(catalog).flatMap(([feature, actions]) => [...actions, "*"].map((action) => `${feature}.${action}`.toLowerCase())));
   for (const permissions of Object.values(memberships)) {
-    if (permissions.length > 200 || permissions.some((key) => !/^[a-z][a-z0-9]*\.(?:[a-z][a-z0-9]*|\*)$/i.test(key))) {
+    if (permissions.length > 200 || permissions.some((key) => !validPermissions.has(key))) {
       throw new HttpsError("invalid-argument", "Invalid membership permissions.");
     }
   }
   const firestore = services.firestore || admin.firestore();
   const auth = services.auth || admin.auth();
   // Verify the Auth identity before writing any profile or membership data.
-  await auth.getUser(userId);
+  const targetUser = await auth.getUser(userId);
   const userRef = firestore.doc(`users/${userId}`);
   const auditRef = firestore.collection("userAccessAudit").doc();
   return firestore.runTransaction(async (transaction) => {
@@ -54,7 +57,7 @@ async function updateUserAccessHandler(request, services = {}) {
     transaction.update(userRef, {
       firstName: String(profile.firstName || "").trim(),
       lastName: String(profile.lastName || "").trim(),
-      email: String(profile.email || "").trim(),
+      email: targetUser.email || "",
       hotelUid: hotelUids,
       permissions: admin.firestore.FieldValue.delete(),
       accessRevision: expectedRevision + 1,

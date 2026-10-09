@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { subscriptionIsActive, setHotelSubscriptionHandler, requireHotelSubscription, listHotelSubscriptionsHandler } = require("./subscriptions");
 const expiry = (millis) => ({ toMillis: () => millis });
 
-const platformAuth = { uid: "platform", token: { platformAdmin: true } };
+const platformAuth = { uid: "platform", token: { platformAdmin: true, email_verified: true } };
 function overviewDatabase(hotels, subscriptions = {}) {
   const reads = [];
   const query = { orderBy() { return this; }, startAfter(id) { reads.push(["cursor", id]); return this; },
@@ -82,7 +82,7 @@ test("subscription state cannot be set by a hotel administrator", async () => {
 });
 
 test("subscription updates validate IDs, revision and trial expiry before writing", async () => {
-  const auth = { uid: "platform", token: { platformAdmin: true } };
+  const auth = { uid: "platform", token: { platformAdmin: true, email_verified: true } };
   for (const data of [
     { hotelUid: "a/b", status: "active", planId: "standard", expectedRevision: 0 },
     { hotelUid: "hotel-a", status: "trialing", planId: "standard", expectedRevision: 0 },
@@ -97,7 +97,7 @@ test("subscription changes and audit records are committed together; stale saves
       get: async (ref) => ({ exists: true, data: () => ref.path.startsWith("hotelSubscriptions/") ? { revision: 2, status: "active" } : {} }),
       set: (ref, data) => writes.push({ path: ref.path, data }),
     }) };
-  const request = { auth: { uid: "platform", token: { platformAdmin: true } }, data: { hotelUid: "hotel-a", status: "suspended", planId: "standard", expectedRevision: 1 } };
+  const request = { auth: { uid: "platform", token: { platformAdmin: true, email_verified: true } }, data: { hotelUid: "hotel-a", status: "suspended", planId: "standard", expectedRevision: 1 } };
   await assert.rejects(setHotelSubscriptionHandler(request, { firestore: db }), (error) => error.code === "aborted");
   assert.equal(writes.length, 0);
   request.data.expectedRevision = 2;
