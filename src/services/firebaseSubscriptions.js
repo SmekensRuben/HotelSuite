@@ -1,20 +1,32 @@
-import { collection, db, functions, getDocs, httpsCallable } from "../firebaseConfig";
+import { functions, httpsCallable, Timestamp } from "../firebaseConfig";
 
 export async function getHotelSubscriptions() {
-  const hotels = await getDocs(collection(db, "hotels"));
-  const hotelRecords = hotels.docs.map((snapshot) => ({ hotelUid: snapshot.id,
-    hotelName: snapshot.data().hotelName || snapshot.data().name || snapshot.id }));
-  let subscriptions;
-  try {
-    subscriptions = await getDocs(collection(db, "hotelSubscriptions"));
-  } catch (cause) {
-    const error = new Error("Subscription records could not be loaded.", { cause });
-    error.code = cause.code;
-    error.hotelRecords = hotelRecords;
-    throw error;
-  }
-  const byHotel = new Map(subscriptions.docs.map((snapshot) => [snapshot.id, snapshot.data()]));
-  return hotelRecords.map((hotel) => ({ ...hotel, subscription: byHotel.get(hotel.hotelUid) || null }));
+  const list = httpsCallable(functions, "listHotelSubscriptions");
+  const hotels = [];
+  const cursors = new Set();
+  let afterHotelUid = null;
+  do {
+    const { data } = await list({ afterHotelUid });
+    if (!Array.isArray(data?.hotels) || (data.nextCursor !== null && typeof data.nextCursor !== "string")) {
+      throw new Error("The subscription overview response is invalid.");
+    }
+    hotels.push(...data.hotels.map(({ subscription, ...hotel }) => {
+      if (subscription === null) return { ...hotel, subscription: null };
+      const { validUntilMillis, ...fields } = subscription;
+      if (!Number.isSafeInteger(fields.revision) || fields.revision < 0
+        || (validUntilMillis !== null && !Number.isFinite(validUntilMillis))) {
+        throw new Error("The subscription overview record is invalid.");
+      }
+      return { ...hotel, subscription: { ...fields,
+        validUntil: validUntilMillis === null ? null : Timestamp.fromMillis(validUntilMillis) } };
+    }));
+    afterHotelUid = data.nextCursor;
+    if (afterHotelUid !== null && (cursors.has(afterHotelUid) || data.hotels.length === 0)) {
+      throw new Error("The subscription overview cursor is invalid.");
+    }
+    cursors.add(afterHotelUid);
+  } while (afterHotelUid !== null);
+  return hotels;
 }
 
 export async function saveHotelSubscription(input) {

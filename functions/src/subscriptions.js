@@ -35,11 +35,50 @@ async function subscribedHotels(db, hotelUids) {
   return hotelUids.filter((hotelUid, index) => flags[index]);
 }
 
-async function setHotelSubscriptionHandler(request, services = {}) {
+function requirePlatformAdministrator(request) {
   if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Authentication is required.");
   if (request.auth.token?.platformAdmin !== true) {
     throw new HttpsError("permission-denied", "Platform administrator access is required.");
   }
+}
+
+function subscriptionOverview(subscription) {
+  if (!subscription) return null;
+  const validUntilMillis = subscription.validUntil == null ? null : subscription.validUntil?.toMillis?.();
+  const revision = subscription.revision ?? 0;
+  if ((validUntilMillis !== null && !Number.isFinite(validUntilMillis))
+    || !Number.isSafeInteger(revision) || revision < 0) {
+    throw new HttpsError("failed-precondition", "A subscription record needs operator review.");
+  }
+  // Return only administration fields, with an explicit timestamp wire format.
+  return { status: subscription.status ?? null, planId: subscription.planId ?? null,
+    billingMode: subscription.billingMode ?? null, validUntilMillis, revision };
+}
+
+async function listHotelSubscriptionsHandler(request, services = {}) {
+  requirePlatformAdministrator(request);
+  const afterHotelUid = request.data?.afterHotelUid == null ? null
+    : requireDocumentId(request.data.afterHotelUid, "afterHotelUid");
+  const db = services.firestore || admin.firestore();
+  let query = db.collection("hotels").orderBy(admin.firestore.FieldPath.documentId());
+  if (afterHotelUid !== null) query = query.startAfter(afterHotelUid);
+  const hotels = await query.limit(51).get();
+  const page = hotels.docs.slice(0, 50);
+  if (!page.length) return { hotels: [], nextCursor: null };
+  // Read only subscriptions for this page; orphaned records and audit data are excluded.
+  const snapshots = await db.getAll(...page.map((hotel) => db.doc(`hotelSubscriptions/${hotel.id}`)));
+  const subscriptions = new Map(snapshots.map((snapshot) => [snapshot.id,
+    snapshot.exists ? subscriptionOverview(snapshot.data()) : null]));
+  return {
+    hotels: page.map((hotel) => ({ hotelUid: hotel.id,
+      hotelName: String(hotel.data().hotelName || hotel.data().name || hotel.id).slice(0, 200),
+      subscription: subscriptions.get(hotel.id) ?? null })),
+    nextCursor: hotels.docs.length > 50 ? page[page.length - 1].id : null,
+  };
+}
+
+async function setHotelSubscriptionHandler(request, services = {}) {
+  requirePlatformAdministrator(request);
   const input = request.data || {};
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid");
   if (!SUBSCRIPTION_STATUSES.includes(input.status)) throw new HttpsError("invalid-argument", "Invalid subscription status.");
@@ -83,4 +122,5 @@ async function setHotelSubscriptionHandler(request, services = {}) {
 }
 
 const setHotelSubscription = onCall({ region: "us-central1", cors: true }, setHotelSubscriptionHandler);
-module.exports = { requireDocumentId, subscriptionIsActive, requireHotelSubscription, hotelHasActiveSubscription, subscribedHotels, setHotelSubscriptionHandler, setHotelSubscription };
+const listHotelSubscriptions = onCall({ region: "us-central1", cors: true }, listHotelSubscriptionsHandler);
+module.exports = { requireDocumentId, subscriptionIsActive, requireHotelSubscription, hotelHasActiveSubscription, subscribedHotels, setHotelSubscriptionHandler, setHotelSubscription, listHotelSubscriptionsHandler, listHotelSubscriptions };
