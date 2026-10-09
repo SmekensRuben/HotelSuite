@@ -32,12 +32,10 @@ service firebase.storage {
             || firestore.get(/databases/(default)/documents/hotels/$(hotelUid)/members/$(request.auth.uid)).data.permissions.hasAny([feature + '.*'])));
     }
 
-    match /hotels/{hotelUid}/contracts/{allPaths=**} {
-      allow read: if hasPermission(hotelUid, 'contracts', 'read');
-      allow create: if hasPermission(hotelUid, 'contracts', 'create') && boundedUpload();
-      allow update: if hasPermission(hotelUid, 'contracts', 'update') && boundedUpload();
-      allow delete: if hasPermission(hotelUid, 'contracts', 'delete');
-    }
+    // Private contract objects and legacy paths cannot expose metadata or mint
+    // download tokens through the browser SDK, even to platform administrators.
+    match /private/contracts/{allPaths=**} { allow read, write: if false; }
+    match /hotels/{hotelUid}/contracts/{allPaths=**} { allow read, write: if false; }
 
     match /hotels/{hotelUid}/catalogproducts/{allPaths=**} {
       allow read: if hasPermission(hotelUid, 'catalogproducts', 'read');
@@ -53,9 +51,9 @@ service firebase.storage {
       allow delete: if hasPermission(hotelUid, 'supplierproducts', 'delete');
     }
 
-    match /hotels/{hotelUid}/{allPaths=**} {
-      allow read, delete: if isPlatformAdmin();
-      allow create, update: if isPlatformAdmin() && boundedUpload();
+    match /hotels/{hotelUid}/{collectionName}/{allPaths=**} {
+      allow read, delete: if isPlatformAdmin() && collectionName != 'contracts';
+      allow create, update: if isPlatformAdmin() && collectionName != 'contracts' && boundedUpload();
     }
 
     match /imports/{hotelUid}/{allPaths=**} {

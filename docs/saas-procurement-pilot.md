@@ -31,7 +31,7 @@ Role grants are made by verified platform operators. The authoritative permissio
 - An unconfirmed external result becomes `needs-review`. The platform operator can record verified provider evidence without sending again. Only an explicitly recorded preparation failure with `externalAttempt: false` may be restarted. Recovery decisions use revisions and an audit record.
 - Storage uploads are limited to nonempty files of at most 20 MiB. Public rooming-list access is limited to a known, unexpired token and an active hotel subscription; anonymous collection discovery and tenant reassignment are denied.
 
-This is a controlled procurement pilot. Other modules still need their own server-side business validation and quotas. The accompanying [Rules assessment](saas-security-assessment.json) records remaining sale-readiness work, including private contract download URLs and public rooming-list submission.
+This is a controlled procurement pilot. Other modules still need their own server-side business validation and quotas. The accompanying [Rules assessment](saas-security-assessment.json) records remaining sale-readiness work, and the separate [private-files and rooming-list backend release](private-files-rooming-backend.md). Those endpoints require their own reviewed Rules migration and activation.
 
 ## One-time Cloud Shell rollout
 

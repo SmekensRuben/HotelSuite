@@ -329,32 +329,10 @@ export default function RoomingListPage() {
     setSaving(true);
     setError("");
     try {
-      const reservation = editingReservationId
-        ? await updateRoomingListReservation(token, editingReservationId, form)
-        : await addRoomingListReservation(token, form);
-      setRoomingList((current) => ({
-        ...current,
-        status: current.status === "Submitted" ? "Submitted" : "Concept",
-        changeRequests: activeRequest
-          ? current.changeRequests.map((request) =>
-              request.id === activeRequest.id
-                ? {
-                    ...request,
-                    reservations: editingReservationId
-                      ? request.reservations.map((item) =>
-                          item.id === editingReservationId ? reservation : item,
-                        )
-                      : [...request.reservations, reservation],
-                  }
-                : request,
-            )
-          : current.changeRequests,
-        reservations: editingReservationId
-          ? (current?.reservations || []).map((item) =>
-              item.id === editingReservationId ? reservation : item,
-            )
-          : [...(current?.reservations || []), reservation],
-      }));
+      await (editingReservationId
+        ? updateRoomingListReservation(token, editingReservationId, form)
+        : addRoomingListReservation(token, form));
+      await reload();
       setForm(emptyReservation);
       if (editingReservationId) setIsReservationFormOpen(false);
       setEditingReservationId("");
@@ -399,25 +377,7 @@ export default function RoomingListPage() {
 
     try {
       await deleteRoomingListReservation(token, reservationToDelete.id);
-      setRoomingList((current) => ({
-        ...current,
-        status: current.status === "Submitted" ? "Submitted" : "Concept",
-        changeRequests: activeRequest
-          ? current.changeRequests.map((request) =>
-              request.id === activeRequest.id
-                ? {
-                    ...request,
-                    reservations: request.reservations.filter(
-                      (item) => item.id !== reservationToDelete.id,
-                    ),
-                  }
-                : request,
-            )
-          : current.changeRequests,
-        reservations: (current?.reservations || []).filter(
-          (item) => item.id !== reservationToDelete.id,
-        ),
-      }));
+      await reload();
       if (editingReservationId === reservationToDelete.id)
         cancelEditReservation();
       setReservationToDelete(null);
@@ -463,10 +423,7 @@ export default function RoomingListPage() {
     setError("");
     try {
       await submitRoomingList(token);
-      setRoomingList((current) => ({
-        ...current,
-        status: "Submitted",
-      }));
+      await reload();
       setIsReservationFormOpen(false);
       setShowSubmitConfirmModal(false);
     } catch (err) {
@@ -560,7 +517,10 @@ export default function RoomingListPage() {
         {loading ? (
           <p className="text-gray-600">Loading rooming list...</p>
         ) : error ? (
-          <p className="text-sm font-semibold text-red-600">{error}</p>
+          <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-semibold text-red-700">{error}</p>
+            <button type="button" disabled={saving || submittingRoomingList} onClick={async () => { try { await reload(); setError(""); } catch (err) { setError(err.message || "Unable to reload this guest list."); } }} className="mt-2 rounded-lg border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-800">Reload guest list</button>
+          </div>
         ) : null}
 
         {roomingList && (

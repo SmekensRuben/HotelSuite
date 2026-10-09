@@ -122,11 +122,9 @@ service cloud.firestore {
         allow read: if mayRead(hotelUid, 'orders');
         allow write: if false;
       }
-      match /contracts/{document=**} {
-        allow read: if mayRead(hotelUid, 'contracts');
-        allow create: if mayWrite(hotelUid, 'contracts', 'create');
-        allow update: if mayWrite(hotelUid, 'contracts', 'update');
-        allow delete: if mayWrite(hotelUid, 'contracts', 'delete');
+      match /contracts/{contractId} {
+        // Contract projections and attachments are served by the authorized backend.
+        allow read, write: if false;
       }
       match /contractReminderRuns/{runId} {
         allow read: if mayRead(hotelUid, 'contracts');
@@ -250,37 +248,16 @@ service cloud.firestore {
         allow write: if false;
       }
       match /{collectionName}/{document=**} {
-        allow read: if isPlatformAdmin() && !(collectionName in ['suppliers', 'supplierSecrets', 'mailQueue', 'dispatches', 'orderOperations', 'cartOperations', 'invitations']);
-        allow write: if isPlatformAdmin() && !(collectionName in ['members', 'suppliers', 'supplierSecrets', 'supplierOutletAccounts', 'orders', 'shoppingCarts', 'outlets', 'subscriptionAudit', 'supplierAudit', 'orderAudit', 'accessAudit', 'mailQueue', 'dispatches', 'orderOperations', 'cartOperations', 'invitations']);
+        allow read: if isPlatformAdmin() && !(collectionName in ['contracts', 'contractOperations', 'contractAttachments', 'contractAudit', 'suppliers', 'supplierSecrets', 'mailQueue', 'dispatches', 'orderOperations', 'cartOperations', 'invitations']);
+        allow write: if isPlatformAdmin() && !(collectionName in ['contracts', 'contractOperations', 'contractAttachments', 'contractAudit', 'members', 'suppliers', 'supplierSecrets', 'supplierOutletAccounts', 'orders', 'shoppingCarts', 'outlets', 'subscriptionAudit', 'supplierAudit', 'orderAudit', 'accessAudit', 'mailQueue', 'dispatches', 'orderOperations', 'cartOperations', 'invitations']);
       }
     }
 
     match /roomingListLinks/{token} {
-      allow get: if isPlatformAdmin()
-        || (signedIn() && hasPermission(resource.data.hotelUid, 'roominglists', 'read'))
-        || (hasActiveSubscription(resource.data.hotelUid)
-          && resource.data.publicAccessEnabled == true
-          && resource.data.publicAccessExpiresAt is timestamp
-          && resource.data.publicAccessExpiresAt > request.time);
-      // Public links authorize one token, never discovery of other hotel links.
-      allow list: if isPlatformAdmin()
-        || (signedIn() && hasPermission(resource.data.hotelUid, 'roominglists', 'read'));
-      allow create: if signedIn()
-        && hasPermission(request.resource.data.hotelUid, 'roominglists', 'create');
-      allow update: if signedIn()
-        && hasPermission(resource.data.hotelUid, 'roominglists', 'update')
-        && request.resource.data.hotelUid == resource.data.hotelUid;
-      allow delete: if signedIn()
-        && hasPermission(resource.data.hotelUid, 'roominglists', 'update');
-
-      match /{collection}/{document=**} {
-        allow read: if isPlatformAdmin()
-          || (signedIn()
-            && hasPermission(get(/databases/$(database)/documents/roomingListLinks/$(token)).data.hotelUid, 'roominglists', 'read'));
-        allow write: if isPlatformAdmin()
-          || (signedIn()
-            && hasPermission(get(/databases/$(database)/documents/roomingListLinks/$(token)).data.hotelUid, 'roominglists', 'approve'));
-      }
+      // Public capability reads use a bounded projection. All versions, reviews,
+      // authority fields and capacity transitions are server-managed.
+      allow read, write: if false;
+      match /{document=**} { allow read, write: if false; }
     }
 
     match /{document=**} {

@@ -8,12 +8,7 @@ import ContractFormFields from "./ContractFormFields";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getContract, updateContract } from "../../services/firebaseContracts";
-import { getAllUsers } from "../../services/firebaseUserManagement";
-
-function isUserInHotel(user, hotelUid) {
-  const hotelUids = Array.isArray(user?.hotelUid) ? user.hotelUid : user?.hotelUid ? [user.hotelUid] : [];
-  return hotelUids.includes(hotelUid);
-}
+import { getContractFollowers } from "../../services/firebaseContracts";
 
 export default function ContractEditPage() {
   const navigate = useNavigate();
@@ -22,6 +17,7 @@ export default function ContractEditPage() {
   const [users, setUsers] = useState([]);
   const [contract, setContract] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   const today = useMemo(
     () =>
@@ -43,10 +39,11 @@ export default function ContractEditPage() {
     const loadData = async () => {
       if (!hotelUid || !contractId) return;
       setLoading(true);
-      const [contractData, allUsers] = await Promise.all([getContract(hotelUid, contractId), getAllUsers()]);
-      setContract(contractData);
-      setUsers(allUsers.filter((user) => isUserInHotel(user, hotelUid)));
-      setLoading(false);
+      try {
+        const [contractData, allUsers] = await Promise.all([getContract(hotelUid, contractId), getContractFollowers(hotelUid, true)]);
+        setContract(contractData); setUsers(allUsers);
+      } catch (error) { setLoadError(error.message || "Unable to load this contract."); }
+      finally { setLoading(false); }
     };
 
     loadData();
@@ -54,7 +51,7 @@ export default function ContractEditPage() {
 
   const handleUpdate = async (payload, contractFiles, remainingFiles) => {
     const actor = auth.currentUser?.uid || "unknown";
-    await updateContract(hotelUid, contractId, payload, contractFiles, remainingFiles, actor);
+    await updateContract(hotelUid, contractId, payload, contractFiles, remainingFiles, actor, contract.revision || 0);
     navigate(`/contracts/${contractId}`);
   };
 
@@ -83,6 +80,7 @@ export default function ContractEditPage() {
           </div>
         </Card>
 
+        {loadError && <p role="alert" className="text-sm text-red-600">{loadError}</p>}
         {loading ? (
           <Card className="border border-gray-100 bg-white/95 shadow-sm">
             <p className="text-gray-600">Loading contract...</p>
@@ -108,6 +106,7 @@ export default function ContractEditPage() {
             <Card className="border border-gray-100 bg-white/95 shadow-sm lg:col-span-2">
               <ContractFormFields
                 onSubmit={handleUpdate}
+                disabled={!contract.privateWorkflowsEnabled}
                 savingLabel="Saving contract..."
                 submitLabel="Save changes"
                 initialValues={contract}

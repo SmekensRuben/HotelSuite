@@ -1,208 +1,87 @@
-import {
-  db,
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  setDoc,
-  updateDoc,
-  serverTimestamp,
-  storage,
-  ref,
-  uploadBytes,
-  getDownloadURL,
-  deleteObject,
-} from "../firebaseConfig";
-
-function normalizeDateInput(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toISOString().slice(0, 10);
-}
+import { functions, httpsCallable, auth } from "../firebaseConfig";
 
 export function calculateCancelBefore(endDate, terminationPeriodDays) {
-  const normalizedEndDate = normalizeDateInput(endDate);
-  const days = Number(terminationPeriodDays);
-  if (!normalizedEndDate || !Number.isFinite(days) || days < 0) return "";
-
-  const [year, month, day] = normalizedEndDate.split("-").map(Number);
-  const endDateUtc = new Date(Date.UTC(year, month - 1, day));
-  endDateUtc.setUTCDate(endDateUtc.getUTCDate() - Math.floor(days));
-  return endDateUtc.toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(endDate || "")) return "";
+  const days = Number(terminationPeriodDays), date = new Date(endDate + "T00:00:00Z");
+  if (!Number.isFinite(days) || days < 0 || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== endDate) return "";
+  date.setUTCDate(date.getUTCDate() - Math.floor(days));
+  return date.toISOString().slice(0, 10);
 }
-
-function sanitizeReminderDays(value) {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(
-    value
-      .map((day) => Number(day))
-      .filter((day) => Number.isFinite(day) && day >= 0)
-      .map((day) => Math.floor(day))
-  )].sort((a, b) => b - a);
-}
-
-function sanitizeFiles(value) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((file) => ({
-      fileName: String(file?.fileName || "").trim(),
-      filePath: String(file?.filePath || "").trim(),
-      downloadUrl: String(file?.downloadUrl || "").trim(),
-    }))
-    .filter((file) => file.fileName && file.downloadUrl);
-}
-
-function buildContractPayload(contractData, actor, existingFiles = []) {
-  const terminationPeriodDays = Number(contractData.terminationPeriodDays);
-  const pricePerMonth = Number(contractData.pricePerMonth);
-
-  return {
-    name: String(contractData.name || "").trim(),
-    startDate: normalizeDateInput(contractData.startDate),
-    endDate: normalizeDateInput(contractData.endDate),
-    pricePerMonth: Number.isFinite(pricePerMonth)
-      ? Math.max(0, Math.round(pricePerMonth * 100) / 100)
-      : 0,
-    terminationPeriodDays: Number.isFinite(terminationPeriodDays)
-      ? Math.max(0, Math.floor(terminationPeriodDays))
-      : 0,
-    cancelBefore: calculateCancelBefore(contractData.endDate, terminationPeriodDays),
-    category: String(contractData.category || "").trim(),
-    categoryId: String(contractData.categoryId || "").trim(),
-    subcategory: String(contractData.subcategory || "").trim(),
-    subcategoryId: String(contractData.subcategoryId || "").trim(),
-    reminderDays: sanitizeReminderDays(contractData.reminderDays),
-    followers: Array.isArray(contractData.followers)
-      ? contractData.followers
-          .map((follower) => ({
-            id: String(follower?.id || "").trim(),
-            email: String(follower?.email || "").trim(),
-            name: String(follower?.name || "").trim(),
-          }))
-          .filter((follower) => follower.id && follower.email)
-      : [],
-    contractFiles: sanitizeFiles(existingFiles),
-    updatedAt: serverTimestamp(),
-    updatedBy: actor || "unknown",
-  };
-}
-
+const call = async (name, data) => (await httpsCallable(functions, name)(data)).data;
 export async function getContracts(hotelUid) {
   if (!hotelUid) return [];
-  const contractsCol = collection(db, `hotels/${hotelUid}/contracts`);
-  const snap = await getDocs(contractsCol);
-  return snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  const contracts = [], seen = new Set();
+  let afterId = null;
+  do {
+    const page = await call("listHotelContracts", { hotelUid, afterId });
+    contracts.push(...page.contracts); afterId = page.nextCursor;
+    if (afterId && seen.has(afterId)) throw new Error("Invalid contract page cursor.");
+    seen.add(afterId);
+  } while (afterId);
+  return contracts;
 }
-
 export async function getContract(hotelUid, contractId) {
   if (!hotelUid || !contractId) return null;
-  const contractDoc = doc(db, `hotels/${hotelUid}/contracts`, contractId);
-  const snap = await getDoc(contractDoc);
-  if (!snap.exists()) return null;
-
-  const data = snap.data() || {};
-  const contractFiles = sanitizeFiles(data.contractFiles);
-  const legacyFile = data.contractFile
-    ? sanitizeFiles([data.contractFile])
-    : [];
-
-  return {
-    id: snap.id,
-    ...data,
-    contractFiles: contractFiles.length ? contractFiles : legacyFile,
-  };
+  const result = await call("listHotelContracts", { hotelUid, contractId });
+  return result.contract ? { ...result.contract, privateWorkflowsEnabled: result.privateWorkflowsEnabled === true } : null;
 }
-
-async function uploadContractFile(hotelUid, contractId, file) {
-  const safeFileName = file.name.replace(/\s+/g, "-");
-  const filePath = `hotels/${hotelUid}/contracts/${contractId}/${Date.now()}-${safeFileName}`;
-  const fileRef = ref(storage, filePath);
-  await uploadBytes(fileRef, file);
-  const downloadUrl = await getDownloadURL(fileRef);
-  return {
-    fileName: file.name,
-    filePath,
-    downloadUrl,
-  };
+export async function getContractFollowers(hotelUid, editing = false, withStatus = false) {
+  if (!hotelUid) return [];
+  const result = await call("listContractFollowers", { hotelUid, editing });
+  return withStatus ? result : result.users;
 }
-
-async function uploadContractFiles(hotelUid, contractId, files) {
-  if (!Array.isArray(files) || files.length === 0) return [];
-  const uploads = await Promise.all(files.map((file) => uploadContractFile(hotelUid, contractId, file)));
-  return sanitizeFiles(uploads);
-}
-
-function toFileArray(value) {
-  if (!value) return [];
-  return Array.isArray(value) ? value.filter(Boolean) : [value].filter(Boolean);
-}
-
-export async function createContract(hotelUid, contractData, contractFiles, actor) {
-  if (!hotelUid) throw new Error("hotelUid is verplicht!");
-
-  const contractsCol = collection(db, `hotels/${hotelUid}/contracts`);
-  const contractDocRef = doc(contractsCol);
-
-  const uploadedFiles = await uploadContractFiles(
-    hotelUid,
-    contractDocRef.id,
-    toFileArray(contractFiles)
-  );
-
-  const payload = {
-    ...buildContractPayload(contractData, actor, uploadedFiles),
-    createdAt: serverTimestamp(),
-    createdBy: actor || "unknown",
-  };
-
-  await setDoc(contractDocRef, payload);
-  return contractDocRef.id;
-}
-
-export async function updateContract(hotelUid, contractId, contractData, contractFiles, remainingFiles, actor) {
-  if (!hotelUid || !contractId) throw new Error("hotelUid en contractId zijn verplicht!");
-
-  const contractRef = doc(db, `hotels/${hotelUid}/contracts`, contractId);
-  const existingSnap = await getDoc(contractRef);
-  if (!existingSnap.exists()) throw new Error("Contract niet gevonden");
-
-  const existingData = existingSnap.data() || {};
-  const existingFiles = sanitizeFiles(existingData.contractFiles || []);
-  const fallbackLegacy = existingFiles.length ? [] : sanitizeFiles([existingData.contractFile]);
-  const currentFiles = [...existingFiles, ...fallbackLegacy];
-  const keptFiles = sanitizeFiles(remainingFiles);
-
-  const filesToDelete = currentFiles.filter((currentFile) =>
-    !keptFiles.some(
-      (keptFile) =>
-        (currentFile.filePath && keptFile.filePath && currentFile.filePath === keptFile.filePath) ||
-        (currentFile.downloadUrl && keptFile.downloadUrl && currentFile.downloadUrl === keptFile.downloadUrl)
-    )
-  );
-
-  await Promise.all(
-    filesToDelete
-      .filter((file) => file.filePath)
-      .map((file) => deleteObject(ref(storage, file.filePath)).catch(() => null))
-  );
-
-  const uploadedFiles = await uploadContractFiles(hotelUid, contractId, toFileArray(contractFiles));
-  const allFiles = [...keptFiles, ...uploadedFiles];
-
-  const payload = buildContractPayload(contractData, actor, allFiles);
-  await updateDoc(contractRef, payload);
-}
-
-export async function triggerContractReminders(hotelUid, actor) {
-  if (!hotelUid) throw new Error("hotelUid is verplicht!");
-
-  const runsCol = collection(db, `hotels/${hotelUid}/contractReminderRuns`);
-  await setDoc(doc(runsCol), {
-    status: "queued",
-    requestedAt: serverTimestamp(),
-    requestedBy: actor || "unknown",
+async function documentRequest(method, data, file) {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Sign in to access contract documents.");
+  const projectId = functions.app.options.projectId;
+  const endpoint = "https://us-central1-" + projectId + ".cloudfunctions.net/contractDocument";
+  const response = await fetch(endpoint + "?" + new URLSearchParams(data), {
+    method, headers: { Authorization: "Bearer " + await user.getIdToken(), ...(file ? { "Content-Type": "application/octet-stream" } : {}) },
+    ...(file ? { body: file } : {}), cache: "no-store",
   });
+  if (!response.ok) { const result = await response.json().catch(() => ({})); throw new Error(result.error || "Unable to access this document."); }
+  return method === "GET" ? response.blob() : response.json();
+}
+export async function downloadContractFile(hotelUid, contractId, file) {
+  const blob = await documentRequest("GET", { hotelUid, contractId, fileId: file.fileId });
+  const url = URL.createObjectURL(blob), anchor = document.createElement("a");
+  anchor.href = url; anchor.download = file.fileName || "contract-document";
+  document.body.appendChild(anchor); anchor.click(); anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+// Retain uncertain operation IDs and upload IDs only in memory. Retrying resumes the same save and attachments.
+const pendingSaves = new Map();
+async function saveContract(hotelUid, contractId, contractData, files, remainingFiles, creating, expectedRevision) {
+  if (!hotelUid) throw new Error("hotelUid is required.");
+  const selectedFiles = (Array.isArray(files) ? files : files ? [files] : []).filter(Boolean);
+  if (selectedFiles.length + remainingFiles.length > 20 || selectedFiles.some((f) => !f.size || f.size > 20 * 1024 * 1024)) throw new Error("A contract supports up to 20 documents, each between 1 byte and 20 MiB.");
+  const fields = ["name", "startDate", "endDate", "pricePerMonth", "terminationPeriodDays", "category", "categoryId", "subcategory", "subcategoryId", "reminderDays", "followers"];
+  const contract = Object.fromEntries(fields.map((field) => [field, contractData[field]]));
+  contract.followers = (contract.followers || []).map(({ id }) => ({ id }));
+  const key = JSON.stringify([hotelUid, contractId, creating, expectedRevision, contract, remainingFiles.map((f) => f.fileId), selectedFiles.map((f) => [f.name, f.size, f.lastModified])]);
+  let operation = pendingSaves.get(key);
+  if (!operation) {
+    operation = { requestId: crypto.randomUUID(), contractId: contractId || crypto.randomUUID(), fileIds: selectedFiles.map(() => crypto.randomUUID().replaceAll("-", "")) };
+    pendingSaves.set(key, operation);
+  }
+  const result = await call("saveHotelContract", { hotelUid, contractId: operation.contractId, requestId: operation.requestId, creating, expectedRevision,
+    contract, keepFileIds: remainingFiles.map((f) => f.fileId), uploadFileIds: operation.fileIds });
+  // Upload sequentially to bound browser/backend memory use and make partial retries predictable.
+  for (let i = 0; i < selectedFiles.length; i++) {
+    await documentRequest("POST", { hotelUid, contractId: result.contractId, fileId: operation.fileIds[i], fileName: selectedFiles[i].name, creating: String(creating), requestId: operation.requestId }, selectedFiles[i]);
+  }
+  pendingSaves.delete(key);
+  return result.contractId;
+}
+export async function createContract(hotelUid, contractData, files) {
+  return saveContract(hotelUid, null, contractData, files, [], true, 0);
+}
+export async function updateContract(hotelUid, contractId, contractData, files, remainingFiles, _actor, expectedRevision = 0) {
+  return saveContract(hotelUid, contractId, contractData, files, remainingFiles || [], false, expectedRevision);
+}
+export async function triggerContractReminders(hotelUid, actor) {
+  // Existing reminders retain their permission-checked queue boundary.
+  const { collection, db, doc, setDoc, serverTimestamp } = await import("../firebaseConfig");
+  if (!hotelUid) throw new Error("hotelUid is required.");
+  await setDoc(doc(collection(db, "hotels/" + hotelUid + "/contractReminderRuns")), { status: "queued", requestedAt: serverTimestamp(), requestedBy: actor || "unknown" });
 }

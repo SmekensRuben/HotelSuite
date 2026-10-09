@@ -23,6 +23,7 @@ import { deleteGroup, getGroup } from "../../services/firebaseGroups";
 import {
   createRoomingListForGroup,
   getRoomingListByToken,
+  setRoomingListPublicAccess,
 } from "../../services/firebaseRoomingLists";
 import { getNotificationLists } from "../../services/firebaseNotificationLists";
 import NotificationListSelector from "./NotificationListSelector";
@@ -94,6 +95,9 @@ export default function GroupDetailPage() {
   const canEditGroups = usePermission("groups", "update");
   const canDeleteGroups = usePermission("groups", "delete");
   const canCreateRoomingLists = usePermission("roominglists", "create");
+  const [accessExpiry, setAccessExpiry] = useState("");
+  const [savingAccess, setSavingAccess] = useState(false);
+  const canUpdateRoomingLists = usePermission("roominglists", "update");
   const [group, setGroup] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -131,7 +135,7 @@ export default function GroupDetailPage() {
         setGroup(result);
         setNotificationLists(lists);
         if (result?.roomingListToken) {
-          const list = await getRoomingListByToken(result.roomingListToken);
+          const list = await getRoomingListByToken(result.roomingListToken, { internal: true });
           if (active) setRoomingList(list);
         } else if (active) {
           setRoomingList(null);
@@ -200,13 +204,23 @@ export default function GroupDetailPage() {
         roomingListLink: result.link,
         roomingListStatus: current?.roomingListStatus || "Not Started",
       }));
-      setRoomingList(await getRoomingListByToken(result.token));
+      setRoomingList(await getRoomingListByToken(result.token, { internal: true }));
     } catch (err) {
       console.error("Unable to create rooming list:", err);
       setError(err?.message || "Unable to create rooming list.");
     } finally {
       setCreatingRoomingList(false);
     }
+  };
+
+  const changePublicAccess = async (enabled) => {
+    setSavingAccess(true); setError("");
+    try {
+      const expiresAt = accessExpiry ? Date.parse(accessExpiry + "T23:59:59Z") : Date.now() + 30 * 86400000;
+      await setRoomingListPublicAccess(group.roomingListToken, enabled, expiresAt);
+      setRoomingList(await getRoomingListByToken(group.roomingListToken, { internal: true }));
+    } catch (error) { setError(error.message || "Unable to change organizer access."); }
+    finally { setSavingAccess(false); }
   };
 
   const handleCopyRoomingListLink = async () => {
@@ -427,6 +441,19 @@ export default function GroupDetailPage() {
                 )}
               </div>
             </Card>
+
+            {roomingList && canUpdateRoomingLists && (
+              <Card className="border border-gray-200 bg-white shadow-sm">
+                <h2 className="font-semibold text-gray-900">Organizer link access</h2>
+                <p className="mt-1 text-sm text-gray-600">Anyone with this link can view and edit this group's guest list until expiry. Share it only with the organizer.</p>
+                <p className="mt-2 text-sm">{roomingList.publicAccessEnabled ? "Enabled" : "Disabled"} · Expires: {roomingList.publicAccessExpiresAtMillis ? new Date(roomingList.publicAccessExpiresAtMillis).toLocaleString() : "Not set"}</p>
+                <div className="mt-3 flex flex-wrap items-end gap-3">
+                  <label className="text-sm">New expiry date (UTC)<input type="date" value={accessExpiry} onChange={(event) => setAccessExpiry(event.target.value)} className="mt-1 block rounded-lg border border-gray-300 p-2" /></label>
+                  <button disabled={savingAccess} onClick={() => changePublicAccess(true)} className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white">{savingAccess ? "Saving..." : "Enable or extend link"}</button>
+                  <button disabled={savingAccess || !roomingList.publicAccessEnabled} onClick={() => changePublicAccess(false)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm">Disable link</button>
+                </div>
+              </Card>
+            )}
 
             {pendingChangeRequest && (
               <Card className="border border-amber-300 bg-amber-50 shadow-sm">

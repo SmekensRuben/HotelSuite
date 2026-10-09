@@ -217,10 +217,10 @@ describe("module and special-action boundaries", () => {
     await assertFails(setDoc(doc(database, "hotels/hotel-b/demandCalendarEvents", "event-b"), { name: "Cross tenant" }));
   });
 
-  it("keeps internal rooming-list history behind internal permissions", async () => {
+  it("keeps internal rooming-list history and approval writes behind the backend", async () => {
     const database = databaseFor(profiles.specialistA);
-    await assertSucceeds(getDoc(doc(database, "roomingListLinks/public-token-a/versions", "1")));
-    await assertSucceeds(setDoc(doc(database, "roomingListLinks/public-token-a/changeRequests", "request-a"), { status: "Approved" }));
+    await assertFails(getDoc(doc(database, "roomingListLinks/public-token-a/versions", "1")));
+    await assertFails(setDoc(doc(database, "roomingListLinks/public-token-a/changeRequests", "request-a"), { status: "Approved" }));
   });
 });
 
@@ -282,7 +282,7 @@ describe("global users containment", () => {
   });
 });
 
-describe("temporary public rooming-list containment", () => {
+describe("server-only public rooming-list boundary", () => {
   it("prevents anonymous discovery of active public tokens through a filtered hotel query", async () => {
     const database = testEnvironment.unauthenticatedContext().firestore();
     await assertFails(getDocs(query(collection(database, "roomingListLinks"), where("hotelUid", "==", "hotel-a"),
@@ -292,12 +292,12 @@ describe("temporary public rooming-list containment", () => {
     const database = testEnvironment.authenticatedContext(profiles.specialistA.uid, { email_verified: true }).firestore();
     await assertFails(updateDoc(doc(database, "roomingListLinks/public-token-a"), { hotelUid: "hotel-b" }));
     await testEnvironment.withSecurityRulesDisabled((context) => updateDoc(doc(context.firestore(), `hotels/hotel-a/members/${profiles.specialistA.uid}`), { permissions: ["roominglists.update"] }));
-    await assertSucceeds(updateDoc(doc(database, "roomingListLinks/public-token-a"), { groupName: "Updated within hotel A" }));
+    await assertFails(updateDoc(doc(database, "roomingListLinks/public-token-a"), { groupName: "Updated within hotel A" }));
     await assertFails(updateDoc(doc(database, "roomingListLinks/public-token-a"), { hotelUid: "hotel-b" }));
   });
-  it("allows only the active token root to be read anonymously", async () => {
+  it("requires the backend projection even for a known active token", async () => {
     const database = testEnvironment.unauthenticatedContext().firestore();
-    await assertSucceeds(getDoc(doc(database, "roomingListLinks", "public-token-a")));
+    await assertFails(getDoc(doc(database, "roomingListLinks", "public-token-a")));
     await assertFails(getDoc(doc(database, "roomingListLinks/public-token-a/versions", "1")));
     await assertFails(updateDoc(doc(database, "roomingListLinks", "public-token-a"), {
       reservations: [{ firstName: "External", lastName: "Guest" }],

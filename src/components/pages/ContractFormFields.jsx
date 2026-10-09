@@ -41,7 +41,7 @@ function sanitizeReminderDays(value) {
 
 function getUserLabel(user) {
   const name = `${String(user?.firstName || "").trim()} ${String(user?.lastName || "").trim()}`.trim();
-  return name || user?.email || user?.id || "Unknown user";
+  return name || user?.name || user?.email || user?.id || "Unknown user";
 }
 
 export default function ContractFormFields({
@@ -50,12 +50,14 @@ export default function ContractFormFields({
   savingLabel,
   initialValues,
   availableUsers = [],
+  disabled = false,
 }) {
   const { hotelUid } = useHotelContext();
   const [formState, setFormState] = useState(INITIAL_STATE);
   const [contractFiles, setContractFiles] = useState([]);
   const [existingContractFiles, setExistingContractFiles] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [selectedFollower, setSelectedFollower] = useState(null);
   const [newReminderDay, setNewReminderDay] = useState("");
   const [categoryOptions, setCategoryOptions] = useState([]);
@@ -230,9 +232,11 @@ export default function ContractFormFields({
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (disabled || saving) return;
     if (!formState.name.trim() || !formState.categoryId || !formState.subcategoryId) return;
 
     setSaving(true);
+    setSaveError("");
     try {
       const selectedCategory = categoryOptions.find((category) => category.id === formState.categoryId);
       const selectedSubcategory = availableSubcategoryOptions.find(
@@ -255,6 +259,8 @@ export default function ContractFormFields({
         contractFiles,
         existingContractFiles
       );
+    } catch (error) {
+      setSaveError(error.message || "Unable to save the contract. Retry to resume pending uploads.");
     } finally {
       setSaving(false);
     }
@@ -264,14 +270,16 @@ export default function ContractFormFields({
     setExistingContractFiles((prev) =>
       prev.filter((file) => {
         const samePath = file?.filePath && file?.filePath === fileToRemove?.filePath;
-        const sameUrl = file?.downloadUrl && file?.downloadUrl === fileToRemove?.downloadUrl;
-        return !(samePath || sameUrl);
+        const sameId = file?.fileId && file?.fileId === fileToRemove?.fileId;
+        return !(samePath || sameId);
       })
     );
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {disabled && <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p className="font-semibold">Private documents are awaiting activation</p><p className="mt-1">Your platform administrator must complete the reviewed file migration before contract changes are available.</p></div>}
+      {saveError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{saveError}</p>}
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="space-y-1 sm:col-span-2">
           <span className="text-sm font-medium text-gray-700">Name</span>
@@ -385,6 +393,7 @@ export default function ContractFormFields({
             onChange={(event) => setContractFiles(Array.from(event.target.files || []))}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-[#b41f1f] file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white"
           />
+          <p className="mt-2 text-xs text-gray-500">Up to 20 private documents, 20 MiB each. Downloads require current hotel access.</p>
           {contractFiles.length > 0 && (
             <p className="mt-2 text-xs text-gray-500">
               {contractFiles.length} file(s) selected: {contractFiles.map((file) => file.name).join(", ")}
@@ -397,7 +406,7 @@ export default function ContractFormFields({
               <ul className="space-y-2">
                 {existingContractFiles.map((file, index) => (
                   <li
-                    key={`${file.filePath || file.downloadUrl || file.fileName}-${index}`}
+                    key={file.fileId || index}
                     className="flex items-center justify-between rounded border border-gray-200 px-3 py-2 text-sm"
                   >
                     <span className="truncate pr-2">{file.fileName || `Document ${index + 1}`}</span>
@@ -516,7 +525,7 @@ export default function ContractFormFields({
       <div className="flex justify-end">
         <button
           type="submit"
-          disabled={saving}
+          disabled={saving || disabled}
           className={`rounded-lg px-5 py-2 text-sm font-semibold ${
             saving ? "bg-gray-300 text-gray-500" : "bg-[#b41f1f] text-white hover:bg-[#961919]"
           }`}

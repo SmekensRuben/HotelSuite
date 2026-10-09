@@ -43,10 +43,12 @@ jobs:
 
       - name: Validate Functions deployment scripts
         run: |
-          bash -n scripts/firebase/setup-functions-deployment.sh scripts/firebase/check-functions-runtime.sh scripts/firebase/rollout-saas-pilot.sh
+          bash -n scripts/firebase/setup-functions-deployment.sh scripts/firebase/check-functions-runtime.sh scripts/firebase/rollout-saas-pilot.sh scripts/firebase/rollout-private-workflows.sh
           node --check scripts/firebase/check-functions-release.mjs
           node --check scripts/firebase/saas-rollout.mjs
           node --check scripts/firebase/saas-release-check.mjs
+          node --check scripts/firebase/private-workflows-rollout.mjs
+          node --check scripts/firebase/private-workflows-migration.mjs
 
       - name: Firestore and Storage security tests
         run: npm run test:security

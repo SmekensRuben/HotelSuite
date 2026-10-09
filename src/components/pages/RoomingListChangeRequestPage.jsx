@@ -38,7 +38,7 @@ export default function RoomingListChangeRequestPage() {
   const [confirmDecision, setConfirmDecision] = useState("");
 
   useEffect(() => {
-    getRoomingListByToken(requestId)
+    getRoomingListByToken(requestId, { internal: true })
       .then(setRoomingList)
       .catch((err) => setError(err.message));
   }, [requestId]);
