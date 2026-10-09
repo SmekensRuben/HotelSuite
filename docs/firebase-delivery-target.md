@@ -1,6 +1,6 @@
 # Proposed Firebase delivery model
 
-Status: proposal only. Nothing in this document enables a deployment or changes a Firebase project.
+Status: 2026-10-09. The owner authorized automatic Functions deployment after successful verification of a merge to `main`. The implemented workflow and one-time Google configuration are described in [functions-continuous-deployment.md](functions-continuous-deployment.md); that decision supersedes the manual-only Functions proposal below. Google-side setup remains pending while Cloud Shell/IAM are inaccessible from the agent browser. Rules, indexes and data migrations remain separate operations.
 
 The per-hotel/manual-invoicing foundation is now implemented. Its migration and tested release order in `subscription-readiness.md` supersede the generic order below: subscriptions must exist before backend/rules enforcement is enabled. No cloud deployment was performed. External preview acceptance remains pending; a successful GitHub verification does not imply Vercel acceptance or disable an external production rollout.
 
@@ -15,7 +15,7 @@ The desired separation is:
 | Concern | Test/preview | Production |
 | --- | --- | --- |
 | Frontend | Vercel Preview for the current transition, or a dedicated Firebase test Hosting/App Hosting backend after the proof of concept | Firebase Hosting now; App Hosting only after the proof of concept is approved |
-| Functions | Explicit Firebase CLI deployment to the test project | Explicit Firebase CLI deployment to the production project after approval |
+| Functions | Explicit Firebase CLI deployment to the test project | Verified current `main` commit through the dedicated keyless deployment workflow, after one-time activation |
 | Rules and indexes | Separate reviewed command after emulator tests | Separate reviewed command with backup, rollout order and rollback notes |
 | CI | GitHub `verify.yml`, no cloud credentials | The same required check; never a deployment credential holder |
 
@@ -23,7 +23,7 @@ The desired separation is:
 
 Connecting a GitHub branch to Firebase App Hosting deploys the App Hosting backend. It does not deploy the functions declared in `functions/`, nor Firestore Rules, Storage Rules or indexes.
 
-Cloud Shell is an authenticated terminal, not an automatic deployment system. Running Firebase CLI commands there is a useful temporary, operator-approved release process because GitHub no longer needs cloud credentials, but it remains a manual deployment. Record the commit SHA, project ID, commands and result for every release.
+Cloud Shell is an authenticated terminal, not an automatic deployment system. It now performs the one-time Workload Identity/IAM setup; the separate GitHub deployment workflow subsequently obtains temporary credentials and runs the locked Firebase CLI. The workflow records its released SHA, project and function inventory. Manual releases and Rules/data migrations still require their own recorded commands and results.
 
 ## Proposed release procedure during hardening
 

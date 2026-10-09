@@ -15,6 +15,8 @@ This is a frontend/backend rollout mismatch, not evidence of an unpaid invoice. 
 
 ## App Hosting frontend
 
+On 2026-10-09 the live Firebase backend confirmed **Release succeeded** for main commit `5fc6be6`. App Hosting now successfully builds and serves the frontend. Functions automation is a separate setup; see [functions-continuous-deployment.md](functions-continuous-deployment.md). Cloud Shell and Google Cloud IAM returned **Site Unavailable** in the agent browser, so no Google-side setup or first Functions deployment is claimed.
+
 `apphosting.yaml` explicitly selects production data in `hotel-toolkit`. Its MFA setting matches the inspected existing Vercel value (`false`); update both hosting configurations if the project's enrollment policy changes.
 
 `npm run build:apphosting` reads Firebase's injected `FIREBASE_WEBAPP_CONFIG`, requires its project to match `EXPECTED_FIREBASE_PROJECT_ID`, and maps the complete web-app configuration into `VITE_FIREBASE_*` for the regular validated Vite build. Missing values, conflicting console overrides, project mismatches and invalid deployment/MFA policies still fail. No credentials or web-app keys are copied into this repository. Vercel and local builds continue to use their explicit Vite environment settings.

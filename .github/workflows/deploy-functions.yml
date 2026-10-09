@@ -1,0 +1,94 @@
+name: Deploy Firebase Functions
+
+on:
+  workflow_run:
+    workflows: ["Verify HotelSuite"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+# Let an in-flight Firebase deployment finish. Queued stale releases are skipped.
+concurrency:
+  group: firebase-functions-hotel-toolkit
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'SmekensRuben/HotelSuite' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.id == 1161047380))
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      FIREBASE_PROJECT_ID: hotel-toolkit
+      FIREBASE_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.FIREBASE_WORKLOAD_IDENTITY_PROVIDER }}
+      FIREBASE_DEPLOY_SERVICE_ACCOUNT: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
+      FUNCTIONS_APP_BASE_URL: ${{ vars.FUNCTIONS_APP_BASE_URL }}
+      FIREBASE_FUNCTIONS_DEPLOY_ENABLED: ${{ vars.FIREBASE_FUNCTIONS_DEPLOY_ENABLED }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Check verified main release and deployment configuration
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/firebase/check-functions-release.mjs
+
+      - name: Install locked dependencies
+        if: steps.release.outputs.deploy == 'true'
+        run: |
+          npm ci
+          npm --prefix functions ci
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+        if: steps.release.outputs.deploy == 'true'
+
+      - name: Authenticate with temporary Google Cloud credentials
+        if: steps.release.outputs.deploy == 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: hotel-toolkit
+          workload_identity_provider: ${{ vars.FIREBASE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+
+      - name: Check runtime configuration and prepare Functions parameters
+        if: steps.release.outputs.deploy == 'true'
+        run: bash scripts/firebase/check-functions-runtime.sh
+
+      - name: Confirm this release is still current
+        id: current
+        if: steps.release.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/firebase/check-functions-release.mjs
+
+      - name: Deploy Functions to hotel-toolkit
+        if: steps.current.outputs.deploy == 'true'
+        # No --force: removing a deployed function requires a deliberate release.
+        run: npx --no-install firebase deploy --only functions --project hotel-toolkit --non-interactive
+
+      - name: Record deployed Functions inventory
+        if: steps.current.outputs.deploy == 'true'
+        run: |
+          npx --no-install firebase functions:list --project hotel-toolkit --non-interactive
+          printf 'Deployed Functions from `%s` to `hotel-toolkit`.\n' "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
