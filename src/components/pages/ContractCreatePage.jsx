@@ -8,17 +8,14 @@ import ContractFormFields from "./ContractFormFields";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { createContract } from "../../services/firebaseContracts";
-import { getAllUsers } from "../../services/firebaseUserManagement";
-
-function isUserInHotel(user, hotelUid) {
-  const hotelUids = Array.isArray(user?.hotelUid) ? user.hotelUid : user?.hotelUid ? [user.hotelUid] : [];
-  return hotelUids.includes(hotelUid);
-}
+import { getContractFollowers } from "../../services/firebaseContracts";
 
 export default function ContractCreatePage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
   const [users, setUsers] = useState([]);
+  const [workflowEnabled, setWorkflowEnabled] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   const today = useMemo(
     () =>
@@ -39,8 +36,8 @@ export default function ContractCreatePage() {
   useEffect(() => {
     const loadUsers = async () => {
       if (!hotelUid) return;
-      const allUsers = await getAllUsers();
-      setUsers(allUsers.filter((user) => isUserInHotel(user, hotelUid)));
+      try { const result = await getContractFollowers(hotelUid, false, true); setUsers(result.users); setWorkflowEnabled(result.privateWorkflowsEnabled === true); }
+      catch (error) { setLoadError(error.message || "Unable to load the hotel follower directory."); }
     };
 
     loadUsers();
@@ -77,6 +74,7 @@ export default function ContractCreatePage() {
           </div>
         </Card>
 
+        {loadError && <p role="alert" className="text-sm text-red-600">{loadError}</p>}
         <div className="grid gap-4 lg:grid-cols-3">
           <Card className="border border-gray-100 bg-white/90 shadow-sm lg:col-span-1">
             <div className="flex items-start gap-3">
@@ -95,6 +93,7 @@ export default function ContractCreatePage() {
           <Card className="border border-gray-100 bg-white/95 shadow-sm lg:col-span-2">
             <ContractFormFields
               onSubmit={handleCreate}
+              disabled={!workflowEnabled}
               savingLabel="Creating contract..."
               submitLabel="Create Contract"
               availableUsers={users}

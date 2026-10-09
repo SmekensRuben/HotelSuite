@@ -6,7 +6,7 @@ import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getContract } from "../../services/firebaseContracts";
+import { getContract, downloadContractFile } from "../../services/firebaseContracts";
 import { usePermission } from "../../hooks/usePermission";
 
 function DetailField({ label, value }) {
@@ -38,6 +38,15 @@ export default function ContractDetailPage() {
   const canEditContracts = usePermission("contracts", "update");
   const [contract, setContract] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [downloadError, setDownloadError] = useState("");
+  const [downloading, setDownloading] = useState("");
+  const download = async (file) => {
+    setDownloadError(""); setDownloading(file.fileId);
+    try { await downloadContractFile(hotelUid, contractId, file); }
+    catch (error) { setDownloadError(error.message || "Unable to download this document."); }
+    finally { setDownloading(""); }
+  };
 
   const today = useMemo(
     () =>
@@ -59,9 +68,9 @@ export default function ContractDetailPage() {
     const loadContract = async () => {
       if (!hotelUid || !contractId) return;
       setLoading(true);
-      const data = await getContract(hotelUid, contractId);
-      setContract(data);
-      setLoading(false);
+      try { const data = await getContract(hotelUid, contractId); setContract(data); }
+      catch (error) { setLoadError(error.message || "Unable to load this contract."); }
+      finally { setLoading(false); }
     };
     loadContract();
   }, [hotelUid, contractId]);
@@ -112,6 +121,7 @@ export default function ContractDetailPage() {
           </div>
         </Card>
 
+        {loadError && <p role="alert" className="text-sm text-red-600">{loadError}</p>}
         {loading ? (
           <Card className="border border-gray-100 bg-white/95 shadow-sm">
             <p className="text-gray-600">Loading contract...</p>
@@ -172,23 +182,23 @@ export default function ContractDetailPage() {
               <h2 className="mb-4 inline-flex items-center gap-2 text-lg font-semibold">
                 <Files className="h-5 w-5 text-[#b41f1f]" /> Documents
               </h2>
+              {downloadError && <p role="alert" className="mb-3 text-sm text-red-600">{downloadError}</p>}
               {contractFiles.length > 0 ? (
                 <ul className="space-y-2">
                   {contractFiles.map((file, index) => (
                     <li
-                      key={`${file.filePath || file.downloadUrl || file.fileName}-${index}`}
+                      key={file.fileId || index}
                       className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2"
                     >
                       <span className="truncate text-sm text-gray-700">{file.fileName || `Document ${index + 1}`}</span>
-                      <a
-                        href={file.downloadUrl}
-                        download={file.fileName || true}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => download(file)}
+                        disabled={Boolean(downloading)}
                         className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[#961919]"
                       >
-                        <Download className="h-4 w-4" /> Download
-                      </a>
+                        <Download className="h-4 w-4" /> {downloading === file.fileId ? "Downloading..." : "Download"}
+                      </button>
                     </li>
                   ))}
                 </ul>

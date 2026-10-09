@@ -66,7 +66,7 @@ describe("Storage tenant and action boundaries", () => {
   it("revokes file access immediately even when an old ID token has hotel permissions", async () => {
     const storage = testEnvironment.authenticatedContext("employee-a", { email_verified: true, hotelPermissions: { "hotel-a": ["contracts.*"] } }).storage();
     const file = ref(storage, "hotels/hotel-a/contracts/contract-a/file.pdf");
-    await assertSucceeds(getBytes(file));
+    await assertFails(getBytes(file));
     await testEnvironment.withSecurityRulesDisabled((context) => deleteDoc(doc(context.firestore(), "hotels/hotel-a/members", "employee-a")));
     await assertFails(getBytes(file));
   });
@@ -76,15 +76,15 @@ describe("Storage tenant and action boundaries", () => {
     await testEnvironment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), "hotelSubscriptions", "hotel-a"), { status: "suspended", validUntil: null }));
     await assertFails(getBytes(ref(storage, "hotels/hotel-a/contracts/contract-a/file.pdf")));
   });
-  it("allows contract readers to download only their hotel's file", async () => {
+  it("requires the backend even for a contract reader's own hotel file", async () => {
     const storage = testEnvironment.authenticatedContext("employee-a", { email_verified: true,
       hotelPermissions: { "hotel-a": ["contracts.read"] },
     }).storage();
-    await assertSucceeds(getBytes(ref(storage, "hotels/hotel-a/contracts/contract-a/file.pdf")));
+    await assertFails(getBytes(ref(storage, "hotels/hotel-a/contracts/contract-a/file.pdf")));
     await assertFails(getBytes(ref(storage, "hotels/hotel-b/contracts/contract-b/file.pdf")));
   });
 
-  it("requires a write permission for contract uploads", async () => {
+  it("denies browser contract uploads even with all contract permissions", async () => {
     const employeeStorage = testEnvironment.authenticatedContext("employee-a", { email_verified: true,
       hotelPermissions: { "hotel-a": ["contracts.read"] },
     }).storage();
@@ -93,7 +93,7 @@ describe("Storage tenant and action boundaries", () => {
     const adminStorage = testEnvironment.authenticatedContext("admin-a", { email_verified: true,
       hotelPermissions: { "hotel-a": ["contracts.*", "imports.*"] },
     }).storage();
-    await assertSucceeds(uploadString(ref(adminStorage, "hotels/hotel-a/contracts/new/file.pdf"), "allowed"));
+    await assertFails(uploadString(ref(adminStorage, "hotels/hotel-a/contracts/new/file.pdf"), "allowed"));
   });
 
   it("denies anonymous storage access", async () => {

@@ -5,7 +5,7 @@ function importObjectMatchesHotel(objectName, hotelUid) {
 }
 function requireHotelImportTarget(path, hotelUid) {
   const segments = String(path || "").split("/");
-  const protectedCollections = ["members", "settings", "mailQueue", "subscriptionAudit", "contractReminderRuns", "fileImportTypes", "fileImportSettings", "supplierSecrets", "suppliers", "supplierOutletAccounts", "orders", "outlets", "invitations", "accessAudit", "supplierAudit", "orderAudit", "dispatches", "orderOperations", "cartOperations", "shoppingCarts"];
+  const protectedCollections = ["contracts", "contractOperations", "contractAttachments", "contractAudit", "members", "settings", "mailQueue", "subscriptionAudit", "contractReminderRuns", "fileImportTypes", "fileImportSettings", "supplierSecrets", "suppliers", "supplierOutletAccounts", "orders", "outlets", "invitations", "accessAudit", "supplierAudit", "orderAudit", "dispatches", "orderOperations", "cartOperations", "shoppingCarts"];
   if (segments.length < 3 || segments[0] !== "hotels" || segments[1] !== hotelUid
     || segments.some((segment) => !segment || [".", ".."].includes(segment))
     || protectedCollections.includes(segments[2])) {

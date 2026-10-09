@@ -27,6 +27,7 @@ export default function ContractsPage() {
   const canRunReminders = usePermission("contracts", "notify");
   const [contracts, setContracts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("active");
   const [runningReminders, setRunningReminders] = useState(false);
@@ -63,9 +64,9 @@ export default function ContractsPage() {
     const loadContracts = async () => {
       if (!hotelUid) return;
       setLoading(true);
-      const result = await getContracts(hotelUid);
-      setContracts(result);
-      setLoading(false);
+      try { const result = await getContracts(hotelUid); setContracts(result); }
+      catch (error) { setLoadError(error.message || "Unable to load contracts."); }
+      finally { setLoading(false); }
     };
     loadContracts();
   }, [hotelUid]);
@@ -170,6 +171,7 @@ export default function ContractsPage() {
           </select>
         </div>
 
+        {loadError && <p role="alert" className="text-sm text-red-600">{loadError}</p>}
         {loading ? (
           <p className="text-gray-600">Loading contracts...</p>
         ) : (

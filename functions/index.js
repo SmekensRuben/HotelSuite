@@ -53,3 +53,9 @@ for (const name of ["listSuppliers", "getSupplierConnection", "saveSupplier", "d
 for (const name of ["createOrdersFromCart", "updateHotelOrder", "deleteHotelOrder", "confirmHotelOrder", "setHotelOutletApprovers", "saveSupplierOutletAccount"]) exports[name] = orders[name];
 exports.mutateHotelShoppingCart = require("./src/shoppingCarts").mutateHotelShoppingCart;
 exports.reviewHotelOrderDelivery = require("./src/deliveryRecovery").reviewHotelOrderDelivery;
+
+const contractFiles = require("./src/contractFiles");
+for (const name of ["listHotelContracts", "listContractFollowers", "saveHotelContract", "contractDocument"]) exports[name] = contractFiles[name];
+
+const roomingLists = require("./src/roomingLists");
+for (const name of ["getRoomingList", "createRoomingList", "mutateRoomingList", "reviewRoomingList", "setRoomingListAccess"]) exports[name] = roomingLists[name];
