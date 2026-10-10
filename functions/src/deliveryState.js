@@ -1,8 +1,17 @@
+const { moduleAllows } = require("./modulePolicy");
 const { admin } = require("./config");
 const { subscriptionIsActive } = require("./subscriptions");
 const { permissionAllows, normalizedPermissions } = require("./authorization");
 
-async function claimDispatch(db, hotelUid, orderId, dispatchId) {
+async function dispatchActorIsCurrent(actorUid, auth = admin.auth()) {
+  if (typeof actorUid !== "string" || !actorUid) return false;
+  try {
+    const user = await auth.getUser(actorUid);
+    return user.disabled !== true && user.emailVerified === true;
+  } catch { return false; }
+}
+
+async function claimDispatch(db, hotelUid, orderId, dispatchId, auth) {
   const dispatchRef = db.doc(`hotels/${hotelUid}/dispatches/${dispatchId}`);
   const orderRef = db.doc(`hotels/${hotelUid}/orders/${orderId}`);
   return db.runTransaction(async (tx) => {
@@ -17,10 +26,11 @@ async function claimDispatch(db, hotelUid, orderId, dispatchId) {
       tx.get(db.doc(`hotels/${hotelUid}/members/${data.actorUid}`)),
       tx.get(db.doc(`hotels/${hotelUid}/outlets/${data.order.outletId}/approvers/${data.actorUid}`)),
     ]);
-    if (!subscription.exists || !subscriptionIsActive(subscription.data()) || !member.exists || !approver.exists
+    if (!await dispatchActorIsCurrent(data.actorUid, auth)
+      || !subscription.exists || !subscriptionIsActive(subscription.data()) || !moduleAllows(subscription.data(), "procurement") || !member.exists || !approver.exists
       || !permissionAllows(normalizedPermissions(member.data().permissions), "orders", "approve")) {
-      tx.update(dispatchRef, { status: "blocked", error: "Subscription or approver access is no longer valid." });
-      tx.update(orderRef, { dispatchStatus: "blocked", dispatchProgress: 100, dispatchStep: "Operator review required", dispatchError: "Subscription or approver access is no longer valid." });
+      tx.update(dispatchRef, { status: "blocked", error: "Current account, subscription or approver access is no longer valid." });
+      tx.update(orderRef, { dispatchStatus: "blocked", dispatchProgress: 100, dispatchStep: "Operator review required", dispatchError: "Current account, subscription or approver access is no longer valid." });
       return null;
     }
     tx.update(dispatchRef, { status: "processing", processingAt: admin.firestore.FieldValue.serverTimestamp() });
@@ -46,4 +56,4 @@ async function completeDispatch(db, hotelUid, orderId, dispatchId, status, detai
   });
 }
 
-module.exports = { claimDispatch, completeDispatch };
+module.exports = { claimDispatch, completeDispatch, dispatchActorIsCurrent };

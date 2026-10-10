@@ -1,12 +1,14 @@
+const { moduleAllows } = require("./modulePolicy");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { admin } = require("./config");
 const { requirePlatformAdministrator, requireDocumentId, subscriptionIsActive } = require("./subscriptions");
 const { requireVerifiedUser, text, revision, digest } = require("./validation");
 const { permissionAllows, normalizedPermissions } = require("./authorization");
 const { gated, enforceRequestRollout } = require("./saasRollout");
+const { dispatchActorIsCurrent } = require("./deliveryState");
 
 async function reviewOrderDeliveryHandler(request, services = {}) {
-  requireVerifiedUser(request); requirePlatformAdministrator(request);
+  requireVerifiedUser(request); await requirePlatformAdministrator(request, services.auth);
   const db = services.firestore || admin.firestore();
   const input = request.data || {};
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid");
@@ -49,7 +51,8 @@ async function reviewOrderDeliveryHandler(request, services = {}) {
         tx.get(db.doc(`hotelSubscriptions/${hotelUid}`)), tx.get(db.doc(`hotels/${hotelUid}/members/${dispatch.data().actorUid}`)),
         tx.get(db.doc(`hotels/${hotelUid}/outlets/${dispatch.data().order.outletId}/approvers/${dispatch.data().actorUid}`)),
       ]);
-      if (!subscription.exists || !subscriptionIsActive(subscription.data()) || !member.exists || !approver.exists
+      if (!await dispatchActorIsCurrent(dispatch.data().actorUid, services.auth)
+        || !subscription.exists || !subscriptionIsActive(subscription.data()) || !moduleAllows(subscription.data(), "procurement") || !member.exists || !approver.exists
         || !permissionAllows(normalizedPermissions(member.data().permissions), "orders", "approve")) throw new HttpsError("failed-precondition", "Restore the subscription and designated approver access before recovery.");
       nextDispatchId = digest(dispatchId, operationId);
       nextStatus = "pending";

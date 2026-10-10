@@ -1,7 +1,8 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const { requireDocumentId, requireHotelSubscription } = require("./subscriptions");
-const { requireVerifiedUser } = require("./validation");
+const { requireCurrentVerifiedUser } = require("./validation");
 const { enforceRequestRollout } = require("./saasRollout");
+const { featureModule } = require("./modulePolicy");
 
 function normalizedPermissions(value) {
   return Array.isArray(value)
@@ -16,8 +17,8 @@ function permissionAllows(permissions, feature, action) {
     || permissions.includes(`${normalizedFeature}.*`);
 }
 
-async function requireHotelPermission(db, request, hotelUid, feature, action, transaction) {
-  requireVerifiedUser(request);
+async function requireHotelPermission(db, request, hotelUid, feature, action, transaction, auth) {
+  await requireCurrentVerifiedUser(request, auth);
   await enforceRequestRollout(db, request, transaction);
   hotelUid = requireDocumentId(hotelUid, "hotelUid");
   if (request.auth.token?.platformAdmin === true) return;
@@ -28,7 +29,9 @@ async function requireHotelPermission(db, request, hotelUid, feature, action, tr
   if (!membership.exists || !permissionAllows(permissions, feature, action)) {
     throw new HttpsError("permission-denied", `${feature}.${action} is required for this hotel.`);
   }
-  await requireHotelSubscription(db, hotelUid, transaction);
+  const moduleId = featureModule(feature);
+  if (!moduleId) throw new HttpsError("permission-denied", "Unsupported hotel feature.");
+  await requireHotelSubscription(db, hotelUid, transaction, moduleId);
 }
 
 module.exports = { normalizedPermissions, permissionAllows, requireHotelPermission };

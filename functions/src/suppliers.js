@@ -150,7 +150,7 @@ async function deleteSupplierHandler(request, services = {}) {
 }
 
 async function migrateSupplierCredentialsHandler(request, services = {}) {
-  requireVerifiedUser(request); requirePlatformAdministrator(request);
+  requireVerifiedUser(request); await requirePlatformAdministrator(request, services.auth);
   const db = services.firestore || admin.firestore();
   const hotelUid = requireDocumentId(request.data?.hotelUid, "hotelUid");
   const afterId = request.data?.afterId ? requireDocumentId(request.data.afterId, "afterId") : null;

@@ -1,11 +1,12 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { auth, db, doc, getDoc, onSnapshot } from "../firebaseConfig";
 import { subscriptionIsActive } from "../utils/subscription";
+import { getHotelBootstrap } from "../services/firebaseSettings";
 import i18n from "../i18n";
 import {
   getSelectedHotelUid,
   setSelectedHotelUid as persistSelectedHotelUid,
-} from "utils/hotelUtils";
+} from "../utils/hotelUtils";
 
 const HotelContext = createContext();
 
@@ -41,6 +42,7 @@ export function HotelProvider({ children }) {
   const [permissions, setPermissions] = useState([]);
   const [userData, setUserData] = useState(null);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [isHotelAdmin, setIsHotelAdmin] = useState(false);
   const [authorizationSource, setAuthorizationSource] = useState("none");
   const [lightspeedShiftRolloverHour, setLightspeedShiftRolloverHour] = useState(4);
   const [posProvider, setPosProvider] = useState("lightspeed");
@@ -50,6 +52,23 @@ export function HotelProvider({ children }) {
   const [subscriptionError, setSubscriptionError] = useState(null);
   const [subscriptionAttempt, setSubscriptionAttempt] = useState(0);
   const [now, setNow] = useState(Date.now());
+  const settingsRequest = useRef(0);
+
+  useEffect(() => {
+    setPermissions([]); setIsHotelAdmin(false); setPermissionsLoading(true); setAuthorizationSource("none");
+    const userUid = auth.currentUser?.uid;
+    if (!selectedHotelUid || !userUid) { setPermissionsLoading(false); return; }
+    return onSnapshot(doc(db, `hotels/${selectedHotelUid}/members`, userUid), (snapshot) => {
+      if (auth.currentUser?.uid !== userUid) return;
+      const membership = snapshot.exists() ? snapshot.data() : null;
+      setPermissions(Array.isArray(membership?.permissions) ? membership.permissions : []);
+      setIsHotelAdmin(membership?.hotelAdmin === true);
+      setAuthorizationSource(membership ? "membership" : "missing-membership");
+      setPermissionsLoading(false);
+    }, () => {
+      setPermissions([]); setIsHotelAdmin(false); setAuthorizationSource("error"); setPermissionsLoading(false);
+    });
+  }, [selectedHotelUid, userData]);
 
   useEffect(() => {
     setSubscription(null); setSubscriptionLoading(true); setSubscriptionError(null);
@@ -71,28 +90,14 @@ export function HotelProvider({ children }) {
   }, [language]);
 
   const loadHotelSettings = async (uid, data, userUid = auth.currentUser?.uid) => {
-    if (!uid) return;
-    setPermissionsLoading(true);
-    setPermissions([]);
-    setAuthorizationSource("none");
-
+    if (!uid) return false;
+    const request = ++settingsRequest.current;
+    const current = () => request === settingsRequest.current && auth.currentUser?.uid === userUid;
     try {
-      const settingsRef = doc(db, `hotels/${uid}/settings`, uid);
-      const membershipRef = userUid ? doc(db, `hotels/${uid}/members`, userUid) : null;
-      const [settingsSnap, membershipSnap] = await Promise.all([
-        getDoc(settingsRef),
-        membershipRef ? getDoc(membershipRef) : Promise.resolve(null),
-      ]);
-      const settings = settingsSnap.exists() ? settingsSnap.data() : {};
-      const membership = membershipSnap?.exists() ? membershipSnap.data() : null;
-      if (membership) {
-        setPermissions(Array.isArray(membership.permissions) ? membership.permissions : []);
-        setAuthorizationSource("membership");
-      } else {
-        // Fail closed: global legacy permissions are not an authorization source.
-        setPermissions([]);
-        setAuthorizationSource("missing-membership");
-      }
+      const [bootstrapResult] = await Promise.allSettled([getHotelBootstrap(uid)]);
+      if (!current()) return false;
+      // Identity defaults must not erase an independently loaded authorization source.
+      const settings = bootstrapResult.status === "fulfilled" ? bootstrapResult.value : {};
 
       setHotelName(settings.hotelName || "Hotel");
       const preferredLanguage =
@@ -100,30 +105,32 @@ export function HotelProvider({ children }) {
       setLanguage(preferredLanguage);
       const rolloverSetting = Number(settings.lightspeedShiftRolloverHour);
       setLightspeedShiftRolloverHour(
-        Number.isFinite(rolloverSetting) ? rolloverSetting : 4
+        Number.isInteger(rolloverSetting) && rolloverSetting >= 0 && rolloverSetting <= 23 ? rolloverSetting : 4
       );
       setPosProvider(settings.posProvider || "lightspeed");
       setOrderMode(settings.orderMode || "ingredient");
     } catch (err) {
-      console.error("Fout bij laden van hotelinstellingen:", err);
+      if (!current()) return false;
+      console.error("Failed to load hotel settings:", err);
       setHotelName("Hotel");
       setLanguage("nl");
       setLightspeedShiftRolloverHour(4);
-      setPermissions([]);
-      setAuthorizationSource("error");
-    } finally {
-      setPermissionsLoading(false);
+      setPosProvider("lightspeed");
+      setOrderMode("ingredient");
     }
+    return current();
   };
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
       if (!user?.uid) {
+        ++settingsRequest.current;
         setPermissions([]);
         setPermissionsLoading(false);
         setHotelUids([]);
         setUserData(null);
         setIsPlatformAdmin(false);
+        setIsHotelAdmin(false);
         setAuthorizationSource("none");
         persistSelectedHotelUid(null);
         setSelectedHotelUid(null);
@@ -136,6 +143,7 @@ export function HotelProvider({ children }) {
           getDoc(doc(db, "users", user.uid)),
           user.getIdTokenResult(),
         ]);
+        if (auth.currentUser?.uid !== user.uid) return;
         setIsPlatformAdmin(tokenResult?.claims?.platformAdmin === true);
 
         if (!userSnap.exists()) {
@@ -167,8 +175,7 @@ export function HotelProvider({ children }) {
         }
 
         setSelectedHotelUid(uid);
-        await loadHotelSettings(uid, data, user.uid);
-        setLoading(false);
+        if (await loadHotelSettings(uid, data, user.uid)) setLoading(false);
       } catch (err) {
         console.error("Fout bij laden van gebruikersgegevens:", err);
         setPermissions([]);
@@ -187,8 +194,7 @@ export function HotelProvider({ children }) {
     persistSelectedHotelUid(uid);
     setSelectedHotelUid(uid);
     const data = userData;
-    await loadHotelSettings(uid, data, auth.currentUser?.uid);
-    setLoading(false);
+    if (await loadHotelSettings(uid, data, auth.currentUser?.uid)) setLoading(false);
   };
 
   const refreshHotelAssignments = async () => {
@@ -221,6 +227,7 @@ export function HotelProvider({ children }) {
         permissionsLoading,
         permissions,
         isPlatformAdmin,
+        isHotelAdmin,
         authorizationSource,
         subscription,
         subscriptionLoading,

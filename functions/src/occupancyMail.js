@@ -1,5 +1,6 @@
+const { resolveAuthorizedRecipients, configuredRecipientUids, deliverScheduledMail, hotelBusinessDate, hotelMailFailure, requireNoHotelMailFailures } = require('./scheduledMailDelivery');
 const { onDocumentCreated, onSchedule, logger, admin, Resend, ExcelJS, PDFDocument, RESEND_API_KEY, RESEND_FROM } = require('./config');
-const { subscribedHotels } = require('./subscriptions');
+const { hotelHasActiveSubscription } = require('./subscriptions');
 
 const db = admin.firestore();
 const SCHEDULED_MAIL_DOC_PATH = 'scheduledMails/scheduledOccupancyMail';
@@ -284,17 +285,19 @@ function buildMonthlyRevenueOverview(rows = []) {
 
 async function getOccupancyRowsForRange(hotelUid, startDate, endDate) {
   const hotelRef = db.collection('hotels').doc(hotelUid);
-  const [hotelSnap, settingsSnap, forecastSnapshotDates, statisticsSnapshotDates] = await Promise.all([
+  const [hotelSnap, settingsSnap, bootstrapSnap, forecastSnapshotDates, statisticsSnapshotDates] = await Promise.all([
     hotelRef.get(),
-    hotelRef.collection('settings').doc(hotelUid).get(),
+    hotelRef.collection('settings').doc('propertySettings').get(),
+    hotelRef.collection('settings').doc('bootstrap').get(),
     getSnapshotDates(hotelUid, 'reservationforecast'),
     getSnapshotDates(hotelUid, 'reservationstatistics'),
   ]);
 
   const hotelData = hotelSnap.exists ? hotelSnap.data() || {} : {};
   const hotelSettings = settingsSnap.exists ? settingsSnap.data() || {} : {};
-  const hotelRooms = Number(hotelSettings?.hotelRooms || 0);
-  const hotelName = String(hotelData?.hotelName || hotelUid).trim() || hotelUid;
+  const hotelRooms = hotelSettings.hotelRooms;
+  if (!Number.isSafeInteger(hotelRooms) || hotelRooms <= 0) throw new Error("A configured positive property capacity is required for occupancy reports.");
+  const hotelName = String(bootstrapSnap.data()?.hotelName || hotelData?.hotelName || hotelUid).trim() || hotelUid;
   const today = startOfTodayUtc();
 
   const forecastSnapshotDate = resolveSnapshotDate(forecastSnapshotDates);
@@ -894,34 +897,37 @@ function buildPdfBuffer({ startDate, endDate, hotels }) {
   });
 }
 
-async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', triggerId = null }) {
-  const hotelUids = await subscribedHotels(db, sanitizeHotelUids(scheduleConfig?.hotelUid));
+async function sendOccupancyMailForHotel({ scheduleConfig, hotelUid, reason = 'scheduled', triggerId = null }, services = {}) {
+  const firestore = services.firestore || db;
+  const hotelUids = [hotelUid];
   if (!hotelUids.length) { logger.info('Occupancy mail skipped: no active subscriptions'); return; }
-  const to = sanitizeEmails(scheduleConfig?.mailto);
-  if (!to.length) throw new Error('No valid mailto addresses found in scheduledOccupancyMail');
+  const to = await resolveAuthorizedRecipients({ db: firestore, auth: services.auth, hotelUid, recipientUids: configuredRecipientUids(scheduleConfig, hotelUid), feature: 'demandcalendar' });
+  if (!to.length) return null;
 
-  const resendApiKey = String(RESEND_API_KEY.value() || '').trim();
-  const resendFrom = String(RESEND_FROM.value() || '').trim();
+  const resendApiKey = services.send ? "test-transport" : String(RESEND_API_KEY.value() || '').trim();
+  const resendFrom = services.from || String(RESEND_FROM.value() || '').trim();
   if (!resendApiKey) throw new Error('Missing RESEND_API_KEY secret');
   if (!resendFrom) throw new Error('Missing RESEND_FROM secret');
 
   const startDate = startOfCurrentMonthUtc();
   const endDate = addDays(addMonths(startDate, REPORT_WINDOW_MONTHS), -1);
   const hotels = await Promise.all(
-    hotelUids.map((hotelUid) => getOccupancyRowsForRange(hotelUid, startDate, endDate))
+    hotelUids.map((hotelUid) => (services.getOccupancyRows || getOccupancyRowsForRange)(hotelUid, startDate, endDate))
   );
   const [pdfBuffer, excelBuffer] = await Promise.all([
-    buildPdfBuffer({ startDate, endDate, hotels }),
-    buildExcelBuffer({ startDate, endDate, hotels }),
+    (services.buildPdf || buildPdfBuffer)({ startDate, endDate, hotels }),
+    (services.buildExcel || buildExcelBuffer)({ startDate, endDate, hotels }),
   ]);
   const resend = new Resend(resendApiKey);
 
   const subject = `Occupancy overview ${displayDateLabel(startDate)} - ${displayDateLabel(endDate)}`;
   const hotelNames = hotels.map((hotel) => hotel.hotelName).join(', ');
 
-  const response = await resend.emails.send({
+  const currentTo = await resolveAuthorizedRecipients({ db: firestore, auth: services.auth, hotelUid, recipientUids: configuredRecipientUids(scheduleConfig, hotelUid), feature: 'demandcalendar' });
+  if (!currentTo.length) return null;
+  const response = await deliverScheduledMail({ db: firestore, hotelUid, deliveryKey: `occupancy/${hotelBusinessDate(services.now?.() ?? Date.now())}/${triggerId || 'scheduled'}`, fingerprintData: { from: resendFrom, to: currentTo, subject, hotels, startDate, endDate, reason, triggerId }, send: services.send || ((payload, options) => resend.emails.send(payload, options)), payload: {
     from: resendFrom,
-    to,
+    to: currentTo,
     subject,
     text:
       `Please find attached the occupancy overview from the first day of the current month ` +
@@ -940,15 +946,15 @@ async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', trigger
         content: excelBuffer.toString('base64'),
       },
     ],
-  });
+  } });
 
-  await db.collection('scheduledMails').doc('scheduledOccupancyMail').set(
+  await firestore.collection('scheduledMails').doc('scheduledOccupancyMail').set(
     {
       lastSentAt: admin.firestore.FieldValue.serverTimestamp(),
       lastSentReason: reason,
       lastTriggerId: triggerId || null,
       lastMailId: response?.data?.id || null,
-      lastSentTo: to,
+      lastSentTo: currentTo,
       lastHotelUid: hotelUids,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
@@ -957,6 +963,29 @@ async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', trigger
 
   logger.info('Occupancy mail sent', { reason, triggerId, hotelCount: hotelUids.length, toCount: to.length });
   return response;
+}
+
+async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', triggerId = null }, services = {}) {
+  const firestore = services.firestore || db, log = services.log || logger;
+  const hotelUids = sanitizeHotelUids(scheduleConfig?.hotelUid);
+  let sent = 0;
+  const failures = [];
+  for (const hotelUid of hotelUids) {
+    try {
+      if (!await hotelHasActiveSubscription(firestore, hotelUid, "revenue")) continue;
+      const response = await sendOccupancyMailForHotel({ scheduleConfig, hotelUid, reason, triggerId }, services);
+      if (response) sent += 1;
+    } catch (error) {
+      const failure = hotelMailFailure(hotelUid, error);
+      failures.push(failure);
+      log.error("Occupancy hotel delivery failed", failure);
+    }
+  }
+  await firestore.doc(SCHEDULED_MAIL_DOC_PATH).set({ lastRunStatus: failures.length ? (sent ? "partial-failure" : "failed") : (sent ? "sent" : "no-delivery"), failedHotels: failures }, { merge: true });
+  log.info("Occupancy mail scan completed", { hotelCount: hotelUids.length, sentHotelCount: sent, failedHotelCount: failures.length });
+  requireNoHotelMailFailures(failures);
+  if (!sent && reason === 'manual') throw new Error('No authorized hotel recipients or active hotel subscriptions.');
+  return { sent };
 }
 
 const sendScheduledOccupancyMail = onSchedule(
@@ -1022,4 +1051,4 @@ const runScheduledOccupancyMailNow = onDocumentCreated(
   }
 );
 
-module.exports = { sendScheduledOccupancyMail, runScheduledOccupancyMailNow };
+module.exports = { sendScheduledOccupancyMail, runScheduledOccupancyMailNow, sendOccupancyMail };

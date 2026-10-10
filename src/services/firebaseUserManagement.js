@@ -4,10 +4,8 @@ import {
   doc,
   getDoc,
   getDocs,
-  query,
   functions,
   httpsCallable,
-  where,
 } from "../firebaseConfig";
 
 export async function getAllUsers() {
@@ -68,33 +66,9 @@ export async function updateUserWithMemberships(userId, profile, memberships, ex
   return result.data;
 }
 
-export async function getUserDisplayName(userIdentifier) {
-  if (!userIdentifier) return "-";
-
-  try {
-    const byIdRef = doc(db, "users", userIdentifier);
-    const byIdSnap = await getDoc(byIdRef);
-
-    if (byIdSnap.exists()) {
-      const userData = byIdSnap.data() || {};
-      const fullName = `${userData.firstName || ""} ${userData.lastName || ""}`.trim();
-      return fullName || userData.email || String(userIdentifier);
-    }
-
-    if (String(userIdentifier).includes("@")) {
-      const usersCollection = collection(db, "users");
-      const q = query(usersCollection, where("email", "==", userIdentifier));
-      const emailSnap = await getDocs(q);
-      if (!emailSnap.empty) {
-        const userData = emailSnap.docs[0].data() || {};
-        const fullName = `${userData.firstName || ""} ${userData.lastName || ""}`.trim();
-        return fullName || userData.email || String(userIdentifier);
-      }
-    }
-
-    return String(userIdentifier);
-  } catch (error) {
-    console.error("Kon gebruiker niet ophalen:", error);
-    return String(userIdentifier);
-  }
+export async function getHotelUserDisplayName(hotelUid, userId) {
+  if (!hotelUid) throw new Error("hotelUid is required");
+  if (!userId) return "-";
+  const result = await httpsCallable(functions, "getHotelUserDisplayName")({ hotelUid, userId });
+  return result.data.displayName || String(userId);
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Pencil, Settings, Trash2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
@@ -8,7 +8,9 @@ import Modal from "../shared/Modal";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { deleteSupplier, getSupplier } from "../../services/firebaseSuppliers";
-import { getUserDisplayName } from "../../services/firebaseUserManagement";
+import AsyncError from "../shared/AsyncError";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 import { usePermission } from "../../hooks/usePermission";
 
 function formatDate(value) {
@@ -63,17 +65,27 @@ function DetailField({ label, value }) {
 }
 
 export default function SupplierDetailPage() {
-  const navigate = useNavigate();
   const { supplierId } = useParams();
   const { hotelUid } = useHotelContext();
+  return <ScopedSupplierDetailPage key={`${hotelUid}:${supplierId}`} hotelUid={hotelUid} supplierId={supplierId} />;
+}
+
+function ScopedSupplierDetailPage({ hotelUid, supplierId }) {
+  const navigate = useNavigate();
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const canEditSuppliers = usePermission("suppliers", "update");
   const canDeleteSuppliers = usePermission("suppliers", "delete");
   const canViewSupplierPassword = usePermission("suppliers", "password");
-  const [supplier, setSupplier] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [createdByName, setCreatedByName] = useState("-");
-  const [updatedByName, setUpdatedByName] = useState("-");
+  const scopeKey = `${hotelUid}:${supplierId}`;
+  const load = useCallback(() => getSupplier(hotelUid, supplierId), [hotelUid, supplierId]);
+  const query = useScopedAsync({ scopeKey, enabled: Boolean(hotelUid && supplierId), load });
+  const supplier = query.data;
+  const loading = query.loading;
+  const { createdByName, updatedByName } = useStaffDisplayNames({ hotelUid, scopeKey, record: supplier });
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const today = useMemo(
     () =>
@@ -91,41 +103,22 @@ export default function SupplierDetailPage() {
     window.location.href = "/login";
   };
 
-  useEffect(() => {
-    const loadSupplier = async () => {
-      if (!hotelUid || !supplierId) return;
-      setLoading(true);
-      const data = await getSupplier(hotelUid, supplierId);
-      setSupplier(data);
-      setLoading(false);
-    };
-    loadSupplier();
-  }, [hotelUid, supplierId]);
-
-  useEffect(() => {
-    const loadUserNames = async () => {
-      if (!supplier) return;
-      const [createdName, updatedName] = await Promise.all([
-        getUserDisplayName(supplier.createdBy),
-        getUserDisplayName(supplier.updatedBy),
-      ]);
-      setCreatedByName(createdName);
-      setUpdatedByName(updatedName);
-    };
-    loadUserNames();
-  }, [supplier]);
 
   const handleDelete = async () => {
-    if (!hotelUid || !supplierId || !canDeleteSuppliers) return;
-    await deleteSupplier(hotelUid, supplierId);
-    setShowDeleteModal(false);
-    navigate("/catalog/suppliers");
+    if (!mounted.current || !hotelUid || !supplierId || !canDeleteSuppliers || deleting) return;
+    setDeleting(true); setDeleteError(null);
+    try {
+      await deleteSupplier(hotelUid, supplierId);
+      if (mounted.current) { setShowDeleteModal(false); navigate("/catalog/suppliers"); }
+    } catch (error) { if (mounted.current) setDeleteError(error); }
+    finally { if (mounted.current) setDeleting(false); }
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
+        <AsyncError error={query.error} onRetry={query.retry} label="Could not load supplier." />
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
@@ -164,7 +157,7 @@ export default function SupplierDetailPage() {
             <button
               type="button"
               onClick={() => setShowDeleteModal(true)}
-              disabled={!canDeleteSuppliers}
+              disabled={!canDeleteSuppliers || deleting}
               className={`inline-flex items-center justify-center rounded border p-2 ${
                 canDeleteSuppliers
                   ? "border-red-200 text-red-700 hover:bg-red-50"
@@ -179,7 +172,7 @@ export default function SupplierDetailPage() {
 
         {loading ? (
           <p className="text-gray-600">Loading supplier...</p>
-        ) : !supplier ? (
+        ) : query.error ? null : !supplier ? (
           <Card>
             <p className="text-gray-600">Supplier not found.</p>
           </Card>
@@ -239,6 +232,7 @@ export default function SupplierDetailPage() {
 
       <Modal open={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete supplier">
         <p className="text-sm text-gray-700">Are you sure you want to delete this supplier?</p>
+        <AsyncError error={deleteError} onRetry={handleDelete} label="Could not delete this supplier." />
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
@@ -250,7 +244,7 @@ export default function SupplierDetailPage() {
           <button
             type="button"
             onClick={handleDelete}
-            disabled={!canDeleteSuppliers}
+            disabled={!canDeleteSuppliers || deleting}
             className={`px-4 py-2 rounded ${
               canDeleteSuppliers
                 ? "bg-red-600 text-white hover:bg-red-700"

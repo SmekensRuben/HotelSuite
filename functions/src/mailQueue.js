@@ -468,7 +468,8 @@ async function processMailQueueHandler(event, services = {}) {
   const db = services.firestore || admin.firestore();
   const ref = db.doc(`hotels/${hotelUid}/mailQueue/${mailId}`);
   const { subscriptionIsActive } = require("./subscriptions");
-  const { completeDispatch } = require("./deliveryState");
+  const { moduleAllows } = require("./modulePolicy");
+  const { completeDispatch, dispatchActorIsCurrent } = require("./deliveryState");
   const { digest } = require("./validation");
   const mail = await db.runTransaction(async (tx) => {
     const [current, subscription] = await Promise.all([tx.get(ref), tx.get(db.doc(`hotelSubscriptions/${hotelUid}`))]);
@@ -481,7 +482,11 @@ async function processMailQueueHandler(event, services = {}) {
         requireDocumentId(data.uid, "Invitee UID");
         const member = await tx.get(db.doc(`hotels/${hotelUid}/members/${data.uid}`));
         const user = await (services.auth || admin.auth()).getUser(data.uid);
-        permitted = permitted && member.exists && !user.disabled && data.payload?.to?.length === 1 && data.payload.to[0] === user.email;
+        const actor = await (services.auth || admin.auth()).getUser(requireDocumentId(data.actorUid, "Invitation actor UID"));
+        const actorMember = await tx.get(db.doc(`hotels/${hotelUid}/members/${data.actorUid}`));
+        permitted = permitted && !actor.disabled && actor.emailVerified === true
+          && (actor.customClaims?.platformAdmin === true || actorMember.data()?.hotelAdmin === true)
+          && member.exists && !user.disabled && data.payload?.to?.length === 1 && data.payload.to[0] === user.email;
       } catch { permitted = false; }
     }
     if (data.type === "order-approval") {
@@ -493,8 +498,12 @@ async function processMailQueueHandler(event, services = {}) {
           const ids = data.recipientUids.map((id) => requireDocumentId(id, "Approver UID"));
           const members = await tx.getAll(...ids.map((id) => db.doc(`hotels/${hotelUid}/members/${id}`)));
           const users = await Promise.all(ids.map((id) => (services.auth || admin.auth()).getUser(id)));
-          permitted = permitted && members.every((m) => m.exists && permissionAllows(normalizedPermissions(m.data().permissions), "orders", "approve"))
-            && users.every((u) => !u.disabled && u.emailVerified && data.payload.to.includes(u.email));
+          const order = await tx.get(db.doc(`hotels/${hotelUid}/orders/${requireDocumentId(data.orderId, "Order ID")}`));
+          const currentOrder = order.data();
+          const approvers = order.exists && currentOrder?.outletId ? await tx.getAll(...ids.map((id) => db.doc(`hotels/${hotelUid}/outlets/${currentOrder.outletId}/approvers/${id}`))) : [];
+          permitted = permitted && order.exists && currentOrder.status === "Created" && approvers.length === ids.length && approvers.every((a) => a.exists) && members.every((m) => m.exists && permissionAllows(normalizedPermissions(m.data().permissions), "orders", "approve"))
+            && users.every((u) => !u.disabled && u.emailVerified && u.email);
+          if (permitted) data.payload = { ...data.payload, to: [...new Set(users.map((u) => u.email))] };
         }
       } catch { permitted = false; }
     }
@@ -511,11 +520,13 @@ async function processMailQueueHandler(event, services = {}) {
           const { permissionAllows, normalizedPermissions } = require("./authorization");
           const member = await tx.get(db.doc(`hotels/${hotelUid}/members/${dispatch.data().actorUid}`));
           const approver = await tx.get(db.doc(`hotels/${hotelUid}/outlets/${dispatch.data().order.outletId}/approvers/${dispatch.data().actorUid}`));
-          permitted = member.exists && approver.exists && permissionAllows(normalizedPermissions(member.data().permissions), "orders", "approve");
+          permitted = await dispatchActorIsCurrent(dispatch.data().actorUid, services.auth || admin.auth())
+            && member.exists && approver.exists && permissionAllows(normalizedPermissions(member.data().permissions), "orders", "approve");
         }
       } catch { permitted = false; }
     }
-    if (!permitted || !subscription.exists || !subscriptionIsActive(subscription.data())) {
+    if (!permitted || !subscription.exists || !subscriptionIsActive(subscription.data())
+      || !moduleAllows(subscription.data(), data.type === "hotel-invitation" ? "core" : "procurement")) {
       tx.update(ref, { status: "blocked", error: "Hotel subscription or delivery authorization is no longer valid." });
       return { ...data, blocked: true };
     }
@@ -544,8 +555,8 @@ async function processMailQueueHandler(event, services = {}) {
     if (!to.length || to.length > 20) throw new Error("Invalid email recipients.");
     const send = services.send || ((data, options) => new Resend(apiKey).emails.send(data, options));
     externalAttempt = true;
-    const response = await send({ ...payload, from, to }, { idempotencyKey: `hotelsuite/${digest(hotelUid, mailId)}` });
-    if (response?.error || !response?.data?.id) throw new Error("Provider did not acknowledge delivery.");
+    const { acknowledgedSend } = require("./scheduledMailDelivery");
+    const response = await acknowledgedSend(send, { ...payload, from, to }, { idempotencyKey: `hotelsuite/${digest(hotelUid, mailId)}` });
     await db.runTransaction(async (tx) => {
       const current = await tx.get(ref);
       if (current.data()?.status !== "processing") return;

@@ -1,7 +1,26 @@
 import { normalizeRoomVatPercentage, toRoomRateExVat, toRoomRateInclVat } from "./roomRateVat";
 import { calculateFutureGroupValue, FUTURE_GROUP_VALUE_WARNINGS } from "./futureGroupValue";
 
+export const CONTRIBUTION_MODEL_VERSION = "group-contribution-v5-optimal-portfolio";
+export const PORTFOLIO_POLICY = "PROTECT_COMMITTED_MAXIMIZE_FUTURE_NET_CONTRIBUTION";
+const knownNonNegative = (value) => (typeof value === "number" || typeof value === "string") && String(value).trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0;
 const number = (value) => Number(value);
+
+export function optimizeNightlyPortfolio({ futureTransientDemand, futureGroupDemand, capacity, transientValue, groupValue }) {
+  const buckets = [
+    { type: "TRANSIENT", demand: futureTransientDemand, value: transientValue },
+    { type: "GROUP", demand: futureGroupDemand, value: groupValue },
+  ];
+  if (!knownNonNegative(capacity) || buckets.some((b) => !knownNonNegative(b.demand) || (b.demand > 0 && !Number.isFinite(b.value)))) return { status: "UNAVAILABLE", accepted: { TRANSIENT: null, GROUP: null }, value: null };
+  buckets.sort((a, b) => (b.value ?? 0) - (a.value ?? 0) || a.type.localeCompare(b.type));
+  let remaining = capacity, value = 0;
+  const accepted = { TRANSIENT: 0, GROUP: 0 };
+  for (const bucket of buckets) {
+    const rooms = bucket.value > 0 ? Math.min(remaining, bucket.demand) : 0;
+    accepted[bucket.type] = rooms; remaining -= rooms; value += rooms * (bucket.value ?? 0);
+  }
+  return { status: "OPTIMAL", accepted, value, remaining, policy: PORTFOLIO_POLICY };
+}
 const WARNING_CODES = new Map([
   ["Transient value is based on limited historical room-rate evidence.", "TRANSIENT_VALUE_LOW_EVIDENCE"],
   ["Transient value is based only on current transient OTB ADR because no valid historical transient ADR evidence is available.", "TRANSIENT_VALUE_CURRENT_ONLY"],
@@ -44,15 +63,16 @@ export function normalizeContributionSettings(settings = {}) {
   const futureGroupCommissionConfigured = settings.expectedFutureGroupCommissionPercentage !== null
     && settings.expectedFutureGroupCommissionPercentage !== undefined
     && settings.expectedFutureGroupCommissionPercentage !== "";
+  const requiredNumber = (v) => knownNonNegative(v) ? Number(v) : NaN;
   const normalized = {
-    variableRoomCost: number(settings.variableRoomCost),
-    breakfastCostPerPerson: number(settings.breakfastCostPerPerson),
-    transientAverageBreakfastPax: number(settings.transientAverageBreakfastPax),
-    transientAverageBreakfastRevenuePerPax: number(settings.transientAverageBreakfastRevenuePerPax),
-    bqtContributionMargin: number(settings.bqtContributionMarginPercentage) / 100,
-    transientDistributionCost: number(settings.transientDistributionCostPercentage) / 100,
-    defaultGroupCommission: number(settings.defaultGroupCommissionPercentage) / 100,
-    expectedFutureGroupCommission: number(futureGroupCommissionConfigured ? settings.expectedFutureGroupCommissionPercentage : settings.defaultGroupCommissionPercentage) / 100,
+    variableRoomCost: requiredNumber(settings.variableRoomCost),
+    breakfastCostPerPerson: requiredNumber(settings.breakfastCostPerPerson),
+    transientAverageBreakfastPax: requiredNumber(settings.transientAverageBreakfastPax),
+    transientAverageBreakfastRevenuePerPax: requiredNumber(settings.transientAverageBreakfastRevenuePerPax),
+    bqtContributionMargin: requiredNumber(settings.bqtContributionMarginPercentage) / 100,
+    transientDistributionCost: requiredNumber(settings.transientDistributionCostPercentage) / 100,
+    defaultGroupCommission: requiredNumber(settings.defaultGroupCommissionPercentage) / 100,
+    expectedFutureGroupCommission: requiredNumber(futureGroupCommissionConfigured ? settings.expectedFutureGroupCommissionPercentage : settings.defaultGroupCommissionPercentage) / 100,
     futureGroupCommissionDefaultFallback: !futureGroupCommissionConfigured,
     inflationPercentage: number(settings.inflationPercentage || 0),
     roomVatPercentage: normalizeRoomVatPercentage(settings.roomVatPercentage),
@@ -83,44 +103,40 @@ export function calculateGroupContribution({ quote, forecastByDate = {}, setting
   const transientBreakfastContributionPerRoom = values.transientAverageBreakfastPax
     * (values.transientAverageBreakfastRevenuePerPax - values.breakfastCostPerPerson);
   const calculateScenario = ({ futureTransientDemand, futureGroupDemand, remainingCapacityBeforeNewGroup, requestedGroupRooms, transientValue, groupValue }) => {
-    const futureDemandWithoutNewGroup = futureTransientDemand + futureGroupDemand;
-    const futureSalesWithoutNewGroup = Math.min(futureDemandWithoutNewGroup, remainingCapacityBeforeNewGroup);
-    const remainingCapacityAfterNewGroup = Math.max(0, remainingCapacityBeforeNewGroup - requestedGroupRooms);
-    const futureSalesWithNewGroup = Math.min(futureDemandWithoutNewGroup, remainingCapacityAfterNewGroup);
-    const totalDisplacedFutureRooms = Math.min(requestedGroupRooms, Math.max(0, futureSalesWithoutNewGroup - futureSalesWithNewGroup));
-    const buckets = [
-      { type: "GROUP", available: futureGroupDemand, value: groupValue },
-      { type: "TRANSIENT", available: futureTransientDemand, value: transientValue },
-    ].sort((left, right) => {
-      if (left.value === null && right.value !== null) return -1;
-      if (right.value === null && left.value !== null) return 1;
-      return (left.value ?? 0) - (right.value ?? 0); // GROUP remains first on an exact tie.
-    });
-    let remaining = totalDisplacedFutureRooms;
-    const displaced = { GROUP: 0, TRANSIENT: 0 };
-    buckets.forEach((bucket) => { const rooms = Math.min(bucket.available, remaining); displaced[bucket.type] = rooms; remaining -= rooms; });
-    const lostFutureTransientContribution = displaced.TRANSIENT === 0 ? 0 : transientValue === null ? null : displaced.TRANSIENT * transientValue;
-    const lostFutureGroupContribution = displaced.GROUP === 0 ? 0 : groupValue === null ? null : displaced.GROUP * groupValue;
-    const totalLostContribution = lostFutureTransientContribution === null || lostFutureGroupContribution === null ? null : lostFutureTransientContribution + lostFutureGroupContribution;
-    return { futureGroupDemand, futureDemandWithoutNewGroup, futureSalesWithoutNewGroup, remainingCapacityAfterNewGroup, futureSalesWithNewGroup, totalDisplacedFutureRooms, displacedFutureTransientRooms: displaced.TRANSIENT, displacedFutureGroupRooms: displaced.GROUP, nonDisplacingGroupRooms: requestedGroupRooms - totalDisplacedFutureRooms, lostFutureTransientContribution, lostFutureGroupContribution, totalLostContribution };
+    const futureDemandWithoutNewGroup = futureTransientDemand === null || futureGroupDemand === null ? null : futureTransientDemand + futureGroupDemand;
+    const remainingCapacityAfterNewGroup = remainingCapacityBeforeNewGroup === null ? null : Math.max(0, remainingCapacityBeforeNewGroup - requestedGroupRooms);
+    const before = optimizeNightlyPortfolio({ futureTransientDemand, futureGroupDemand, capacity: remainingCapacityBeforeNewGroup, transientValue, groupValue });
+    const after = optimizeNightlyPortfolio({ futureTransientDemand, futureGroupDemand, capacity: remainingCapacityAfterNewGroup, transientValue, groupValue });
+    const available = before.status === "OPTIMAL" && after.status === "OPTIMAL";
+    const displacedTransient = available ? Math.max(0, before.accepted.TRANSIENT - after.accepted.TRANSIENT) : null;
+    const displacedGroup = available ? Math.max(0, before.accepted.GROUP - after.accepted.GROUP) : null;
+    const futureSalesWithoutNewGroup = available ? before.accepted.TRANSIENT + before.accepted.GROUP : null;
+    const futureSalesWithNewGroup = available ? after.accepted.TRANSIENT + after.accepted.GROUP : null;
+    const totalDisplacedFutureRooms = available ? displacedTransient + displacedGroup : null;
+    const lostFutureTransientContribution = available ? displacedTransient * (transientValue ?? 0) : null;
+    const lostFutureGroupContribution = available ? displacedGroup * (groupValue ?? 0) : null;
+    const totalLostContribution = available ? before.value - after.value : null;
+    return { futureGroupDemand, futureDemandWithoutNewGroup, futureSalesWithoutNewGroup, remainingCapacityAfterNewGroup, futureSalesWithNewGroup, totalDisplacedFutureRooms, displacedFutureTransientRooms: displacedTransient, displacedFutureGroupRooms: displacedGroup, nonDisplacingGroupRooms: available ? requestedGroupRooms - totalDisplacedFutureRooms : null, lostFutureTransientContribution, lostFutureGroupContribution, totalLostContribution, portfolioWithoutGroup: before, portfolioWithGroup: after, optimizationPolicy: PORTFOLIO_POLICY };
   };
   const nightly = (quote.roomsByDate || []).map((roomNight) => {
     const forecast = forecastByDate[roomNight.date] || {};
     const groupForecast = forecast.groupForecast || {};
     const requestedGroupRooms = Math.max(0, number(roomNight.rooms) || 0);
-    const currentTransientOtb = Math.max(0, number(forecast.currentTransientOtb) || 0);
-    const currentGroupOtb = Math.max(0, number(forecast.existingGroupOtb) || 0);
-    const hardOtherCommittedRooms = Math.max(0, number(forecast.hardOtherCommittedRooms) || 0);
-    const sellableInventory = Math.max(0, number(forecast.sellableInventory) || 0);
-    const finalTransientDemandForecast = Math.max(currentTransientOtb, number(forecast.transientDemandForecast) || 0);
-    const futureTransientDemand = Math.max(0, finalTransientDemandForecast - currentTransientOtb);
-    const futureGroupDemandLow = Math.max(0, (number(groupForecast.forecastLow) ?? currentGroupOtb) - currentGroupOtb);
-    const futureGroupDemandBase = Math.max(0, (number(groupForecast.forecastBase) ?? currentGroupOtb) - currentGroupOtb);
-    const futureGroupDemandHigh = Math.max(0, (number(groupForecast.forecastHigh) ?? currentGroupOtb) - currentGroupOtb);
-    const hardCommittedRooms = currentTransientOtb + currentGroupOtb + hardOtherCommittedRooms;
-    const physicalCapacityAvailableForNewGroup = Math.max(0, sellableInventory - hardCommittedRooms);
-    const capacityConflictRooms = forecast.groupForecast ? Math.max(0, requestedGroupRooms - physicalCapacityAvailableForNewGroup) : 0;
+    const currentTransientOtb = forecast.groupForecast && !knownNonNegative(forecast.currentTransientOtb) ? null : Math.max(0, number(forecast.currentTransientOtb) || 0);
+    const currentGroupOtb = forecast.groupForecast && !knownNonNegative(forecast.existingGroupOtb) ? null : Math.max(0, number(forecast.existingGroupOtb) || 0);
+    const hardOtherCommittedRooms = forecast.hardOtherCommittedRooms !== undefined && !knownNonNegative(forecast.hardOtherCommittedRooms) ? null : Math.max(0, number(forecast.hardOtherCommittedRooms) || 0);
+    const sellableInventory = forecast.groupForecast && !knownNonNegative(forecast.sellableInventory) ? null : Math.max(0, number(forecast.sellableInventory) || 0);
+    const finalTransientDemandForecast = forecast.groupForecast && !knownNonNegative(forecast.transientDemandForecast) ? null : Math.max(currentTransientOtb, number(forecast.transientDemandForecast) || 0);
+    const futureTransientDemand = finalTransientDemandForecast === null || currentTransientOtb === null ? null : Math.max(0, finalTransientDemandForecast - currentTransientOtb);
+    const futureGroupDemandLow = currentGroupOtb !== null && knownNonNegative(groupForecast.forecastLow) ? Math.max(0, number(groupForecast.forecastLow) - currentGroupOtb) : null;
+    const futureGroupDemandBase = currentGroupOtb !== null && knownNonNegative(groupForecast.forecastBase) ? Math.max(0, number(groupForecast.forecastBase) - currentGroupOtb) : null;
+    const futureGroupDemandHigh = currentGroupOtb !== null && knownNonNegative(groupForecast.forecastHigh) ? Math.max(0, number(groupForecast.forecastHigh) - currentGroupOtb) : null;
+    const hardCommittedRooms = currentTransientOtb === null || currentGroupOtb === null || hardOtherCommittedRooms === null ? null : currentTransientOtb + currentGroupOtb + hardOtherCommittedRooms;
+    const physicalCapacityAvailableForNewGroup = sellableInventory === null || hardCommittedRooms === null ? null : Math.max(0, sellableInventory - hardCommittedRooms);
+    const capacityConflictRooms = forecast.groupForecast && physicalCapacityAvailableForNewGroup !== null ? Math.max(0, requestedGroupRooms - physicalCapacityAvailableForNewGroup) : 0;
     const remainingCapacityBeforeNewGroup = physicalCapacityAvailableForNewGroup;
+    const quoteEconomicsAvailable = !["group-quote-v2", "group-quote-v3-meal-basis"].includes(quote.quoteInputSchemaVersion) || [roomNight.rooms, roomNight.breakfastPax, roomNight.bqtRevenue].every(knownNonNegative);
+    const requiredInputsAvailable = quoteEconomicsAvailable && (!forecast.groupForecast || (hardOtherCommittedRooms !== null && [roomNight.rooms, forecast.sellableInventory, forecast.currentTransientOtb, forecast.existingGroupOtb, forecast.transientDemandForecast, groupForecast.forecastLow, groupForecast.forecastBase, groupForecast.forecastHigh].every(knownNonNegative)));
     const v2TransientRate = forecast.expectedFutureTransientRoomRateExVat;
     const expectedTransientRoomRate = Number.isFinite(v2TransientRate) && v2TransientRate > 0
       ? v2TransientRate : v2TransientRate === undefined && Number.isFinite(forecast.expectedTransientRoomRate) && forecast.expectedTransientRoomRate > 0
@@ -160,34 +176,36 @@ export function calculateGroupContribution({ quote, forecastByDate = {}, setting
       scenarios = { low: legacy, base: legacy, high: legacy, transientOnly: legacy };
     }
     if (capacityConflictRooms > 0) contributionWarnings.push(`Requested group exceeds currently uncommitted physical capacity by ${capacityConflictRooms} rooms.`);
-    if (Object.values(scenarios).some((scenario) => scenario.displacedFutureTransientRooms > 0) && transientContributionPerDisplacedRoom === null) contributionWarnings.push("Future transient demand is forecast, but no reliable transient room-rate evidence is available.");
-    if ([scenarios.low, scenarios.base, scenarios.high].some((scenario) => scenario.displacedFutureGroupRooms > 0) && futureGroupContributionPerRoom === null) contributionWarnings.push(FUTURE_GROUP_VALUE_WARNINGS.UNAVAILABLE);
+    if ((futureTransientDemand > 0 || Object.values(scenarios).some((scenario) => scenario.displacedFutureTransientRooms > 0)) && transientContributionPerDisplacedRoom === null) contributionWarnings.push("Future transient demand is forecast, but no reliable transient room-rate evidence is available.");
+    if (futureGroupDemandHigh > 0 && futureGroupContributionPerRoom === null) contributionWarnings.push(FUTURE_GROUP_VALUE_WARNINGS.UNAVAILABLE);
+    if (!requiredInputsAvailable) contributionWarnings.push("Required forecast, capacity or quote economics are unavailable.");
     if (futureGroupDemandHigh > 0) contributionWarnings.push("Future group contribution currently excludes unknown future BQT and breakfast economics.");
     if (groupForecast.confidence === "LOW") contributionWarnings.push("High uncertainty in future group-demand forecast.");
     ["Group forecast is based on a limited but contextually relevant historical sample.", "Group forecast is based on a very limited historical sample.", "Historical Demand Calendar coverage is incomplete; normal-business matching may include unlabeled event periods.", "Current group OTB is missing; zero was used as a fallback.", "Historical group observations above 100% of sellable inventory were excluded."].forEach((message) => {
       if (groupForecast.warnings?.includes(message)) contributionWarnings.push(message);
     });
     contributionWarnings.push("Group Forecast V1 does not yet use historical booking pace.");
-    return { stayDate: roomNight.date, mealBasis: roomNight.mealBasis, breakfastPax: roomNight.breakfastPax, requestedGroupRooms, currentTransientOtb, currentGroupOtb, hardOtherCommittedRooms, hardCommittedRooms, sellableInventory, physicalCapacityAvailableForNewGroup, capacityConflictRooms, finalTransientDemandForecast, futureTransientDemand, futureGroupDemandLow, futureGroupDemandBase, futureGroupDemandHigh, remainingCapacityBeforeNewGroup, expectedTransientRoomRate, expectedFutureTransientRoomRateExVat: expectedTransientRoomRate, expectedFutureTransientRoomRateInclVat: toRoomRateInclVat(expectedTransientRoomRate, values.roomVatPercentage), transientDemandConfidence: forecast.transientDemandConfidence || forecast.forecastConfidence, transientValueConfidence: forecast.transientValueConfidence || null, transientValueSource: forecast.transientValueSource || (v2TransientRate === undefined ? "LEGACY_BLENDED_ADR_FALLBACK" : "UNAVAILABLE"), historicalTransientAdrEvidenceCount: forecast.historicalTransientAdrEvidenceCount ?? 0, transientAdrEvidenceCount: forecast.transientAdrEvidenceCount ?? 0, historicalComparableTransientAdrExVat: forecast.historicalComparableTransientAdrExVat ?? null, currentTransientOtbAdrExVat: forecast.currentTransientOtbAdrExVat ?? null, historicalTransientAdrObservations: forecast.historicalTransientAdrObservations || [], transientDistributionCostPerRoom, transientRoomContributionPerRoom, transientBreakfastContributionPerRoom, transientContributionPerDisplacedRoom, futureTransientContributionPerRoom: transientContributionPerDisplacedRoom, ...futureGroupValue, expectedFutureGroupRoomRate, expectedFutureGroupRoomRateExVat: expectedFutureGroupRoomRate, expectedFutureGroupRoomRateInclVat, futureGroupRateSource, expectedFutureGroupCommission: values.expectedFutureGroupCommission, futureGroupCommissionDefaultFallback: values.futureGroupCommissionDefaultFallback, futureGroupContributionPerRoom, scenarios, displacedRooms: scenarios.base.totalDisplacedFutureRooms, nonDisplacingGroupRooms: scenarios.base.nonDisplacingGroupRooms, lostTransientContribution: scenarios.transientOnly.lostFutureTransientContribution, contributionWarnings };
+    return { stayDate: roomNight.date, requiredInputsAvailable, mealBasis: roomNight.mealBasis, breakfastPax: roomNight.breakfastPax, requestedGroupRooms, currentTransientOtb, currentGroupOtb, hardOtherCommittedRooms, hardCommittedRooms, sellableInventory, physicalCapacityAvailableForNewGroup, capacityConflictRooms, finalTransientDemandForecast, futureTransientDemand, futureGroupDemandLow, futureGroupDemandBase, futureGroupDemandHigh, remainingCapacityBeforeNewGroup, expectedTransientRoomRate, expectedFutureTransientRoomRateExVat: expectedTransientRoomRate, expectedFutureTransientRoomRateInclVat: toRoomRateInclVat(expectedTransientRoomRate, values.roomVatPercentage), transientDemandConfidence: forecast.transientDemandConfidence || forecast.forecastConfidence, transientValueConfidence: forecast.transientValueConfidence || null, transientValueSource: forecast.transientValueSource || (v2TransientRate === undefined ? "LEGACY_BLENDED_ADR_FALLBACK" : "UNAVAILABLE"), historicalTransientAdrEvidenceCount: forecast.historicalTransientAdrEvidenceCount ?? 0, transientAdrEvidenceCount: forecast.transientAdrEvidenceCount ?? 0, historicalComparableTransientAdrExVat: forecast.historicalComparableTransientAdrExVat ?? null, currentTransientOtbAdrExVat: forecast.currentTransientOtbAdrExVat ?? null, historicalTransientAdrObservations: forecast.historicalTransientAdrObservations || [], transientDistributionCostPerRoom, transientRoomContributionPerRoom, transientBreakfastContributionPerRoom, transientContributionPerDisplacedRoom, futureTransientContributionPerRoom: transientContributionPerDisplacedRoom, ...futureGroupValue, expectedFutureGroupRoomRate, expectedFutureGroupRoomRateExVat: expectedFutureGroupRoomRate, expectedFutureGroupRoomRateInclVat, futureGroupRateSource, expectedFutureGroupCommission: values.expectedFutureGroupCommission, futureGroupCommissionDefaultFallback: values.futureGroupCommissionDefaultFallback, futureGroupContributionPerRoom, scenarios, displacedRooms: scenarios.base.totalDisplacedFutureRooms, nonDisplacingGroupRooms: scenarios.base.nonDisplacingGroupRooms, lostTransientContribution: scenarios.transientOnly.lostFutureTransientContribution, contributionWarnings };
   });
   const totalRequestedGroupRoomNights = nightly.reduce((sum, night) => sum + night.requestedGroupRooms, 0);
-  const totalDisplacedRooms = nightly.reduce((sum, night) => sum + night.displacedRooms, 0);
-  const totalNonDisplacingGroupRooms = nightly.reduce((sum, night) => sum + night.nonDisplacingGroupRooms, 0);
+  const totalDisplacedRooms = nightly.some((night) => night.displacedRooms === null) ? null : nightly.reduce((sum, night) => sum + night.displacedRooms, 0);
+  const totalNonDisplacingGroupRooms = nightly.some((night) => night.nonDisplacingGroupRooms === null) ? null : nightly.reduce((sum, night) => sum + night.nonDisplacingGroupRooms, 0);
   const sumScenario = (key, field) => nightly.some((night) => night.scenarios[key][field] === null) ? null : nightly.reduce((sum, night) => sum + night.scenarios[key][field], 0);
   const totalLostTransientContribution = sumScenario("transientOnly", "lostFutureTransientContribution");
   const groupVariableRoomCosts = totalRequestedGroupRoomNights * values.variableRoomCost;
   // V2 stores breakfast pax per stay night; legacy quotes retain their unknown-distribution quote total.
-  const breakfastPax = ["group-quote-v2", "group-quote-v3-meal-basis"].includes(quote.quoteInputSchemaVersion)
+  const nightlyEconomics = ["group-quote-v2", "group-quote-v3-meal-basis"].includes(quote.quoteInputSchemaVersion);
+  const breakfastPax = nightlyEconomics && (quote.roomsByDate || []).some((night) => !knownNonNegative(night.breakfastPax)) ? null : nightlyEconomics
     ? (quote.roomsByDate || []).reduce((sum, night) => sum + Math.max(0, number(night.breakfastPax) || 0), 0)
     : Math.max(0, number(quote.breakfastPax) || 0);
-  const groupBreakfastCosts = breakfastPax * values.breakfastCostPerPerson;
-  const totalBqtRevenue = (quote.roomsByDate || []).reduce((sum, night) => sum + Math.max(0, number(night.bqtRevenue) || 0), 0);
-  const bqtContribution = totalBqtRevenue * values.bqtContributionMargin;
+  const groupBreakfastCosts = breakfastPax === null ? null : breakfastPax * values.breakfastCostPerPerson;
+  const totalBqtRevenue = nightlyEconomics && (quote.roomsByDate || []).some((night) => !knownNonNegative(night.bqtRevenue)) ? null : (quote.roomsByDate || []).reduce((sum, night) => sum + Math.max(0, number(night.bqtRevenue) || 0), 0);
+  const bqtContribution = totalBqtRevenue === null ? null : totalBqtRevenue * values.bqtContributionMargin;
   const warningDetails = aggregateAnalysisWarnings(nightly);
   const warnings = warningDetails.map((warning) => warning.message);
   const floorFor = (key) => {
     const lost = sumScenario(key, "totalLostContribution");
-    if (totalRequestedGroupRoomNights <= 0 || lost === null || nightly.some((night) => night.capacityConflictRooms > 0)) return { requiredNet: null, requiredGross: null, floor: null };
+    if (totalRequestedGroupRoomNights <= 0 || lost === null || nightly.some((night) => night.capacityConflictRooms > 0 || !night.requiredInputsAvailable)) return { requiredNet: null, requiredGross: null, floor: null };
     const requiredNet = Math.max(0, lost + groupVariableRoomCosts + groupBreakfastCosts - bqtContribution);
     const requiredGross = requiredNet / (1 - groupCommission);
     return { requiredNet, requiredGross, floor: requiredGross / totalRequestedGroupRoomNights };
@@ -196,17 +214,18 @@ export function calculateGroupContribution({ quote, forecastByDate = {}, setting
   const economicFloorUnavailableReason = floors.base.floor !== null ? null
     : nightly.some((night) => night.capacityConflictRooms > 0) ? "ECONOMIC_FLOOR_UNAVAILABLE_PHYSICAL_CAPACITY"
       : totalRequestedGroupRoomNights <= 0 ? "ECONOMIC_FLOOR_UNAVAILABLE_NO_REQUESTED_ROOM_NIGHTS"
-        : "ECONOMIC_FLOOR_UNAVAILABLE_CONTRIBUTION_VALUE";
+        : nightly.some((night) => !night.requiredInputsAvailable) ? "ECONOMIC_FLOOR_UNAVAILABLE_REQUIRED_INPUT"
+          : "ECONOMIC_FLOOR_UNAVAILABLE_CONTRIBUTION_VALUE";
   const floorInclVat = (floor) => toRoomRateInclVat(floor, values.roomVatPercentage);
   if (totalRequestedGroupRoomNights <= 0) warnings.push("Economic Floor Rate is unavailable because requested group room nights are zero.");
   else if (floors.base.floor === null) warnings.push("Adjusted Economic Floor is unavailable because capacity or required contribution value is unavailable.");
   const allWarningDetails = [...warningDetails, ...warnings.filter((message) => !warningDetails.some((warning) => warning.message === message)).map((message) => ({ code: message.replace(/\W+/g, "_").replace(/^_|_$/g, "").toUpperCase(), message, stayDates: [] }))];
   const scenarioTotals = Object.fromEntries(["low", "base", "high"].map((key) => [key, { totalDisplacedRooms: sumScenario(key, "totalDisplacedFutureRooms"), displacedFutureTransientRooms: sumScenario(key, "displacedFutureTransientRooms"), displacedFutureGroupRooms: sumScenario(key, "displacedFutureGroupRooms"), lostFutureTransientContribution: sumScenario(key, "lostFutureTransientContribution"), lostFutureGroupContribution: sumScenario(key, "lostFutureGroupContribution"), totalLostContribution: sumScenario(key, "totalLostContribution"), economicFloorRate: floors[key].floor }]));
-  return { totalRequestedGroupRoomNights, economicFloorUnavailableReason, totalBreakfastPax: breakfastPax, totalDisplacedRooms, totalNonDisplacingGroupRooms, totalLostTransientContribution, totalLostContribution: scenarioTotals.base.totalLostContribution, totalLostFutureTransientContribution: scenarioTotals.base.lostFutureTransientContribution, totalLostFutureGroupContribution: scenarioTotals.base.lostFutureGroupContribution, groupVariableRoomCosts, breakfastPax, groupBreakfastCosts, totalBqtRevenue, bqtContributionMargin: values.bqtContributionMargin, bqtContribution, groupCommission, expectedFutureGroupCommission: values.expectedFutureGroupCommission, futureGroupCommissionDefaultFallback: values.futureGroupCommissionDefaultFallback, roomVatPercentage: values.roomVatPercentage, requiredNetGroupRoomRevenue: floors.base.requiredNet, requiredRoomRevenueAfterCostsExVat: floors.base.requiredNet, requiredGrossGroupRoomRevenue: floors.base.requiredGross, requiredCommissionableRoomRevenueExVat: floors.base.requiredGross, economicFloorRate: floors.base.floor, economicFloorRateExVat: floors.base.floor, economicFloorRateInclVat: floorInclVat(floors.base.floor), economicFloorLow: floors.low.floor, economicFloorBase: floors.base.floor, economicFloorHigh: floors.high.floor, economicFloorLowExVat: floors.low.floor, economicFloorBaseExVat: floors.base.floor, economicFloorHighExVat: floors.high.floor, economicFloorLowInclVat: floorInclVat(floors.low.floor), economicFloorBaseInclVat: floorInclVat(floors.base.floor), economicFloorHighInclVat: floorInclVat(floors.high.floor), transientOnlyEconomicFloor: floors.transientOnly.floor, transientOnlyEconomicFloorExVat: floors.transientOnly.floor, transientOnlyEconomicFloorInclVat: floorInclVat(floors.transientOnly.floor), scenarioTotals, nightly, warnings, warningDetails: allWarningDetails };
+  return { modelVersion: CONTRIBUTION_MODEL_VERSION, optimizationPolicy: PORTFOLIO_POLICY, totalRequestedGroupRoomNights, economicFloorUnavailableReason, totalBreakfastPax: breakfastPax, totalDisplacedRooms, totalNonDisplacingGroupRooms, totalLostTransientContribution, totalLostContribution: scenarioTotals.base.totalLostContribution, totalLostFutureTransientContribution: scenarioTotals.base.lostFutureTransientContribution, totalLostFutureGroupContribution: scenarioTotals.base.lostFutureGroupContribution, groupVariableRoomCosts, breakfastPax, groupBreakfastCosts, totalBqtRevenue, bqtContributionMargin: values.bqtContributionMargin, bqtContribution, groupCommission, expectedFutureGroupCommission: values.expectedFutureGroupCommission, futureGroupCommissionDefaultFallback: values.futureGroupCommissionDefaultFallback, roomVatPercentage: values.roomVatPercentage, requiredNetGroupRoomRevenue: floors.base.requiredNet, requiredRoomRevenueAfterCostsExVat: floors.base.requiredNet, requiredGrossGroupRoomRevenue: floors.base.requiredGross, requiredCommissionableRoomRevenueExVat: floors.base.requiredGross, economicFloorRate: floors.base.floor, economicFloorRateExVat: floors.base.floor, economicFloorRateInclVat: floorInclVat(floors.base.floor), economicFloorLow: floors.low.floor, economicFloorBase: floors.base.floor, economicFloorHigh: floors.high.floor, economicFloorLowExVat: floors.low.floor, economicFloorBaseExVat: floors.base.floor, economicFloorHighExVat: floors.high.floor, economicFloorLowInclVat: floorInclVat(floors.low.floor), economicFloorBaseInclVat: floorInclVat(floors.base.floor), economicFloorHighInclVat: floorInclVat(floors.high.floor), transientOnlyEconomicFloor: floors.transientOnly.floor, transientOnlyEconomicFloorExVat: floors.transientOnly.floor, transientOnlyEconomicFloorInclVat: floorInclVat(floors.transientOnly.floor), scenarioTotals, nightly, warnings, warningDetails: allWarningDetails };
 }
 
 export function simulateGroupQuote(contribution, testGroupRate) {
-  if (contribution.economicFloorRateInclVat === null || contribution.totalLostContribution === null) return null;
+  if (contribution.economicFloorUnavailableReason || !(contribution.totalRequestedGroupRoomNights > 0) || !Number.isFinite(contribution.economicFloorRateInclVat) || !Number.isFinite(contribution.totalLostContribution)) return null;
   const testGroupRateInclVat = number(testGroupRate);
   if (!Number.isFinite(testGroupRateInclVat) || testGroupRateInclVat < 0) return null;
   const testGroupRateExVat = toRoomRateExVat(testGroupRateInclVat, contribution.roomVatPercentage);

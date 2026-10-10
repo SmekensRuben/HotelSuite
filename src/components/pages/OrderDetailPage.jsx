@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
@@ -6,16 +6,16 @@ import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import DataListTable from "../shared/DataListTable";
 import { useTranslation } from "react-i18next";
-import { auth, db, doc, getDoc, signOut } from "../../firebaseConfig";
+import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { deleteOrder, getOrderById, confirmOrder, reviewOrderDelivery } from "../../services/firebaseOrders";
 import { getOutletApprovers } from "../../services/firebaseSettings";
-import { getUserDisplayName } from "../../services/firebaseUserManagement";
+import AsyncError from "../shared/AsyncError";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 import { getSupplier } from "../../services/firebaseSuppliers";
 import { StickyNote } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
-import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -25,29 +25,47 @@ function formatContent(item) {
 }
 
 export default function OrderDetailPage() {
+  const { orderId } = useParams();
+  const { hotelUid, hotelName, isPlatformAdmin } = useHotelContext();
+  return <ScopedOrderDetail key={`${hotelUid}:${orderId}`} hotelUid={hotelUid} hotelName={hotelName} isPlatformAdmin={isPlatformAdmin} orderId={orderId} />;
+}
+
+function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
   const canUpdateOrders = usePermission("orders", "update");
   const canDeleteOrders = usePermission("orders", "delete");
   const canApproveOrders = usePermission("orders", "approve");
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { orderId } = useParams();
-  const { hotelUid, hotelName, isPlatformAdmin } = useHotelContext();
-  const [order, setOrder] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [createdByName, setCreatedByName] = useState("-");
+  const scopeKey = `${hotelUid}:${orderId}`;
+  const load = useCallback(() => getOrderById(hotelUid, orderId), [hotelUid, orderId]);
+  const query = useScopedAsync({ scopeKey, enabled: Boolean(hotelUid && orderId), retainData: true, load });
+  const order = query.data;
+  const loading = query.loading;
+  const refreshOrder = query.run;
+  const { createdByName } = useStaffDisplayNames({ hotelUid, scopeKey, record: order });
+  const canReadSuppliers = usePermission("suppliers", "read");
+  const supplierId = order?.supplierId || "";
+  const loadSupplier = useCallback(() => getSupplier(hotelUid, supplierId), [hotelUid, supplierId]);
+  const supplierQuery = useScopedAsync({ scopeKey: `${scopeKey}:${supplierId}:${canReadSuppliers}`, enabled: Boolean(hotelUid && supplierId && canReadSuppliers), load: loadSupplier });
+  const supplierName = supplierQuery.data?.name || order?.supplierName || supplierId || "-";
+  const supplierOrderSystem = supplierQuery.data?.orderSystem || (order?.dispatchedVia === "sftp" ? "SFTP csv" : "Supplier configuration");
+  const pdfHotelName = hotelName || "-";
+  const outletId = order?.outletId || "";
+  const currentUid = auth.currentUser?.uid || "";
+  const loadApprovers = useCallback(() => getOutletApprovers(hotelUid, outletId), [hotelUid, outletId]);
+  const approvalQuery = useScopedAsync({ scopeKey: `${scopeKey}:${outletId}:${currentUid}:${canApproveOrders}`, enabled: Boolean(hotelUid && outletId && currentUid && canApproveOrders), load: loadApprovers });
+  const canConfirmOrder = canApproveOrders && Boolean(approvalQuery.data?.some((approver) => approver.id === currentUid));
+  const approverWarning = !canApproveOrders ? "You do not have permission to approve orders." : !outletId || !currentUid ? "No outlet approvers configured for this order." : approvalQuery.loading ? "Checking outlet approval..." : !canConfirmOrder ? "Only outlet approvers can confirm this order." : "";
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showOrderConfirmModal, setShowOrderConfirmModal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [ordering, setOrdering] = useState(false);
-  const [supplierName, setSupplierName] = useState("-");
-  const [pdfHotelName, setPdfHotelName] = useState("-");
-  const [supplierOrderSystem, setSupplierOrderSystem] = useState("Email");
   const [actionError, setActionError] = useState("");
   const [confirmSubmitted, setConfirmSubmitted] = useState(false);
   const [confirmStartedAt, setConfirmStartedAt] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
-  const [canConfirmOrder, setCanConfirmOrder] = useState(false);
-  const [approverWarning, setApproverWarning] = useState("");
   const [openNoteRowId, setOpenNoteRowId] = useState("");
   const [recoveryEvidence, setRecoveryEvidence] = useState("");
   const [recoveryBusy, setRecoveryBusy] = useState(false);
@@ -73,80 +91,14 @@ export default function OrderDetailPage() {
     setShowOrderConfirmModal(false);
   };
 
-  const refreshOrder = async () => {
-    if (!hotelUid || !orderId) return null;
-    const result = await getOrderById(hotelUid, orderId);
-    setOrder(result);
-
-    if (result?.createdBy) {
-      setCreatedByName(await getUserDisplayName(result.createdBy));
-    }
-
-    if (result?.supplierId) {
-      let supplier;
-      try { supplier = await getSupplier(hotelUid, result.supplierId); }
-      catch { supplier = { name: result.supplierName, orderSystem: result.dispatchedVia === "sftp" ? "SFTP csv" : "Supplier configuration" }; }
-      setSupplierName(String(supplier?.name || "").trim() || result.supplierId);
-      setSupplierOrderSystem(String(supplier?.orderSystem || "Email").trim() || "Email");
-    } else {
-      setSupplierName("-");
-      setSupplierOrderSystem("Email");
-    }
-
-    if (hotelUid) {
-      try {
-        const hotelSnap = await getDoc(doc(db, `hotels/${hotelUid}`));
-        const hotelData = hotelSnap.exists() ? hotelSnap.data() : null;
-        const resolvedHotelName = String(hotelData?.hotelName || "").trim();
-        setPdfHotelName(resolvedHotelName || hotelName || "-");
-      } catch (error) {
-        setPdfHotelName(hotelName || "-");
-      }
-    } else {
-      setPdfHotelName(hotelName || "-");
-    }
-
-    const currentUid = String(auth.currentUser?.uid || "").trim();
-    if (result?.outletId && currentUid) {
-      const approvers = await getOutletApprovers(hotelUid, result.outletId);
-      const isAllowed = approvers.some((approver) => String(approver.id || "").trim() === currentUid);
-      setCanConfirmOrder(isAllowed && canApproveOrders);
-      if (!canApproveOrders) {
-        setApproverWarning("You do not have permission to approve orders.");
-      } else if (!isAllowed) {
-        setApproverWarning("Only outlet approvers can confirm this order.");
-      } else {
-        setApproverWarning("");
-      }
-    } else {
-      setCanConfirmOrder(false);
-      setApproverWarning("No outlet approvers configured for this order.");
-    }
-
-    return result;
-  };
-
-  useEffect(() => {
-    const loadOrder = async () => {
-      if (!hotelUid || !orderId) return;
-      setLoading(true);
-      try { await refreshOrder(); }
-      catch (error) { setActionError(error.message || "Unable to load this order."); }
-      finally { setLoading(false); }
-    };
-
-    loadOrder();
-  }, [hotelUid, orderId, canApproveOrders]);
-
   useEffect(() => {
     if (!showOrderConfirmModal) return undefined;
 
     const interval = setInterval(async () => {
-      let latestOrder;
-      try { latestOrder = await refreshOrder(); }
-      catch { setProgressMessage("Unable to refresh delivery. Reopen the order to check its status."); return; }
+      const latestOrder = await refreshOrder();
+      if (!mounted.current) return;
+      if (!latestOrder) { setProgressMessage("Unable to refresh delivery. Reopen the order to check its status."); return; }
       const dispatchStatus = String(latestOrder?.dispatchStatus || "").toLowerCase();
-      const latestStatus = String(latestOrder?.status || "");
 
       if (dispatchStatus === "sent") {
         setProgressMessage("Dispatch completed successfully.");
@@ -179,16 +131,18 @@ export default function OrderDetailPage() {
     return () => clearInterval(interval);
   }, [showOrderConfirmModal, hotelUid, orderId, confirmSubmitted, confirmStartedAt]);
 
-  if (loading) {
+  if (loading && !order) {
     return (
       <div className="min-h-screen bg-gray-50 text-gray-900">
         <HeaderBar today={today} onLogout={handleLogout} />
         <PageContainer>
-          <p className="text-sm text-gray-600">Order laden...</p>
+          <p role="status" className="text-sm text-gray-600">Loading order...</p>
         </PageContainer>
       </div>
     );
   }
+
+  if (query.error && !order) return <div className="min-h-screen bg-gray-50 text-gray-900"><HeaderBar today={today} onLogout={handleLogout} /><PageContainer><AsyncError error={query.error} onRetry={query.retry} label="Could not load this order." /></PageContainer></div>;
 
   if (!order) {
     return (
@@ -229,7 +183,9 @@ export default function OrderDetailPage() {
     };
   });
 
-  const downloadOrderPdf = () => {
+  const downloadOrderPdf = async () => {
+    const [{ jsPDF }, { default: autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+    if (!mounted.current) return;
     const doc = new jsPDF();
     const outletName = String(order?.outletName || order?.outletId || "-").trim() || "-";
 
@@ -317,6 +273,9 @@ export default function OrderDetailPage() {
     <div className="min-h-screen bg-gray-50 text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
+        <AsyncError error={query.error} onRetry={query.retry} label="Could not refresh this order." />
+        {canReadSuppliers && <AsyncError error={supplierQuery.error} onRetry={supplierQuery.retry} label="Could not load supplier details. Saved order names remain available." />}
+        {canApproveOrders && <AsyncError error={approvalQuery.error} onRetry={approvalQuery.retry} label="Could not verify outlet approval." />}
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-3xl font-semibold">Order Detail</h1>
           <div className="flex items-center gap-2">
@@ -468,11 +427,11 @@ export default function OrderDetailPage() {
                 let requestId = sessionStorage.getItem(key);
                 if (!requestId) { requestId = crypto.randomUUID(); sessionStorage.setItem(key, requestId); }
                 await confirmOrder(hotelUid, orderId, order.revision || 0, requestId);
-                await refreshOrder();
+                if (mounted.current) await refreshOrder();
               } catch (error) {
-                setActionError(error?.message || "Could not confirm and dispatch order");
+                if (mounted.current) setActionError(error?.message || "Could not confirm and dispatch order");
               } finally {
-                setOrdering(false);
+                if (mounted.current) setOrdering(false);
               }
             }}
             className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
@@ -491,9 +450,9 @@ export default function OrderDetailPage() {
             setRecoveryBusy(true); setActionError("");
             try {
               await reviewOrderDelivery({ hotelUid, orderId, expectedRevision: order.revision || 0, requestId: crypto.randomUUID(), action, evidence: recoveryEvidence });
-              await refreshOrder(); setRecoveryEvidence("");
-            } catch (error) { setActionError(error.message || "This delivery needs operator review."); }
-            finally { setRecoveryBusy(false); }
+              if (mounted.current) { await refreshOrder(); if (mounted.current) setRecoveryEvidence(""); }
+            } catch (error) { if (mounted.current) setActionError(error.message || "This delivery needs operator review."); }
+            finally { if (mounted.current) setRecoveryBusy(false); }
           }}>{label}</button>)}</div>
           {actionError && <p role="alert" className="mt-3 text-sm text-red-700">{actionError}</p>}
         </Card>
@@ -507,11 +466,13 @@ export default function OrderDetailPage() {
             type="button"
             disabled={busy}
             onClick={async () => {
-              setBusy(true);
               if (!canDeleteOrders) return;
-              await deleteOrder(hotelUid, orderId);
-              setBusy(false);
-              navigate("/orders");
+              setBusy(true);
+              try {
+                await deleteOrder(hotelUid, orderId);
+                if (mounted.current) navigate("/orders");
+              } catch (error) { if (mounted.current) setActionError(error.message || "Could not delete this order."); }
+              finally { if (mounted.current) setBusy(false); }
             }}
             className="px-4 py-2 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
           >

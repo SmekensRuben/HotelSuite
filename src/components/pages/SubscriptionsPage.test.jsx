@@ -30,7 +30,7 @@ describe("hotel subscription administration", () => {
     getHotelSubscriptions.mockResolvedValue([hotel]); saveHotelSubscription.mockResolvedValue({ revision: 1 });
     render(<SubscriptionsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Save subscription" }));
-    await waitFor(() => expect(saveHotelSubscription).toHaveBeenCalledWith({ hotelUid: "testhotel", status: "active", planId: "standard", validUntil: null, expectedRevision: 0 }));
+    await waitFor(() => expect(saveHotelSubscription).toHaveBeenCalledWith({ hotelUid: "testhotel", status: "active", planId: "standard", modules: [], seatLimit: null, validUntil: null, expectedRevision: 0 }));
     expect(await screen.findByText("Subscription saved. Hotel access has been updated.")).toBeInTheDocument();
   });
   it("explains an undeployed activation function", async () => {

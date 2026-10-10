@@ -76,3 +76,8 @@ Negative historical transient rooms are excluded. Historical group rooms above s
 ## Explicit non-changes
 
 No Market Pricing, Lighthouse/compset price use, group pace, STLY, wash, conversion probability, future ancillary forecast, or machine learning was added. `hardOtherCommittedRooms` remains zero; non-deductible group remains pipeline context/value proxy only. Economic Floor scenario structure and room-rate VAT normalization are unchanged.
+
+
+## Audit remediation model policy (2026-10-10)
+
+New analyses use `group-contribution-v5-optimal-portfolio`, `los-network-v2-optimal-portfolio` when validated, and `physical-feasibility-v2-required-inputs`. Historical model names above describe saved evidence, not current calculation policy. Persist the contribution optimization policy and immutable before/after portfolio/value certificates with each current analysis. Do not silently recalculate saved analyses after a version change. Unavailable source/settings analyses may only be explicitly unavailable drafts. All commercial rates and simulation remain suppressed until physical, positive requested-RN and required-input guards pass. See [contribution optimization](contribution-optimization.md).

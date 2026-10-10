@@ -11,20 +11,126 @@ import {
   updateDoc,
   writeBatch,
 } from "../firebaseConfig";
-import { getSelectedHotelUid } from "../utils/hotelUtils";
+import { runTransaction } from "firebase/firestore";
 
-// *** ALGEMENE SETTINGS ***
-export async function getSettings(hotelUid) {
+// Each settings domain has its own authority; never read the retired shared document.
+export async function getHotelBootstrap(hotelUid) {
   if (!hotelUid) return {};
-  const settingsDoc = doc(db, `hotels/${hotelUid}/settings`, hotelUid);
+  const settingsDoc = doc(db, `hotels/${hotelUid}/settings/bootstrap`);
   const snapshot = await getDoc(settingsDoc);
   return snapshot.exists() ? snapshot.data() : {};
 }
 
-export async function setSettings(hotelUid, settingsObj) {
-  if (!hotelUid) return;
-  const settingsDoc = doc(db, `hotels/${hotelUid}/settings`, hotelUid);
-  await setDoc(settingsDoc, settingsObj, { merge: true });
+export async function getPropertySettings(hotelUid) {
+  if (!hotelUid) return {};
+  const snapshot = await getDoc(doc(db, `hotels/${hotelUid}/settings/propertySettings`));
+  return snapshot.exists() ? snapshot.data() : {};
+}
+
+export const MAX_SETTINGS_BATCH_MUTATIONS = 400;
+const requireId = (value, label = "ID") => {
+  if (typeof value !== "string" || !value || value !== value.trim() || value.length > 128 || value.includes("/") || [".", ".."].includes(value) || /^__.*__$/.test(value) || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new Error(`${label} must be a nonempty ID of at most 128 characters.`);
+  }
+  return value;
+};
+const requireName = (value, label = "Name") => {
+  const name = typeof value === "string" ? value.trim() : "";
+  if (!name || name.length > 200 || /[\u0000-\u001f\u007f]/.test(name)) throw new Error(`${label} must contain 1 to 200 characters without control characters.`);
+  return name;
+};
+const taxonomyPath = (hotelUid, domain, kind) =>
+  `hotels/${requireId(hotelUid, "Hotel ID")}/settings/${domain}/${kind}`;
+
+async function getTaxonomy(hotelUid, domain) {
+  if (!hotelUid) return { categories: [], subcategories: [] };
+  const [categories, subcategories] = await Promise.all([
+    getDocs(collection(db, taxonomyPath(hotelUid, domain, "categories"))),
+    getDocs(collection(db, taxonomyPath(hotelUid, domain, "subcategories"))),
+  ]);
+  const records = (snapshot) => snapshot.docs.map((record) => ({ ...record.data(), id: record.id }));
+  return { categories: records(categories), subcategories: records(subcategories) };
+}
+
+async function createTaxonomyRecord(hotelUid, domain, kind, input) {
+  const reference = doc(collection(db, taxonomyPath(hotelUid, domain, kind)));
+  const payload = { name: requireName(input?.name) };
+  if (kind === "subcategories") payload.categoryId = requireId(input?.categoryId, "Category ID");
+  await setDoc(reference, payload);
+  return { id: reference.id, ...payload };
+}
+
+async function updateTaxonomyRecord(hotelUid, domain, kind, id, input) {
+  const payload = { name: requireName(input?.name) };
+  if (kind === "subcategories") payload.categoryId = requireId(input?.categoryId, "Category ID");
+  await updateDoc(doc(db, taxonomyPath(hotelUid, domain, kind), requireId(id)), payload);
+}
+
+async function deleteTaxonomyCategory(hotelUid, domain, categoryId) {
+  requireId(categoryId, "Category ID");
+  // Read current children rather than replacing the page's possibly stale taxonomy.
+  const snapshot = await getDocs(collection(db, taxonomyPath(hotelUid, domain, "subcategories")));
+  const linked = snapshot.docs.filter((record) => record.data().categoryId === categoryId);
+  if (linked.length + 1 > MAX_SETTINGS_BATCH_MUTATIONS) {
+    throw new Error("This category has too many subcategories to delete at once. Delete subcategories first.");
+  }
+  const categoryRef = doc(db, taxonomyPath(hotelUid, domain, "categories"), categoryId);
+  await runTransaction(db, async (transaction) => {
+    // A child moved to another category after enumeration must survive deletion.
+    const current = await Promise.all([transaction.get(categoryRef), ...linked.map((record) => transaction.get(record.ref))]);
+    current.slice(1).forEach((record) => {
+      if (record.exists() && record.data().categoryId === categoryId) transaction.delete(record.ref);
+    });
+    transaction.delete(categoryRef);
+  });
+}
+
+async function deleteTaxonomySubcategory(hotelUid, domain, subcategoryId) {
+  await deleteDoc(doc(db, taxonomyPath(hotelUid, domain, "subcategories"), requireId(subcategoryId)));
+}
+
+export const getCatalogTaxonomy = (hotelUid) => getTaxonomy(hotelUid, "catalog");
+export const createCatalogCategory = (hotelUid, input) => createTaxonomyRecord(hotelUid, "catalog", "categories", input);
+export const updateCatalogCategory = (hotelUid, id, input) => updateTaxonomyRecord(hotelUid, "catalog", "categories", id, input);
+export const deleteCatalogCategory = (hotelUid, id) => deleteTaxonomyCategory(hotelUid, "catalog", id);
+export const createCatalogSubcategory = (hotelUid, input) => createTaxonomyRecord(hotelUid, "catalog", "subcategories", input);
+export const updateCatalogSubcategory = (hotelUid, id, input) => updateTaxonomyRecord(hotelUid, "catalog", "subcategories", id, input);
+export const deleteCatalogSubcategory = (hotelUid, id) => deleteTaxonomySubcategory(hotelUid, "catalog", id);
+export const getContractTaxonomy = (hotelUid) => getTaxonomy(hotelUid, "contracts");
+export const createContractCategory = (hotelUid, input) => createTaxonomyRecord(hotelUid, "contracts", "categories", input);
+export const updateContractCategory = (hotelUid, id, input) => updateTaxonomyRecord(hotelUid, "contracts", "categories", id, input);
+export const deleteContractCategory = (hotelUid, id) => deleteTaxonomyCategory(hotelUid, "contracts", id);
+export const createContractSubcategory = (hotelUid, input) => createTaxonomyRecord(hotelUid, "contracts", "subcategories", input);
+export const updateContractSubcategory = (hotelUid, id, input) => updateTaxonomyRecord(hotelUid, "contracts", "subcategories", id, input);
+export const deleteContractSubcategory = (hotelUid, id) => deleteTaxonomySubcategory(hotelUid, "contracts", id);
+
+const operaMappingsPath = (hotelUid) => `hotels/${requireId(hotelUid, "Hotel ID")}/settings/opera/userMappings`;
+const operaMappingId = (operaUser) => requireId(requireName(operaUser, "Opera username"), "Opera username");
+
+export async function getOperaSettings(hotelUid) {
+  if (!hotelUid) return { operaUserMappings: {} };
+  const snapshot = await getDocs(collection(db, operaMappingsPath(hotelUid)));
+  return { operaUserMappings: Object.fromEntries(snapshot.docs.map((record) => {
+    const data = record.data();
+    return [data.operaUser, data.employeeName];
+  })) };
+}
+
+export async function createOperaUserMapping(hotelUid, input) {
+  const payload = { operaUser: requireName(input?.operaUser, "Opera username"), employeeName: requireName(input?.employeeName, "Employee name") };
+  const reference = doc(db, operaMappingsPath(hotelUid), operaMappingId(payload.operaUser));
+  await runTransaction(db, async (transaction) => {
+    if ((await transaction.get(reference)).exists()) throw new Error("This Opera username already has a mapping. Edit the existing mapping.");
+    transaction.set(reference, payload);
+  });
+}
+
+export async function updateOperaUserMapping(hotelUid, operaUser, employeeName) {
+  await updateDoc(doc(db, operaMappingsPath(hotelUid), operaMappingId(operaUser)), { employeeName: requireName(employeeName, "Employee name") });
+}
+
+export async function deleteOperaUserMapping(hotelUid, operaUser) {
+  await deleteDoc(doc(db, operaMappingsPath(hotelUid), operaMappingId(operaUser)));
 }
 
 // *** OUTLETS ***
@@ -369,41 +475,6 @@ export async function removeLocationStockTemplateItem(hotelUid, locationId, temp
   });
   const templateRef = doc(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`, templateId);
   await updateDoc(templateRef, { items: nextItems, updatedAt: new Date() });
-}
-
-export async function transferOutletsToCollection(hotelUid) {
-  if (!hotelUid) return { transferred: 0 };
-
-  const settingsDoc = doc(db, `hotels/${hotelUid}/settings`, hotelUid);
-  const snap = await getDoc(settingsDoc);
-  if (!snap.exists()) {
-    return { transferred: 0 };
-  }
-
-  const outlets = Array.isArray(snap.data().outlets) ? snap.data().outlets : [];
-  if (!outlets.length) {
-    return { transferred: 0 };
-  }
-
-  const outletsCol = collection(db, `hotels/${hotelUid}/outlets`);
-  let transferred = 0;
-  const chunkSize = 400;
-
-  for (let i = 0; i < outlets.length; i += chunkSize) {
-    const batch = writeBatch(db);
-    outlets.slice(i, i + chunkSize).forEach(outlet => {
-      const rawId = outlet?.id ?? outlet?.name ?? "";
-      const outletId = String(rawId).trim();
-      const outletRef = outletId
-        ? doc(db, `hotels/${hotelUid}/outlets`, outletId)
-        : doc(outletsCol);
-      batch.set(outletRef, outlet);
-      transferred += 1;
-    });
-    await batch.commit();
-  }
-
-  return { transferred };
 }
 
 // *** FILE IMPORT SETTINGS ***
@@ -863,447 +934,4 @@ export async function deleteFileImportType(hotelUid, fileImportTypeId) {
 
   const fileImportTypeRef = doc(db, `hotels/${hotelUid}/fileImportTypes`, fileImportTypeId);
   await deleteDoc(fileImportTypeRef);
-}
-
-// *** CATEGORIEËN ***
-export async function getCategories() {
-  const hotelId = getSelectedHotelUid();
-  const settingsDoc = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  const snapshot = await getDoc(settingsDoc);
-  return snapshot.exists() && snapshot.data().categories
-    ? snapshot.data().categories
-    : {};
-}
-
-export async function addCategory(key, label, vat, type, parentId = "") {
-  const hotelId = getSelectedHotelUid();
-  const settingsDoc = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  // Voeg de nieuwe categorie toe of update bestaande
-  const snapshot = await getDoc(settingsDoc);
-  let categories = {};
-  if (snapshot.exists() && snapshot.data().categories) {
-    categories = { ...snapshot.data().categories };
-  }
-  categories[key] = { label, vat, type, parentId };
-  await updateDoc(settingsDoc, { categories });
-}
-
-export async function deleteCategory(key) {
-  const hotelId = getSelectedHotelUid();
-  const settingsDoc = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  // Firestore kan geen veld direct deleten uit een map met updateDoc({ ... }), dus eerst ophalen, verwijderen en dan wegschrijven
-  const snapshot = await getDoc(settingsDoc);
-  if (snapshot.exists() && snapshot.data().categories) {
-    const categories = { ...snapshot.data().categories };
-    delete categories[key];
-    await updateDoc(settingsDoc, { categories });
-  }
-}
-
-// *** PRODUCT-CATEGORIEËN ***
-export async function getProductCategories() {
-  const hotelId = getSelectedHotelUid();
-  const settingsDoc = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  const snapshot = await getDoc(settingsDoc);
-  return snapshot.exists() && snapshot.data().productCategories
-    ? snapshot.data().productCategories
-    : {};
-}
-
-export async function addProductCategory(key, label, vat, type, parentId = "") {
-  const hotelId = getSelectedHotelUid();
-  const settingsDoc = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  const snapshot = await getDoc(settingsDoc);
-  let productCategories = {};
-  if (snapshot.exists() && snapshot.data().productCategories) {
-    productCategories = { ...snapshot.data().productCategories };
-  }
-  productCategories[key] = { label, vat, type, parentId };
-  await updateDoc(settingsDoc, { productCategories });
-}
-
-export async function deleteProductCategory(key) {
-  const hotelId = getSelectedHotelUid();
-  const settingsDoc = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  const snapshot = await getDoc(settingsDoc);
-  if (snapshot.exists() && snapshot.data().productCategories) {
-    const productCategories = { ...snapshot.data().productCategories };
-    delete productCategories[key];
-    await updateDoc(settingsDoc, { productCategories });
-  }
-}
-
-// *** UNITS ***
-export async function getUnits(hotelUid) {
-  if (!hotelUid) return [];
-  const unitsDoc = doc(db, "units", hotelUid);
-  const snap = await getDoc(unitsDoc);
-  return snap.exists() && snap.data().units ? snap.data().units : [];
-}
-
-export async function setUnits(hotelUid, units) {
-  if (!hotelUid) return;
-  const unitsDoc = doc(db, "units", hotelUid);
-  await setDoc(unitsDoc, { units });
-}
-
-// *** LEVERANCIERS ***
-export async function getSuppliers() {
-  const hotelId = getSelectedHotelUid();
-  const settingsDoc = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  const snapshot = await getDoc(settingsDoc);
-  if (!snapshot.exists() || !snapshot.data().suppliers) return [];
-  const obj = snapshot.data().suppliers;
-  return Object.entries(obj).map(([key, value]) => ({ key, ...value }));
-}
-
-export async function addSupplier(supplierObj) {
-  const hotelId = getSelectedHotelUid();
-  const settingsDoc = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  // Voeg supplier toe aan de map suppliers
-  const snapshot = await getDoc(settingsDoc);
-  let suppliers = {};
-  if (snapshot.exists() && snapshot.data().suppliers) {
-    suppliers = { ...snapshot.data().suppliers };
-  }
-  suppliers[supplierObj.name] = supplierObj;
-  await updateDoc(settingsDoc, { suppliers });
-}
-
-export async function deleteSupplier(name) {
-  const hotelId = getSelectedHotelUid();
-  const settingsDoc = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  // Firestore: verwijder veld uit object
-  const snapshot = await getDoc(settingsDoc);
-  if (snapshot.exists() && snapshot.data().suppliers) {
-    const suppliers = { ...snapshot.data().suppliers };
-    delete suppliers[name];
-    await updateDoc(settingsDoc, { suppliers });
-  }
-}
-
-// *** SALES & PROMO CATEGORIEN ***
-export async function getSalesPromoCategories(hotelUid) {
-  if (!hotelUid) return [];
-  const docRef = doc(db, `hotels/${hotelUid}/settings`, hotelUid);
-  const snap = await getDoc(docRef);
-  return snap.exists() && Array.isArray(snap.data().salesAndPromoCategories)
-    ? snap.data().salesAndPromoCategories
-    : [];
-}
-
-export async function setSalesPromoCategories(hotelUid, categories) {
-  if (!hotelUid) return;
-  const docRef = doc(db, `hotels/${hotelUid}/settings`, hotelUid);
-  await setDoc(docRef, { salesAndPromoCategories: categories }, { merge: true });
-}
-
-// *** SALES & PROMO TYPES ***
-const mapSalesPromoType = type => {
-  if (typeof type === "string") {
-    return { name: type, checklist: [] };
-  }
-  if (type && typeof type === "object") {
-    const name = typeof type.name === "string" ? type.name.trim() : "";
-    if (!name) return null;
-    const checklist = Array.isArray(type.checklist)
-      ? type.checklist.filter(item => typeof item === "string" && item.trim()).map(item => item.trim())
-      : [];
-    return { name, checklist };
-  }
-  return null;
-};
-
-export async function getSalesPromoTypes(hotelUid) {
-  if (!hotelUid) return [];
-  const docRef = doc(db, `hotels/${hotelUid}/settings`, hotelUid);
-  const snap = await getDoc(docRef);
-  if (!snap.exists()) return [];
-  const raw = snap.data().salesPromoTypes;
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map(mapSalesPromoType)
-    .filter(Boolean);
-}
-
-export async function setSalesPromoTypes(hotelUid, types) {
-  if (!hotelUid) return;
-  const docRef = doc(db, `hotels/${hotelUid}/settings`, hotelUid);
-  const sanitized = Array.isArray(types)
-    ? types
-        .map(mapSalesPromoType)
-        .filter(Boolean)
-    : [];
-  await setDoc(docRef, { salesPromoTypes: sanitized }, { merge: true });
-}
-
-// *** SALES & PROMO PRODUCTS ***
-export async function getSalesPromoProducts(hotelUid) {
-  if (!hotelUid) return [];
-  const docRef = doc(db, `hotels/${hotelUid}/settings`, hotelUid);
-  const snap = await getDoc(docRef);
-  return snap.exists() && Array.isArray(snap.data().salesPromoProducts)
-    ? snap.data().salesPromoProducts
-    : [];
-}
-
-export async function setSalesPromoProducts(hotelUid, products) {
-  if (!hotelUid) return;
-  const docRef = doc(db, `hotels/${hotelUid}/settings`, hotelUid);
-  await setDoc(docRef, { salesPromoProducts: products }, { merge: true });
-}
-
-// *** CATEGORIE-MAPPING ***
-export async function getCategoryMappings() {
-  const hotelId = getSelectedHotelUid();
-  const docRef = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  const snap = await getDoc(docRef);
-  return snap.exists() && snap.data().categoryMappings
-    ? snap.data().categoryMappings
-    : {};
-}
-
-export async function addCategoryMapping(productCategoryKey, categoryKey) {
-  const hotelId = getSelectedHotelUid();
-  const docRef = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  const snap = await getDoc(docRef);
-  let mappings = {};
-  if (snap.exists() && snap.data().categoryMappings) {
-    mappings = { ...snap.data().categoryMappings };
-  }
-  mappings[productCategoryKey] = categoryKey;
-  await updateDoc(docRef, { categoryMappings: mappings });
-}
-
-export async function deleteCategoryMapping(productCategoryKey) {
-  const hotelId = getSelectedHotelUid();
-  const docRef = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  const snap = await getDoc(docRef);
-  if (snap.exists() && snap.data().categoryMappings) {
-    const mappings = { ...snap.data().categoryMappings };
-    delete mappings[productCategoryKey];
-    await updateDoc(docRef, { categoryMappings: mappings });
-  }
-}
-// *** STAFF / PERSONEEL ***
-function normalizeHoursHistory(history = []) {
-  if (!Array.isArray(history)) return [];
-  return history
-    .filter(entry => entry && (entry.date || entry.hours))
-    .map((entry, index) => ({
-      id:
-        entry.id ||
-        `${entry.date || "unknown"}-${index}-${Math.random().toString(36).slice(2, 8)}`,
-      date: entry.date || "",
-      hours:
-        typeof entry.hours === "number"
-          ? entry.hours
-          : Number.parseFloat(entry.hours) || 0,
-      note: entry.note || "",
-    }));
-}
-
-function normalizeStaffRecord(value = {}, fallbackId = "") {
-  const id = value?.id || value?.key || value?.name || fallbackId;
-  return {
-    id,
-    key: id,
-    ...value,
-    contractHours:
-      typeof value?.contractHours === "number"
-        ? value.contractHours
-        : value?.contractHours
-        ? Number.parseFloat(value.contractHours) || null
-        : null,
-    hourlyWage:
-      typeof value?.hourlyWage === "number"
-        ? value.hourlyWage
-        : value?.hourlyWage
-        ? Number.parseFloat(value.hourlyWage) || null
-        : null,
-    hoursHistory: normalizeHoursHistory(value?.hoursHistory),
-  };
-}
-
-async function getLegacyStaff(hotelId) {
-  const docRef = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  const snap = await getDoc(docRef);
-  if (!snap.exists() || !snap.data().staff) return [];
-  const obj = snap.data().staff;
-  return Object.entries(obj).map(([key, value]) => normalizeStaffRecord(value, key));
-}
-
-async function deleteLegacyStaffMember(hotelId, id) {
-  const docRef = doc(db, `hotels/${hotelId}/settings`, hotelId);
-  const snap = await getDoc(docRef);
-  if (!snap.exists() || !snap.data().staff) return;
-  const staff = { ...snap.data().staff };
-  if (staff[id]) {
-    delete staff[id];
-    await updateDoc(docRef, { staff });
-  }
-}
-
-const createStaffContractTypeId = () => {
-  if (typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID) {
-    return globalThis.crypto.randomUUID();
-  }
-  return `staff_contract_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-};
-
-const normalizeStaffContractType = (value = {}, fallbackId = "") => {
-  const id = value?.id || fallbackId || createStaffContractTypeId();
-  const coefficientRaw =
-    value?.coefficient === null || value?.coefficient === undefined || value?.coefficient === ""
-      ? 1
-      : typeof value.coefficient === "number"
-      ? value.coefficient
-      : Number.parseFloat(value.coefficient);
-  const coefficient = Number.isFinite(coefficientRaw) ? coefficientRaw : 1;
-  return {
-    id,
-    name: String(value?.name || value?.label || "").trim(),
-    coefficient,
-  };
-};
-
-async function setStaffContractTypes(hotelUid, contractTypes) {
-  if (!hotelUid) return [];
-  const docRef = doc(db, `hotels/${hotelUid}/settings`, hotelUid);
-  const normalized = Array.isArray(contractTypes)
-    ? contractTypes.map(type => normalizeStaffContractType(type))
-    : [];
-  await setDoc(
-    docRef,
-    {
-      staffContractTypes: normalized,
-    },
-    { merge: true }
-  );
-  return normalized;
-}
-
-export async function getStaffContractTypes(hotelUid = getSelectedHotelUid()) {
-  if (!hotelUid) return [];
-  const docRef = doc(db, `hotels/${hotelUid}/settings`, hotelUid);
-  const snap = await getDoc(docRef);
-  if (!snap.exists()) return [];
-  const list = snap.data().staffContractTypes;
-  if (!Array.isArray(list)) return [];
-  return list.map((type, index) => normalizeStaffContractType(type, `staff_contract_${index}`));
-}
-
-export async function addStaffContractType(contractType) {
-  const hotelUid = getSelectedHotelUid();
-  if (!hotelUid) return null;
-  const existing = await getStaffContractTypes(hotelUid);
-  const newType = normalizeStaffContractType({ ...contractType, id: createStaffContractTypeId() });
-  const updated = [...existing, newType];
-  await setStaffContractTypes(hotelUid, updated);
-  return newType;
-}
-
-export async function updateStaffContractType(id, updates) {
-  const hotelUid = getSelectedHotelUid();
-  if (!hotelUid || !id) return null;
-  const existing = await getStaffContractTypes(hotelUid);
-  const updated = existing.map(type => (type.id === id ? normalizeStaffContractType({ ...type, ...updates, id }) : type));
-  await setStaffContractTypes(hotelUid, updated);
-  return updated.find(type => type.id === id) || null;
-}
-
-export async function deleteStaffContractType(id) {
-  const hotelUid = getSelectedHotelUid();
-  if (!hotelUid || !id) return [];
-  const existing = await getStaffContractTypes(hotelUid);
-  const updated = existing.filter(type => type.id !== id);
-  await setStaffContractTypes(hotelUid, updated);
-  return updated;
-}
-
-export async function getStaff() {
-  const hotelId = getSelectedHotelUid();
-  if (!hotelId) return [];
-  const staffCollection = collection(db, `hotels/${hotelId}/staff`);
-  const staffSnap = await getDocs(staffCollection);
-  const staff = staffSnap.docs.map(docSnap => normalizeStaffRecord(docSnap.data(), docSnap.id));
-  if (staff.length > 0) {
-    return staff;
-  }
-  return getLegacyStaff(hotelId);
-}
-
-function getStaffId(staffObj = {}) {
-  if (!staffObj) return null;
-  return staffObj.id || staffObj.key || staffObj.name || null;
-}
-
-export async function saveStaffMember(staffObj) {
-  const hotelId = getSelectedHotelUid();
-  if (!hotelId) return null;
-  const id = getStaffId(staffObj);
-  if (!id) {
-    throw new Error("Personeelslid moet een id of naam hebben om op te slaan.");
-  }
-  const staffDocRef = doc(db, `hotels/${hotelId}/staff`, id);
-  const existingSnap = await getDoc(staffDocRef);
-  const existing = existingSnap.exists() ? existingSnap.data() : {};
-  const mergedHistory = Array.isArray(staffObj?.hoursHistory)
-    ? normalizeHoursHistory(staffObj.hoursHistory)
-    : normalizeHoursHistory(existing.hoursHistory);
-
-  const normalizedContractHours =
-    staffObj.contractHours === null || staffObj.contractHours === undefined || staffObj.contractHours === ""
-      ? null
-      : typeof staffObj.contractHours === "number"
-      ? staffObj.contractHours
-      : Number.parseFloat(staffObj.contractHours) || null;
-
-  const normalizedHourlyWage =
-    staffObj.hourlyWage === null || staffObj.hourlyWage === undefined || staffObj.hourlyWage === ""
-      ? null
-      : typeof staffObj.hourlyWage === "number"
-      ? staffObj.hourlyWage
-      : Number.parseFloat(staffObj.hourlyWage) || null;
-
-  const payload = {
-    ...existing,
-    ...staffObj,
-    id,
-    key: id,
-    contractHours: normalizedContractHours,
-    hourlyWage: normalizedHourlyWage,
-    hoursHistory: mergedHistory,
-  };
-
-  await setDoc(staffDocRef, payload);
-  await deleteLegacyStaffMember(hotelId, id);
-  return normalizeStaffRecord(payload, id);
-}
-
-export async function addStaffMember(staffObj) {
-  return saveStaffMember(staffObj);
-}
-
-export async function deleteStaffMember(id) {
-  const hotelId = getSelectedHotelUid();
-  if (!hotelId) return;
-  const staffId = id || null;
-  if (!staffId) return;
-  const staffDocRef = doc(db, `hotels/${hotelId}/staff`, staffId);
-  await deleteDoc(staffDocRef);
-  await deleteLegacyStaffMember(hotelId, staffId);
-}
-
-export async function getStaffMember(id) {
-  if (!id) return null;
-  const hotelId = getSelectedHotelUid();
-  if (!hotelId) return null;
-  const staffDocRef = doc(db, `hotels/${hotelId}/staff`, id);
-  const snap = await getDoc(staffDocRef);
-  if (snap.exists()) {
-    return normalizeStaffRecord(snap.data(), snap.id);
-  }
-  const legacyStaff = await getLegacyStaff(hotelId);
-  return legacyStaff.find(member => member.id === id || member.key === id || member.name === id) || null;
 }

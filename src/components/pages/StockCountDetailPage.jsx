@@ -1,14 +1,14 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Download } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import DataListTable from "../shared/DataListTable";
-import * as XLSX from "xlsx";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { finishStockCount, getStockCountById } from "../../services/firebaseStockCounts";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { usePermission } from "../../hooks/usePermission";
 
 function formatCurrency(value) {
@@ -56,8 +56,13 @@ export default function StockCountDetailPage() {
   const { stockCountId } = useParams();
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
-  const [stockCount, setStockCount] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const scopeKey = `${hotelUid}:${stockCountId}`;
+  const activeScope = useRef({ key: scopeKey });
+  if (activeScope.current.key !== scopeKey) activeScope.current = { key: scopeKey };
+  const loadStockCount = useCallback(() => getStockCountById(hotelUid, stockCountId), [hotelUid, stockCountId]);
+  const { data: stockCount, loading, error: loadError, retry, setData: setStockCount } = useScopedAsync({
+    scopeKey, enabled: Boolean(hotelUid && stockCountId), load: loadStockCount,
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -78,22 +83,10 @@ export default function StockCountDetailPage() {
   };
 
   useEffect(() => {
-    const loadStockCount = async () => {
-      if (!hotelUid || !stockCountId) return;
-      setLoading(true);
-      setError("");
-      try {
-        const nextStockCount = await getStockCountById(hotelUid, stockCountId);
-        setStockCount(nextStockCount);
-      } catch (loadError) {
-        setError(loadError?.message || "Unable to load stock count.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadStockCount();
-  }, [hotelUid, stockCountId]);
+    activeScope.current = { key: scopeKey };
+    setSaving(false); setError("");
+    return () => { activeScope.current = { key: null }; };
+  }, [scopeKey]);
 
   const rows = useMemo(
     () =>
@@ -151,7 +144,8 @@ export default function StockCountDetailPage() {
     [stockCount]
   );
 
-  const handleExportCountedSupplierProducts = () => {
+  const handleExportCountedSupplierProducts = async () => {
+    const XLSX = await import("xlsx");
     const worksheet = XLSX.utils.json_to_sheet(countedSupplierProductRows);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Counted Products");
@@ -166,17 +160,19 @@ export default function StockCountDetailPage() {
   const handleFinishStockCount = async () => {
     if (!canUpdateStockCounts) return;
     if (!hotelUid || !stockCountId || !canFinishStockCount) return;
+    const requestedScope = activeScope.current;
     setSaving(true);
     setError("");
 
     try {
-      await finishStockCount(hotelUid, stockCountId, auth.currentUser?.uid || "unknown");
+      await finishStockCount(hotelUid, stockCountId, auth.currentUser?.uid || "unknown", stockCount.revision);
+      if (activeScope.current !== requestedScope) return;
       const nextStockCount = await getStockCountById(hotelUid, stockCountId);
-      setStockCount(nextStockCount);
+      if (activeScope.current === requestedScope) setStockCount(nextStockCount);
     } catch (finishError) {
-      setError(finishError?.message || "Unable to finish stock count.");
+      if (activeScope.current === requestedScope) setError(finishError?.message || "Unable to finish stock count.");
     } finally {
-      setSaving(false);
+      if (activeScope.current === requestedScope) setSaving(false);
     }
   };
 
@@ -213,6 +209,7 @@ export default function StockCountDetailPage() {
           </div>
         </div>
 
+        {loadError && <div role="alert"><p>{loadError.message || "Unable to load stock count."}</p><button type="button" onClick={retry}>Retry</button></div>}
         {loading ? (
           <p className="text-gray-600">Loading stock count...</p>
         ) : !stockCount ? (

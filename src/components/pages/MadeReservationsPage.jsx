@@ -5,7 +5,7 @@ import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getMadeReservationDates, getMadeReservations } from "../../services/firebaseArrivals";
-import { getSettings } from "../../services/firebaseSettings";
+import { getOperaSettings } from "../../services/firebaseSettings";
 import { subscribeMarketSegments } from "../../services/firebaseMarketSegments";
 import { calculateNights } from "../../utils/arrivalDates";
 import { filterMadeReservations, getReservationCreator } from "../../utils/arrivalFilters";
@@ -93,7 +93,7 @@ export default function MadeReservationsPage() {
       return () => { active = false; };
     }
 
-    Promise.all([getMadeReservationDates(hotelUid), getSettings(hotelUid)])
+    Promise.all([getMadeReservationDates(hotelUid), getOperaSettings(hotelUid)])
       .then(([dates, settings]) => {
         if (!active) return;
         setSelectedDate(dates[0] || "");

@@ -1299,3 +1299,10 @@ The displacement model declares `displacementBasis: STAY_DATE`. It does not mode
 arrival-date × LOS itinerary networks or additional shoulder-night contribution.
 No LOS distributions, shoulder multipliers, overbooking, walking, or stay-through
 controls were introduced by V3.2.
+
+
+## Contribution optimization correction (2026-10-10)
+
+The current model is `group-contribution-v5-optimal-portfolio`. It supersedes the historical lowest-contribution-first displacement allocation described above. Protect current commitments, optimize profitable future demand in descending net contribution within available capacity before and after the complete new group, and subtract portfolio values. Independent forecast buckets may exceed inventory; business rejected in the baseline must never be charged as displacement. For inventory 100, transient demand 90 at €200 net and future group demand 100 at €100 net, accepting a new group of 20 changes portfolio value from €19,000 to €16,000. With no additional costs, commission or VAT, opportunity cost is €3,000, floor €150 and a €125 quote loses €500.
+
+Active LOS uses `los-network-v2-optimal-portfolio`: bounded, certified complete-itinerary optimization, including replacement contribution. Its core arrival horizon and complete capacity/valuation tail are separate. Required unknown data, hard-capacity failure and zero RN suppress all floors, Target, Stretch and simulation. The room VAT, separate future/proposed commission, nightly breakfast cost, meal-basis disclosure and incremental BQT contribution contracts remain as documented. Saved historical snapshots are retained; a version mismatch is not permission to recalculate them. See [contribution optimization](contribution-optimization.md) and [LOS contract](los-network-v1.md).

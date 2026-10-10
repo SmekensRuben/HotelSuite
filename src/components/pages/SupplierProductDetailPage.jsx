@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Pencil, Trash2 } from "lucide-react";
@@ -9,7 +9,9 @@ import Modal from "../shared/Modal";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { deleteSupplierProduct, getSupplierProduct } from "../../services/firebaseProducts";
-import { getUserDisplayName } from "../../services/firebaseUserManagement";
+import AsyncError from "../shared/AsyncError";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 import { usePermission } from "../../hooks/usePermission";
 
 function formatDate(value) {
@@ -29,17 +31,27 @@ function DetailField({ label, value }) {
 }
 
 export default function SupplierProductDetailPage() {
-  const navigate = useNavigate();
-  const { t } = useTranslation("common");
   const { productId } = useParams();
   const { hotelUid } = useHotelContext();
+  return <ScopedSupplierProductDetailPage key={`${hotelUid}:${productId}`} hotelUid={hotelUid} productId={productId} />;
+}
+
+function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
+  const navigate = useNavigate();
+  const { t } = useTranslation("common");
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const canEditProducts = usePermission("supplierproducts", "update");
   const canDeleteProducts = usePermission("supplierproducts", "delete");
-  const [product, setProduct] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [createdByName, setCreatedByName] = useState("-");
-  const [updatedByName, setUpdatedByName] = useState("-");
+  const scopeKey = `${hotelUid}:${productId}`;
+  const load = useCallback(() => getSupplierProduct(hotelUid, productId), [hotelUid, productId]);
+  const query = useScopedAsync({ scopeKey, enabled: Boolean(hotelUid && productId), load });
+  const product = query.data;
+  const loading = query.loading;
+  const { createdByName, updatedByName } = useStaffDisplayNames({ hotelUid, scopeKey, record: product });
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const today = useMemo(
     () =>
@@ -57,41 +69,22 @@ export default function SupplierProductDetailPage() {
     window.location.href = "/login";
   };
 
-  useEffect(() => {
-    const loadProduct = async () => {
-      if (!hotelUid || !productId) return;
-      setLoading(true);
-      const data = await getSupplierProduct(hotelUid, productId);
-      setProduct(data);
-      setLoading(false);
-    };
-    loadProduct();
-  }, [hotelUid, productId]);
-
-  useEffect(() => {
-    const loadUserNames = async () => {
-      if (!product) return;
-      const [createdName, updatedName] = await Promise.all([
-        getUserDisplayName(product.createdBy),
-        getUserDisplayName(product.updatedBy),
-      ]);
-      setCreatedByName(createdName);
-      setUpdatedByName(updatedName);
-    };
-    loadUserNames();
-  }, [product]);
 
   const handleDeleteProduct = async () => {
-    if (!hotelUid || !productId || !canDeleteProducts) return;
-    await deleteSupplierProduct(hotelUid, productId);
-    setShowDeleteModal(false);
-    navigate("/catalog/supplier-products");
+    if (!mounted.current || !hotelUid || !productId || !canDeleteProducts || deleting) return;
+    setDeleting(true); setDeleteError(null);
+    try {
+      await deleteSupplierProduct(hotelUid, productId);
+      if (mounted.current) { setShowDeleteModal(false); navigate("/catalog/supplier-products"); }
+    } catch (error) { if (mounted.current) setDeleteError(error); }
+    finally { if (mounted.current) setDeleting(false); }
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
+        <AsyncError error={query.error} onRetry={query.retry} label="Could not load product." />
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
@@ -114,7 +107,7 @@ export default function SupplierProductDetailPage() {
             <button
               type="button"
               onClick={() => setShowDeleteModal(true)}
-              disabled={!canDeleteProducts}
+              disabled={!canDeleteProducts || deleting}
               className={`inline-flex items-center justify-center rounded border p-2 ${
                 canDeleteProducts
                   ? "border-red-200 text-red-700 hover:bg-red-50"
@@ -136,7 +129,7 @@ export default function SupplierProductDetailPage() {
 
         {loading ? (
           <p className="text-gray-600">{t("products.loading")}</p>
-        ) : !product ? (
+        ) : query.error ? null : !product ? (
           <Card>
             <p className="text-gray-600">{t("products.notFound")}</p>
           </Card>
@@ -262,6 +255,7 @@ export default function SupplierProductDetailPage() {
         title={t("products.deleteModal.title")}
       >
         <p className="text-sm text-gray-700">{t("products.deleteModal.message")}</p>
+        <AsyncError error={deleteError} onRetry={handleDeleteProduct} label="Could not delete this product." />
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
@@ -273,7 +267,7 @@ export default function SupplierProductDetailPage() {
           <button
             type="button"
             onClick={handleDeleteProduct}
-            disabled={!canDeleteProducts}
+            disabled={!canDeleteProducts || deleting}
             className={`px-4 py-2 rounded ${
               canDeleteProducts
                 ? "bg-red-600 text-white hover:bg-red-700"

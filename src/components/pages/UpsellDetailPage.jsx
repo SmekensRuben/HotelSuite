@@ -6,7 +6,7 @@ import PageContainer from "../layout/PageContainer";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getAuditUpsell, updateAuditUpsellValidation } from "../../services/firebaseUpsells";
-import { getSettings } from "../../services/firebaseSettings";
+import { getOperaSettings } from "../../services/firebaseSettings";
 import Modal from "../shared/Modal";
 import { usePermission } from "../../hooks/usePermission";
 
@@ -245,7 +245,7 @@ export default function UpsellDetailPage() {
       try {
         const [record, settings] = await Promise.all([
           getAuditUpsell(hotelUid, date, auditUpsellId),
-          getSettings(hotelUid),
+          getOperaSettings(hotelUid),
         ]);
         if (!active) return;
         setAuditUpsell(record);

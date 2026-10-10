@@ -1,8 +1,11 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { admin } = require("./config");
-const { requireVerifiedUser } = require("./validation");
+const { text } = require("./validation");
 const catalog = require("./permissionCatalog.json");
-const { requireDocumentId } = require("./subscriptions");
+const { requireDocumentId, requirePlatformAdministrator } = require("./subscriptions");
+const { readTeamGuard, writeTeamGuard } = require("./hotelTeam");
+const { ADMIN_PERMISSIONS } = require("./modulePolicy");
+const { gated } = require("./saasRollout");
 
 function normalizeStrings(values) {
   return Array.isArray(values)
@@ -13,18 +16,17 @@ function normalizeStrings(values) {
 function normalizeMemberships(hotelUids, memberships) {
   return Object.fromEntries(hotelUids.map((hotelUid) => [
     hotelUid,
-    normalizeStrings(memberships?.[hotelUid]).map((key) => key.toLowerCase()),
+    normalizeStrings(normalizeStrings(memberships?.[hotelUid]).map((key) => key.toLowerCase())),
   ]));
 }
 
 async function updateUserAccessHandler(request, services = {}) {
-  requireVerifiedUser(request);
-  if (request.auth.token?.platformAdmin !== true) {
-    throw new HttpsError("permission-denied", "Platform administrator access is required.");
-  }
+  await requirePlatformAdministrator(request, services.auth);
 
   const userId = requireDocumentId(request.data?.userId, "userId");
   const profile = request.data?.profile && typeof request.data.profile === "object" ? request.data.profile : {};
+  const firstName = text(profile.firstName || "", "First name", 80);
+  const lastName = text(profile.lastName || "", "Last name", 80);
   const hotelUids = normalizeStrings(profile.hotelUid);
   if (hotelUids.length > 50) throw new HttpsError("invalid-argument", "At most 50 hotels may be assigned in one save.");
   hotelUids.forEach((hotelUid) => requireDocumentId(hotelUid, "hotelUid"));
@@ -54,9 +56,29 @@ async function updateUserAccessHandler(request, services = {}) {
     previousHotelUids.forEach((hotelUid) => requireDocumentId(hotelUid, "stored hotelUid"));
     const hotelSnapshots = await Promise.all(hotelUids.map((hotelUid) => transaction.get(firestore.doc(`hotels/${hotelUid}`))));
     if (hotelSnapshots.some((snapshot) => !snapshot.exists)) throw new HttpsError("not-found", "An assigned hotel does not exist.");
+    const affectedHotels = [...new Set([...previousHotelUids, ...hotelUids])].sort();
+    const previousMembers = await Promise.all(affectedHotels.map((hotelUid) =>
+      transaction.get(firestore.doc(`hotels/${hotelUid}/members/${userId}`))));
+    const subscriptions = await Promise.all(affectedHotels.map((hotelUid) => transaction.get(firestore.doc(`hotelSubscriptions/${hotelUid}`))));
+    const guards = await Promise.all(affectedHotels.map((hotelUid, index) => readTeamGuard(firestore, transaction, hotelUid, {
+      removingAdminUid: previousMembers[index].data()?.hotelAdmin === true && !hotelUids.includes(hotelUid) ? userId : null,
+      addingMember: !previousMembers[index].exists && hotelUids.includes(hotelUid),
+      seatLimit: subscriptions[index].data()?.seatLimit ?? null,
+    })));
+    affectedHotels.forEach((hotelUid, index) => {
+      if (hotelUids.includes(hotelUid) && previousMembers[index].data()?.hotelAdmin === true) {
+        memberships[hotelUid] = [...new Set([...memberships[hotelUid], ...ADMIN_PERMISSIONS])].sort();
+      }
+    });
+    const permissionDeltas = affectedHotels.map((hotelUid, index) => {
+      const before = normalizeStrings(normalizeStrings(previousMembers[index].data()?.permissions).map((key) => key.toLowerCase())).sort();
+      const after = (memberships[hotelUid] || []).slice().sort();
+      return { hotelUid, before, after, added: after.filter((key) => !before.includes(key)),
+        removed: before.filter((key) => !after.includes(key)) };
+    });
     transaction.update(userRef, {
-      firstName: String(profile.firstName || "").trim(),
-      lastName: String(profile.lastName || "").trim(),
+      firstName,
+      lastName,
       email: targetUser.email || "",
       hotelUid: hotelUids,
       permissions: admin.firestore.FieldValue.delete(),
@@ -66,13 +88,18 @@ async function updateUserAccessHandler(request, services = {}) {
     });
     hotelUids.forEach((hotelUid) => transaction.set(firestore.doc(`hotels/${hotelUid}/members/${userId}`), {
       permissions: memberships[hotelUid],
+      moduleRoles: {}, additionalPermissions: memberships[hotelUid].filter((key) => !key.startsWith("users.")), rolePolicyVersion: 1,
+      firstName, lastName,
+      revision: (previousMembers[affectedHotels.indexOf(hotelUid)].data()?.revision || 0) + 1,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true }));
+    guards.forEach((guard) => writeTeamGuard(transaction, guard, request.auth.uid));
     previousHotelUids.filter((hotelUid) => !hotelUids.includes(hotelUid))
       .forEach((hotelUid) => transaction.delete(firestore.doc(`hotels/${hotelUid}/members/${userId}`)));
     transaction.set(auditRef, {
       userId, actorUid: request.auth.uid, hotelUids,
       removedHotelUids: previousHotelUids.filter((hotelUid) => !hotelUids.includes(hotelUid)),
+      permissionDeltas,
       revision: expectedRevision + 1,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
@@ -82,6 +109,6 @@ async function updateUserAccessHandler(request, services = {}) {
 
 // Callable functions normally enable CORS by default. Keep it explicit because
 // this endpoint is invoked from Vercel preview origins as well as production.
-const updateUserAccess = onCall({ region: "us-central1", cors: true }, (request) => updateUserAccessHandler(request));
+const updateUserAccess = onCall({ region: "us-central1", cors: true }, gated(updateUserAccessHandler));
 
 module.exports = { normalizeStrings, normalizeMemberships, updateUserAccessHandler, updateUserAccess };

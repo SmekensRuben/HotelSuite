@@ -1,10 +1,13 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getSettings, setSettings } from "../../services/firebaseSettings";
+import {
+  getCatalogTaxonomy, createCatalogCategory, updateCatalogCategory, deleteCatalogCategory,
+  createCatalogSubcategory, updateCatalogSubcategory, deleteCatalogSubcategory,
+} from "../../services/firebaseSettings";
 import { usePermission } from "../../hooks/usePermission";
 
 function sortByName(items) {
@@ -32,6 +35,9 @@ export default function SettingsCatalogPage() {
   const [editingSubcategoryName, setEditingSubcategoryName] = useState("");
   const [editingSubcategoryCategoryId, setEditingSubcategoryCategoryId] = useState("");
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const requestVersion = useRef(0);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   const todayLabel = useMemo(
     () =>
@@ -77,107 +83,85 @@ export default function SettingsCatalogPage() {
   };
 
   useEffect(() => {
-    if (!hotelUid) return;
-
-    const loadCatalog = async () => {
-      setLoading(true);
-      const settings = await getSettings(hotelUid);
-      const loadedCategories = Object.entries(settings?.catalogCategories || {}).map(
-        ([id, value]) => ({
-          id,
-          name: value?.name || "",
-        })
-      );
-
-      const loadedSubcategories = Object.entries(
-        settings?.catalogSubcategories || {}
-      ).map(([id, value]) => ({
-        id,
-        name: value?.name || "",
-        categoryId: value?.categoryId || "",
-      }));
-
-      setCategories(loadedCategories);
-      setSubcategories(loadedSubcategories);
-      setLoading(false);
-    };
-
-    loadCatalog();
+    setCategoryName("");
+    setSubcategoryName("");
+    setSubcategoryCategoryId("");
+    setEditingCategoryId("");
+    setEditingCategoryName("");
+    setEditingSubcategoryId("");
+    setEditingSubcategoryName("");
+    setEditingSubcategoryCategoryId("");
   }, [hotelUid]);
 
-  const persistCatalog = async (nextCategories, nextSubcategories) => {
-    const catalogCategories = nextCategories.reduce((accumulator, category) => {
-      accumulator[category.id] = { name: category.name };
-      return accumulator;
-    }, {});
-
-    const catalogSubcategories = nextSubcategories.reduce(
-      (accumulator, subcategory) => {
-        accumulator[subcategory.id] = {
-          name: subcategory.name,
-          categoryId: subcategory.categoryId,
-        };
-        return accumulator;
-      },
-      {}
-    );
-
-    await setSettings(hotelUid, {
-      catalogCategories,
-      catalogSubcategories,
+  useEffect(() => {
+    const version = ++requestVersion.current;
+    setCategories([]);
+    setSubcategories([]);
+    setError("");
+    setMessage("");
+    setLoading(Boolean(hotelUid));
+    setSavingCategory(false);
+    setSavingSubcategory(false);
+    if (!hotelUid) return;
+    getCatalogTaxonomy(hotelUid).then((taxonomy) => {
+      if (version !== requestVersion.current) return;
+      setCategories(taxonomy.categories);
+      setSubcategories(taxonomy.subcategories);
+    }).catch(() => {
+      if (version === requestVersion.current) setError("Settings could not be loaded.");
+    }).finally(() => {
+      if (version === requestVersion.current) setLoading(false);
     });
+    return () => { ++requestVersion.current; };
+  }, [hotelUid, loadAttempt]);
+
+  const saveTaxonomy = async (mutation, successMessage) => {
+    const version = requestVersion.current;
+    setSavingCategory(true);
+    setSavingSubcategory(true);
+    setError("");
+    setMessage("");
+    let saved = false;
+    try {
+      await mutation();
+      saved = true;
+      if (version !== requestVersion.current) return false;
+      const taxonomy = await getCatalogTaxonomy(hotelUid);
+      if (version !== requestVersion.current) return false;
+      setCategories(taxonomy.categories);
+      setSubcategories(taxonomy.subcategories);
+      setMessage(successMessage);
+      return true;
+    } catch (error) {
+      if (version === requestVersion.current) setError(saved ? "Changes saved, but settings could not be refreshed. Reload settings." : error.message || "Settings could not be saved.");
+      return version === requestVersion.current && saved;
+    } finally {
+      if (version === requestVersion.current) {
+        setSavingCategory(false);
+        setSavingSubcategory(false);
+      }
+    }
   };
 
   const handleAddCategory = async (event) => {
     event.preventDefault();
-    const cleanedName = categoryName.trim();
-    if (!canCreateSettings || !hotelUid || !cleanedName) return;
-
-    setSavingCategory(true);
-    setMessage("");
-
-    const nextCategories = [
-      ...categories,
-      {
-        id: crypto.randomUUID(),
-        name: cleanedName,
-      },
-    ];
-
-    await persistCatalog(nextCategories, subcategories);
-    setCategories(nextCategories);
-    setCategoryName("");
-    setSavingCategory(false);
-    setMessage("Category created.");
+    const name = categoryName.trim();
+    if (!canCreateSettings || !hotelUid || !name || savingCategory) return;
+    if (await saveTaxonomy(() => createCatalogCategory(hotelUid, { name }), "Category created.")) setCategoryName("");
   };
 
   const handleAddSubcategory = async (event) => {
     event.preventDefault();
-    const cleanedName = subcategoryName.trim();
-
-    if (!canCreateSettings || !hotelUid || !cleanedName || !subcategoryCategoryId) {
-      setMessage("Please select one category for this subcategory.");
+    const name = subcategoryName.trim();
+    if (!canCreateSettings || !hotelUid || savingSubcategory) return;
+    if (!name || !subcategoryCategoryId) {
+      setError("Please select one category and enter a name for this subcategory.");
       return;
     }
-
-    setSavingSubcategory(true);
-    setMessage("");
-
-    const nextSubcategories = [
-      ...subcategories,
-      {
-        id: crypto.randomUUID(),
-        name: cleanedName,
-        categoryId: subcategoryCategoryId,
-      },
-    ];
-
-    await persistCatalog(categories, nextSubcategories);
-    setSubcategories(nextSubcategories);
-    setSubcategoryName("");
-    setSubcategoryCategoryId("");
-    setSavingSubcategory(false);
-    setMessage("Subcategory created.");
+    if (await saveTaxonomy(() => createCatalogSubcategory(hotelUid, { name, categoryId: subcategoryCategoryId }), "Subcategory created.")) {
+      setSubcategoryName("");
+      setSubcategoryCategoryId("");
+    }
   };
 
   const startCategoryEdit = (category) => {
@@ -186,46 +170,24 @@ export default function SettingsCatalogPage() {
   };
 
   const handleSaveCategoryEdit = async () => {
-    const cleanedName = editingCategoryName.trim();
-    if (!canUpdateSettings || !hotelUid || !editingCategoryId || !cleanedName) return;
-
-    const nextCategories = categories.map((category) =>
-      category.id === editingCategoryId ? { ...category, name: cleanedName } : category
-    );
-
-    await persistCatalog(nextCategories, subcategories);
-    setCategories(nextCategories);
-    setEditingCategoryId("");
-    setEditingCategoryName("");
-    setMessage("Category updated.");
+    const name = editingCategoryName.trim();
+    if (!canUpdateSettings || !hotelUid || !editingCategoryId || !name || savingCategory) return;
+    if (await saveTaxonomy(() => updateCatalogCategory(hotelUid, editingCategoryId, { name }), "Category updated.")) {
+      setEditingCategoryId("");
+      setEditingCategoryName("");
+    }
   };
 
   const handleDeleteCategory = async (categoryId) => {
-    if (!canDeleteSettings || !hotelUid || !categoryId) return;
-
-    const linkedSubcategories = subcategories.filter(
-      (subcategory) => subcategory.categoryId === categoryId
-    );
-
-    const shouldDelete = window.confirm(
-      linkedSubcategories.length > 0
-        ? "This category has linked subcategories. Deleting it will also delete those subcategories. Continue?"
-        : "Delete this category?"
-    );
-
-    if (!shouldDelete) return;
-
-    const nextCategories = categories.filter((category) => category.id !== categoryId);
-    const nextSubcategories = subcategories.filter(
-      (subcategory) => subcategory.categoryId !== categoryId
-    );
-
-    await persistCatalog(nextCategories, nextSubcategories);
-    setCategories(nextCategories);
-    setSubcategories(nextSubcategories);
-    setEditingCategoryId("");
-    setEditingCategoryName("");
-    setMessage("Category deleted.");
+    if (!canDeleteSettings || !hotelUid || !categoryId || savingCategory) return;
+    const hasLinkedSubcategories = subcategories.some((subcategory) => subcategory.categoryId === categoryId);
+    if (!window.confirm(hasLinkedSubcategories
+      ? "This category has linked subcategories. Deleting it will also delete those subcategories. Continue?"
+      : "Delete this category?")) return;
+    if (await saveTaxonomy(() => deleteCatalogCategory(hotelUid, categoryId), "Category deleted.")) {
+      setEditingCategoryId("");
+      setEditingCategoryName("");
+    }
   };
 
   const startSubcategoryEdit = (subcategory) => {
@@ -235,52 +197,27 @@ export default function SettingsCatalogPage() {
   };
 
   const handleSaveSubcategoryEdit = async () => {
-    const cleanedName = editingSubcategoryName.trim();
-    if (
-      !canUpdateSettings ||
-      !hotelUid ||
-      !editingSubcategoryId ||
-      !cleanedName ||
-      !editingSubcategoryCategoryId
-    ) {
-      setMessage("Each subcategory must be linked to one category.");
+    const name = editingSubcategoryName.trim();
+    if (!canUpdateSettings || !hotelUid || !editingSubcategoryId || savingSubcategory) return;
+    if (!name || !editingSubcategoryCategoryId) {
+      setError("Each subcategory must have a name and be linked to one category.");
       return;
     }
-
-    const nextSubcategories = subcategories.map((subcategory) =>
-      subcategory.id === editingSubcategoryId
-        ? {
-            ...subcategory,
-            name: cleanedName,
-            categoryId: editingSubcategoryCategoryId,
-          }
-        : subcategory
-    );
-
-    await persistCatalog(categories, nextSubcategories);
-    setSubcategories(nextSubcategories);
-    setEditingSubcategoryId("");
-    setEditingSubcategoryName("");
-    setEditingSubcategoryCategoryId("");
-    setMessage("Subcategory updated.");
+    if (await saveTaxonomy(() => updateCatalogSubcategory(hotelUid, editingSubcategoryId, { name, categoryId: editingSubcategoryCategoryId }), "Subcategory updated.")) {
+      setEditingSubcategoryId("");
+      setEditingSubcategoryName("");
+      setEditingSubcategoryCategoryId("");
+    }
   };
 
   const handleDeleteSubcategory = async (subcategoryId) => {
-    if (!canDeleteSettings || !hotelUid || !subcategoryId) return;
-
-    const shouldDelete = window.confirm("Delete this subcategory?");
-    if (!shouldDelete) return;
-
-    const nextSubcategories = subcategories.filter(
-      (subcategory) => subcategory.id !== subcategoryId
-    );
-
-    await persistCatalog(categories, nextSubcategories);
-    setSubcategories(nextSubcategories);
-    setEditingSubcategoryId("");
-    setEditingSubcategoryName("");
-    setEditingSubcategoryCategoryId("");
-    setMessage("Subcategory deleted.");
+    if (!canDeleteSettings || !hotelUid || !subcategoryId || savingSubcategory) return;
+    if (!window.confirm("Delete this subcategory?")) return;
+    if (await saveTaxonomy(() => deleteCatalogSubcategory(hotelUid, subcategoryId), "Subcategory deleted.")) {
+      setEditingSubcategoryId("");
+      setEditingSubcategoryName("");
+      setEditingSubcategoryCategoryId("");
+    }
   };
 
   return (
@@ -298,6 +235,7 @@ export default function SettingsCatalogPage() {
             <form onSubmit={handleAddCategory} className="flex flex-col sm:flex-row gap-3">
               <input
                 type="text"
+                maxLength={200}
                 value={categoryName}
                 onChange={(event) => setCategoryName(event.target.value)}
                 placeholder="New category"
@@ -326,6 +264,7 @@ export default function SettingsCatalogPage() {
                     {editingCategoryId === category.id ? (
                       <input
                         type="text"
+                        maxLength={200}
                         value={editingCategoryName}
                         onChange={(event) => setEditingCategoryName(event.target.value)}
                         className="rounded border border-gray-300 px-2 py-1 text-sm flex-1"
@@ -391,6 +330,7 @@ export default function SettingsCatalogPage() {
             <form onSubmit={handleAddSubcategory} className="grid gap-3 sm:grid-cols-3">
               <input
                 type="text"
+                maxLength={200}
                 value={subcategoryName}
                 onChange={(event) => setSubcategoryName(event.target.value)}
                 placeholder="New subcategory"
@@ -439,6 +379,7 @@ export default function SettingsCatalogPage() {
                               <>
                                 <input
                                   type="text"
+                                  maxLength={200}
                                   value={editingSubcategoryName}
                                   onChange={(event) =>
                                     setEditingSubcategoryName(event.target.value)
@@ -520,7 +461,8 @@ export default function SettingsCatalogPage() {
           </div>
         </Card>
 
-        {message && <p className="text-sm text-green-700">{message}</p>}
+        {error && <p role="alert" className="text-sm text-red-700">{error} <button type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)} className="underline">Reload settings</button></p>}
+        {message && <p role="status" className="text-sm text-green-700">{message}</p>}
       </PageContainer>
     </div>
   );

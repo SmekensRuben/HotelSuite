@@ -1,6 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { uploadCatalogProductImage } from "../../services/firebaseProducts";
+import { getCatalogTaxonomy } from "../../services/firebaseSettings";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import AsyncError from "../shared/AsyncError";
 
 const defaultState = {
   name: "",
@@ -56,6 +59,10 @@ export default function ProductFormFields({
   const [formState, setFormState] = useState(() => toFormState(initialData));
   const [saving, setSaving] = useState(false);
   const [imageFile, setImageFile] = useState(null);
+  const loadTaxonomy = useCallback(() => getCatalogTaxonomy(hotelUid), [hotelUid]);
+  const taxonomy = useScopedAsync({ scopeKey: hotelUid, enabled: Boolean(hotelUid), load: loadTaxonomy });
+  const categoryId = taxonomy.data?.categories?.find((category) => category.name === formState.category)?.id;
+  const subcategories = (taxonomy.data?.subcategories || []).filter((subcategory) => !formState.category || subcategory.categoryId === categoryId);
 
   useEffect(() => {
     setFormState(toFormState(initialData));
@@ -118,6 +125,9 @@ export default function ProductFormFields({
 
   return (
     <form onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2">
+      <AsyncError error={taxonomy.error} onRetry={taxonomy.retry} label="Could not load catalog categories." />
+      <datalist id="catalog-form-categories">{(taxonomy.data?.categories || []).map((category) => <option key={category.id} value={category.name} />)}</datalist>
+      <datalist id="catalog-form-subcategories">{subcategories.map((subcategory) => <option key={subcategory.id} value={subcategory.name} />)}</datalist>
       <SectionCard title={t("products.sections.identity")}>
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           {t("products.fields.name")} *
@@ -174,6 +184,7 @@ export default function ProductFormFields({
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           {t("products.fields.category")}
           <input
+            list="catalog-form-categories"
             value={formState.category}
             onChange={(event) => updateField("category", event.target.value)}
             className="rounded border border-gray-300 px-3 py-2 text-sm"
@@ -182,6 +193,7 @@ export default function ProductFormFields({
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           {t("products.fields.subcategory")}
           <input
+            list="catalog-form-subcategories"
             value={formState.subcategory}
             onChange={(event) => updateField("subcategory", event.target.value)}
             className="rounded border border-gray-300 px-3 py-2 text-sm"

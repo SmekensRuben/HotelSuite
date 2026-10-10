@@ -38,7 +38,7 @@ try {
   for (const hotelUid of hotelUids) {
     const ref = db.doc(`hotelSubscriptions/${hotelUid}`);
     if (!applying) {
-      console.log(`${hotelUid}: ${(await ref.get()).exists ? "keep existing subscription" : "would create active/manual/standard, no expiry"}`);
+      console.log(`${hotelUid}: ${(await ref.get()).exists ? "keep existing subscription" : "would create active/manual/standard, no expiry, core only; reviewed module activation required"}`);
       continue;
     }
     const created = await db.runTransaction(async (transaction) => {
@@ -49,9 +49,11 @@ try {
       if (current.exists) return false; // Never reactivate suspended/canceled hotels.
       const timestamp = FieldValue.serverTimestamp();
       transaction.create(ref, { status: "active", planId: "standard", billingMode: "manual",
+        modules: [], modulePolicyVersion: 1, seatLimit: null,
         validUntil: null, revision: 1, updatedAt: timestamp, updatedBy: `bootstrap:${operator}` });
       transaction.create(db.collection(`hotels/${hotelUid}/subscriptionAudit`).doc(), {
         source: "cloud-shell-bootstrap", operator, previousStatus: null, status: "active",
+        modules: [], modulePolicyVersion: 1, seatLimit: null,
         planId: "standard", validUntil: null, revision: 1, createdAt: timestamp,
       });
       return true;

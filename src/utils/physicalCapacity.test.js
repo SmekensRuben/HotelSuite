@@ -24,4 +24,9 @@ describe("physical capacity feasibility", () => {
     expect(result.perDate[0].hardCommittedRooms).toBe(30);
     expect(result.status).toBe("PHYSICALLY_FEASIBLE");
   });
+  it.each([null, undefined, "", "bad"])("retains unknown committed capacity (%j)", (existingGroupOtb) => {
+    const result = calculate([{ date: "2027-03-19", rooms: 10 }], { "2027-03-19": { sellableInventory: 100, currentTransientOtb: 0, existingGroupOtb } });
+    expect(result).toMatchObject({ status: "PHYSICAL_CAPACITY_UNAVAILABLE", inputsAvailable: false, physicallyFeasibleRequestedRoomNights: null, totalCapacityShortfallRoomNights: null, maxUniformRoomsCurrentlyFeasible: null });
+    expect(result.perDate[0].remainingPhysicalCapacity).toBeNull();
+  });
 });

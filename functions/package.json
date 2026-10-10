@@ -26,5 +26,10 @@
     "ssh2-sftp-client": "^11.0.0",
     "svix": "^1.99.1"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
+  }
 }

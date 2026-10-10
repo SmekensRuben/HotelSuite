@@ -34,7 +34,7 @@ function buildSearchRequest(input) {
 async function searchHotelProductsHandler(request, services = {}) {
   const query = buildSearchRequest(request.data || {});
   const db = services.firestore || admin.firestore();
-  await requireHotelPermission(db, request, query.hotelUid, query.collection, "read");
+  await requireHotelPermission(db, request, query.hotelUid, query.collection, "read", undefined, services.auth);
   let payload;
   try {
     payload = await (services.search || ((body) => {

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Plus } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
@@ -17,6 +17,8 @@ import { getSupplierProducts } from "../../services/firebaseProducts";
 import { getOutlets } from "../../services/firebaseSettings";
 import { matchesSearchTokensAcross } from "../../utils/search";
 import { usePermission } from "../../hooks/usePermission";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { collectPaginatedProducts } from "../../services/paginatedExport";
 
 function buildItemKey(item) {
   return `${String(item?.supplierProductId || "").trim()}::${String(item?.outletId || "").trim()}`;
@@ -54,17 +56,22 @@ function buildSupplierProductSnapshot(product = {}, outlet = {}) {
 
 export default function StockCountLocationPage() {
   const canUpdateStockCounts = usePermission("stockcounts", "update");
+  const canUpdateTemplates = usePermission("locations", "update");
+  const canReadProducts = usePermission("supplierproducts", "read");
+  const canReadOutlets = usePermission("outlets", "read");
+  const canReadOrders = usePermission("orders", "read");
+  const canAddProducts = canUpdateStockCounts && canReadProducts && (canReadOutlets || canReadOrders);
   const { stockCountId, locationId } = useParams();
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
+  const scopeKey = `${hotelUid}:${stockCountId}:${locationId}`;
+  const activeScope = useRef({ key: scopeKey });
+  if (activeScope.current.key !== scopeKey) activeScope.current = { key: scopeKey };
   const [stockCount, setStockCount] = useState(null);
   const [stockCountLocation, setStockCountLocation] = useState(null);
   const [template, setTemplate] = useState(null);
-  const [supplierProducts, setSupplierProducts] = useState([]);
-  const [outlets, setOutlets] = useState([]);
   const [additionalItems, setAdditionalItems] = useState([]);
   const [quantitiesByKey, setQuantitiesByKey] = useState({});
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -91,51 +98,53 @@ export default function StockCountLocationPage() {
     window.location.href = "/login";
   };
 
-  const loadLocation = async () => {
-    if (!hotelUid || !stockCountId || !locationId) return;
-    setLoading(true);
-    setError("");
-
-    try {
-      const [nextStockCount, productResult, nextOutlets] = await Promise.all([
-        getStockCountById(hotelUid, stockCountId),
-        getSupplierProducts(hotelUid),
-        getOutlets(hotelUid),
-      ]);
-      const nextLocation = (nextStockCount?.locations || []).find(
-        (location) => location.locationId === locationId
-      );
-
-      const nextTemplate = nextLocation?.stockTemplate?.id ? nextLocation.stockTemplate : null;
-      const templateKeys = new Set((nextTemplate?.items || []).map(buildItemKey));
-
-      const nextQuantities = {};
-      const nextAdditionalItems = [];
-      (nextLocation?.countedItems || []).forEach((item) => {
-        const key = buildItemKey(item);
-        nextQuantities[key] = item.isCounted === false ? "" : String(item.quantity ?? "");
-        if (item.isTemplateItem === false || !templateKeys.has(key)) {
-          nextAdditionalItems.push({ ...item, key, isTemplateItem: false });
-        }
-      });
-
-      setStockCount(nextStockCount);
-      setStockCountLocation(nextLocation || null);
-      setTemplate(nextTemplate);
-      setSupplierProducts(Array.isArray(productResult) ? productResult : productResult?.products || []);
-      setOutlets(nextOutlets);
-      setAdditionalItems(nextAdditionalItems);
-      setQuantitiesByKey(nextQuantities);
-    } catch (loadError) {
-      setError(loadError?.message || "Unable to load stock count location.");
-    } finally {
-      setLoading(false);
+  const loadLocation = useCallback(async () => ({ nextStockCount: await getStockCountById(hotelUid, stockCountId) }),
+    [hotelUid, stockCountId]);
+  const { data: loaded, loading, error: loadError, retry } = useScopedAsync({
+    scopeKey, enabled: Boolean(hotelUid && stockCountId && locationId), load: loadLocation,
+  });
+  const loadProductSources = useCallback(async () => {
+    const [products, outlets] = await Promise.all([
+      collectPaginatedProducts((options) => getSupplierProducts(hotelUid, options)), getOutlets(hotelUid),
+    ]);
+    return { products, outlets };
+  }, [hotelUid]);
+  const productSources = useScopedAsync({
+    scopeKey: `${scopeKey}:add-products`, enabled: Boolean(hotelUid && stockCountId && locationId && canAddProducts),
+    load: loadProductSources,
+  });
+  const supplierProducts = productSources.data?.products || [];
+  const outlets = productSources.data?.outlets || [];
+  const additionsAvailable = canAddProducts && Boolean(productSources.data) && !productSources.loading && !productSources.error;
+  useEffect(() => {
+    if (!additionsAvailable) {
+      setShowAddModal(false); setSelectedProduct(null); setSelectedOutletId("");
     }
-  };
+  }, [additionsAvailable]);
+  useEffect(() => {
+    const nextStockCount = loaded?.nextStockCount || null;
+    const nextLocation = (nextStockCount?.locations || []).find((location) => location.locationId === locationId);
+    const nextTemplate = nextLocation?.stockTemplate?.id ? nextLocation.stockTemplate : null;
+    const templateKeys = new Set((nextTemplate?.items || []).map(buildItemKey));
+    const nextQuantities = {}, nextAdditionalItems = [];
+    (nextLocation?.countedItems || []).forEach((item) => {
+      const key = buildItemKey(item);
+      nextQuantities[key] = item.isCounted === false ? "" : String(item.quantity ?? "");
+      if (item.isTemplateItem === false || !templateKeys.has(key)) nextAdditionalItems.push({ ...item, key, isTemplateItem: false });
+    });
+    setStockCount(nextStockCount); setStockCountLocation(nextLocation || null); setTemplate(nextTemplate);
+    setAdditionalItems(nextAdditionalItems); setQuantitiesByKey(nextQuantities); setError("");
+    if (!loaded) {
+      setShowAddModal(false); setShowFinishModal(false); setSelectedProduct(null); setSelectedOutletId("");
+      setSelectedTemplateAdditions({});
+    }
+  }, [loaded, locationId]);
 
   useEffect(() => {
-    loadLocation();
-  }, [hotelUid, stockCountId, locationId]);
+    activeScope.current = { key: scopeKey };
+    setSaving(false); setError("");
+    return () => { activeScope.current = { key: null }; };
+  }, [scopeKey]);
 
   const outletsById = useMemo(
     () => Object.fromEntries(outlets.map((outlet) => [String(outlet.id || "").trim(), outlet])),
@@ -241,7 +250,7 @@ export default function StockCountLocationPage() {
   };
 
   const handleAddSupplierProduct = () => {
-    if (isFinished) return;
+    if (isFinished || !additionsAvailable) return;
     if (!selectedProduct || !selectedOutletId) return;
     const outlet = outletsById[selectedOutletId] || { id: selectedOutletId };
     const nextItem = { ...buildSupplierProductSnapshot(selectedProduct, outlet), isTemplateItem: false };
@@ -263,7 +272,8 @@ export default function StockCountLocationPage() {
 
   const handleSave = async () => {
     if (!canUpdateStockCounts) return;
-    if (!hotelUid || !stockCountId || !locationId || isFinished) return;
+    if (!hotelUid || !stockCountId || !locationId || !stockCount || !stockCountLocation || isFinished) return;
+    const requestedScope = activeScope.current;
     setSaving(true);
     setError("");
 
@@ -273,25 +283,28 @@ export default function StockCountLocationPage() {
         stockCountId,
         locationId,
         buildCountedItems(),
-        auth.currentUser?.uid || "unknown"
+        auth.currentUser?.uid || "unknown",
+        stockCount.revision
       );
-      navigate(`/catalog/stock-counts/${stockCountId}`);
+      if (activeScope.current === requestedScope) navigate(`/catalog/stock-counts/${stockCountId}`);
     } catch (saveError) {
-      setError(saveError?.message || "Unable to save stock count location.");
+      if (activeScope.current === requestedScope) setError(saveError?.message || "Unable to save stock count location.");
     } finally {
-      setSaving(false);
+      if (activeScope.current === requestedScope) setSaving(false);
     }
   };
 
   const handleFinishClick = () => {
     if (!canUpdateStockCounts) return;
     if (isFinished) return;
-    setSelectedTemplateAdditions(Object.fromEntries(addedRows.map((row) => [row.key, true])));
+    setSelectedTemplateAdditions(Object.fromEntries(addedRows.map((row) => [row.key, canUpdateTemplates])));
     setShowFinishModal(true);
   };
 
   const handleFinish = async (templateRowsToAdd = []) => {
-    if (!hotelUid || !stockCountId || !locationId || isFinished) return;
+    if (!canUpdateStockCounts) return;
+    if (!hotelUid || !stockCountId || !locationId || !stockCount || !stockCountLocation || isFinished) return;
+    const requestedScope = activeScope.current;
     setSaving(true);
     setError("");
 
@@ -302,18 +315,19 @@ export default function StockCountLocationPage() {
         locationId,
         buildCountedItems(),
         templateRowsToAdd.map((row) => ({ supplierProductId: row.supplierProductId, outletId: row.outletId })),
-        auth.currentUser?.uid || "unknown"
+        auth.currentUser?.uid || "unknown",
+        stockCount.revision
       );
-      navigate(`/catalog/stock-counts/${stockCountId}`);
+      if (activeScope.current === requestedScope) navigate(`/catalog/stock-counts/${stockCountId}`);
     } catch (finishError) {
-      setError(finishError?.message || "Unable to finish stock count location.");
+      if (activeScope.current === requestedScope) setError(finishError?.message || "Unable to finish stock count location.");
     } finally {
-      setSaving(false);
-      setShowFinishModal(false);
+      if (activeScope.current === requestedScope) { setSaving(false); setShowFinishModal(false); }
     }
   };
 
-  const selectedRowsToAddToTemplate = addedRows.filter((row) => selectedTemplateAdditions[row.key] !== false);
+  const selectedRowsToAddToTemplate = canUpdateTemplates
+    ? addedRows.filter((row) => selectedTemplateAdditions[row.key] !== false) : [];
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
@@ -337,6 +351,8 @@ export default function StockCountLocationPage() {
           </button>
         </div>
 
+        {loadError && <div role="alert"><p>{loadError.message || "Unable to load stock count location."}</p><button type="button" onClick={retry}>Retry</button></div>}
+        {productSources.error && <div role="alert"><p>{productSources.error.message || "Unable to load add-product sources."}</p><p>Counting existing snapshot items remains available.</p><button type="button" onClick={productSources.retry}>Retry add-product sources</button></div>}
         {loading ? (
           <p className="text-gray-600">Loading stock count location...</p>
         ) : !stockCount || !stockCountLocation ? (
@@ -390,7 +406,7 @@ export default function StockCountLocationPage() {
                   <button
                     type="button"
                     onClick={() => setShowAddModal(true)}
-                    disabled={isFinished}
+                    disabled={isFinished || !additionsAvailable}
                     className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <Plus className="h-4 w-4" /> Add Supplier Product
@@ -448,7 +464,7 @@ export default function StockCountLocationPage() {
                               inputMode="decimal"
                               value={row.quantity}
                               onChange={handleQuantityChange(row.key)}
-                              disabled={isFinished}
+                              disabled={isFinished || !canUpdateStockCounts}
                               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-3 text-base disabled:bg-gray-100 disabled:text-gray-600"
                             />
                           </label>
@@ -480,7 +496,7 @@ export default function StockCountLocationPage() {
                           value={row.quantity}
                           onClick={(event) => event.stopPropagation()}
                           onChange={handleQuantityChange(row.key)}
-                          disabled={isFinished}
+                          disabled={isFinished || !canUpdateStockCounts}
                           className="w-28 rounded border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-600"
                         />
                       ),
@@ -524,7 +540,7 @@ export default function StockCountLocationPage() {
         )}
       </PageContainer>
 
-      <Modal open={showAddModal && !isFinished} onClose={() => setShowAddModal(false)} title="Add Supplier Product">
+      <Modal open={showAddModal && !isFinished && additionsAvailable} onClose={() => setShowAddModal(false)} title="Add Supplier Product">
         <div className="space-y-3">
           <input
             type="search"
@@ -593,7 +609,7 @@ export default function StockCountLocationPage() {
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
             Once this Stock Count Location is marked as Finished, counts can no longer be changed and supplier products can no longer be added from this page.
           </p>
-          {addedRows.length > 0 && (
+          {canUpdateTemplates && addedRows.length > 0 && (
             <div className="space-y-2">
               <p className="text-sm text-gray-700">
                 {addedRows.length} supplier product{addedRows.length === 1 ? " was" : "s were"} added to this Stock Count Location that {addedRows.length === 1 ? "is" : "are"} not in the original template.
@@ -629,7 +645,7 @@ export default function StockCountLocationPage() {
             >
               Cancel
             </button>
-            {addedRows.length > 0 && (
+            {canUpdateTemplates && addedRows.length > 0 && (
               <button
                 type="button"
                 className="rounded border border-gray-300 px-3 py-2 text-sm disabled:opacity-60"

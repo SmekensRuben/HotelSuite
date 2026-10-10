@@ -1,15 +1,17 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Plus, X } from "lucide-react";
-import * as XLSX from "xlsx";
-import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import PageShell from "../layout/PageShell";
+import AsyncError from "../shared/AsyncError";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { collectPaginatedProducts } from "../../services/paginatedExport";
 import DataListTable from "../shared/DataListTable";
 import Modal from "../shared/Modal";
-import { auth, signOut } from "../../firebaseConfig";
+import { auth } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getCatalogProducts, importCatalogProducts } from "../../services/firebaseProducts";
+import { getCatalogTaxonomy } from "../../services/firebaseSettings";
 import { usePermission } from "../../hooks/usePermission";
 
 const EXCEL_HEADERS = [
@@ -52,66 +54,42 @@ const EXPORT_TEMPLATE_ROW = {
 const PAGE_SIZE = 50;
 
 export default function ProductsPage() {
+  const { hotelUid } = useHotelContext();
+  return <ScopedProductsPage key={hotelUid} hotelUid={hotelUid} />;
+}
+
+function ScopedProductsPage({ hotelUid }) {
   const navigate = useNavigate();
   const { t } = useTranslation("common");
-  const { hotelUid } = useHotelContext();
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const fileInputRef = useRef(null);
   const canCreateProducts = usePermission("catalogproducts", "create");
-  const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedSubcategory, setSelectedSubcategory] = useState("");
-  const [pageIndex, setPageIndex] = useState(0);
-  const [hasMorePages, setHasMorePages] = useState(false);
   const [pageStartCursors, setPageStartCursors] = useState({ 0: null });
   const [showExportModal, setShowExportModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [pendingImportProducts, setPendingImportProducts] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [exportError, setExportError] = useState(null);
 
-  const today = useMemo(
-    () =>
-      new Date().toLocaleDateString(undefined, {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }),
-    []
-  );
-
-  const handleLogout = async () => {
-    await signOut(auth);
-    sessionStorage.clear();
-    window.location.href = "/login";
-  };
-
-  const loadProductsPage = async (nextPageIndex, cursor) => {
-    if (!hotelUid) return;
-
-    setLoading(true);
-    const result = await getCatalogProducts(hotelUid, {
-      pageSize: PAGE_SIZE,
-      cursor,
-      searchTerm: debouncedSearchTerm,
-      category: selectedCategory,
-      subcategory: selectedSubcategory,
-    });
-
-    setProducts(result.products);
-    setHasMorePages(result.hasMore);
-    setPageIndex(nextPageIndex);
-
-    if (result.hasMore && result.cursor) {
-      setPageStartCursors((prev) => ({
-        ...prev,
-        [nextPageIndex + 1]: result.cursor,
-      }));
-    }
-
-    setLoading(false);
-  };
+  const queryKey = `${hotelUid}:${debouncedSearchTerm}:${selectedCategory}:${selectedSubcategory}`;
+  const loadProducts = useCallback(async (nextPageIndex = 0, cursor = null) => ({
+    ...(await getCatalogProducts(hotelUid, { pageSize: PAGE_SIZE, cursor, searchTerm: debouncedSearchTerm, category: selectedCategory, subcategory: selectedSubcategory })), pageIndex: nextPageIndex,
+  }), [hotelUid, debouncedSearchTerm, selectedCategory, selectedSubcategory]);
+  const query = useScopedAsync({ scopeKey: queryKey, enabled: Boolean(hotelUid), initialData: null, load: loadProducts });
+  const products = query.data?.products || [];
+  const loading = query.loading;
+  const pageIndex = query.data?.pageIndex || 0;
+  const hasMorePages = Boolean(query.data?.hasMore);
+  const loadProductsPage = query.run;
+  useEffect(() => { setPageStartCursors({ 0: null }); }, [queryKey]);
+  useEffect(() => {
+    if (query.data?.hasMore && query.data.cursor) setPageStartCursors((current) => ({ ...current, [query.data.pageIndex + 1]: query.data.cursor }));
+  }, [query.data]);
 
   useEffect(() => {
     const timeoutId = setTimeout(() => {
@@ -121,34 +99,15 @@ export default function ProductsPage() {
     return () => clearTimeout(timeoutId);
   }, [searchTerm]);
 
-  useEffect(() => {
-    if (!hotelUid) return;
 
-    setPageStartCursors({ 0: null });
-    loadProductsPage(0, null);
-  }, [hotelUid, debouncedSearchTerm, selectedCategory, selectedSubcategory]);
-
-  const categories = useMemo(() => {
-    const values = new Set(
-      products
-        .map((product) => String(product.category || "").trim())
-        .filter(Boolean)
-    );
-    return Array.from(values).sort((a, b) => a.localeCompare(b));
-  }, [products]);
-
-  const subcategories = useMemo(() => {
-    const values = new Set(
-      products
-        .filter((product) => !selectedCategory || String(product.category || "") === selectedCategory)
-        .map((product) => String(product.subcategory || "").trim())
-        .filter(Boolean)
-    );
-    return Array.from(values).sort((a, b) => a.localeCompare(b));
-  }, [products, selectedCategory]);
+  const loadTaxonomy = useCallback(() => getCatalogTaxonomy(hotelUid), [hotelUid]);
+  const taxonomy = useScopedAsync({ scopeKey: hotelUid, enabled: Boolean(hotelUid), load: loadTaxonomy });
+  const categories = (taxonomy.data?.categories || []).map((category) => category.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const categoryId = taxonomy.data?.categories?.find((category) => category.name === selectedCategory)?.id;
+  const subcategories = (taxonomy.data?.subcategories || []).filter((subcategory) => !selectedCategory || subcategory.categoryId === categoryId).map((subcategory) => subcategory.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
 
   useEffect(() => {
-    if (selectedSubcategory && !subcategories.includes(selectedSubcategory)) {
+    if (taxonomy.data && selectedSubcategory && !subcategories.includes(selectedSubcategory)) {
       setSelectedSubcategory("");
     }
   }, [selectedSubcategory, subcategories]);
@@ -189,7 +148,10 @@ export default function ProductsPage() {
     },
   ];
 
-  const downloadExcel = (rows, headers, filename) => {
+  const downloadExcel = async (rows, headers, filename) => {
+    if (!mounted.current) return;
+    const XLSX = await import("xlsx");
+    if (!mounted.current) return;
     const worksheet = XLSX.utils.json_to_sheet(rows, { header: headers });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Products");
@@ -214,15 +176,24 @@ export default function ProductsPage() {
     imageUrl: row.imageUrl || "",
   });
 
-  const handleExportTemplate = () => {
-    downloadExcel([EXPORT_TEMPLATE_ROW], TEMPLATE_HEADERS, "catalog-products-template.xlsx");
-    setShowExportModal(false);
+  const handleExportTemplate = async () => {
+    try { await downloadExcel([EXPORT_TEMPLATE_ROW], TEMPLATE_HEADERS, "catalog-products-template.xlsx");
+    if (mounted.current) setShowExportModal(false); } catch (error) { if (mounted.current) setExportError(error); }
   };
 
-  const handleExportFullList = () => {
-    const rows = products.map((product) => normalizeExportRow({ documentId: product.id, ...product }));
-    downloadExcel(rows, EXCEL_HEADERS, "catalog-products-full.xlsx");
-    setShowExportModal(false);
+  const handleExportFullList = async () => {
+    if (!mounted.current || !hotelUid) return;
+    setBusy(true); setExportError(null);
+    try {
+      const allProducts = await collectPaginatedProducts((options) => {
+        if (!mounted.current) throw new Error("The catalog page is no longer active.");
+        return getCatalogProducts(hotelUid, options);
+      });
+      if (!mounted.current) return;
+      const rows = allProducts.map((product) => normalizeExportRow({ documentId: product.id, ...product }));
+      await downloadExcel(rows, EXCEL_HEADERS, "catalog-products-full.xlsx");
+      if (mounted.current) setShowExportModal(false);
+    } catch (error) { if (mounted.current) setExportError(error); } finally { if (mounted.current) setBusy(false); }
   };
 
   const handleImportButton = () => {
@@ -232,10 +203,13 @@ export default function ProductsPage() {
   const handleImportFileChange = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file) return;
+    if (!mounted.current || !file) return;
 
     try {
       const workbookData = await file.arrayBuffer();
+      if (!mounted.current) return;
+      const XLSX = await import("xlsx");
+      if (!mounted.current) return;
       const workbook = XLSX.read(workbookData, { type: "array" });
       const firstSheet = workbook.SheetNames[0];
       const worksheet = firstSheet ? workbook.Sheets[firstSheet] : null;
@@ -288,13 +262,14 @@ export default function ProductsPage() {
       setPendingImportProducts(importedProducts);
       setShowImportModal(true);
     } catch (error) {
+      if (!mounted.current) return;
       console.error("Failed to parse import file", error);
       window.alert(t("products.import.invalidFile"));
     }
   };
 
   const submitImport = async (onExisting) => {
-    if (!hotelUid || pendingImportProducts.length === 0) return;
+    if (!mounted.current || !hotelUid || pendingImportProducts.length === 0) return;
 
     const actor =
       sessionStorage.getItem("userEmail") ||
@@ -308,10 +283,12 @@ export default function ProductsPage() {
         onExisting,
         actor,
       });
+      if (!mounted.current) return;
       setShowImportModal(false);
       setPendingImportProducts([]);
       setPageStartCursors({ 0: null });
       await loadProductsPage(0, null);
+      if (!mounted.current) return;
       window.alert(
         t("products.import.result", {
           imported: result.imported,
@@ -319,17 +296,18 @@ export default function ProductsPage() {
         })
       );
     } catch (error) {
+      if (!mounted.current) return;
       console.error("Failed to import products", error);
       window.alert(t("products.import.failed"));
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
-      <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+    <PageShell>
+        <AsyncError error={query.error} onRetry={query.retry} label="Could not load products." />
+        <AsyncError error={taxonomy.error} onRetry={taxonomy.retry} label="Could not load catalog categories." />
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
@@ -428,7 +406,7 @@ export default function ProductsPage() {
 
         {loading ? (
           <p className="text-gray-600">{t("products.loading")}</p>
-        ) : (
+        ) : query.error ? null : (
           <>
             <DataListTable
               columns={columns}
@@ -471,7 +449,6 @@ export default function ProductsPage() {
             </div>
           </>
         )}
-      </PageContainer>
 
       <Modal open={showExportModal} onClose={() => setShowExportModal(false)} title={t("products.export.title")}>
         <button
@@ -483,6 +460,8 @@ export default function ProductsPage() {
           <X className="h-4 w-4" />
         </button>
         <p className="mb-4 text-sm text-gray-700">{t("products.export.message")}</p>
+        <p className="mb-3 text-sm text-gray-600">The full export includes every product in this hotel, regardless of the current filters.</p>
+        <AsyncError error={exportError} onRetry={handleExportFullList} label="Could not export products." />
         <div className="flex flex-col gap-2">
           <button
             type="button"
@@ -494,6 +473,7 @@ export default function ProductsPage() {
           <button
             type="button"
             onClick={handleExportFullList}
+            disabled={busy}
             className="rounded-lg bg-[#b41f1f] px-3 py-2 text-sm font-semibold text-white hover:bg-[#961919]"
           >
             {t("products.export.full")}
@@ -522,6 +502,6 @@ export default function ProductsPage() {
           </button>
         </div>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

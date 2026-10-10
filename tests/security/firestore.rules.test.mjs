@@ -19,6 +19,7 @@ import {
   query,
   where,
   setDoc,
+  serverTimestamp,
   Timestamp,
   updateDoc,
 } from "firebase/firestore";
@@ -74,7 +75,7 @@ async function seedIsolatedHotels() {
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
     const database = context.firestore();
     await Promise.all([
-      ...["hotel-a", "hotel-b"].map((hotelUid) => setDoc(doc(database, "hotelSubscriptions", hotelUid), { status: "active", validUntil: null })),
+      ...["hotel-a", "hotel-b"].map((hotelUid) => setDoc(doc(database, "hotelSubscriptions", hotelUid), { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null })),
       ...Object.values(profiles).map((actor) =>
         setDoc(doc(database, "users", actor.uid), actor.profile),
       ),
@@ -146,7 +147,7 @@ describe("module and special-action boundaries", () => {
   it("blocks module access when a subscription is suspended, expired or missing", async () => {
     const database = databaseFor(profiles.employeeA);
     const product = doc(database, "hotels/hotel-a/catalogproducts", "product-a");
-    for (const subscription of [{ status: "suspended", validUntil: null }, { status: "active", validUntil: Timestamp.fromMillis(1) }]) {
+    for (const subscription of [{ status: "suspended", validUntil: null }, { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: Timestamp.fromMillis(1) }]) {
       await testEnvironment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), "hotelSubscriptions", "hotel-a"), subscription));
       await assertFails(getDoc(product));
     }
@@ -155,12 +156,12 @@ describe("module and special-action boundaries", () => {
   });
 
   it("prevents a hotel member from changing their subscription", async () => {
-    await assertFails(setDoc(doc(databaseFor(profiles.hotelAdminA), "hotelSubscriptions", "hotel-a"), { status: "active", validUntil: null }));
+    await assertFails(setDoc(doc(databaseFor(profiles.hotelAdminA), "hotelSubscriptions", "hotel-a"), { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null }));
   });
   it("requires backend mutations even for platform subscription and audit changes", async () => {
     const database = databaseFor(profiles.platformAdmin);
-    await assertFails(setDoc(doc(database, "hotelSubscriptions", "hotel-a"), { status: "active", validUntil: null }));
-    await assertFails(setDoc(doc(database, "hotels/hotel-a/subscriptionAudit", "forged"), { status: "active" }));
+    await assertFails(setDoc(doc(database, "hotelSubscriptions", "hotel-a"), { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null }));
+    await assertFails(setDoc(doc(database, "hotels/hotel-a/subscriptionAudit", "forged"), { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active" }));
   });
   it("bootstrap defaults to dry-run, preserves suspended subscriptions and safely reruns", async () => {
     const directory = await mkdtemp(join(tmpdir(), "hotel-subscription-bootstrap-"));
@@ -212,7 +213,8 @@ describe("module and special-action boundaries", () => {
 
   it("allows explicit notify and demand-calendar actions only in hotel A", async () => {
     const database = databaseFor(profiles.specialistA);
-    await assertSucceeds(setDoc(doc(database, "hotels/hotel-a/contractReminderRuns", "run-a"), { status: "queued" }));
+    await assertSucceeds(setDoc(doc(database, "hotels/hotel-a/contractReminderRuns", "run-a"), { status: "queued", requestedBy: profiles.specialistA.uid, requestedAt: serverTimestamp() }));
+    await assertFails(setDoc(doc(database, "hotels/hotel-a/contractReminderRuns", "forged"), { status: "queued", requestedBy: "another-user", requestedAt: serverTimestamp() }));
     await assertSucceeds(setDoc(doc(database, "hotels/hotel-a/demandCalendarEvents", "event-a"), { name: "Fixture" }));
     await assertFails(setDoc(doc(database, "hotels/hotel-b/demandCalendarEvents", "event-b"), { name: "Cross tenant" }));
   });

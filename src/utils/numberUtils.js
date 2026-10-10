@@ -1,3 +1,4 @@
+/** @param {unknown} value @returns {number} */
 export function parseLocalizedNumber(value) {
   if (typeof value === "number") {
     return value;

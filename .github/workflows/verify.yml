@@ -38,8 +38,14 @@ jobs:
       - name: Frontend tests
         run: npm test -- --run
 
+      - name: JavaScript correctness lint and incremental boundary types
+        run: npm run lint && npm run typecheck
+
       - name: Functions tests
         run: npm --prefix functions test
+
+      - name: Settings migration safeguards
+        run: node --test scripts/migrate-domain-settings.test.mjs
 
       - name: Validate Functions deployment scripts
         run: |
@@ -49,6 +55,8 @@ jobs:
           node --check scripts/firebase/saas-release-check.mjs
           node --check scripts/firebase/private-workflows-rollout.mjs
           node --check scripts/firebase/private-workflows-migration.mjs
+          node --check scripts/firebase/module-access-migration.mjs
+          node scripts/render-module-rules.mjs --check
 
       - name: Verify the locked operator runtime
         run: |

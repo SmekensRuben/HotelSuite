@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
@@ -7,7 +7,9 @@ import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getOrderById, updateOrder } from "../../services/firebaseOrders";
-import { getUserDisplayName } from "../../services/firebaseUserManagement";
+import AsyncError from "../shared/AsyncError";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -17,14 +19,22 @@ function formatContent(item) {
 }
 
 export default function OrderEditPage() {
-  const navigate = useNavigate();
   const { orderId } = useParams();
   const { hotelUid } = useHotelContext();
-  const [order, setOrder] = useState(null);
-  const [loading, setLoading] = useState(true);
+  return <ScopedOrderEdit key={`${hotelUid}:${orderId}`} hotelUid={hotelUid} orderId={orderId} />;
+}
+
+function ScopedOrderEdit({ hotelUid, orderId }) {
+  const navigate = useNavigate();
+  const scopeKey = `${hotelUid}:${orderId}`;
+  const load = useCallback(() => getOrderById(hotelUid, orderId), [hotelUid, orderId]);
+  const query = useScopedAsync({ scopeKey, enabled: Boolean(hotelUid && orderId), load });
+  const order = query.data;
+  const loading = query.loading;
+  const { createdByName } = useStaffDisplayNames({ hotelUid, scopeKey, record: order });
+  const mounted = useRef(false);
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const [createdByName, setCreatedByName] = useState("-");
   const [deliveryDate, setDeliveryDate] = useState("");
   const [editableItems, setEditableItems] = useState([]);
 
@@ -44,33 +54,24 @@ export default function OrderEditPage() {
     window.location.href = "/login";
   };
 
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
-    const load = async () => {
-      if (!hotelUid || !orderId) return;
-      setLoading(true);
-      const result = await getOrderById(hotelUid, orderId);
-      setOrder(result);
-      if (result?.createdBy) {
-        setCreatedByName(await getUserDisplayName(result.createdBy));
-      }
-      setDeliveryDate(result?.deliveryDate || "");
-      setEditableItems(Array.isArray(result?.products) ? result.products : []);
-      setLoading(false);
-    };
-
-    load();
-  }, [hotelUid, orderId]);
+    setDeliveryDate(order?.deliveryDate || "");
+    setEditableItems(Array.isArray(order?.products) ? order.products : []);
+  }, [order]);
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 text-gray-900">
         <HeaderBar today={today} onLogout={handleLogout} />
         <PageContainer>
-          <p className="text-sm text-gray-600">Order laden...</p>
+          <p role="status" className="text-sm text-gray-600">Loading order...</p>
         </PageContainer>
       </div>
     );
   }
+
+  if (query.error) return <div className="min-h-screen bg-gray-50 text-gray-900"><HeaderBar today={today} onLogout={handleLogout} /><PageContainer><AsyncError error={query.error} onRetry={query.retry} label="Could not load this order." /></PageContainer></div>;
 
   if (!order) {
     return (
@@ -170,9 +171,9 @@ export default function OrderEditPage() {
                 try {
                   const actor = auth.currentUser?.uid || "unknown";
                   await updateOrder(hotelUid, orderId, { deliveryDate, products: editableItems }, actor, order.revision || 0);
-                  navigate(`/orders/${orderId}`);
-                } catch (error) { setSaveError(error.message || "Reload and review the order before saving."); }
-                finally { setBusy(false); }
+                  if (mounted.current) navigate(`/orders/${orderId}`);
+                } catch (error) { if (mounted.current) setSaveError(error.message || "Reload and review the order before saving."); }
+                finally { if (mounted.current) setBusy(false); }
               }}
               disabled={!deliveryDate || editableItems.length === 0 || busy}
               className="px-4 py-2 rounded bg-[#b41f1f] text-white font-semibold hover:bg-[#961919] disabled:opacity-50"

@@ -57,7 +57,7 @@ try {
     }
     if (mode === "enable") {
       const procurement = (await db.doc("platformConfiguration/saasProcurement").get()).data();
-      if (procurement?.enabled !== true || procurement.rulesVersion !== "saas-procurement-v1") throw new Error("Enable the verified procurement pilot before private workflow activation.");
+      if (procurement?.enabled !== true || procurement.rulesVersion !== "saas-modules-v2") throw new Error("Enable the verified procurement pilot before private workflow activation.");
       if (inspection.summary.legacyFiles || inspection.summary.legacyUrls || inspection.summary.downloadTokens) throw new Error("Complete file migration and token revocation before activation.");
       const releaseSha = process.env.SAAS_RELEASE_SHA;
       if (!emulator && !/^[a-f0-9]{40}$/.test(releaseSha || "")) throw new Error("An exact reviewed release SHA is required.");

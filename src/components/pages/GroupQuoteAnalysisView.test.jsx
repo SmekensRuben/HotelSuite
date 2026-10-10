@@ -12,6 +12,11 @@ const market = { groupStaySummary: { weightedOwnPublicRateInclVat: 244, weighted
 const props = { contribution, forecastData: { byDate: { "2027-04-03": forecast } }, groupForecastData: { byDate: { "2027-04-03": group } }, marketContextSnapshot: market, pricingGuidance: guidance, quoteSettings: { transientDistributionCostPercentage: 10 }, testGroupRate: "", setTestGroupRate: vi.fn(), simulation: null, targetSimulation: { netIncrementalContribution: 3840 }, forecastLoading: false };
 
 describe("GroupQuoteAnalysisView hierarchy", () => {
+  it("shows the explicit LOS fallback reason and actionable calculation detail", () => {
+    render(<GroupQuoteAnalysisView {...props} contribution={{ ...contribution, losNetworkDisplacement: { active: false, fallbackReason: "LOS_HORIZON_CALCULATION_FAILED", error: "Required horizon valuation is missing" } }} />);
+    expect(screen.getByText(/LOS_HORIZON_CALCULATION_FAILED/)).toBeVisible();
+    expect(screen.getByText(/Required horizon valuation is missing/)).toBeVisible();
+  });
   it("discloses stay-date displacement without introducing LOS adjustments", () => {
     render(<GroupQuoteAnalysisView {...props} />);
     expect(screen.getByText(/Potential additional shoulder-night impact/)).toBeVisible();
@@ -22,6 +27,20 @@ describe("GroupQuoteAnalysisView hierarchy", () => {
     expect(screen.getByText("NOT FEASIBLE")).toBeVisible();
     expect(screen.getByText(/shortfall 3/)).toBeVisible();
     expect(screen.getByText("Market Pricing Context")).toBeVisible();
+  });
+  it.each(["PHYSICAL_CAPACITY_SHORTFALL", "PHYSICAL_CAPACITY_UNAVAILABLE"])("suppresses every quoted price and simulator when capacity is %s, even with active LOS", (status) => {
+    const physicalFeasibility = { status, perDate: [] };
+    render(<GroupQuoteAnalysisView {...props} contribution={{ ...contribution, losNetworkDisplacement: { active: true, baseScenario: {}, validation: {} } }} physicalFeasibility={physicalFeasibility} simulation={{ netIncrementalContribution: 999 }} />);
+    expect(screen.queryByText("€239.00")).not.toBeInTheDocument();
+    expect(screen.queryByText("€255.00")).not.toBeInTheDocument();
+    expect(screen.queryByText("€176.00")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Test Average Group Rate/)).toBeDisabled();
+    expect(screen.queryByText("€999.00")).not.toBeInTheDocument();
+  });
+  it("disables the simulator for zero requested room nights", () => {
+    render(<GroupQuoteAnalysisView {...props} contribution={{ ...contribution, totalRequestedGroupRoomNights: 0 }} />);
+    expect(screen.queryByText("€239.00")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Test Average Group Rate/)).toBeDisabled();
   });
   it("makes Target primary while preserving the unchanged quote corridor and decision values", () => {
     render(<GroupQuoteAnalysisView {...props} />);

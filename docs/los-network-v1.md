@@ -1,4 +1,6 @@
-# LOS / Shoulder-Night Network Displacement V1
+# LOS / Shoulder-Night Network Displacement
+
+The current allocation policy is V2, `los-network-v2-optimal-portfolio`, introduced by the 2026-10-10 audit remediation. The historical training/source contract remains `stay-pattern-v1`. Saved V1 analyses remain historical snapshots and are never silently recalculated. See [contribution optimization](contribution-optimization.md) for the solver proof, numerical bounds and regression oracle.
 
 ## Data contract and preparation
 
@@ -14,7 +16,7 @@ It supports the importer’s grouped-document/list representation and grouped re
 hotels/{hotelUid}/reports/stayPatternModel/years/{year}
 ```
 
-Quote analysis reads only the selected annual aggregate documents. It never scans raw five-year reservations. Annual observations remain composable when users change selected historical years and contain only context, LOS and room volume—no guest, company or reservation identifiers.
+Quote analysis reads only the selected annual aggregate documents. It never scans raw five-year reservations. Annual observations remain composable when users change selected historical years and contain only context, LOS and room volume—no guest, company or reservation identifiers. Quote source reads include both root metadata and annual documents. Current activation requires root `VALID`, publication version `stay-pattern-publication-v2`, matching active/completed root build identities and selected annual build identities matching `publishedYearBuildRunIds`. Root `STALE`, `BUILDING`, validation failure, missing publication proof or incompatible aggregate versions force explicit stay-date fallback even if old annual documents still look valid. Legacy published roots need a successful rebuild before current LOS activation; historical saved quote snapshots remain untouched.
 
 ### Build lifecycle
 
@@ -22,7 +24,7 @@ The callable Cloud Function `rebuildStayPatternModel` provides the initial/manua
 
 After `processImportedFileToFirestore` has committed an entire successful staydatepattern import, it derives affected years from mapped arrival dates and resolved arrival-date paths and invokes the builder once for those years. It never rebuilds after individual reservation writes. Quote creation has no build call and reads only published `years/{year}` documents.
 
-Each run sets `hotels/{hotelUid}/reports/stayPatternModel` to `BUILDING`, writes complete candidates below `builds/{runId}/years/{year}`, and atomically publishes prepared annual replacements in a transaction. The root then records `VALID` or `VALIDATION_FAILED`, `builtAt`, `sourceThroughDate`, `affectedYears`, trigger, and combined Transient/Group evidence. Annual documents record their own status, evidence, settings, exclusions, coverage, `builtAt`, and build run. A preparation exception leaves published annual documents untouched and restores a prior global `VALID` state (or marks it `STALE` when no valid model exists), with failure metadata for audit.
+Each run sets `hotels/{hotelUid}/reports/stayPatternModel` to `BUILDING`, writes complete candidates below `builds/{runId}/years/{year}`, and atomically publishes prepared annual replacements in a transaction. The root then records `VALID` or `VALIDATION_FAILED`, `builtAt`, `sourceThroughDate`, `affectedYears`, trigger, combined Transient/Group evidence and the captured `publishedSourceRevision`. Annual documents record their own status, evidence, settings, exclusions, coverage, `builtAt`, and build run. A read, preparation, staging or publication exception leaves published annual documents untouched and marks the current root `STALE`, including when the previous root was `VALID`. The root is marked `BUILDING` before raw/history collection. Durable build receipts record completion or failure. Publication checks both the active build identity and unchanged source revision transactionally, so a superseded run or concurrent source import cannot overwrite a newer publication or clear its state. Dirty source revisions force a full rebuild even when a single year was requested; retained annuals with removed source evidence are rebuilt and must pass validation again. Consumers require `sourceRevision === publishedSourceRevision`; unknown revisions require fallback. If failure metadata itself cannot be persisted, the original failure is returned and that persistence failure is logged; this requires operator recovery rather than a claim of successful invalidation.
 
 ### Current-hotel read-only validation run
 
@@ -63,28 +65,24 @@ For each future arrival and business type, comparables are attempted in this fix
 
 The first tier with 30 room arrivals and five distinct arrival dates is used. If none qualifies, the first contextually relevant non-empty tier remains usable with LOW confidence; the order is never reversed merely to enlarge the sample. Shares retain exact LOS and sum to one.
 
-The horizon runs from arrival minus `2 × maxModeledLos` through checkout plus `2 × maxModeledLos` (exclusive). Existing PMS, forecast, calendar and contribution maps are prepared once for the horizon. Missing required shoulder-date PMS or contribution data makes the network unavailable; values are not replaced by zero.
+The core synthetic-arrival and occupancy-fit horizon runs from arrival minus `2 × maxModeledLos` through checkout plus `2 × maxModeledLos` (exclusive). `createLosNetworkHorizon` also supplies a capacity/valuation tail through the final core arrival plus its complete maximum LOS. Prepare PMS, forecast, calendar and contribution maps once over `valuationDates`, but generate arrivals and fit occupancy only over `horizonDates`. Tail dates never generate more synthetic arrivals. Only occupied itinerary dates require tail data; absent irrelevant empty edges do not invalidate a network. Missing genuine shoulder-night capacity or value keeps LOS unavailable, and values are never replaced by zero.
 
 Existing forecasts remain authoritative. For each type/scenario, future occupancy is still `max(0, final forecast - current OTB)`. Chronological deconvolution subtracts carryover from earlier synthetic itineraries and distributes only the remaining arrivals by LOS share. Historical volume is never added. Synthetic occupancy is reconciled with the source occupancy; carryover excess is recorded and the default network-fit gate is 5% WAPE.
 
 ## Capacity, displacement and contribution
 
-Current OTB is hard committed. Available capacity is sellable inventory minus hard committed rooms. The requested group is subtracted only on its requested stay dates. The same deterministic itinerary ordering is used without and with the group:
+Current OTB is hard committed. Available capacity is sellable inventory minus hard committed rooms. The requested complete group is subtracted only on its requested stay dates. Both portfolios use exactly the same forecast demand and net values. Each optimizes complete interval paths jointly with nightly capacity and demand bounds; fractional expected room arrivals are retained. The implementation uses bounded minimum-cost circulation, verifies an independent primal/dual certificate and fails explicitly on numerical or work limits. It does not use average contribution per RN as its final allocation policy.
 
-1. highest average contribution per RN;
-2. Transient before Group within numeric tolerance;
-3. earlier arrival;
-4. shorter LOS;
-5. stable itinerary key.
+Opportunity cost is the signed difference between optimized portfolio contributions before and after the group. Replacement paths reduce opportunity cost. Positive lost-room-night diagnostics are reported separately; they are not a proxy for the net contribution difference. Full itinerary values use the existing nightly Transient Value or Future Group Value. Nights in `[groupArrival, groupCheckout)` are core; all other lost nights are shoulder. Network RN can exceed requested RN. Low/P25, Base/P50 and High/P75 group scenarios are independently reconstructed and simulated.
 
-This is deterministic network allocation, not optimal revenue management or bid-price optimization. Fractional expected rooms are preserved. An itinerary is accepted only up to the minimum remaining capacity across its **complete** path, and that accepted volume consumes every night.
+When all reconciliation, coverage, network-fit, capacity, sample and contribution gates pass, LOS net portfolio opportunity cost **replaces** the validated per-night portfolio opportunity cost in the unchanged Economic Floor structure. It is never added to legacy contribution. Variable room cost, breakfast cost, BQT contribution, commission, VAT and commercial floor normalization are unchanged. On any failure `LOS_NETWORK_FALLBACK_TO_STAY_DATE` retains the validated per-night portfolio result and records the factual reason. Physical shortfalls, unknown required inputs and zero requested room nights remain blocking in the replacement layer, Pricing Guidance and simulator.
 
-The difference between without-group and with-group acceptance is valued over the complete itinerary using the existing nightly Transient Value or Future Group Value. Nights in `[groupArrival, groupCheckout)` are core; all other lost nights are shoulder. Network RN can exceed requested RN. Low/P25, Base/P50 and High/P75 group scenarios are independently reconstructed and simulated.
+Snapshots persist both `legacyStayDateDisplacement` and the compact `losNetworkDisplacement`; synthetic itinerary rows are not persisted. Versions are `stay-pattern-v1`, `los-network-v2-optimal-portfolio`, and `group-contribution-v5-optimal-portfolio`; Pricing Guidance remains `pricing-guidance-v1`. Physical feasibility is `physical-feasibility-v2-required-inputs`. Portfolio snapshots include before/after values, gross lost and replacement contributions, policy, bounded solver diagnostics and certificate gaps. Accepted synthetic paths are not persisted.
 
-When all reconciliation, coverage, network-fit, capacity, sample and contribution gates pass, LOS lost contribution **replaces** legacy stay-date opportunity cost in the unchanged Economic Floor structure. It is never added to legacy contribution. Variable room cost, breakfast cost, BQT contribution, commission, VAT and commercial floor normalization are unchanged. On any failure `LOS_NETWORK_FALLBACK_TO_STAY_DATE` retains numerically identical legacy behavior and records the factual reason.
+## Model boundaries
 
-Snapshots persist both `legacyStayDateDisplacement` and the compact `losNetworkDisplacement`; synthetic itinerary rows are not persisted. Versions are `stay-pattern-v1`, `los-network-v1`, and `group-contribution-v5-los-network`; Pricing Guidance remains `pricing-guidance-v1`.
+Future Group LOS represents expected inventory paths. It does not model reducing rooms on one night, shifting dates, partially accepting a commercial group, or alternative-date negotiation. V1 also does not implement cancellation/wash or booking-pace modelling, insert-date inference, overbooking, BAR or bid-price optimization, competitor group-price prediction, conversion probability, ML/OpenAI pricing, meeting/function-space constraints, or BQT displacement.
 
-## V1 boundaries
+## Canonical preparation
 
-Future Group LOS represents expected inventory paths. It does not model reducing rooms on one night, shifting dates, partially accepting a commercial group, or alternative-date negotiation. V1 also does not implement cancellation/wash or booking-pace modelling, insert-date inference, overbooking, BAR/bid-price/LP optimization, competitor group-price prediction, conversion probability, ML/OpenAI pricing, meeting/function-space constraints, or BQT displacement.
+`functions/src/stayPatternPreparation.mjs` is the sole pure annual reservation normalization, classification, occupancy reconstruction and reconciliation builder. The server lifecycle and browser diagnostic adapter call the same builder. Server imports/publication remain in `stayPatternModel.js`; browser analysis continues to read published anonymous annual aggregates only. Node 22.12 or later is required for the synchronous CommonJS-to-ES-module bridge. Strict date validation excludes impossible calendar dates instead of rolling them into another month. Training observations and room-arrival volume remain grouped by arrival year; annual occupancy reconciliation includes all realized reservations overlapping the selected stay year, including December arrivals occupying January.
