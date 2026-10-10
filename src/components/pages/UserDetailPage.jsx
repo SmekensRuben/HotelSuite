@@ -154,10 +154,10 @@ function ScopedUserDetailPage({ userId, platform }) {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-3">
+      <PageContainer as={platform ? "div" : "main"} className="space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-3xl font-semibold">User Detail</h1>
             <p className="text-gray-600 mt-1">
@@ -189,7 +189,7 @@ function ScopedUserDetailPage({ userId, platform }) {
                   type="text"
                   value={firstName}
                   onChange={(event) => setFirstName(event.target.value)}
-                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
                 />
               </label>
 
@@ -199,7 +199,7 @@ function ScopedUserDetailPage({ userId, platform }) {
                   type="text"
                   value={lastName}
                   onChange={(event) => setLastName(event.target.value)}
-                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
                 />
               </label>
             </div>
@@ -210,7 +210,7 @@ function ScopedUserDetailPage({ userId, platform }) {
                 type="email"
                 value={email}
                 readOnly
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
               />
               <span className="mt-1 block text-xs text-gray-500">The sign-in email is managed by Firebase Authentication.</span>
             </label>
@@ -227,7 +227,7 @@ function ScopedUserDetailPage({ userId, platform }) {
                   if (!nextHotelUids.includes(selectedHotelUid)) setSelectedHotelUid(nextHotelUids[0] || "");
                 }}
                 placeholder="hotel-a, hotel-b"
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
               />
             </label>
 
@@ -261,13 +261,13 @@ function ScopedUserDetailPage({ userId, platform }) {
                       return (
                         <label
                           key={permissionKey}
-                          className="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm"
+                          className="flex flex-wrap items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm"
                         >
                           <input
                             type="checkbox"
                             checked={isChecked}
                             onChange={() => togglePermission(permissionKey)}
-                            className="h-4 w-4 rounded border-gray-300 text-[#b41f1f] focus:ring-[#b41f1f]/30"
+                            className="h-4 w-4 rounded border-gray-300 text-brand-800 focus:ring-brand-800/30"
                           />
                           <span>{action === "*" ? "All actions" : action}</span>
                         </label>
@@ -278,11 +278,11 @@ function ScopedUserDetailPage({ userId, platform }) {
               ))}
             </div>}
 
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="submit"
                 disabled={!canUpdateUsers || saving}
-                className="inline-flex items-center rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:cursor-not-allowed disabled:opacity-70"
+                className="inline-flex items-center rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-brand-950 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {saving ? "Saving..." : "Save"}
               </button>

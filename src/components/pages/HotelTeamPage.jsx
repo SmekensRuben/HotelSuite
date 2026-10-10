@@ -107,10 +107,10 @@ function ScopedHotelTeamPage({ platform, hotelUid }) {
     } catch (failure) { if (current()) setError(errorMessage(failure)); }
     finally { if (current()) setBusy(false); }
   };
-  if (!canManage) return <PageContainer><p role="alert">Hotel administrator access is required.</p></PageContainer>;
+  if (!canManage) return <PageContainer as={platform ? "div" : "main"}><p role="alert">Hotel administrator access is required.</p></PageContainer>;
   return <div className="min-h-screen bg-slate-50 text-slate-900">
     <HeaderBar today={new Date().toLocaleDateString("en-GB")} onLogout={() => signOut(auth)} />
-    <PageContainer className="space-y-6">
+    <PageContainer as={platform ? "div" : "main"} className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-3xl font-semibold">Hotel team</h1>
         <p className="mt-2 text-sm text-slate-600">Manage named accounts and module roles for {hotelName}. Other hotels remain separate.</p></div>
         <button disabled={busy || loading} onClick={load} className="rounded-lg border bg-white px-4 py-2 text-sm">Refresh team</button></div>
@@ -119,8 +119,8 @@ function ScopedHotelTeamPage({ platform, hotelUid }) {
       {loading ? <p role="status">Loading hotel team...</p> : <div className="grid items-start gap-6 lg:grid-cols-2">
         <div className="overflow-x-auto rounded-xl border bg-white p-5"><p className="mb-4 text-sm text-slate-600">{team.users.length} assigned accounts · {team.seatLimit === null ? "No user limit" : `Limit: ${team.seatLimit}`}. Invited accounts count as assigned users.</p>
           <table className="w-full text-left text-sm"><caption className="sr-only">Team members for this hotel</caption><thead><tr><th className="pb-3">Member</th><th className="pb-3">Administration</th></tr></thead>
-            <tbody>{team.users.map((member) => <tr key={member.id} className="border-t"><td className="py-3"><button disabled={busy} onClick={() => select(member)} className="text-left text-red-800 underline">{[member.firstName, member.lastName].filter(Boolean).join(" ") || member.email || member.id}</button><p className="mt-1 text-xs text-slate-500">{member.email}</p></td><td>{member.hotelAdmin ? "Hotel administrator" : "Member"}</td></tr>)}</tbody>
-          </table><button disabled={busy} onClick={reset} className="mt-5 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white">Invite a member</button>
+            <tbody>{team.users.map((member) => <tr key={member.id} className="border-t"><td className="py-3"><button disabled={busy} onClick={() => select(member)} className="text-left text-brand-800 underline">{[member.firstName, member.lastName].filter(Boolean).join(" ") || member.email || member.id}</button><p className="mt-1 text-xs text-slate-500">{member.email}</p></td><td>{member.hotelAdmin ? "Hotel administrator" : "Member"}</td></tr>)}</tbody>
+          </table><button disabled={busy} onClick={reset} className="mt-5 rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white">Invite a member</button>
         </div>
         <form onSubmit={save} className="space-y-5 rounded-xl border bg-white p-6">
           <h2 className="text-xl font-semibold">{editing ? "Edit hotel access" : "Invite a member"}</h2>
@@ -140,12 +140,12 @@ function ScopedHotelTeamPage({ platform, hotelUid }) {
               if (!licensed && !displayed.some((action) => form.additionalPermissions.includes(`${feature.toLowerCase()}.${action}`))) return null;
               return <fieldset key={feature} disabled={busy || !licensed} className="mt-4"><legend className="text-xs font-semibold">{MODULE_CATALOG[FEATURE_MODULE[feature.toLowerCase()]]?.label || "Platform basics"} · {feature}</legend><div className="mt-2 flex flex-wrap gap-3">{displayed.map((action) => {
                 const key = `${feature.toLowerCase()}.${action}`;
-                return <label key={key} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={form.additionalPermissions.includes(key)} onChange={() => change("additionalPermissions", form.additionalPermissions.includes(key) ? form.additionalPermissions.filter((item) => item !== key) : [...form.additionalPermissions, key])} />{action === "*" ? "All actions (legacy)" : action}</label>;
+                return <label key={key} className="flex flex-wrap items-center gap-2 text-xs"><input type="checkbox" checked={form.additionalPermissions.includes(key)} onChange={() => change("additionalPermissions", form.additionalPermissions.includes(key) ? form.additionalPermissions.filter((item) => item !== key) : [...form.additionalPermissions, key])} />{action === "*" ? "All actions (legacy)" : action}</label>;
               })}</div></fieldset>;
             })}
           </details>
-          <button disabled={busy || loading || Boolean(error)} className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Saving..." : editing ? "Save hotel access" : "Assign access and send invitation"}</button>
-          {editing && <div className="flex flex-wrap gap-4 border-t pt-4"><button type="button" disabled={busy} onClick={resend} className="text-sm text-red-800 underline">Resend invitation</button><button type="button" disabled={busy} onClick={() => setConfirmRemoval(true)} className="text-sm text-red-800 underline">Remove hotel access</button></div>}
+          <button disabled={busy || loading || Boolean(error)} className="rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Saving..." : editing ? "Save hotel access" : "Assign access and send invitation"}</button>
+          {editing && <div className="flex flex-wrap gap-4 border-t pt-4"><button type="button" disabled={busy} onClick={resend} className="text-sm text-brand-800 underline">Resend invitation</button><button type="button" disabled={busy} onClick={() => setConfirmRemoval(true)} className="text-sm text-red-800 underline">Remove hotel access</button></div>}
           {confirmRemoval && <div role="alertdialog" aria-label="Confirm hotel access removal" className="rounded-lg border border-red-200 bg-red-50 p-4"><p className="text-sm">Remove {form.email}'s access to this hotel? Their account and other hotel memberships are preserved.</p><div className="mt-3 flex gap-4"><button type="button" disabled={busy} onClick={remove} className="text-sm font-semibold text-red-800">Confirm removal</button><button type="button" disabled={busy} onClick={() => setConfirmRemoval(false)} className="text-sm">Keep access</button></div></div>}
         </form>
       </div>}

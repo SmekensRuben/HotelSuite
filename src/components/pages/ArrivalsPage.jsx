@@ -125,7 +125,7 @@ export default function ArrivalsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div>
@@ -178,7 +178,7 @@ export default function ArrivalsPage() {
                       type="checkbox"
                       checked={selectedMemberships.includes(membership)}
                       onChange={() => toggleMembership(membership)}
-                      className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                      className="h-4 w-4 rounded border-gray-300 text-brand-700"
                     />
                     <span className="truncate" title={membership}>{membership}</span>
                   </label>

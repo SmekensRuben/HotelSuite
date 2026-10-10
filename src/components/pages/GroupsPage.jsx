@@ -96,7 +96,7 @@ export default function GroupsPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -115,7 +115,7 @@ export default function GroupsPage() {
             disabled={!canCreateGroups}
             className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow ${
               canCreateGroups
-                ? "bg-[#b41f1f] text-white hover:bg-[#961919]"
+                ? "bg-brand-800 text-white hover:bg-brand-950"
                 : "bg-gray-300 text-gray-500 cursor-not-allowed"
             }`}
           >
@@ -124,8 +124,8 @@ export default function GroupsPage() {
         </div>
 
         <div className="rounded-xl border border-red-100 bg-white p-4 shadow-sm">
-          <div className="mb-4 flex items-center gap-3 text-sm text-gray-600">
-            <span className="rounded-lg bg-[#b41f1f]/10 p-2 text-[#b41f1f]">
+          <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-gray-600">
+            <span className="rounded-lg bg-brand-800/10 p-2 text-brand-800">
               <UsersRound className="h-5 w-5" />
             </span>
             <span>Use this overview to follow group block status before the rooming list deadline.</span>

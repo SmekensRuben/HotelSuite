@@ -324,13 +324,13 @@ function ScopedSupplierProductsPage({ hotelUid }) {
     <PageShell>
         <AsyncError error={query.error} onRetry={query.retry} label="Could not load products." />
         {canReadSuppliers && <AsyncError error={supplierQuery.error} onRetry={supplierQuery.retry} label="Could not load suppliers." />}
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
             <h1 className="text-3xl font-semibold">Supplier Products</h1>
             <p className="text-gray-600 mt-1">{t("products.subtitle")}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={handleImportButton}
@@ -352,7 +352,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
               disabled={!canCreateProducts}
               className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow ${
                 canCreateProducts
-                  ? "bg-[#b41f1f] text-white hover:bg-[#961919]"
+                  ? "bg-brand-800 text-white hover:bg-brand-950"
                   : "bg-gray-300 text-gray-500 cursor-not-allowed"
               }`}
             >
@@ -378,7 +378,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
             placeholder="Search by supplier name, supplier sku or product name"
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
           />
         </div>
 
@@ -387,7 +387,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
             aria-label="Filter by supplier"
             value={selectedSupplierId}
             onChange={(event) => setSelectedSupplierId(event.target.value)}
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
           >
             <option value="">All suppliers</option>
             {supplierFilters.map((supplier) => (
@@ -400,7 +400,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
           <select
             value={selectedStatus}
             onChange={(event) => setSelectedStatus(event.target.value)}
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
           >
             <option value="">All statuses</option>
             <option value="active">{t("products.status.active")}</option>
@@ -419,9 +419,9 @@ function ScopedSupplierProductsPage({ hotelUid }) {
           />
         )}
 
-        <div className="flex items-center justify-between border-t border-gray-200 pt-4">
+        <div className="flex flex-wrap items-center justify-between border-t border-gray-200 pt-4">
           <p className="text-sm text-gray-500">Page {pageIndex + 1}</p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => {
@@ -471,7 +471,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
             type="button"
             onClick={handleExportFullList}
             disabled={busy}
-            className="rounded-lg bg-[#b41f1f] px-3 py-2 text-sm font-semibold text-white hover:bg-[#961919]"
+            className="rounded-lg bg-brand-800 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-950"
           >
             {t("products.export.full")}
           </button>
@@ -485,7 +485,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
             type="button"
             onClick={() => submitImport("overwrite")}
             disabled={busy}
-            className="rounded-lg bg-[#b41f1f] px-3 py-2 text-sm font-semibold text-white hover:bg-[#961919] disabled:opacity-50"
+            className="rounded-lg bg-brand-800 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-950 disabled:opacity-50"
           >
             {t("products.import.overwrite")}
           </button>

@@ -81,16 +81,16 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <AsyncError error={query.error} onRetry={query.retry} label="Could not load product." />
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
             <h1 className="text-3xl font-semibold">Supplier Product Detail</h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => navigate(`/catalog/supplier-products/${productId}/edit`)}
@@ -98,7 +98,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
               className={`inline-flex items-center justify-center rounded border p-2 ${
                 canEditProducts
                   ? "border-gray-300 text-gray-700 hover:bg-gray-100"
-                  : "border-gray-200 text-gray-400 cursor-not-allowed"
+                  : "border-gray-200 text-gray-500 cursor-not-allowed"
               }`}
               title={t("products.actions.edit")}
             >
@@ -111,7 +111,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
               className={`inline-flex items-center justify-center rounded border p-2 ${
                 canDeleteProducts
                   ? "border-red-200 text-red-700 hover:bg-red-50"
-                  : "border-gray-200 text-gray-400 cursor-not-allowed"
+                  : "border-gray-200 text-gray-500 cursor-not-allowed"
               }`}
               title={t("products.actions.delete")}
             >
@@ -174,7 +174,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
                         className="w-full max-w-[220px] aspect-[4/3] object-contain rounded-lg border border-gray-200 bg-white p-1 mx-auto"
                       />
                     ) : (
-                      <div className="w-full max-w-[140px] aspect-[4/3] rounded-lg border border-dashed border-gray-300 bg-gray-50 text-gray-400 text-xs flex items-center justify-center px-3 text-center mx-auto">
+                      <div className="w-full max-w-[140px] aspect-[4/3] rounded-lg border border-dashed border-gray-300 bg-gray-50 text-gray-500 text-xs flex items-center justify-center px-3 text-center mx-auto">
                         Geen image
                       </div>
                     )}

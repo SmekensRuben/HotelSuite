@@ -84,7 +84,7 @@ export default function OutletCreatePage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div>
@@ -105,7 +105,7 @@ export default function OutletCreatePage() {
                 disabled={Boolean(createdOutlet) || saving}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="Outlet name"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
                 required
               />
             </div>
@@ -116,7 +116,7 @@ export default function OutletCreatePage() {
                 {users.map((user) => {
                   const label = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email || user.id;
                   return (
-                    <label key={user.id} className="flex items-center gap-2 text-sm text-gray-700">
+                    <label key={user.id} className="flex flex-wrap items-center gap-2 text-sm text-gray-700">
                       <input
                         type="checkbox"
                         checked={selectedApproverIds.includes(user.id)}
@@ -141,7 +141,7 @@ export default function OutletCreatePage() {
               <button
                 type="submit"
                 disabled={saving}
-                className="px-4 py-2 rounded-lg bg-[#b41f1f] text-white text-sm font-semibold hover:bg-[#961919] disabled:opacity-60"
+                className="px-4 py-2 rounded-lg bg-brand-800 text-white text-sm font-semibold hover:bg-brand-950 disabled:opacity-60"
               >
                 {saving ? "Saving..." : "Save Outlet"}
               </button>

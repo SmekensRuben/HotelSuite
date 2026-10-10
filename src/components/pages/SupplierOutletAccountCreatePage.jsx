@@ -109,10 +109,10 @@ export default function SupplierOutletAccountCreatePage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
             <h1 className="text-3xl font-semibold">Nieuwe Supplier Outlet Account</h1>
@@ -176,7 +176,7 @@ export default function SupplierOutletAccountCreatePage() {
               <button
                 type="submit"
                 disabled={saving}
-                className="inline-flex h-10 items-center justify-center rounded-lg bg-[#b41f1f] px-4 text-sm font-semibold text-white hover:bg-[#961919] disabled:opacity-50"
+                className="inline-flex h-10 items-center justify-center rounded-lg bg-brand-800 px-4 text-sm font-semibold text-white hover:bg-brand-950 disabled:opacity-50"
               >
                 {saving ? "Opslaan..." : "Opslaan"}
               </button>

@@ -154,7 +154,7 @@ export default function ProductFormFields({
             className="rounded border border-gray-300 px-3 py-2 text-sm min-h-24"
           />
         </label>
-        <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+        <label className="flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-700">
           <input
             type="checkbox"
             checked={formState.active}
@@ -269,11 +269,11 @@ export default function ProductFormFields({
         </label>
       </SectionCard>
 
-      <div className="sm:col-span-2 flex items-center gap-3 pt-2">
+      <div className="sm:col-span-2 flex flex-wrap items-center gap-3 pt-2">
         <button
           type="submit"
           disabled={saving}
-          className="bg-[#b41f1f] text-white px-4 py-2 rounded font-semibold shadow hover:bg-[#961919] transition-colors disabled:opacity-60"
+          className="bg-brand-800 text-white px-4 py-2 rounded font-semibold shadow hover:bg-brand-950 transition-colors disabled:opacity-60"
         >
           {saving ? savingLabel : submitLabel}
         </button>

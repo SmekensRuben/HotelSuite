@@ -51,12 +51,12 @@ export default function OutletDetailPage() {
   }, [hotelUid, outletId]);
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-3xl font-semibold">Outlet Detail</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => navigate("/settings/outlets")}
@@ -72,7 +72,7 @@ export default function OutletDetailPage() {
               className={`inline-flex items-center justify-center rounded border p-2 ${
                 canEditOutlets
                   ? "border-gray-300 text-gray-700 hover:bg-gray-100"
-                  : "border-gray-200 text-gray-400 cursor-not-allowed"
+                  : "border-gray-200 text-gray-500 cursor-not-allowed"
               }`}
               title="Edit outlet"
             >

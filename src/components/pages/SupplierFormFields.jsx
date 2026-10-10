@@ -206,7 +206,7 @@ export default function SupplierFormFields({
                     type="checkbox"
                     checked={checked}
                     onChange={() => toggleDeliveryDay(dayOption.value)}
-                    className="h-4 w-4 rounded border-gray-300 text-[#b41f1f] focus:ring-[#b41f1f]/30"
+                    className="h-4 w-4 rounded border-gray-300 text-brand-800 focus:ring-brand-800/30"
                   />
                   <span>{dayOption.label}</span>
                 </label>
@@ -259,7 +259,7 @@ export default function SupplierFormFields({
           type="submit"
           disabled={saving}
           className={`inline-flex items-center rounded-lg px-5 py-2 text-sm font-semibold text-white ${
-            saving ? "bg-gray-400 cursor-not-allowed" : "bg-[#b41f1f] hover:bg-[#961919]"
+            saving ? "bg-gray-400 cursor-not-allowed" : "bg-brand-800 hover:bg-brand-950"
           }`}
         >
           {saving ? savingLabel : submitLabel}
@@ -279,7 +279,7 @@ function InputField({ label, value, onChange, type = "text", placeholder = "", r
         onChange={(event) => onChange(event.target.value)}
         required={required}
         placeholder={placeholder}
-        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
       />
     </label>
   );
@@ -293,7 +293,7 @@ function TextAreaField({ label, value, onChange }) {
         rows={4}
         value={value || ""}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
       />
     </label>
   );
@@ -306,7 +306,7 @@ function SelectField({ label, value, options, onChange }) {
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
       >
         {options.map((option) => (
           <option key={option} value={option}>

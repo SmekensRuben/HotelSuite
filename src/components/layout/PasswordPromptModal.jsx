@@ -28,7 +28,7 @@ export default function PasswordPromptModal({
 
   return (
     <Dialog open={open} onClose={onCancel} className="fixed inset-0 z-[70] overflow-hidden">
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" aria-hidden="true" />
+      <div className="fixed inset-0 bg-brand-950/40 backdrop-blur-sm" aria-hidden="true" />
       <div className="fixed inset-0 flex items-center justify-center p-4">
         <Dialog.Panel className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
           <Dialog.Title className="text-lg font-semibold text-gray-900">{title}</Dialog.Title>

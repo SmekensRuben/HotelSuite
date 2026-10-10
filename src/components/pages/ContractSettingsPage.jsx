@@ -208,7 +208,7 @@ export default function ContractSettingsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={todayLabel} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div>
@@ -232,7 +232,7 @@ export default function ContractSettingsPage() {
               <button
                 type="submit"
                 disabled={!canCreateSettings || savingCategory}
-                className="rounded bg-[#b41f1f] px-4 py-2 font-semibold text-white shadow transition-colors hover:bg-[#961919] disabled:opacity-60"
+                className="rounded bg-brand-800 px-4 py-2 font-semibold text-white shadow transition-colors hover:bg-brand-950 disabled:opacity-60"
               >
                 {savingCategory ? "Adding..." : "Add category"}
               </button>
@@ -261,7 +261,7 @@ export default function ContractSettingsPage() {
                       <span className="flex-1">{category.name}</span>
                     )}
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       {editingCategoryId === category.id ? (
                         <>
                           <button
@@ -339,7 +339,7 @@ export default function ContractSettingsPage() {
               <button
                 type="submit"
                 disabled={!canCreateSettings || savingSubcategory || sortedCategories.length === 0}
-                className="rounded bg-[#b41f1f] px-4 py-2 font-semibold text-white shadow transition-colors hover:bg-[#961919] disabled:opacity-60"
+                className="rounded bg-brand-800 px-4 py-2 font-semibold text-white shadow transition-colors hover:bg-brand-950 disabled:opacity-60"
               >
                 {savingSubcategory ? "Adding..." : "Add subcategory"}
               </button>
@@ -393,7 +393,7 @@ export default function ContractSettingsPage() {
                               <span className="flex-1">{subcategory.name}</span>
                             )}
 
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               {editingSubcategoryId === subcategory.id ? (
                                 <>
                                   <button

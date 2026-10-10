@@ -43,9 +43,9 @@ export default function NotificationListSelector({ lists, value, onChange, disab
             <div className="mt-3 space-y-2">
               {selectedLists.length === 0 && <p className="text-sm text-gray-500">No Notification Lists added.</p>}
               {selectedLists.map((list) => (
-                <div key={list.id} className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm">
+                <div key={list.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm">
                   <span><span className="font-medium text-gray-900">{list.title}</span><span className="ml-2 text-xs text-gray-500">{list.contacts?.length || 0} contact(s)</span></span>
-                  {!readOnly && <button type="button" onClick={() => removeList(notification.key, list.id)} disabled={disabled} aria-label={`Remove ${list.title} from ${notification.label}`} className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-[#b41f1f] disabled:opacity-50"><X className="h-4 w-4" /></button>}
+                  {!readOnly && <button type="button" onClick={() => removeList(notification.key, list.id)} disabled={disabled} aria-label={`Remove ${list.title} from ${notification.label}`} className="rounded p-1 text-gray-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"><X className="h-4 w-4" /></button>}
                 </div>
               ))}
             </div>
@@ -55,7 +55,7 @@ export default function NotificationListSelector({ lists, value, onChange, disab
                   <option value="">{availableLists.length ? "Select a Notification List" : "All lists added"}</option>
                   {availableLists.map((list) => <option key={list.id} value={list.id}>{list.title}</option>)}
                 </select>
-                <button type="button" onClick={() => addList(notification.key)} disabled={disabled || !pending[notification.key]} className="inline-flex items-center gap-1 rounded-lg bg-[#b41f1f] px-3 py-2 text-sm font-semibold text-white disabled:bg-gray-300"><Plus className="h-4 w-4" /> Add</button>
+                <button type="button" onClick={() => addList(notification.key)} disabled={disabled || !pending[notification.key]} className="inline-flex items-center gap-1 rounded-lg bg-brand-800 px-3 py-2 text-sm font-semibold text-white disabled:bg-gray-300"><Plus className="h-4 w-4" /> Add</button>
               </div>
             )}
           </section>

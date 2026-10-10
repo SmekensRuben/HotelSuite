@@ -11,7 +11,7 @@ import { MODULE_CATALOG } from "../../constants/moduleCatalog";
 import ModuleRolePicker from "../shared/ModuleRolePicker";
 
 const fieldClass = "mt-2 w-full rounded-xl border border-slate-200 bg-white p-3";
-const buttonClass = "inline-flex items-center justify-center gap-2 rounded-xl bg-[#b41f1f] px-5 py-3 text-sm font-semibold text-white hover:bg-[#981b1b] disabled:opacity-50";
+const buttonClass = "inline-flex items-center justify-center gap-2 rounded-xl bg-brand-800 px-5 py-3 text-sm font-semibold text-white hover:bg-brand-950 disabled:opacity-50";
 
 function messageFor(error) {
   if (["functions/already-exists", "functions/invalid-argument", "functions/failed-precondition"].includes(error?.code)) return error.message;
@@ -80,13 +80,13 @@ export default function HotelOnboardingPage({ platform = false }) {
     finally { setBusy(""); }
   };
 
-  return <div className="min-h-screen bg-[#f6f4f1] text-slate-900">
+  return <div className="min-h-screen bg-canvas text-slate-900">
     <HeaderBar today={new Date().toLocaleDateString("en-GB")} onLogout={() => signOut(auth)} />
-    <PageContainer className="space-y-7">
-      <div><p className="text-xs font-semibold uppercase tracking-widest text-[#b41f1f]">Platform administration</p>
+    <PageContainer as={platform ? "div" : "main"} className="space-y-7">
+      <div><p className="text-xs font-semibold uppercase tracking-widest text-brand-800">Platform administration</p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">Set up a hotel</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">Create a property, assign its access period and invite the team. Each hotel has its own data and permissions.</p></div>
-      <div className="flex gap-3 rounded-2xl border border-slate-200 bg-white p-5"><ShieldCheck className="shrink-0 text-[#b41f1f]" size={22} />
+      <div className="flex gap-3 rounded-2xl border border-slate-200 bg-white p-5"><ShieldCheck className="shrink-0 text-brand-800" size={22} />
         <p className="text-sm leading-6 text-slate-600">Appoint a primary and backup hotel administrator. They manage their own team and assign licensed module roles. Operational access is assigned separately. Invoicing remains manual.</p></div>
       {message && <p role={message.error ? "alert" : "status"} className={`rounded-xl border p-4 text-sm ${message.error ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>{message.text}</p>}
       {rolloutReady === false && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
@@ -99,16 +99,16 @@ export default function HotelOnboardingPage({ platform = false }) {
       </div>}
       <div className="grid items-start gap-6 lg:grid-cols-2">
         <form onSubmit={create} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6">
-          <Building2 size={24} className="text-[#b41f1f]" /><div><p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Step 1</p><h2 className="mt-2 text-xl font-semibold">Create a property</h2></div>
+          <Building2 size={24} className="text-brand-800" /><div><p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Step 1</p><h2 className="mt-2 text-xl font-semibold">Create a property</h2></div>
           <label className="block text-sm font-medium">Hotel name<input required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} className={fieldClass} disabled={Boolean(busy)} /></label>
           <label className="block text-sm font-medium">Hotel ID<input required pattern="[a-z0-9][a-z0-9-]{2,59}" value={hotelUid} onChange={(e) => setHotelUid(e.target.value.toLowerCase())} className={fieldClass} disabled={Boolean(busy)} /><span className="mt-2 block text-xs font-normal text-slate-500">A unique, permanent ID, such as riverside-hotel.</span></label>
           <label className="block text-sm font-medium">Initial access<select value={status} onChange={(e) => setStatus(e.target.value)} className={fieldClass} disabled={Boolean(busy)}><option value="trialing">Trial</option><option value="active">Active · manual invoicing</option></select></label>
-          <fieldset disabled={Boolean(busy)} className="space-y-3"><legend className="mb-3 text-sm font-semibold">Initial modules</legend>{Object.entries(MODULE_CATALOG).map(([id, module]) => <label key={id} className="flex items-center gap-3 text-sm"><input type="checkbox" checked={modules.includes(id)} onChange={() => setModules((previous) => previous.includes(id) ? previous.filter((key) => key !== id) : [...previous, id])} />{module.label}</label>)}</fieldset>
+          <fieldset disabled={Boolean(busy)} className="space-y-3"><legend className="mb-3 text-sm font-semibold">Initial modules</legend>{Object.entries(MODULE_CATALOG).map(([id, module]) => <label key={id} className="flex flex-wrap items-center gap-3 text-sm"><input type="checkbox" checked={modules.includes(id)} onChange={() => setModules((previous) => previous.includes(id) ? previous.filter((key) => key !== id) : [...previous, id])} />{module.label}</label>)}</fieldset>
           {status === "trialing" && <label className="block text-sm font-medium">Trial length in days<input required type="number" min={1} max={90} value={trialDays} onChange={(e) => setTrialDays(e.target.value)} className={fieldClass} disabled={Boolean(busy)} /></label>}
           <button disabled={Boolean(busy) || rolloutReady !== true} className={buttonClass}>{busy === "create" && <Loader2 size={16} className="animate-spin" />}Create hotel</button>
         </form>
         <form onSubmit={invite} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6">
-          <Mail size={24} className="text-[#b41f1f]" /><div><p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Step 2</p><h2 className="mt-2 text-xl font-semibold">Invite a team member</h2></div>
+          <Mail size={24} className="text-brand-800" /><div><p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Step 2</p><h2 className="mt-2 text-xl font-semibold">Invite a team member</h2></div>
           <label className="block text-sm font-medium">Hotel<select required value={selectedHotel} onChange={(e) => { setSelectedHotel(e.target.value); setModuleRoles({}); }} className={fieldClass} disabled={Boolean(busy)}><option value="">Choose a hotel</option>{hotels.map((h) => <option key={h.hotelUid} value={h.hotelUid}>{h.hotelName}</option>)}</select></label>
           <div className="grid gap-4 sm:grid-cols-2"><label className="block text-sm font-medium">First name<input maxLength={80} value={firstName} onChange={(e) => setFirstName(e.target.value)} className={fieldClass} disabled={Boolean(busy)} /></label><label className="block text-sm font-medium">Last name<input maxLength={80} value={lastName} onChange={(e) => setLastName(e.target.value)} className={fieldClass} disabled={Boolean(busy)} /></label></div>
           <label className="block text-sm font-medium">Email address<input required type="email" maxLength={254} value={recipient} onChange={(e) => setRecipient(e.target.value)} className={fieldClass} disabled={Boolean(busy)} /></label>
@@ -119,7 +119,7 @@ export default function HotelOnboardingPage({ platform = false }) {
           <button disabled={Boolean(busy) || !selectedHotel || rolloutReady !== true} className={buttonClass}>{busy === "invite" && <Loader2 size={16} className="animate-spin" />}{resend ? "Resend invitation" : "Assign access and send invitation"}</button>
         </form>
       </div>
-      <Link to={platform ? "/platform/subscriptions" : "/settings/subscriptions"} className="inline-block text-sm font-semibold text-[#9b1c1c] hover:underline">Manage hotel subscriptions →</Link>
+      <Link to={platform ? "/platform/subscriptions" : "/settings/subscriptions"} className="inline-block text-sm font-semibold text-brand-800 hover:underline">Manage hotel subscriptions →</Link>
     </PageContainer>
   </div>;
 }

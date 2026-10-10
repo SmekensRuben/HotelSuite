@@ -99,7 +99,7 @@ export default function RoomingListChangeRequestPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-canvas">
       <HeaderBar onLogout={logout} />
       <PageContainer className="space-y-6 pb-10">
         <button
@@ -111,8 +111,8 @@ export default function RoomingListChangeRequestPage() {
         {error && <p className="font-semibold text-red-600">{error}</p>}
         {roomingList && request && (
           <>
-            <Card className="border-0 bg-gradient-to-r from-[#b41f1f] to-[#7f1717] text-white">
-              <p className="text-sm text-red-100">
+            <Card className="border-0 bg-gradient-to-r from-brand-800 to-brand-950 text-white">
+              <p className="text-sm text-brand-100">
                 {roomingList.groupName} · Rooming List
               </p>
               <h1 className="mt-1 text-3xl font-semibold">
@@ -359,7 +359,7 @@ function ConfirmationModal({ decision, saving, onCancel, onConfirm }) {
             type="button"
             onClick={onConfirm}
             disabled={saving}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-60 ${approving ? "bg-green-700 hover:bg-green-800" : "bg-[#b41f1f] hover:bg-[#961919]"}`}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-60 ${approving ? "bg-green-700 hover:bg-green-800" : "bg-brand-800 hover:bg-brand-950"}`}
           >
             {approving ? "Approve" : "Reject"}
           </button>
@@ -404,7 +404,7 @@ function RoomTypePickupOverview({ summary }) {
             key={day.date}
             type="button"
             onClick={() => setSelectedDate(day.date)}
-            className={`rounded-full px-3 py-1 text-xs font-semibold ${day.date === selectedDay?.date ? "bg-[#b41f1f] text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+            className={`rounded-full px-3 py-1 text-xs font-semibold ${day.date === selectedDay?.date ? "bg-brand-800 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
           >
             {new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, {
               month: "short",
@@ -420,7 +420,7 @@ function RoomTypePickupOverview({ summary }) {
               const day = selectedDay;
               return (
                 <>
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <h3 className="font-semibold text-gray-900">
                         {new Date(`${day.date}T00:00:00`).toLocaleDateString(

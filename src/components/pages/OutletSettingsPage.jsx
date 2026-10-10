@@ -56,10 +56,10 @@ export default function OutletSettingsPage() {
   const columns = [{ key: "name", label: "Name" }];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">Settings</p>
             <h1 className="text-3xl font-semibold">Outlet Settings</h1>
@@ -70,7 +70,7 @@ export default function OutletSettingsPage() {
             disabled={!canCreateOutlets}
             className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow ${
               canCreateOutlets
-                ? "bg-[#b41f1f] text-white hover:bg-[#961919]"
+                ? "bg-brand-800 text-white hover:bg-brand-950"
                 : "bg-gray-300 text-gray-500 cursor-not-allowed"
             }`}
           >
@@ -88,7 +88,7 @@ export default function OutletSettingsPage() {
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
             placeholder="Search by outlet name"
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
           />
         </div>
 

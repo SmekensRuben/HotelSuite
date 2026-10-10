@@ -25,7 +25,7 @@ export default function HistoricalYearsDropdown({ years, selectedYears, onToggle
       {years.map((year) => {
         const checked = selectedYears.includes(year);
         return <button key={year} type="button" role="option" aria-selected={checked} onClick={() => onToggle(year)} className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
-          <span>{year}</span><span className={`flex h-5 w-5 items-center justify-center rounded border ${checked ? "border-[#b41f1f] bg-[#b41f1f] text-white" : "border-gray-300"}`}>{checked && <Check className="h-3.5 w-3.5" />}</span>
+          <span>{year}</span><span className={`flex h-5 w-5 items-center justify-center rounded border ${checked ? "border-brand-800 bg-brand-800 text-white" : "border-gray-300"}`}>{checked && <Check className="h-3.5 w-3.5" />}</span>
         </button>;
       })}
     </div>}

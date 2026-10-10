@@ -243,7 +243,7 @@ function MappingEditor({
                   disabled={!canRemove}
                   className={`inline-flex items-center justify-center rounded-lg border p-2 ${
                     !canRemove
-                      ? "cursor-not-allowed border-gray-200 text-gray-400"
+                      ? "cursor-not-allowed border-gray-200 text-gray-500"
                       : "border-red-200 text-red-700 hover:bg-red-50"
                   }`}
                   title="Remove mapping"
@@ -274,7 +274,7 @@ function MappingEditor({
 
             {isListMapping ? (
               <div className="rounded-xl border border-dashed border-gray-300 bg-white p-4">
-                <div className="mb-3 flex items-center justify-between gap-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
                   <div>
                     <h3 className="text-sm font-semibold text-gray-900">List item mappings</h3>
                     <p className="text-xs text-gray-500">{(isXmlParser || isJsonParser) ? "Map fields inside each object of this list to properties on the target list item." : "Map fields from the same CSV row to properties on one list item. Rows with the same documentId will append new list items instead of overwriting the document."}</p>
@@ -494,13 +494,13 @@ export default function FileImportTypeForm({
                 return (
                   <label
                     key={`id-format-${mapping.databaseField}-${mapping.sourceField}`}
-                    className="flex items-center gap-3"
+                    className="flex flex-wrap items-center gap-3"
                   >
                     <input
                       type="checkbox"
                       checked={checked}
                       onChange={() => onIdFormatToggle(mapping.databaseField)}
-                      className="h-4 w-4 rounded border-gray-300 text-[#b41f1f]"
+                      className="h-4 w-4 rounded border-gray-300 text-brand-800"
                     />
                     <span className="text-sm text-gray-700">
                       {mapping.databaseField} ← {mapping.sourceField}
@@ -623,12 +623,12 @@ export default function FileImportTypeForm({
 
       <div className="grid gap-4 md:grid-cols-2">
         {formValues.parserType === "csv" ? (
-          <label className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+          <label className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
             <input
               type="checkbox"
               checked={formValues.hasHeaderRow}
               onChange={onToggle("hasHeaderRow")}
-              className="h-4 w-4 rounded border-gray-300 text-[#b41f1f]"
+              className="h-4 w-4 rounded border-gray-300 text-brand-800"
             />
             <span className="text-sm font-medium text-gray-700">Has Header Row</span>
           </label>
@@ -636,19 +636,19 @@ export default function FileImportTypeForm({
           <div />
         )}
 
-        <label className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+        <label className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
           <input
             type="checkbox"
             checked={formValues.enabled}
             onChange={onToggle("enabled")}
-            className="h-4 w-4 rounded border-gray-300 text-[#b41f1f]"
+            className="h-4 w-4 rounded border-gray-300 text-brand-800"
           />
           <span className="text-sm font-medium text-gray-700">Enabled</span>
         </label>
       </div>
 
       <div className="space-y-4">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Column Mappings</h2>
             <p className="text-sm text-gray-500">
@@ -684,7 +684,7 @@ export default function FileImportTypeForm({
         <button
           type="submit"
           disabled={saving}
-          className="px-4 py-2 rounded-lg bg-[#b41f1f] text-white text-sm font-semibold hover:bg-[#961919] disabled:opacity-60"
+          className="px-4 py-2 rounded-lg bg-brand-800 text-white text-sm font-semibold hover:bg-brand-950 disabled:opacity-60"
         >
           {saving ? "Saving..." : submitLabel}
         </button>
