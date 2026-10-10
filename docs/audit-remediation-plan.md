@@ -11,7 +11,7 @@
 
 ## Status definitions
 
-`confirmed` = baseline problem reproduced or traced; `implementing` = changes in progress; `local-verified` = focused tests/required checks passed; `reviewed` = independent review addressed; `deployed-unverified` = release/migration/operator acceptance remains. A green pre-existing suite alone does not resolve a finding.
+`resolved` in the Code column means the actionable repository change is implemented. Local verification and independent review are recorded separately. **Not deployed** means migrations, deployed parity and operator/browser acceptance remain. A green pre-existing suite alone does not resolve a finding. F22 branch protection requires repository administration and remains operationally unverified.
 
 ## Workstreams and exclusive ownership
 
@@ -35,9 +35,9 @@ Hard physical feasibility overrides every engine and pricing/simulation output. 
 
 | ID | Finding / acceptance criteria | Code | Local checks / review | Deployment / remaining work |
 | --- | --- | --- | --- | --- |
-| F01 | Server-owned unique receiving identity; two hotels cannot claim the same mailbox/route or read misrouted bytes | resolved | 27 focused import/parser tests; independent probes/review passed | Not deployed. Source VM reproduction; real-provider/staging acceptance remains |
-| F02 | Global projection IDs include hotel; source-owned update/delete; safe reindex/migration tool | resolved | 27 focused import/parser tests; independent probes/review passed | Not deployed. Same local ID across hotels and reordered trigger regressions required |
-| F03 | Durable event/attachment receipt and deterministic storage identity; concurrent replay does not duplicate work | resolved | 27 focused import/parser tests; independent probes/review passed | Not deployed. Crash/retry/concurrency regression required |
+| F01 | Server-owned unique receiving identity; two hotels cannot claim the same mailbox/route or read misrouted bytes | resolved | Import/parser, collision, replay, UTF-8 and source-revision regressions; independent ingress review passed | Not deployed. Review receiving identities and perform real-provider/staging acceptance |
+| F02 | Global projection IDs include hotel; source-owned update/delete; safe reindex/migration tool | resolved | Two-hotel local-ID collisions, reordered/deleted source triggers and safe migration reviewed | Not deployed. Reviewed source-owned reindex/registry migration remains |
+| F03 | Durable event/attachment receipt and deterministic storage identity; concurrent replay does not duplicate work | resolved | Atomic checkpoints, concurrent replay, crash-before/after commit and UTF-8 restart tested and reviewed | Not deployed. Inventory old objects without receipts; provider/emulator boundary acceptance |
 | F04 | Domain/field-specific settings authority, action-consistent categories, bounded typed mutation schemas | resolved | 15 focused Rules tests, migration safeguards and service/mounted regressions; independent direct-client/ordinary-role review passed | Not deployed. Review migration manifest, legacy retirement and deployed Rules/client parity |
 | F05 | Actual compset paths work for ordinary revenue users; coupled saves atomic | resolved | 15 focused Rules tests, migration safeguards and service/mounted regressions; independent direct-client/ordinary-role review passed | Not deployed. Review migration manifest, legacy retirement and deployed Rules/client parity |
 | F06 | Finished stock counts/locations immutable to direct clients; authorized transactional finish with canonical actor/totals | resolved | 31 focused Functions, 18 mounted/adapter and 6 real Auth/Firestore tests; independent adversarial and UI review passed | Not deployed. Protected callable/rules/frontend parity and ordinary-user staging required |
@@ -55,8 +55,8 @@ Hard physical feasibility overrides every engine and pricing/simulation output. 
 | F18 | Minimal outbound guest identity, explicit <=24h retention/cleanup, tenant-scoped recipients | resolved | 39 focused scheduled-worker tests; independent before/after privacy/freshness/expiry/acknowledgment probes and hotel-failure isolation passed | Not deployed. Migrate recipient UIDs; check provider/scheduler/idempotency configuration, alerts and <=24h deletion operation |
 | F19 | Complete paginated catalog export and independently loaded taxonomy | resolved | Independent 80 focused UI/adapter/hook tests and six mounted before/after probes; failures, retries, roles, hotel switches and unmounts covered | Not deployed. Inspect real-browser exports/layout and two-hotel acceptance against matching backend/Rules |
 | F20 | Shared scoped async state with recovery and stale response protection | resolved | Independent 80 focused UI/adapter/hook tests and six mounted before/after probes; failures, retries, roles, hotel switches and unmounts covered | Not deployed. Inspect real-browser exports/layout and two-hotel acceptance against matching backend/Rules |
-| F21 | Clear live/legacy boundary, smaller domain contracts, shared shell, canonical stay-pattern builder | implementing | Lint/checkJS, compatibility, zero runtime audit and expanded restore passed; review followups in progress | Not deployed. Preserve domain fixtures; lint/incremental type checks; inventory/documentation |
-| F22 | Remove actionable vulnerable dependency baseline, meaningful allowed-path Storage tests and fuller restore fixture; prepare branch-protection guidance | implementing | Lint/checkJS, compatibility, zero runtime audit and expanded restore passed; review followups in progress | Not deployed. Package gates/CI; GitHub administration unavailable unless exposed; deployment state remains unverified |
+| F21 | Clear live/legacy boundary, smaller domain contracts, shared shell, canonical stay-pattern builder | resolved | Canonical model preparation, 82 lazy routes, scoped loaders/shell, live lint and incremental checkJS; independent frontend/maintenance review passed | Not deployed. Bundle/browser acceptance remains; checkJS intentionally covers two boundaries, not the whole app |
+| F22 | Remove actionable vulnerable dependency baseline, meaningful allowed-path Storage tests and fuller restore fixture; prepare branch-protection guidance | resolved (repository scope) | Zero runtime audit in three scopes, real XLSX compatibility, positive/negative Storage tests, full Auth/Firestore/Storage restore and both builds passed; independent review passed | Not deployed. Main branch protection cannot be changed with exposed tools; admin verification and live restore/deployment checks remain |
 
 ## Additional linked audit observations
 
@@ -70,7 +70,7 @@ Hard physical feasibility overrides every engine and pricing/simulation output. 
 
 Baseline executed in the audit: frontend431 + Functions62 + emulator63 =556 passing tests; both non-production fixture builds passed; restore marker smoke passed; dependency policy passed only against temporary exceptions.
 
-After changes run affected regressions, then integrated frontend/Functions/security suites, restore fixture, dependency gate and builds. Local Node24 versus CI/Functions Node22 is recorded; Java21 is available in scratch. Emulator child processes must omit this environment's proxy variables for localhost traffic. No production resources or real mail/SFTP.
+Final local gates passed: frontend641, Functions139, emulator88, migration10; canonical two-hotel Auth/Firestore/Storage restore; lint; incremental type checks; zero-runtime-exception audit in root/Functions/operator; test and App Hosting fixture builds. See [verification record](audit-remediation-verification.md). Local Node24 versus CI/Functions Node22 is recorded; Java21 is available in scratch. Emulator child processes must omit this environment's proxy variables for localhost traffic. No production resources or real mail/SFTP.
 
 Mandatory optimizer checks: zero/partial/full scarcity; reverse group/transient contribution; malformed/missing values and zero RN; full LOS paths; complete-vs-greedy portfolio counterexample (A both nights300, B night1=200, C night2=50); replacement gain; deterministic fractional outputs, feasibility, demand bounds and capacity monotonicity; VAT/meal basis/commission/BQT fixtures.
 
@@ -83,5 +83,11 @@ Mandatory optimizer checks: zero/partial/full scarcity; reverse group/transient 
 Rules/Functions deployment parity; controlled import index/route migration; retired source settings migration; live IAM/tokens/private-file migrations; Auth/App Check/MFA settings; external providers and data retention; complete backup restore including Auth/Storage; normal two-hotel browser acceptance. Prepare commands/runbooks and record unverified items rather than claim deployment.
 
 - Checkpoint: import independent review closed protected stock/guest/mail/derived-model target bypasses and UTF-8 crash/replay corruption; actual pipeline regressions pass. No production ingress/migration performed.
-- Checkpoint: initial expanded restore passed all three emulators; independent review requires canonical domain fixture paths, corrected before final re-run. Memory cache rollout must explicitly clear legacy IndexedDB data on previously used shared devices.
-- Checkpoint: pricing independent review passed 1,500 exhaustive portfolios and found previous-year carry-in occupancy and unknown breakfast-pax gaps; fixes ongoing. Failed rebuild metadata must cause explicit LOS fallback.
+- Completed: final canonical two-hotel restore passed all three emulators, including Auth claims/state and private bytes/metadata. Memory cache rollout must explicitly clear old IndexedDB data on shared devices.
+- Completed: independent pricing review checked 1,500 exhaustive portfolios; carry-in, unknown source/economics, failed/concurrent publication and repeat-analysis freshness gaps are closed. Explicit fallback reasons/errors and complete frozen contribution evidence are persisted.
+
+## Exact release resume point
+
+All actionable repository findings are implemented and independently reviewed. Do not merge or deploy this branch automatically. Start with the reviewed draft PR and the recorded verification commit; confirm `main` is still based on the audited SHA or review any new changes. The next authorized release task is the staged sequence in [release checklist](audit-release-checklist.md): backup/inventory, dry-run manifests, settings/receiving identity/recipient migration, matching Rules/Functions/frontend release, model rebuild, ordinary-user two-hotel checks, retention/provider acceptance and branch protection. No new commercial pricing decision is pending; the contribution policy above is authoritative.
+
+Numeric quote snapshots are still client-generated advice: Rules enforce tenant access, structural bounds and lifecycle, not server-certified portfolio arithmetic. The pure engine, mounted workflow, frozen evidence and independent optimizer checks are the numerical proof for this repository revision. No claim of guaranteed forecast profit or deployed verification is made.

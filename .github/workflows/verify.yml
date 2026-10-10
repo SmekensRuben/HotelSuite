@@ -38,8 +38,14 @@ jobs:
       - name: Frontend tests
         run: npm test -- --run
 
+      - name: JavaScript correctness lint and incremental boundary types
+        run: npm run lint && npm run typecheck
+
       - name: Functions tests
         run: npm --prefix functions test
+
+      - name: Settings migration safeguards
+        run: node --test scripts/migrate-domain-settings.test.mjs
 
       - name: Validate Functions deployment scripts
         run: |

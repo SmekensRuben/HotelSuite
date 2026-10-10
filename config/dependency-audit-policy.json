@@ -1,36 +1,44 @@
 {
-  "reviewBy": "2026-11-02",
+  "reviewBy": null,
   "owner": "platform",
-  "rationale": "Runtime dependencies were remediated during SaaS integration. Fail on any regression from this reduced, expiring baseline; remaining findings must be eliminated before subscription sales.",
+  "rationale": "No runtime vulnerability exceptions are permitted. Known vulnerable registry-only spreadsheet releases and unsafe transitive versions are independently checked in the lockfiles.",
   "scopes": {
     "root": {
       "maximum": {
         "critical": 0,
-        "high": 5,
+        "high": 0,
         "moderate": 0,
         "low": 0,
-        "total": 5
+        "total": 0
       },
-      "directPackagesRequiringRemediation": [
-        "firebase",
-        "xlsx"
-      ]
+      "directPackagesRequiringRemediation": [],
+      "verifiedPackages": {
+        "xlsx": "0.20.2",
+        "@grpc/grpc-js": "1.14.6"
+      }
     },
     "operator": {
-      "maximum": { "critical": 0, "high": 0, "moderate": 0, "low": 0, "total": 0 },
+      "maximum": {
+        "critical": 0,
+        "high": 0,
+        "moderate": 0,
+        "low": 0,
+        "total": 0
+      },
       "directPackagesRequiringRemediation": []
     },
     "functions": {
       "maximum": {
         "critical": 0,
         "high": 0,
-        "moderate": 2,
+        "moderate": 0,
         "low": 0,
-        "total": 2
+        "total": 0
       },
-      "directPackagesRequiringRemediation": [
-        "exceljs"
-      ]
+      "directPackagesRequiringRemediation": [],
+      "verifiedPackages": {
+        "uuid": "11.1.1"
+      }
     }
   }
 }

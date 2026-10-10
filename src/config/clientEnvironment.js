@@ -7,6 +7,7 @@ const REQUIRED_FIREBASE_VARIABLES = [
   "VITE_FIREBASE_APP_ID",
 ];
 
+/** @param {Record<string, string | undefined>} environment */
 export function readClientEnvironment(environment) {
   const deploymentEnvironment = String(environment.VITE_DEPLOYMENT_ENV || "").trim();
   if (!['test', 'production'].includes(deploymentEnvironment)) {
@@ -31,12 +32,12 @@ export function readClientEnvironment(environment) {
       requireMfa: requireMfaValue === "true",
     },
     firebaseConfig: {
-      apiKey: environment.VITE_FIREBASE_API_KEY.trim(),
-      authDomain: environment.VITE_FIREBASE_AUTH_DOMAIN.trim(),
-      projectId: environment.VITE_FIREBASE_PROJECT_ID.trim(),
-      storageBucket: environment.VITE_FIREBASE_STORAGE_BUCKET.trim(),
-      messagingSenderId: environment.VITE_FIREBASE_MESSAGING_SENDER_ID.trim(),
-      appId: environment.VITE_FIREBASE_APP_ID.trim(),
+      apiKey: String(environment.VITE_FIREBASE_API_KEY).trim(),
+      authDomain: String(environment.VITE_FIREBASE_AUTH_DOMAIN).trim(),
+      projectId: String(environment.VITE_FIREBASE_PROJECT_ID).trim(),
+      storageBucket: String(environment.VITE_FIREBASE_STORAGE_BUCKET).trim(),
+      messagingSenderId: String(environment.VITE_FIREBASE_MESSAGING_SENDER_ID).trim(),
+      appId: String(environment.VITE_FIREBASE_APP_ID).trim(),
     },
   };
 }

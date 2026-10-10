@@ -3,7 +3,8 @@
 
 import { initializeApp } from 'firebase/app';
 import {
-  getFirestore,
+  initializeFirestore,
+  memoryLocalCache,
   collection,
   doc,
   getDoc,
@@ -22,7 +23,6 @@ import {
   documentId,
   serverTimestamp,
   writeBatch,   // <-- toegevoegd!
-  enableIndexedDbPersistence,
   Timestamp
 } from 'firebase/firestore';
 
@@ -45,12 +45,8 @@ import { readClientEnvironment } from './config/clientEnvironment';
 const { firebaseConfig, authPolicy } = readClientEnvironment(import.meta.env);
 
 const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-
-// Enable offline persistence for Firestore
-enableIndexedDbPersistence(db).catch(err => {
-  console.warn('Offline persistence could not be enabled', err);
-});
+// Reception computers can be shared. Hotel data must not survive in a persistent browser cache.
+const db = initializeFirestore(app, { localCache: memoryLocalCache() });
 const auth = getAuth(app);
 const functions = getFunctions(app);
 const storage = getStorage(app);

@@ -1,4 +1,4 @@
-import { db, collection, addDoc, deleteDoc, getDocs } from "../firebaseConfig";
+import { db, collection, doc, addDoc, deleteDoc, getDocs } from "../firebaseConfig";
 import { getSelectedHotelUid } from "../utils/hotelUtils";
 
 // Haal alle locaties op

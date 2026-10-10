@@ -1,4 +1,4 @@
-import { db, collection, getDocs, doc, setDoc, writeBatch, getDoc } from "../firebaseConfig";
+import { db, collection, getDocs, doc, writeBatch } from "../firebaseConfig";
 import { rebuildArticleMasterIndex } from "./firebaseArticles";
 import { rebuildIngredientIndex } from "./firebaseIngredients";
 import { rebuildProductMasterIndex } from "./firebaseProducts";
@@ -36,13 +36,8 @@ export async function transferIngredients(fromUid, toUid) {
   await rebuildIngredientIndex(toUid);
 }
 
-export async function transferSettings(fromUid, toUid) {
-  if (!fromUid || !toUid) return;
-  const srcRef = doc(db, `hotels/${fromUid}/settings`, fromUid);
-  const snap = await getDoc(srcRef);
-  if (!snap.exists()) return;
-  const destRef = doc(db, `hotels/${toUid}/settings`, toUid);
-  await setDoc(destRef, snap.data());
+export async function transferSettings() {
+  throw new Error("Generic settings transfer is retired. Migrate approved settings domains with the operator migration tool; never copy a hotel's private configuration.");
 }
 
 export async function transferProducts(fromUid, toUid) {
