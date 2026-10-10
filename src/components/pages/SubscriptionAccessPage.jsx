@@ -2,16 +2,18 @@ import React, { useState } from "react";
 import { ArrowRight, Building2, CheckCircle2, LifeBuoy, LockKeyhole, LogOut, RefreshCw, ShieldCheck } from "lucide-react";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { auth, signOut } from "../../firebaseConfig";
+import { modulesAreValid } from "../../constants/moduleCatalog";
 
 const STATUS_LABELS = { trialing: "Trial ended", active: "Expired", suspended: "Paused", canceled: "Canceled" };
 
 export default function SubscriptionAccessPage() {
   const { hotelName, hotelUid, hotelUids = [], selectHotel, subscription, subscriptionError,
-    subscriptionLoading, retrySubscription } = useHotelContext();
+    subscriptionLoading, subscriptionActive, retrySubscription } = useHotelContext();
   const [actionError, setActionError] = useState("");
   const expiry = subscription?.validUntil?.toDate?.();
   const unavailable = Boolean(subscriptionError);
-  const status = unavailable ? "Unable to verify" : STATUS_LABELS[subscription?.status] || "Not activated";
+  const modulesPending = !unavailable && subscriptionActive === true && !modulesAreValid(subscription);
+  const status = unavailable ? "Unable to verify" : modulesPending ? "Module activation required" : STATUS_LABELS[subscription?.status] || "Not activated";
   const switchHotel = async (uid) => {
     setActionError("");
     try { await selectHotel(uid); } catch { setActionError("We could not switch hotels. Please try again."); }
@@ -35,13 +37,14 @@ export default function SubscriptionAccessPage() {
     <main className="mx-auto grid max-w-6xl gap-10 px-5 py-12 sm:px-8 sm:py-20 lg:grid-cols-[1.1fr_0.9fr] lg:gap-16">
       <section className="self-center">
         <span className="inline-flex items-center gap-2 rounded-full border border-[#b41f1f]/15 bg-[#b41f1f]/5 px-3 py-1.5 text-xs font-semibold uppercase tracking-widest text-[#9b1c1c]">
-          <LockKeyhole size={14} aria-hidden="true" /> {unavailable ? "Access check unavailable" : "Hotel access paused"}
+          <LockKeyhole size={14} aria-hidden="true" /> {unavailable ? "Access check unavailable" : modulesPending ? "Modules awaiting activation" : "Hotel access paused"}
         </span>
         <h1 className="mt-6 max-w-xl text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">
-          {unavailable ? "We could not verify your hotel access" : "No active hotel subscription"}
+          {unavailable ? "We could not verify your hotel access" : modulesPending ? "Your hotel modules need activation" : "No active hotel subscription"}
         </h1>
         <p className="mt-5 max-w-lg text-base leading-7 text-slate-600">
           {unavailable ? "Your subscription status could not be loaded. This does not mean your subscription has ended. Check again, or contact your platform administrator if the problem continues."
+            : modulesPending ? "Your subscription is active. Your platform administrator still needs to activate the hotel modules included in your agreement. Contact them to complete the setup."
             : `Access to ${hotelName || "this hotel"} is currently paused. Your platform administrator can activate or renew the hotel's subscription so your team can get back to work.`}
         </p>
         <button disabled={subscriptionLoading} onClick={() => { setActionError(""); retrySubscription?.(); }}

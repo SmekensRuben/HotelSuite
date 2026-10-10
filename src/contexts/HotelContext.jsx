@@ -42,6 +42,7 @@ export function HotelProvider({ children }) {
   const [permissions, setPermissions] = useState([]);
   const [userData, setUserData] = useState(null);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [isHotelAdmin, setIsHotelAdmin] = useState(false);
   const [authorizationSource, setAuthorizationSource] = useState("none");
   const [lightspeedShiftRolloverHour, setLightspeedShiftRolloverHour] = useState(4);
   const [posProvider, setPosProvider] = useState("lightspeed");
@@ -52,6 +53,22 @@ export function HotelProvider({ children }) {
   const [subscriptionAttempt, setSubscriptionAttempt] = useState(0);
   const [now, setNow] = useState(Date.now());
   const settingsRequest = useRef(0);
+
+  useEffect(() => {
+    setPermissions([]); setIsHotelAdmin(false); setPermissionsLoading(true); setAuthorizationSource("none");
+    const userUid = auth.currentUser?.uid;
+    if (!selectedHotelUid || !userUid) { setPermissionsLoading(false); return; }
+    return onSnapshot(doc(db, `hotels/${selectedHotelUid}/members`, userUid), (snapshot) => {
+      if (auth.currentUser?.uid !== userUid) return;
+      const membership = snapshot.exists() ? snapshot.data() : null;
+      setPermissions(Array.isArray(membership?.permissions) ? membership.permissions : []);
+      setIsHotelAdmin(membership?.hotelAdmin === true);
+      setAuthorizationSource(membership ? "membership" : "missing-membership");
+      setPermissionsLoading(false);
+    }, () => {
+      setPermissions([]); setIsHotelAdmin(false); setAuthorizationSource("error"); setPermissionsLoading(false);
+    });
+  }, [selectedHotelUid, userData]);
 
   useEffect(() => {
     setSubscription(null); setSubscriptionLoading(true); setSubscriptionError(null);
@@ -76,29 +93,11 @@ export function HotelProvider({ children }) {
     if (!uid) return false;
     const request = ++settingsRequest.current;
     const current = () => request === settingsRequest.current && auth.currentUser?.uid === userUid;
-    setPermissionsLoading(true);
-    setPermissions([]);
-    setAuthorizationSource("none");
-
     try {
-      const membershipRef = userUid ? doc(db, `hotels/${uid}/members`, userUid) : null;
-      const [bootstrapResult, membershipResult] = await Promise.allSettled([
-        getHotelBootstrap(uid),
-        membershipRef ? getDoc(membershipRef) : Promise.resolve(null),
-      ]);
+      const [bootstrapResult] = await Promise.allSettled([getHotelBootstrap(uid)]);
       if (!current()) return false;
       // Identity defaults must not erase an independently loaded authorization source.
       const settings = bootstrapResult.status === "fulfilled" ? bootstrapResult.value : {};
-      const membershipSnap = membershipResult.status === "fulfilled" ? membershipResult.value : null;
-      const membership = membershipSnap?.exists() ? membershipSnap.data() : null;
-      if (membership) {
-        setPermissions(Array.isArray(membership.permissions) ? membership.permissions : []);
-        setAuthorizationSource("membership");
-      } else {
-        // Fail closed: global legacy permissions are not an authorization source.
-        setPermissions([]);
-        setAuthorizationSource(membershipResult.status === "rejected" ? "error" : "missing-membership");
-      }
 
       setHotelName(settings.hotelName || "Hotel");
       const preferredLanguage =
@@ -118,10 +117,6 @@ export function HotelProvider({ children }) {
       setLightspeedShiftRolloverHour(4);
       setPosProvider("lightspeed");
       setOrderMode("ingredient");
-      setPermissions([]);
-      setAuthorizationSource("error");
-    } finally {
-      if (current()) setPermissionsLoading(false);
     }
     return current();
   };
@@ -135,6 +130,7 @@ export function HotelProvider({ children }) {
         setHotelUids([]);
         setUserData(null);
         setIsPlatformAdmin(false);
+        setIsHotelAdmin(false);
         setAuthorizationSource("none");
         persistSelectedHotelUid(null);
         setSelectedHotelUid(null);
@@ -231,6 +227,7 @@ export function HotelProvider({ children }) {
         permissionsLoading,
         permissions,
         isPlatformAdmin,
+        isHotelAdmin,
         authorizationSource,
         subscription,
         subscriptionLoading,

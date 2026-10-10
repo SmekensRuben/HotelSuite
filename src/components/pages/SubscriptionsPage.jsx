@@ -5,6 +5,7 @@ import PageContainer from "../layout/PageContainer";
 import { auth, signOut } from "../../firebaseConfig";
 import { getHotelSubscriptions, saveHotelSubscription } from "../../services/firebaseSubscriptions";
 import { subscriptionIsActive } from "../../utils/subscription";
+import { MODULE_CATALOG } from "../../constants/moduleCatalog";
 
 const LABELS = { trialing: "Trial", active: "Active", suspended: "Paused", canceled: "Canceled" };
 const dateValue = (subscription) => subscription?.validUntil?.toDate?.().toISOString().slice(0, 10) || "";
@@ -15,6 +16,8 @@ export default function SubscriptionsPage() {
   const [status, setStatus] = useState("active");
   const [planId, setPlanId] = useState("standard");
   const [validUntil, setValidUntil] = useState("");
+  const [modules, setModules] = useState([]);
+  const [seatLimit, setSeatLimit] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState(null);
@@ -24,6 +27,7 @@ export default function SubscriptionsPage() {
   const select = (hotel) => {
     setSelected(hotel.hotelUid); setStatus(hotel.subscription?.status || "active");
     setPlanId(hotel.subscription?.planId || "standard"); setValidUntil(dateValue(hotel.subscription));
+    setModules(hotel.subscription?.modules || []); setSeatLimit(hotel.subscription?.seatLimit ?? "");
     setMessage(null);
   };
   const load = async (preferred = "") => {
@@ -54,6 +58,7 @@ export default function SubscriptionsPage() {
     setSaving(true); setMessage(null);
     try {
       await saveHotelSubscription({ hotelUid: selected, status, planId,
+        modules, seatLimit: seatLimit === "" ? null : Number(seatLimit),
         validUntil: validUntil ? new Date(validUntil + "T00:00:00Z").toISOString() : null,
         expectedRevision: current.subscription?.revision || 0 });
       const refreshed = await load(selected);
@@ -119,7 +124,10 @@ export default function SubscriptionsPage() {
             {!loadError && current && <form onSubmit={save} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6">
               <div><p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Manage subscription</p><h2 className="mt-2 text-xl font-semibold">{current.hotelName}</h2></div>
               <label className="block text-sm font-medium">Status<select disabled={saving} value={status} onChange={(event) => setStatus(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3">{Object.entries(LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-              <label className="block text-sm font-medium">Plan<input disabled={saving} required pattern="[a-zA-Z0-9_-]{1,60}" value={planId} onChange={(event) => setPlanId(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 p-3" /><span className="mt-2 block text-xs font-normal text-slate-500">Use standard for initial access. Plans are labels; they do not change feature permissions yet.</span></label>
+              <label className="block text-sm font-medium">Plan<input disabled={saving} required pattern="[a-zA-Z0-9_-]{1,60}" value={planId} onChange={(event) => setPlanId(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 p-3" /><span className="mt-2 block text-xs font-normal text-slate-500">The plan is a billing label. Select the licensed modules below; users still need their own action permissions.</span></label>
+              {current.subscription?.moduleMigrationRequired && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">This subscription needs an explicit module assignment. Review its existing agreement before saving.</p>}
+              <fieldset disabled={saving} className="space-y-3"><legend className="mb-3 text-sm font-semibold">Licensed modules</legend>{Object.entries(MODULE_CATALOG).map(([id, module]) => <label key={id} className="flex items-center gap-3 text-sm"><input type="checkbox" checked={modules.includes(id)} onChange={() => setModules((previous) => previous.includes(id) ? previous.filter((key) => key !== id) : [...previous, id])} />{module.label}</label>)}<p className="text-xs leading-5 text-slate-500">Platform basics are included. Removing a module blocks access and future work; its records and historical permissions are retained.</p></fieldset>
+              <label className="block text-sm font-medium">Assigned-user limit<input disabled={saving} type="number" min={1} max={10000} step={1} value={seatLimit} onChange={(event) => setSeatLimit(event.target.value)} placeholder="Unlimited" className="mt-2 w-full rounded-xl border border-slate-200 p-3" /><span className="mt-2 block text-xs font-normal leading-5 text-slate-500">Leave empty for unlimited users. Assigned and invited members count. A lower limit blocks new assignments and preserves existing access.</span></label>
               <label className="block text-sm font-medium">First day without access<input disabled={saving} type="date" required={status === "trialing"} value={validUntil} onChange={(event) => setValidUntil(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 p-3" /><span className="mt-2 block text-xs font-normal leading-5 text-slate-500">Access ends at 00:00 UTC on this date. Leave empty for an active subscription with no end date. Trials require an end date.</span></label>
               <button disabled={saving} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#b41f1f] px-4 py-3 text-sm font-semibold text-white hover:bg-[#981b1b] disabled:opacity-50">{saving && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}{saving ? "Saving..." : "Save subscription"}</button>
               <p className="text-xs leading-5 text-slate-500">Pausing or canceling blocks hotel modules. Platform administrators can still manage the property.</p>

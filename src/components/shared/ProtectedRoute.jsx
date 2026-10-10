@@ -5,13 +5,15 @@ import { hasPermission } from "../../utils/permissions";
 import { auth, authPolicy } from "../../firebaseConfig";
 import { multiFactor } from "firebase/auth";
 import SubscriptionAccessPage from "../pages/SubscriptionAccessPage";
+import { featureIsLicensed, modulesAreValid } from "../../constants/moduleCatalog";
 
-export default function ProtectedRoute({ children, feature, action = "read", anyOf = [], platformOnly = false }) {
+export default function ProtectedRoute({ children, feature, action = "read", anyOf = [], platformOnly = false, hotelAdminOnly = false }) {
   const { hotelUid, loading, permissionsLoading, permissions, isPlatformAdmin,
-    subscriptionLoading, subscriptionActive } = useHotelContext();
+    subscriptionLoading, subscriptionActive, subscription, isHotelAdmin } = useHotelContext();
   const permissionChecks = anyOf.length ? anyOf : feature ? [{ feature, action }] : [];
   const hasAccess = isPlatformAdmin || (permissionChecks.length
-    ? permissionChecks.some((permission) => hasPermission({ permissions }, permission.feature, permission.action || "read"))
+    ? permissionChecks.some((permission) => featureIsLicensed(subscription, permission.feature)
+      && hasPermission({ permissions }, permission.feature, permission.action || "read"))
     : true);
 
   if (loading || permissionsLoading || (!isPlatformAdmin && subscriptionLoading)) {
@@ -31,7 +33,7 @@ export default function ProtectedRoute({ children, feature, action = "read", any
     return <Navigate to="/login" replace />;
   }
 
-  if (!isPlatformAdmin && subscriptionActive !== true) {
+  if (!isPlatformAdmin && (subscriptionActive !== true || !modulesAreValid(subscription))) {
     return <SubscriptionAccessPage />;
   }
 
@@ -42,6 +44,7 @@ export default function ProtectedRoute({ children, feature, action = "read", any
   if (platformOnly && !isPlatformAdmin) {
     return <Navigate to="/dashboard" replace />;
   }
+  if (hotelAdminOnly && !isPlatformAdmin && !isHotelAdmin) return <Navigate to="/dashboard" replace />;
 
   return children;
 }

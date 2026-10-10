@@ -8,7 +8,7 @@ import SupplierProductDetailPage from "./SupplierProductDetailPage";
 import SupplierDetailPage from "./SupplierDetailPage";
 
 const mocks = vi.hoisted(() => ({ hotel: "hotel-a", id: "record-a", permissions: [], order: vi.fn(), catalog: vi.fn(), supplierProduct: vi.fn(), supplier: vi.fn(), deleteCatalog: vi.fn(), deleteSupplierProduct: vi.fn(), deleteSupplier: vi.fn(), display: vi.fn(), approvers: vi.fn(), update: vi.fn(), navigate: vi.fn() }));
-vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, hotelName: mocks.hotel, permissions: mocks.permissions, subscriptionActive: true, isPlatformAdmin: false }) }));
+vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, hotelName: mocks.hotel, permissions: mocks.permissions, subscriptionActive: true, subscription: { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null }, isPlatformAdmin: false }) }));
 vi.mock("react-router-dom", () => ({ useParams: () => ({ orderId: mocks.id, productId: mocks.id, supplierId: mocks.id }), useNavigate: () => mocks.navigate }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key) => key }) }));
 vi.mock("../layout/HeaderBar", () => ({ default: () => null }));
