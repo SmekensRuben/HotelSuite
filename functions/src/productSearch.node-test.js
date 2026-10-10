@@ -14,7 +14,7 @@ function fixture() {
     reads.push(path);
     return { id: path.split("/").at(-1), exists: !!records[path], data: () => records[path] };
   } }) };
-  return { firestore, reads, records };
+  return { firestore, reads, records, auth: { getUser: async () => ({ emailVerified: true, disabled: false }) } };
 }
 const request = { auth: { uid: "employee-a", token: { email_verified: true } }, data: { hotelUid: "hotel-a", collection: "catalogproducts", criteria: {}, pageSize: 20 } };
 

@@ -53,6 +53,9 @@ for (const name of ["listSuppliers", "getSupplierConnection", "saveSupplier", "d
 for (const name of ["createOrdersFromCart", "updateHotelOrder", "deleteHotelOrder", "confirmHotelOrder", "setHotelOutletApprovers", "saveSupplierOutletAccount"]) exports[name] = orders[name];
 exports.mutateHotelShoppingCart = require("./src/shoppingCarts").mutateHotelShoppingCart;
 exports.reviewHotelOrderDelivery = require("./src/deliveryRecovery").reviewHotelOrderDelivery;
+const stockCounts = require("./src/stockCounts");
+for (const name of ["createHotelStockCount", "mutateHotelStockCount", "listHotelStockCountSources"]) exports[name] = stockCounts[name];
+exports.getHotelUserDisplayName = require("./src/staffDisplay").getHotelUserDisplayName;
 
 const contractFiles = require("./src/contractFiles");
 for (const name of ["listHotelContracts", "listContractFollowers", "saveHotelContract", "contractDocument"]) exports[name] = contractFiles[name];

@@ -1,4 +1,4 @@
-import { collection, db, doc, getDoc, getDocs, serverTimestamp, writeBatch } from "../firebaseConfig";
+import { collection, db, doc, getDoc, getDocs, functions, httpsCallable } from "../firebaseConfig";
 
 export const STOCK_COUNT_TYPES = ["Ad Hoc", "Daily", "Weekly", "Month-End"];
 export const STOCK_COUNT_STATUSES = ["Started", "In Progress", "Finished"];
@@ -18,10 +18,6 @@ function normalizeStockTemplateItem(item = {}) {
     supplierProductId: String(item?.supplierProductId || "").trim(),
     outletId: String(item?.outletId || "").trim(),
   };
-}
-
-function buildStockTemplateItemKey(item = {}) {
-  return `${String(item?.supplierProductId || "").trim()}::${String(item?.outletId || "").trim()}`;
 }
 
 function normalizeStockTemplate(template = {}) {
@@ -99,6 +95,7 @@ function normalizeStockCount(data = {}, fallbackId = "") {
     name: String(data.name || "").trim(),
     type: STOCK_COUNT_TYPES.includes(data.type) ? data.type : "Ad Hoc",
     status: deriveStockCountStatus(data, normalizedLocations),
+    revision: Number.isSafeInteger(data.revision) ? data.revision : 0,
     locations: normalizedLocations,
     countedValue,
     createdAt,
@@ -108,30 +105,6 @@ function normalizeStockCount(data = {}, fallbackId = "") {
   };
 }
 
-
-function buildLocationSummaries(locations = []) {
-  return locations.map((location) => ({
-    locationId: location.locationId,
-    locationName: location.locationName,
-    stockTemplateId: location.stockTemplateId,
-    stockTemplateName: location.stockTemplateName,
-    status: location.status || "Not Started",
-    countedValue: getStockCountLocationValue(location),
-  }));
-}
-
-function getStockCountValue(locations = []) {
-  return locations.reduce((sum, location) => sum + getStockCountLocationValue(location), 0);
-}
-
-function getActiveStockCountStatus(locations = []) {
-  const hasProgress = locations.some((location) => {
-    const status = String(location?.status || "").trim();
-    return status === "In Progress" || status === "Finished" || getStockCountLocationValue(location) > 0;
-  });
-
-  return hasProgress ? "In Progress" : "Started";
-}
 
 function normalizeCountedItems(items) {
   return Array.isArray(items)
@@ -215,293 +188,65 @@ export async function getStockCountById(hotelUid, stockCountId) {
   return normalizeStockCount({ ...stockCountData, locations }, snapshot.id);
 }
 
+// Only editable quantities/identities cross the command boundary. The server owns
+// price snapshots, totals, status transitions, timestamps and actors.
+function commandItems(items) {
+  if (!Array.isArray(items)) throw new Error("countedItems must be an array");
+  return items.map((item) => ({ supplierProductId: item.supplierProductId, outletId: item.outletId,
+    quantity: item.quantity, isCounted: item.isCounted !== false }));
+}
+async function mutateStockCount(hotelUid, stockCountId, payload, expectedRevision) {
+  if (!hotelUid || !stockCountId) throw new Error("hotelUid and stockCountId are required");
+  const current = expectedRevision == null ? await getStockCountById(hotelUid, stockCountId) : null;
+  if (expectedRevision == null && !current) throw new Error("Stock count not found");
+  const result = await httpsCallable(functions, "mutateHotelStockCount")({ hotelUid, stockCountId,
+    ...payload, expectedRevision: expectedRevision ?? current.revision });
+  return result.data;
+}
+export async function getStockCountSources(hotelUid) {
+  if (!hotelUid) throw new Error("hotelUid is required");
+  const locations = [], seen = new Set();
+  let afterLocationId = null;
+  while (true) {
+    const result = await httpsCallable(functions, "listHotelStockCountSources")({ hotelUid, afterLocationId });
+    locations.push(...result.data.locations);
+    if (locations.length > 1000) throw new Error("More than 1,000 stock locations require operator review.");
+    const cursor = result.data.nextCursor;
+    if (!cursor) return locations;
+    if (seen.has(cursor)) throw new Error("Stock location pagination did not advance. Please retry.");
+    seen.add(cursor); afterLocationId = cursor;
+  }
+}
 export async function createStockCount(hotelUid, input) {
-  if (!hotelUid) throw new Error("hotelUid is verplicht");
-
-  const name = String(input?.name || "").trim();
-  if (!name) throw new Error("Name is verplicht");
-
-  const type = STOCK_COUNT_TYPES.includes(input?.type) ? input.type : "Ad Hoc";
-  const locations = Array.isArray(input?.locations)
-    ? input.locations
-        .map((location) => {
-          const stockTemplate = normalizeStockTemplate({
-            ...(location?.stockTemplate || {}),
-            id: location?.stockTemplate?.id || location?.stockTemplateId,
-            name: location?.stockTemplate?.name || location?.stockTemplateName,
-          });
-
-          return {
-            locationId: String(location?.locationId || "").trim(),
-            locationName: String(location?.locationName || "").trim(),
-            stockTemplateId: String(location?.stockTemplateId || stockTemplate.id || "").trim(),
-            stockTemplateName: String(location?.stockTemplateName || stockTemplate.name || "").trim(),
-            stockTemplate,
-            countedItems: [],
-            status: "Not Started",
-          };
-        })
-        .filter((location) => location.locationId)
-    : [];
-
-  if (!locations.length) throw new Error("Selecteer minimaal één locatie");
-
-  const stockCountsCol = collection(db, `hotels/${hotelUid}/stockCounts`);
-  const stockCountRef = doc(stockCountsCol);
-  const locationSummaries = buildLocationSummaries(locations);
-  const payload = {
-    id: stockCountRef.id,
-    name,
-    type,
-    status: "Started",
-    locations: locationSummaries,
-    countedValue: 0,
-    createdBy: input?.createdBy || null,
-    createdAt: serverTimestamp(),
-  };
-
-  const batch = writeBatch(db);
-  batch.set(stockCountRef, payload);
-  locations.forEach((location) => {
-    const locationRef = doc(db, `hotels/${hotelUid}/stockCounts/${stockCountRef.id}/locations`, location.locationId);
-    batch.set(locationRef, {
-      ...location,
-      id: location.locationId,
-      createdAt: serverTimestamp(),
-      createdBy: input?.createdBy || null,
-    });
-  });
-
-  await batch.commit();
-  return { ...payload, createdAt: new Date() };
+  if (!hotelUid) throw new Error("hotelUid is required");
+  const payload = { hotelUid, name: input?.name, type: input?.type,
+    locations: (input?.locations || []).map((location) => ({ locationId: location.locationId,
+      stockTemplateId: location.stockTemplateId || location.stockTemplate?.id })) };
+  const storageKey = `hotelsuite.stockCount.create:${hotelUid}`;
+  const fingerprint = JSON.stringify(payload);
+  let operation;
+  try { operation = JSON.parse(sessionStorage.getItem(storageKey) || "null"); } catch { operation = null; }
+  if (!operation || operation.fingerprint !== fingerprint) {
+    operation = { fingerprint, requestId: crypto.randomUUID() };
+    sessionStorage.setItem(storageKey, JSON.stringify(operation));
+  }
+  const result = await httpsCallable(functions, "createHotelStockCount")({ ...payload, requestId: operation.requestId });
+  sessionStorage.removeItem(storageKey);
+  return { id: result.data.stockCountId, ...result.data };
 }
-
-export async function updateStockCountLocationCounts(hotelUid, stockCountId, locationId, countedItems, updatedBy) {
-  if (!hotelUid || !stockCountId || !locationId) {
-    throw new Error("hotelUid, stockCountId en locationId zijn verplicht");
-  }
-
-  const stockCount = await getStockCountById(hotelUid, stockCountId);
-  if (!stockCount) throw new Error("Stock count niet gevonden");
-  if (stockCount.status === "Finished") {
-    throw new Error("Finished stock counts kunnen niet meer worden aangepast");
-  }
-
-  const normalizedLocationId = String(locationId || "").trim();
-  const currentLocation = (stockCount.locations || []).find(
-    (location) => String(location?.locationId || "").trim() === normalizedLocationId
-  );
-  if (!currentLocation) throw new Error("Stock count location niet gevonden");
-  if (currentLocation.status === "Finished") {
-    throw new Error("Finished stock count locations kunnen niet meer worden aangepast");
-  }
-
-  const normalizedCountedItems = normalizeCountedItems(countedItems);
-  const updatedAt = new Date();
-  const nextLocations = (stockCount.locations || []).map((location) => {
-    if (String(location?.locationId || "").trim() !== normalizedLocationId) return location;
-
-    return {
-      ...location,
-      countedItems: normalizedCountedItems,
-      status: location.status === "Finished" ? "Finished" : normalizedCountedItems.length ? "In Progress" : "Not Started",
-      updatedAt,
-      updatedBy: updatedBy || null,
-    };
-  });
-
-  const stockCountRef = doc(db, `hotels/${hotelUid}/stockCounts`, stockCountId);
-  const locationRef = doc(db, `hotels/${hotelUid}/stockCounts/${stockCountId}/locations`, normalizedLocationId);
-  const locationPayload = nextLocations.find(
-    (location) => String(location?.locationId || "").trim() === normalizedLocationId
-  );
-
-  const locationSummaries = buildLocationSummaries(nextLocations);
-
-  const batch = writeBatch(db);
-  batch.update(stockCountRef, {
-    locations: locationSummaries,
-    status: getActiveStockCountStatus(nextLocations),
-    countedValue: getStockCountValue(nextLocations),
-    updatedAt,
-    updatedBy: updatedBy || null,
-  });
-  if (locationPayload) {
-    batch.set(locationRef, locationPayload, { merge: true });
-  }
-  await batch.commit();
+export async function updateStockCountLocationCounts(hotelUid, stockCountId, locationId, countedItems, _updatedBy, expectedRevision) {
+  return mutateStockCount(hotelUid, stockCountId, { action: "save-location", locationId,
+    countedItems: commandItems(countedItems) }, expectedRevision);
 }
-
-
-export async function finishStockCountLocation(
-  hotelUid,
-  stockCountId,
-  locationId,
-  countedItems,
-  templateItemsToAdd = [],
-  updatedBy
-) {
-  if (!hotelUid || !stockCountId || !locationId) {
-    throw new Error("hotelUid, stockCountId en locationId zijn verplicht");
-  }
-
-  const stockCount = await getStockCountById(hotelUid, stockCountId);
-  if (!stockCount) throw new Error("Stock count niet gevonden");
-  if (stockCount.status === "Finished") {
-    throw new Error("Deze Stock Count is al Finished");
-  }
-
-  const normalizedLocationId = String(locationId || "").trim();
-  const currentLocation = (stockCount.locations || []).find(
-    (location) => String(location?.locationId || "").trim() === normalizedLocationId
-  );
-  if (!currentLocation) throw new Error("Stock count location niet gevonden");
-  if (currentLocation.status === "Finished") {
-    throw new Error("Deze Stock Count Location is al Finished");
-  }
-
-  const normalizedCountedItems = normalizeCountedItems(countedItems);
-  const normalizedTemplateItemsToAdd = Array.isArray(templateItemsToAdd)
-    ? templateItemsToAdd.map(normalizeStockTemplateItem).filter((item) => item.supplierProductId && item.outletId)
-    : [];
-  const existingTemplateItems = Array.isArray(currentLocation.stockTemplate?.items)
-    ? currentLocation.stockTemplate.items.map(normalizeStockTemplateItem).filter((item) => item.supplierProductId && item.outletId)
-    : [];
-  const countedItemsByKey = Object.fromEntries(
-    normalizedCountedItems.map((item) => [buildStockTemplateItemKey(item), item])
-  );
-  const templateItemKeys = new Set(existingTemplateItems.map(buildStockTemplateItemKey));
-  const newTemplateItems = [];
-
-  normalizedTemplateItemsToAdd.forEach((item) => {
-    const key = buildStockTemplateItemKey(item);
-    if (templateItemKeys.has(key)) return;
-    templateItemKeys.add(key);
-    newTemplateItems.push({ ...(countedItemsByKey[key] || {}), ...item, isTemplateItem: true });
-  });
-
-  const updatedAt = new Date();
-  const nextLocations = (stockCount.locations || []).map((location) => {
-    if (String(location?.locationId || "").trim() !== normalizedLocationId) return location;
-
-    return {
-      ...location,
-      countedItems: normalizedCountedItems,
-      status: "Finished",
-      updatedAt,
-      updatedBy: updatedBy || null,
-      finishedAt: updatedAt,
-      finishedBy: updatedBy || null,
-    };
-  });
-
-  const stockCountRef = doc(db, `hotels/${hotelUid}/stockCounts`, stockCountId);
-  const locationRef = doc(db, `hotels/${hotelUid}/stockCounts/${stockCountId}/locations`, normalizedLocationId);
-  const locationPayload = nextLocations.find(
-    (location) => String(location?.locationId || "").trim() === normalizedLocationId
-  );
-  const locationSummaries = buildLocationSummaries(nextLocations);
-
-  const batch = writeBatch(db);
-  batch.update(stockCountRef, {
-    locations: locationSummaries,
-    status: getActiveStockCountStatus(nextLocations),
-    countedValue: getStockCountValue(nextLocations),
-    updatedAt,
-    updatedBy: updatedBy || null,
-  });
-  batch.set(locationRef, locationPayload, { merge: true });
-
-  if (newTemplateItems.length && currentLocation.stockTemplateId) {
-    const templateRef = doc(
-      db,
-      `hotels/${hotelUid}/locations/${normalizedLocationId}/stockTemplates`,
-      currentLocation.stockTemplateId
-    );
-    batch.update(templateRef, {
-      items: [...existingTemplateItems, ...newTemplateItems],
-      updatedAt,
-      updatedBy: updatedBy || null,
-    });
-  }
-
-  await batch.commit();
+export async function finishStockCountLocation(hotelUid, stockCountId, locationId, countedItems,
+  templateItemsToAdd = [], _updatedBy, expectedRevision) {
+  return mutateStockCount(hotelUid, stockCountId, { action: "finish-location", locationId,
+    countedItems: commandItems(countedItems), templateItemsToAdd: templateItemsToAdd.map((item) =>
+      ({ supplierProductId: item.supplierProductId, outletId: item.outletId })) }, expectedRevision);
 }
-
-export async function finishStockCount(hotelUid, stockCountId, updatedBy) {
-  if (!hotelUid || !stockCountId) {
-    throw new Error("hotelUid en stockCountId zijn verplicht");
-  }
-
-  const stockCount = await getStockCountById(hotelUid, stockCountId);
-  if (!stockCount) throw new Error("Stock count niet gevonden");
-  if (stockCount.status === "Finished") {
-    throw new Error("Deze Stock Count is al Finished");
-  }
-
-  const locations = Array.isArray(stockCount.locations) ? stockCount.locations : [];
-  if (!locations.length || locations.some((location) => location.status !== "Finished")) {
-    throw new Error("Alle Stock Count Locations moeten Finished zijn voordat de Stock Count kan worden afgerond");
-  }
-
-  const updatedAt = new Date();
-  const stockCountRef = doc(db, `hotels/${hotelUid}/stockCounts`, stockCountId);
-  const batch = writeBatch(db);
-  batch.update(stockCountRef, {
-    status: "Finished",
-    countedValue: getStockCountValue(locations),
-    updatedAt,
-    updatedBy: updatedBy || null,
-    finishedAt: updatedAt,
-    finishedBy: updatedBy || null,
-  });
-  await batch.commit();
+export async function finishStockCount(hotelUid, stockCountId, _updatedBy, expectedRevision) {
+  return mutateStockCount(hotelUid, stockCountId, { action: "finish-count" }, expectedRevision);
 }
-
-export async function updateStockCountLocationStatus(hotelUid, stockCountId, locationId, status, updatedBy) {
-  if (!hotelUid || !stockCountId || !locationId) {
-    throw new Error("hotelUid, stockCountId en locationId zijn verplicht");
-  }
-
-  const nextStatus = String(status || "").trim();
-  if (!nextStatus) throw new Error("Status is verplicht");
-
-  const stockCount = await getStockCountById(hotelUid, stockCountId);
-  if (!stockCount) throw new Error("Stock count niet gevonden");
-  if (stockCount.status === "Finished") {
-    throw new Error("Finished stock counts kunnen niet meer worden aangepast");
-  }
-
-  const normalizedLocationId = String(locationId || "").trim();
-  const updatedAt = new Date();
-  const nextLocations = (stockCount.locations || []).map((location) => {
-    if (String(location?.locationId || "").trim() !== normalizedLocationId) return location;
-
-    return {
-      ...location,
-      status: nextStatus,
-      updatedAt,
-      updatedBy: updatedBy || null,
-      ...(nextStatus === "Finished" ? { finishedAt: updatedAt, finishedBy: updatedBy || null } : {}),
-    };
-  });
-  const locationPayload = nextLocations.find(
-    (location) => String(location?.locationId || "").trim() === normalizedLocationId
-  );
-  if (!locationPayload) throw new Error("Stock count location niet gevonden");
-
-  const stockCountRef = doc(db, `hotels/${hotelUid}/stockCounts`, stockCountId);
-  const locationRef = doc(db, `hotels/${hotelUid}/stockCounts/${stockCountId}/locations`, normalizedLocationId);
-  const locationSummaries = buildLocationSummaries(nextLocations);
-
-  const batch = writeBatch(db);
-  batch.update(stockCountRef, {
-    locations: locationSummaries,
-    status: getActiveStockCountStatus(nextLocations),
-    countedValue: getStockCountValue(nextLocations),
-    updatedAt,
-    updatedBy: updatedBy || null,
-  });
-  batch.set(locationRef, locationPayload, { merge: true });
-  await batch.commit();
+export async function updateStockCountLocationStatus(hotelUid, stockCountId, locationId, status, _updatedBy, expectedRevision) {
+  return mutateStockCount(hotelUid, stockCountId, { action: "set-location-status", locationId, status }, expectedRevision);
 }

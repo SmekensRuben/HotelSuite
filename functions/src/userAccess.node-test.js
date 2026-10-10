@@ -33,7 +33,7 @@ test("updateUserAccess writes profiles, memberships and server-owned membership 
   };
   let claims;
   const auth = {
-    getUser: async () => ({ customClaims: { platformAdmin: false, retained: true } }),
+    getUser: async (uid) => uid === "platform" ? { emailVerified: true, customClaims: { platformAdmin: true } } : { customClaims: { platformAdmin: false, retained: true } },
     setCustomUserClaims: async (uid, value) => { claims = { uid, value }; },
   };
 
@@ -62,6 +62,6 @@ test("stale user access saves cannot overwrite a more recent assignment", async 
   await assert.rejects(updateUserAccessHandler({
     auth: { uid: "platform", token: { platformAdmin: true, email_verified: true } },
     data: { userId: "user-a", profile: { hotelUid: [] }, expectedAccessRevision: 2 },
-  }, { firestore, auth: { getUser: async () => ({}) } }), (error) => error.code === "aborted");
+  }, { firestore, auth: { getUser: async () => ({ emailVerified: true, customClaims: { platformAdmin: true } }) } }), (error) => error.code === "aborted");
 
 });

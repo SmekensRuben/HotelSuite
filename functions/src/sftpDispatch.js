@@ -11,7 +11,7 @@ async function dispatchOrderHandler(event, services = {}) {
   if (!dispatchId || before.dispatchRequestId === dispatchId) return;
   const { hotelUid, orderId } = event.params;
   const db = services.firestore || admin.firestore();
-  const dispatch = await claimDispatch(db, hotelUid, orderId, dispatchId);
+  const dispatch = await claimDispatch(db, hotelUid, orderId, dispatchId, services.auth);
   if (!dispatch) return;
   let externalAttempt = false;
   try {

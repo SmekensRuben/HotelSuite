@@ -1,13 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { createStockCount, STOCK_COUNT_TYPES } from "../../services/firebaseStockCounts";
-import { getLocationStockTemplates, getLocations, getOutlets } from "../../services/firebaseSettings";
-import { getSupplierProducts } from "../../services/firebaseProducts";
+import { createStockCount, getStockCountSources, STOCK_COUNT_TYPES } from "../../services/firebaseStockCounts";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
 
 const initialValues = {
   name: "",
@@ -17,11 +16,10 @@ const initialValues = {
 export default function StockCountCreatePage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
+  const activeScope = useRef({ key: hotelUid });
+  if (activeScope.current.key !== hotelUid) activeScope.current = { key: hotelUid };
   const [formValues, setFormValues] = useState(initialValues);
   const [locationRows, setLocationRows] = useState([]);
-  const [supplierProducts, setSupplierProducts] = useState([]);
-  const [outlets, setOutlets] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -44,80 +42,25 @@ export default function StockCountCreatePage() {
     (row) => row.templates.length === 0 || !row.stockTemplateId
   );
 
-  const supplierProductsById = useMemo(
-    () => Object.fromEntries(supplierProducts.map((product) => [String(product.id || "").trim(), product])),
-    [supplierProducts]
-  );
-
-  const outletsById = useMemo(
-    () => Object.fromEntries(outlets.map((outlet) => [String(outlet.id || "").trim(), outlet])),
-    [outlets]
-  );
-
-  const buildTemplateSnapshot = (template) => ({
-    ...(template || {}),
-    items: Array.isArray(template?.items)
-      ? template.items.map((item) => {
-          const supplierProductId = String(item?.supplierProductId || "").trim();
-          const outletId = String(item?.outletId || "").trim();
-          const supplierProduct = supplierProductsById[supplierProductId] || {};
-          const outlet = outletsById[outletId] || {};
-          const baseUnitsPerPurchaseUnit = supplierProduct.baseUnitsPerPurchaseUnit ?? item.baseUnitsPerPurchaseUnit ?? "";
-          const baseUnit = supplierProduct.baseUnit || item.baseUnit || "";
-          const purchaseUnit = supplierProduct.purchaseUnit || item.purchaseUnit || "";
-
-          return {
-            ...item,
-            supplierProductId,
-            outletId,
-            supplierProductName: supplierProduct.supplierProductName || supplierProduct.name || item.supplierProductName || "",
-            supplierName: supplierProduct.supplierName || item.supplierName || "",
-            baseUnitsPerPurchaseUnit,
-            baseUnit,
-            purchaseUnit,
-            content: item.content || `${baseUnitsPerPurchaseUnit || "-"} ${baseUnit || "-"} / ${purchaseUnit || "-"}`,
-            pricePerPurchaseUnit: Number(supplierProduct.pricePerPurchaseUnit ?? item.pricePerPurchaseUnit ?? 0),
-            outletName: outlet.name || item.outletName || outletId,
-          };
-        })
-      : [],
-  });
-
   const handleLogout = async () => {
     await signOut(auth);
     sessionStorage.clear();
     window.location.href = "/login";
   };
 
+  const loadSources = useCallback(() => getStockCountSources(hotelUid), [hotelUid]);
+  const { data: sources, loading, error: sourceError, retry } = useScopedAsync({
+    scopeKey: hotelUid, enabled: Boolean(hotelUid), load: loadSources,
+  });
   useEffect(() => {
-    const loadLocationsAndTemplates = async () => {
-      if (!hotelUid) return;
-      setLoading(true);
-      const [locations, productResult, nextOutlets] = await Promise.all([
-        getLocations(hotelUid),
-        getSupplierProducts(hotelUid),
-        getOutlets(hotelUid),
-      ]);
-      const rows = await Promise.all(
-        locations.map(async (location) => {
-          const templates = await getLocationStockTemplates(hotelUid, location.id);
-          const firstTemplate = templates[0] || null;
-          return {
-            locationId: location.id,
-            locationName: location.name,
-            selected: true,
-            templates,
-            stockTemplateId: firstTemplate?.id || "",
-          };
-        })
-      );
-      setSupplierProducts(Array.isArray(productResult) ? productResult : productResult?.products || []);
-      setOutlets(nextOutlets);
-      setLocationRows(rows);
-      setLoading(false);
-    };
+    setLocationRows((sources || []).map((location) => ({ ...location, selected: true,
+      stockTemplateId: location.templates[0]?.id || "" })));
+  }, [sources]);
 
-    loadLocationsAndTemplates();
+  useEffect(() => {
+    activeScope.current = { key: hotelUid };
+    setSaving(false); setError("");
+    return () => { activeScope.current = { key: null }; };
   }, [hotelUid]);
 
   const handleFieldChange = (field) => (event) => {
@@ -149,35 +92,29 @@ export default function StockCountCreatePage() {
       setError("Select at least one location.");
       return;
     }
+    if (selectedRows.length > 50) {
+      setError("Select at most 50 locations per stock count.");
+      return;
+    }
     if (hasSelectedLocationWithoutTemplate) {
       setError("Every selected location needs a stock count template.");
       return;
     }
 
+    const requestedScope = activeScope.current;
     setSaving(true);
     try {
-      const locations = selectedRows.map((row) => {
-        const template = row.templates.find((item) => item.id === row.stockTemplateId);
-        const stockTemplate = buildTemplateSnapshot(template);
-        return {
-          locationId: row.locationId,
-          locationName: row.locationName,
-          stockTemplateId: row.stockTemplateId,
-          stockTemplateName: stockTemplate.name || "",
-          stockTemplate,
-        };
-      });
+      const locations = selectedRows.map((row) => ({ locationId: row.locationId, stockTemplateId: row.stockTemplateId }));
 
       await createStockCount(hotelUid, {
         ...formValues,
         locations,
-        createdBy: auth.currentUser?.uid || "unknown",
       });
-      navigate("/catalog/stock-counts");
+      if (activeScope.current === requestedScope) navigate("/catalog/stock-counts");
     } catch (submitError) {
-      setError(submitError?.message || "Unable to create stock count.");
+      if (activeScope.current === requestedScope) setError(submitError?.message || "Unable to create stock count.");
     } finally {
-      setSaving(false);
+      if (activeScope.current === requestedScope) setSaving(false);
     }
   };
 
@@ -193,6 +130,7 @@ export default function StockCountCreatePage() {
           </p>
         </div>
 
+        {sourceError && <div role="alert"><p>{sourceError.message || "Unable to load stock sources."}</p><button type="button" onClick={retry}>Retry</button></div>}
         <Card>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="grid gap-4 md:grid-cols-2">
@@ -293,7 +231,7 @@ export default function StockCountCreatePage() {
               </button>
               <button
                 type="submit"
-                disabled={saving || loading || selectedRows.length === 0 || hasSelectedLocationWithoutTemplate}
+                disabled={saving || loading || Boolean(sourceError) || selectedRows.length === 0 || selectedRows.length > 50 || hasSelectedLocationWithoutTemplate}
                 className="px-4 py-2 rounded-lg bg-[#b41f1f] text-white text-sm font-semibold hover:bg-[#961919] disabled:opacity-60"
               >
                 {saving ? "Saving..." : "Save Stock Count"}

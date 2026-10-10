@@ -1,6 +1,6 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const { requireDocumentId, requireHotelSubscription } = require("./subscriptions");
-const { requireVerifiedUser } = require("./validation");
+const { requireCurrentVerifiedUser } = require("./validation");
 const { enforceRequestRollout } = require("./saasRollout");
 
 function normalizedPermissions(value) {
@@ -16,8 +16,8 @@ function permissionAllows(permissions, feature, action) {
     || permissions.includes(`${normalizedFeature}.*`);
 }
 
-async function requireHotelPermission(db, request, hotelUid, feature, action, transaction) {
-  requireVerifiedUser(request);
+async function requireHotelPermission(db, request, hotelUid, feature, action, transaction, auth) {
+  await requireCurrentVerifiedUser(request, auth);
   await enforceRequestRollout(db, request, transaction);
   hotelUid = requireDocumentId(hotelUid, "hotelUid");
   if (request.auth.token?.platformAdmin === true) return;

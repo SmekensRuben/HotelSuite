@@ -1,6 +1,6 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { admin } = require("./config");
-const { requireVerifiedUser } = require("./validation");
+const { requireVerifiedUser, requireCurrentVerifiedUser } = require("./validation");
 
 const SUBSCRIPTION_STATUSES = ["trialing", "active", "suspended", "canceled"];
 
@@ -37,11 +37,12 @@ async function subscribedHotels(db, hotelUids) {
   return hotelUids.filter((hotelUid, index) => flags[index]);
 }
 
-function requirePlatformAdministrator(request) {
+async function requirePlatformAdministrator(request, auth) {
   requireVerifiedUser(request);
   if (request.auth.token?.platformAdmin !== true) {
     throw new HttpsError("permission-denied", "Platform administrator access is required.");
   }
+  await requireCurrentVerifiedUser(request, auth);
 }
 
 function subscriptionOverview(subscription) {
@@ -58,7 +59,7 @@ function subscriptionOverview(subscription) {
 }
 
 async function listHotelSubscriptionsHandler(request, services = {}) {
-  requirePlatformAdministrator(request);
+  await requirePlatformAdministrator(request, services.auth);
   const afterHotelUid = request.data?.afterHotelUid == null ? null
     : requireDocumentId(request.data.afterHotelUid, "afterHotelUid");
   const db = services.firestore || admin.firestore();
@@ -80,7 +81,7 @@ async function listHotelSubscriptionsHandler(request, services = {}) {
 }
 
 async function setHotelSubscriptionHandler(request, services = {}) {
-  requirePlatformAdministrator(request);
+  await requirePlatformAdministrator(request, services.auth);
   const input = request.data || {};
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid");
   if (!SUBSCRIPTION_STATUSES.includes(input.status)) throw new HttpsError("invalid-argument", "Invalid subscription status.");

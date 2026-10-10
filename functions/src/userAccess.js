@@ -1,8 +1,8 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { admin } = require("./config");
-const { requireVerifiedUser } = require("./validation");
+const { text } = require("./validation");
 const catalog = require("./permissionCatalog.json");
-const { requireDocumentId } = require("./subscriptions");
+const { requireDocumentId, requirePlatformAdministrator } = require("./subscriptions");
 
 function normalizeStrings(values) {
   return Array.isArray(values)
@@ -13,18 +13,17 @@ function normalizeStrings(values) {
 function normalizeMemberships(hotelUids, memberships) {
   return Object.fromEntries(hotelUids.map((hotelUid) => [
     hotelUid,
-    normalizeStrings(memberships?.[hotelUid]).map((key) => key.toLowerCase()),
+    normalizeStrings(normalizeStrings(memberships?.[hotelUid]).map((key) => key.toLowerCase())),
   ]));
 }
 
 async function updateUserAccessHandler(request, services = {}) {
-  requireVerifiedUser(request);
-  if (request.auth.token?.platformAdmin !== true) {
-    throw new HttpsError("permission-denied", "Platform administrator access is required.");
-  }
+  await requirePlatformAdministrator(request, services.auth);
 
   const userId = requireDocumentId(request.data?.userId, "userId");
   const profile = request.data?.profile && typeof request.data.profile === "object" ? request.data.profile : {};
+  const firstName = text(profile.firstName || "", "First name", 80);
+  const lastName = text(profile.lastName || "", "Last name", 80);
   const hotelUids = normalizeStrings(profile.hotelUid);
   if (hotelUids.length > 50) throw new HttpsError("invalid-argument", "At most 50 hotels may be assigned in one save.");
   hotelUids.forEach((hotelUid) => requireDocumentId(hotelUid, "hotelUid"));
@@ -54,9 +53,18 @@ async function updateUserAccessHandler(request, services = {}) {
     previousHotelUids.forEach((hotelUid) => requireDocumentId(hotelUid, "stored hotelUid"));
     const hotelSnapshots = await Promise.all(hotelUids.map((hotelUid) => transaction.get(firestore.doc(`hotels/${hotelUid}`))));
     if (hotelSnapshots.some((snapshot) => !snapshot.exists)) throw new HttpsError("not-found", "An assigned hotel does not exist.");
+    const affectedHotels = [...new Set([...previousHotelUids, ...hotelUids])].sort();
+    const previousMembers = await Promise.all(affectedHotels.map((hotelUid) =>
+      transaction.get(firestore.doc(`hotels/${hotelUid}/members/${userId}`))));
+    const permissionDeltas = affectedHotels.map((hotelUid, index) => {
+      const before = normalizeStrings(normalizeStrings(previousMembers[index].data()?.permissions).map((key) => key.toLowerCase())).sort();
+      const after = (memberships[hotelUid] || []).slice().sort();
+      return { hotelUid, before, after, added: after.filter((key) => !before.includes(key)),
+        removed: before.filter((key) => !after.includes(key)) };
+    });
     transaction.update(userRef, {
-      firstName: String(profile.firstName || "").trim(),
-      lastName: String(profile.lastName || "").trim(),
+      firstName,
+      lastName,
       email: targetUser.email || "",
       hotelUid: hotelUids,
       permissions: admin.firestore.FieldValue.delete(),
@@ -66,6 +74,7 @@ async function updateUserAccessHandler(request, services = {}) {
     });
     hotelUids.forEach((hotelUid) => transaction.set(firestore.doc(`hotels/${hotelUid}/members/${userId}`), {
       permissions: memberships[hotelUid],
+      firstName, lastName,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true }));
     previousHotelUids.filter((hotelUid) => !hotelUids.includes(hotelUid))
@@ -73,6 +82,7 @@ async function updateUserAccessHandler(request, services = {}) {
     transaction.set(auditRef, {
       userId, actorUid: request.auth.uid, hotelUids,
       removedHotelUids: previousHotelUids.filter((hotelUid) => !hotelUids.includes(hotelUid)),
+      permissionDeltas,
       revision: expectedRevision + 1,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });

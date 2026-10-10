@@ -15,7 +15,7 @@ const ROLES = {
 
 async function createHotelHandler(request, services = {}) {
   requireVerifiedUser(request);
-  requirePlatformAdministrator(request);
+  await requirePlatformAdministrator(request, services.auth);
   const input = request.data || {};
   const requestId = requireDocumentId(input.requestId, "requestId");
   const name = text(input.name, "Hotel name", 200, true);
@@ -46,7 +46,9 @@ async function createHotelHandler(request, services = {}) {
       ? admin.firestore.Timestamp.fromMillis((services.now?.() ?? Date.now()) + trialDays * 86400000) : null;
     const result = { hotelUid, name, status: input.status, validUntilMillis: validUntil?.toMillis() ?? null };
     tx.create(ref, { name, hotelName: name, createdAt: stamp(), createdBy: request.auth.uid, onboardingVersion: 1 });
-    tx.create(db.doc(`hotels/${hotelUid}/settings/${hotelUid}`), { hotelName: name, currency: "EUR" });
+    tx.create(db.doc(`hotels/${hotelUid}/settings/bootstrap`), { hotelName: name, currency: "EUR", language: "en" });
+    // Capacity is unknown until configured; do not invent a zero-room property.
+    tx.create(db.doc(`hotels/${hotelUid}/settings/propertySettings`), {});
     tx.create(db.doc(`hotelSubscriptions/${hotelUid}`), { status: input.status, planId: "standard", billingMode: "manual", validUntil, revision: 1, updatedAt: stamp(), updatedBy: request.auth.uid });
     tx.create(db.doc(`hotels/${hotelUid}/subscriptionAudit/${key}`), { actorUid: request.auth.uid, previousStatus: null, status: input.status, planId: "standard", validUntil, revision: 1, createdAt: stamp() });
     tx.set(profileRef, { hotelUid: admin.firestore.FieldValue.arrayUnion(hotelUid), accessRevision: (profileData.accessRevision || 0) + 1 }, { merge: true });
@@ -58,7 +60,7 @@ async function createHotelHandler(request, services = {}) {
 async function inviteHotelUserHandler(request, services = {}) {
   requireVerifiedUser(request);
   // Only platform operators can grant the initial role presets. No custom claims are set.
-  requirePlatformAdministrator(request);
+  await requirePlatformAdministrator(request, services.auth);
   const input = request.data || {};
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid");
   const requestId = requireDocumentId(input.requestId, "requestId");
@@ -125,7 +127,7 @@ async function inviteHotelUserHandler(request, services = {}) {
     }
     tx.create(ref, { uid: user.uid, email: user.email, role: input.role, fingerprint, actorUid: request.auth.uid, createdAt: stamp });
     tx.create(db.doc(`hotels/${hotelUid}/accessAudit/${key}`), { uid: user.uid, action: member.exists ? "resend-invitation" : "invite", role: member.data()?.role || input.role, actorUid: request.auth.uid, createdAt: stamp });
-    tx.create(mailRef, { type: "hotel-invitation", hotelUid, uid: user.uid, status: "queued", queuedAt: stamp,
+    tx.create(mailRef, { type: "hotel-invitation", hotelUid, uid: user.uid, actorUid: request.auth.uid, status: "queued", queuedAt: stamp,
       payload: { to: [user.email], subject: `Your HotelSuite access: ${hotel.data().name || hotelUid}`,
         text: `You have been invited to ${hotel.data().name || hotelUid} as a ${member.data()?.role || input.role}.\n\n${resetLink ? `1. Set your password: ${resetLink}\n\n` : ""}${verificationLink ? `Verify your email: ${verificationLink}\n\n` : ""}Sign in: ${signInUrl}\n\nHotel access is managed by your platform administrator.` } });
     return { hotelUid, uid: user.uid, invitationId: key, status: "queued" };
@@ -136,7 +138,7 @@ async function listHotelUsersHandler(request, services = {}) {
   requireVerifiedUser(request);
   const hotelUid = requireDocumentId(request.data?.hotelUid, "hotelUid");
   const db = services.firestore || admin.firestore();
-  await requireHotelPermission(db, request, hotelUid, "outlets", "approvers");
+  await requireHotelPermission(db, request, hotelUid, "outlets", "approvers", undefined, services.auth);
   const afterUid = request.data?.afterUid ? requireDocumentId(request.data.afterUid, "afterUid") : null;
   let query = db.collection(`hotels/${hotelUid}/members`).orderBy(admin.firestore.FieldPath.documentId());
   if (afterUid) query = query.startAfter(afterUid);
@@ -151,7 +153,7 @@ async function listHotelUsersHandler(request, services = {}) {
 }
 
 async function getHotelOnboardingStatusHandler(request, services = {}) {
-  requireVerifiedUser(request); requirePlatformAdministrator(request);
+  requireVerifiedUser(request); await requirePlatformAdministrator(request, services.auth);
   const db = services.firestore || admin.firestore();
   const status = (await db.doc("platformConfiguration/saasProcurement").get()).data();
   return { enabled: status?.enabled === true && status.rulesVersion === SAAS_RULES_VERSION };
