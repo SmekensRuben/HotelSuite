@@ -11,11 +11,11 @@ For the Purchasing & Inventory module, explicit per-hotel entitlements, combined
 For automatic Functions deployment after successful main-branch verification and the one-time keyless Cloud Shell setup, see [Functions continuous deployment](docs/functions-continuous-deployment.md).
 
 ## Local setup
-1. Install [Node.js](https://nodejs.org/) (version 22 or later) and npm.
+1. Install [Node.js](https://nodejs.org/) 22 and npm 10.9.9, matching the root `package.json` engines used by GitHub and App Hosting.
 2. Install project dependencies:
    ```bash
-   npm install
-   cd functions && npm install
+   npm ci
+   npm --prefix functions ci
    ```
 3. Copy `.env.example` to `.env` and fill in the Firebase configuration for a non-production development project.
 4. Install the Firebase CLI if you want to run or deploy functions:

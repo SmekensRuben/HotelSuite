@@ -19,13 +19,48 @@ On 2026-10-09 the live Firebase backend confirmed **Release succeeded** for main
 
 `apphosting.yaml` explicitly selects production data in `hotel-toolkit`. Its MFA setting matches the inspected existing Vercel value (`false`); update both hosting configurations if the project's enrollment policy changes.
 
-`npm run build:apphosting` reads Firebase's injected `FIREBASE_WEBAPP_CONFIG`, requires its project to match `EXPECTED_FIREBASE_PROJECT_ID`, and maps the complete web-app configuration into `VITE_FIREBASE_*` for the regular validated Vite build. Missing values, conflicting console overrides, project mismatches and invalid deployment/MFA policies still fail. No credentials or web-app keys are copied into this repository. Vercel and local builds continue to use their explicit Vite environment settings.
+`npm run apphosting:build` reads Firebase's injected `FIREBASE_WEBAPP_CONFIG`, requires its project to match `EXPECTED_FIREBASE_PROJECT_ID`, and maps the complete web-app configuration into `VITE_FIREBASE_*` for the regular validated Vite build. `build:apphosting` remains a compatibility alias. Missing values, conflicting console overrides, project mismatches and invalid deployment/MFA policies still fail. No credentials or web-app keys are copied into this repository. Vercel and local builds continue to use their explicit Vite environment settings.
 
 If Firebase does not supply `FIREBASE_WEBAPP_CONFIG`, link the intended Firebase web app to the backend before retrying. Do not supply a different project's configuration to bypass validation.
 
 The Node runtime serves only `dist`, listens on Cloud Run's `PORT`, supports React Router HTML deep links, and returns 404 for missing assets. Fingerprinted assets are cached; HTML is revalidated. It does not implement hotel APIs: those remain in Firebase Functions. App Hosting is an additional frontend deployment alongside Vercel; neither frontend rollout publishes database rules or Functions.
 
 References: [App Hosting configuration](https://firebase.google.com/docs/app-hosting/configure) and [Node/static framework support](https://firebase.blog/posts/2025/06/app-hosting-frameworks/).
+
+### Keep the build toolchain aligned
+
+The root `package.json` selects Node 22 (`engines.node`) and npm 10.9.9
+(`engines.npm`). Both GitHub workflows read the Node version from this file and
+install the selected npm version before `npm ci`. App Hosting supports the same
+`engines.npm` setting. Its backend runtime must separately be set to **Node 22**
+under Settings > Automatic base image updates; changing `engines.node` alone does
+not change a versioned backend runtime. Keep automatic base image updates enabled.
+
+Build `build-2026-10-10-004` for main `7dae815` failed during `npm ci` with
+`Missing: @grpc/grpc-js@1.9.16 from lock file`, before the frontend build. That
+backend selected Node 24.19.0, while the successful GitHub verification used
+Node 22.23.3 and npm 10.9.9. Firestore declares gRPC `~1.9.0`, but the reviewed
+root override and lockfile select gRPC 1.14.6. Switching only the backend to Node
+22 produced the same installation error in build `build-2026-10-10-005`.
+
+The Google buildpack's `OverrideAppHostingBuildScript` rewrites `package.json`
+when `apphosting.yaml` contains `scripts.buildCommand`. Its `PackageJSON` struct
+omits `overrides`, so that rewrite drops the gRPC pin before `npm ci` runs. An
+isolated install with the original manifest succeeds; applying that field loss
+reproduces the missing-gRPC lockfile failure. The build command now lives in the
+supported `apphosting:build` package script, with no YAML build override, avoiding
+the rewrite. The runtime command remains in YAML. See the upstream
+[manifest and rewrite code](https://github.com/GoogleCloudPlatform/buildpacks/blob/main/pkg/nodejs/nodejs.go)
+and [npm buildpack](https://github.com/GoogleCloudPlatform/buildpacks/blob/main/cmd/nodejs/npm/lib/lib.go).
+
+Keep the override when validating or regenerating the lockfile; adding the older
+package to silence installation errors would undo the dependency repair.
+
+When updating the toolchain, update the package metadata and backend runtime
+together, run a clean `npm ci` with the selected npm, and check the actual Cloud
+Build logs and rollout status. A successful local dry run or GitHub build alone
+does not prove that the Firebase rollout succeeded. See
+[Firebase runtimes and package managers](https://firebase.google.com/docs/app-hosting/frameworks-tooling).
 
 ## Assigning a subscription
 

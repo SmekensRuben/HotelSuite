@@ -2,6 +2,10 @@
   "name": "breakfastpilot",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": "22.x",
+    "npm": "10.9.9"
+  },
   "scripts": {
     "test": "vitest src",
     "test:security": "firebase emulators:exec --project demo-hotel-suite-a00 --only auth,firestore,storage \"node --test --test-concurrency=1 tests/security/*.test.mjs\"",
@@ -10,7 +14,8 @@
     "dev": "vite",
     "validate:env": "node scripts/validate-client-environment.mjs",
     "build": "npm run validate:env && vite build",
-    "build:apphosting": "node scripts/build-apphosting.mjs",
+    "apphosting:build": "node scripts/build-apphosting.mjs",
+    "build:apphosting": "npm run apphosting:build",
     "start": "node scripts/serve-app.mjs",
     "build:test": "NODE_ENV=test npm run validate:env && vite build --mode test",
     "preview": "vite preview",
