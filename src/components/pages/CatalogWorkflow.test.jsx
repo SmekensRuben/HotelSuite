@@ -5,7 +5,7 @@ import ProductsPage from "./ProductsPage";
 import SupplierProductsPage from "./SupplierProductsPage";
 
 const mocks = vi.hoisted(() => ({ hotel: "hotel-a", permissions: [], catalog: vi.fn(), supplier: vi.fn(), suppliers: vi.fn(), importCatalog: vi.fn(), importSupplier: vi.fn(), read: vi.fn(), parse: vi.fn(), rows: vi.fn(), write: vi.fn() }));
-vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, permissions: mocks.permissions, isPlatformAdmin: false, subscriptionActive: true }) }));
+vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, permissions: mocks.permissions, isPlatformAdmin: false, subscriptionActive: true, subscription: { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null } }) }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key) => key }) }));
 vi.mock("../layout/PageShell", () => ({ default: ({ children }) => <main>{children}</main> }));

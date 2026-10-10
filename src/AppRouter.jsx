@@ -1,5 +1,6 @@
 import React, { lazy, Suspense } from "react";
 const HotelOnboardingPage = lazy(() => import("./components/pages/HotelOnboardingPage.jsx"));
+const HotelTeamPage = lazy(() => import("./components/pages/HotelTeamPage.jsx"));
 import { Routes, Route, Navigate } from "react-router-dom";
 const SubscriptionsPage = lazy(() => import("./components/pages/SubscriptionsPage.jsx"));
 
@@ -539,6 +540,7 @@ export default function AppRouter() {
           </ProtectedRoute>
         }
       />
+      <Route path="/settings/team" element={<ProtectedRoute hotelAdminOnly feature="users" action="read"><HotelTeamPage /></ProtectedRoute>} />
       <Route
         path="/orders"
         element={

@@ -972,7 +972,7 @@ async function sendOccupancyMail({ scheduleConfig, reason = 'scheduled', trigger
   const failures = [];
   for (const hotelUid of hotelUids) {
     try {
-      if (!await hotelHasActiveSubscription(firestore, hotelUid)) continue;
+      if (!await hotelHasActiveSubscription(firestore, hotelUid, "revenue")) continue;
       const response = await sendOccupancyMailForHotel({ scheduleConfig, hotelUid, reason, triggerId }, services);
       if (response) sent += 1;
     } catch (error) {

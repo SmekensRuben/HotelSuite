@@ -2,7 +2,7 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const { admin } = require("./config");
 const { requireVerifiedUser } = require("./validation");
 
-const SAAS_RULES_VERSION = "saas-procurement-v1";
+const SAAS_RULES_VERSION = "saas-modules-v2";
 const ROLLOUT_GUARD = Symbol("server-validated-saas-rollout");
 async function requireSaasRollout(db, tx) {
   const ref = db.doc("platformConfiguration/saasProcurement");

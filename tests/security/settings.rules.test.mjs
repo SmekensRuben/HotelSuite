@@ -25,7 +25,7 @@ before(async () => {
 beforeEach(async () => {
   await environment.clearFirestore();
   await seed(async (db) => {
-    await setDoc(record(db, "hotelSubscriptions/hotel-a"), { status: "active", validUntil: null });
+    await setDoc(record(db, "hotelSubscriptions/hotel-a"), { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null });
     for (const [uid, keys] of Object.entries(permissions)) {
       await setDoc(record(db, `hotels/hotel-a/members/${uid}`), { permissions: keys });
       await setDoc(record(db, `users/${uid}`), { hotelUid: ["hotel-a"], disabled: false, permissions: [] });

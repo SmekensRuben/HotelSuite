@@ -503,7 +503,7 @@ async function processAuditUpsellsForDate(dateKey = getYesterdayDateKey()) {
 
   for (const hotelDoc of hotelsSnap.docs) {
     const hotelUid = hotelDoc.id;
-    if (!await hotelHasActiveSubscription(db, hotelUid)) continue;
+    if (!await hotelHasActiveSubscription(db, hotelUid, "frontoffice")) continue;
     const packageCodes = await getUpsellPackageCodes(hotelUid);
 
     if (packageCodes.length) {

@@ -1,3 +1,4 @@
+const { moduleAllows } = require("./modulePolicy");
 const { admin } = require("./config");
 const { subscriptionIsActive } = require("./subscriptions");
 const { permissionAllows, normalizedPermissions } = require("./authorization");
@@ -26,7 +27,7 @@ async function claimDispatch(db, hotelUid, orderId, dispatchId, auth) {
       tx.get(db.doc(`hotels/${hotelUid}/outlets/${data.order.outletId}/approvers/${data.actorUid}`)),
     ]);
     if (!await dispatchActorIsCurrent(data.actorUid, auth)
-      || !subscription.exists || !subscriptionIsActive(subscription.data()) || !member.exists || !approver.exists
+      || !subscription.exists || !subscriptionIsActive(subscription.data()) || !moduleAllows(subscription.data(), "procurement") || !member.exists || !approver.exists
       || !permissionAllows(normalizedPermissions(member.data().permissions), "orders", "approve")) {
       tx.update(dispatchRef, { status: "blocked", error: "Current account, subscription or approver access is no longer valid." });
       tx.update(orderRef, { dispatchStatus: "blocked", dispatchProgress: 100, dispatchStep: "Operator review required", dispatchError: "Current account, subscription or approver access is no longer valid." });

@@ -143,6 +143,7 @@ const config = { id: "type-a", basePath: "hotels/{hotelUid}", targetPath: "repor
   columnMappings: [{ databaseField: "items", targetType: "list", childMappings: [] }] };
 function streamRows(count) { return Array.from({ length: count }, (_, rowIndex) => ({ rowIndex, mappedDocument: { items: [{ rowIndex }] } })); }
 async function importRows(db, runRef, owner, rows, fileImportType = config) {
+  if (!db.records.has("hotelSubscriptions/hotel-a")) db.records.set("hotelSubscriptions/hotel-a", { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null });
   return processMappedDocumentStream({ db, runRef, owner, fileImportType, hotelUid: "hotel-a", fileType: "arrivals", object,
     onEachMappedDocument: async (onRow) => { for (const row of rows) await onRow(row); } });
 }
@@ -166,7 +167,7 @@ test("XML preserves split UTF-8 and crash replay accepts identical bytes with di
   const { Readable } = require("node:stream");
   const bytes = Buffer.from("<ROOT><G_RESERVATION><NAME>José 😀</NAME></G_RESERVATION></ROOT>");
   const xmlConfig = { ...config, recordNodeName: "G_RESERVATION", columnMappings: [{ sourceField: "NAME", databaseField: "name", targetType: "string" }] };
-  const db = new ImportTestDb(), runRef = db.doc(`hotels/hotel-a/importRuns/${importRunId(object)}`);
+  const db = new ImportTestDb({ "hotelSubscriptions/hotel-a": { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null } }), runRef = db.doc(`hotels/hotel-a/importRuns/${importRunId(object)}`);
   const attempt = async (owner, chunks) => processMappedDocumentStream({ db, runRef, owner, fileImportType: xmlConfig,
     hotelUid: "hotel-a", fileType: "arrivals", object,
     onEachMappedDocument: (onRow) => processXmlDocumentsStream(Readable.from(chunks), xmlConfig, onRow) });
@@ -245,7 +246,7 @@ test("lost commit acknowledgement does not repeat append-mode rows after resume"
 });
 
 test("actual finalize handler uses canonical types, pins generation and deduplicates replay", async () => {
-  const db = new ImportTestDb({ "hotelSubscriptions/hotel-a": { status: "active" },
+  const db = new ImportTestDb({ "hotelSubscriptions/hotel-a": { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active" },
     "hotels/hotel-a/fileImportTypes/shared": { fileType: "arrivals", parserType: "csv", hasHeaderRow: true,
       basePath: "hotels/{hotelUid}", targetPath: "reports", writeMode: "append",
       columnMappings: [{ sourceField: "ID", databaseField: "id", targetType: "string" }] },
@@ -311,7 +312,7 @@ test("migration prunes only unchanged legacy ownership snapshots and source chan
 });
 
 test("finalize run lease prevents a concurrent parser and keeps current target checks on replay", async () => {
-  const db = new ImportTestDb({ "hotelSubscriptions/hotel-a": { status: "active" },
+  const db = new ImportTestDb({ "hotelSubscriptions/hotel-a": { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active" },
     "hotels/hotel-a/fileImportTypes/shared": { fileType: "arrivals", parserType: "csv", basePath: "hotels/{hotelUid}", targetPath: "reports",
       columnMappings: [{ sourceField: "ID", databaseField: "id", targetType: "string" }] } });
   let deliverBytes;

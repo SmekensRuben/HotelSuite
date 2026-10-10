@@ -101,7 +101,7 @@ describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
     await rejected(handler(request(operator, {})), "failed-precondition");
     await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion: "wrong" });
     await rejected(handler(request(operator, {})), "failed-precondition");
-    await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion: "saas-procurement-v1" });
+    await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion: "saas-modules-v2" });
     assert.deepEqual(await handler(request(operator, {})), { changed: true });
     assert.deepEqual(await getHotelOnboardingStatusHandler(request(operator, {}), services), { enabled: true });
     const pausedDuringRequest = gated(async (input) => {
@@ -360,7 +360,7 @@ describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
     await assertSucceeds(getDoc(orderRef));
     for (const status of ["suspended", "canceled"]) {
       const current = (await db.doc("hotelSubscriptions/hotel-a").get()).data();
-      await setHotelSubscriptionHandler(request(operator, { hotelUid: "hotel-a", status, planId: "standard", expectedRevision: current.revision }), services);
+      await setHotelSubscriptionHandler(request(operator, { hotelUid: "hotel-a", status, modules: current.modules, seatLimit: current.seatLimit, planId: "standard", expectedRevision: current.revision }), services);
       await assertFails(getDoc(orderRef));
       await rejected(listSuppliersHandler(request(managerA, { hotelUid: "hotel-a" }), services), "permission-denied");
     }
@@ -369,7 +369,7 @@ describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
     await db.doc("hotelSubscriptions/hotel-a").update({ status: "trialing", validUntil: admin.firestore.Timestamp.fromMillis(1) });
     await assertFails(getDoc(orderRef));
     const current = (await db.doc("hotelSubscriptions/hotel-a").get()).data();
-    await setHotelSubscriptionHandler(request(operator, { hotelUid: "hotel-a", status: "active", planId: "standard", expectedRevision: current.revision }), services);
+    await setHotelSubscriptionHandler(request(operator, { hotelUid: "hotel-a", status: "active", modules: current.modules, seatLimit: current.seatLimit, planId: "standard", expectedRevision: current.revision }), services);
     await assertSucceeds(getDoc(orderRef));
     await assertFails(getDocs(collection(client(managerB), "hotels/hotel-a/orders")));
     const scoped = await listHotelUsersHandler(request(managerA, { hotelUid: "hotel-a" }), services);

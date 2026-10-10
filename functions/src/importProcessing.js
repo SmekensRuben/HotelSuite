@@ -1,4 +1,6 @@
 const { stableId } = require("./importIdentity");
+const { requireHotelSubscription } = require("./subscriptions");
+const { dataPathModule } = require("./modulePolicy");
 
 function importRunId(object) {
   if (!object.bucket || !object.name || !object.generation) throw new Error("Import object needs bucket/name/generation identity");
@@ -18,6 +20,14 @@ async function commitImportChunk({ db, runRef, owner, chunkIndex, rows, mergeDoc
       tx.update(runRef, { leaseUntil: Date.now() + 300000, updatedAt: Date.now() });
       return checkpoint.data().summary;
     }
+    const hotelUid = runRef.path.split("/")[1];
+    const moduleIds = [...new Set(rows.map((row) => {
+      const parts = row.docPath.split("/");
+      const moduleId = dataPathModule(row.docPath);
+      if (parts[1] !== hotelUid || !moduleId) throw new Error("Import target has no authorized hotel module.");
+      return moduleId;
+    }))];
+    for (const moduleId of moduleIds) await requireHotelSubscription(db, hotelUid, tx, moduleId);
     if (chunkIndex > 0) {
       const previous = await tx.get(runRef.collection("chunks").doc(String(chunkIndex - 1).padStart(8, "0")));
       if (!previous.exists) throw new Error("Import chunks must commit in source order");

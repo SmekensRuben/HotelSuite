@@ -23,9 +23,9 @@ test("updateUserAccess writes profiles, memberships and server-owned membership 
   const operations = [];
   const firestore = {
     doc: (path) => ({ path }),
-    collection: () => ({ doc: () => ({ path: "userAccessAudit/event" }) }),
+    collection: () => ({ doc: () => ({ path: "userAccessAudit/event" }), where() { return this; }, limit() { return { query: true }; } }),
     runTransaction: (callback) => callback({
-      get: async (reference) => ({ exists: true, data: () => reference.path === "users/user-a" ? { hotelUid: ["hotel-a", "hotel-b"], accessRevision: 0 } : {} }),
+      get: async (reference) => reference.query ? { docs: [], size: 0 } : ({ exists: true, data: () => reference.path === "users/user-a" ? { hotelUid: ["hotel-a", "hotel-b"], accessRevision: 0 } : {} }),
       update: (reference, data) => operations.push(["update", reference.path, data]),
       set: (reference, data) => operations.push(["set", reference.path, data]),
       delete: (reference) => operations.push(["delete", reference.path]),

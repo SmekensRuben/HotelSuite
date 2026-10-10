@@ -22,7 +22,7 @@ describe("hotel onboarding", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create hotel" }));
     await screen.findByRole("alert");
     fireEvent.click(screen.getByRole("button", { name: "Create hotel" }));
-    await screen.findByText("Hotel C is ready. Invite the first hotel manager below.");
+    await screen.findByText("Hotel C is ready. Invite a primary and backup hotel administrator below.");
     expect(createHotel.mock.calls[0][0].requestId).toBe(createHotel.mock.calls[1][0].requestId);
     expect(createHotel.mock.calls[1][0]).toMatchObject({ status: "trialing", trialDays: 14 });
     expect(screen.getByLabelText("Hotel").value).toBe("hotel-c");
@@ -33,7 +33,7 @@ describe("hotel onboarding", () => {
     render(<MemoryRouter><HotelOnboardingPage /></MemoryRouter>);
     await waitFor(() => expect(screen.getByLabelText("Hotel").value).toBe("hotel-a"));
     fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "manager@example.test" } });
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByLabelText(/Resend an invitation to an existing member/));
     fireEvent.click(screen.getByRole("button", { name: "Resend invitation" }));
     await screen.findByText(/Their invitation is queued/);
     expect(inviteHotelUser).toHaveBeenCalledWith(expect.objectContaining({ hotelUid: "hotel-a", email: "manager@example.test", resend: true }));

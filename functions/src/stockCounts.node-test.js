@@ -12,11 +12,17 @@ function memoryDatabase(initial) {
   const snapshot = (path) => ({ exists: records.has(path), data: () => structuredClone(records.get(path)), id: path.split("/").at(-1) });
   let serial = Promise.resolve();
   const db = { records, doc: (path) => ({ path, get: async () => snapshot(path) }),
-    collection: (path) => ({ doc: () => ({ path: `${path}/test-audit` }) }),
+    collection: (path) => {
+      const query = (filters = [], maximum = Infinity) => ({ doc: () => ({ path: `${path}/test-audit` }),
+        where: (field, _op, value) => query([...filters, [field, value]], maximum), limit: (count) => query(filters, count),
+        get: async () => { const docs = [...records.entries()].filter(([key, value]) => key.startsWith(`${path}/`) && key.slice(path.length + 1).split("/").length === 1
+          && filters.every(([field, expected]) => value[field] === expected)).slice(0, maximum).map(([key]) => snapshot(key)); return { docs, size: docs.length }; }, isQuery: true });
+      return query();
+    },
     runTransaction(fn) {
       const run = serial.then(async () => {
         const writes = [];
-        const tx = { get: async (ref) => snapshot(ref.path),
+        const tx = { get: async (ref) => ref.isQuery ? ref.get() : snapshot(ref.path),
           create: (ref, data) => writes.push(["create", ref.path, data]),
           set: (ref, data, options) => writes.push([options?.merge ? "update" : "set", ref.path, data]),
           update: (ref, data) => writes.push(["update", ref.path, data]),
@@ -40,7 +46,7 @@ const request = (data, auth = { uid: "counter", token: { email_verified: true } 
 function fixture(permissions = ["stockcounts.create", "stockcounts.update", "stockcounts.read", "locations.update"]) {
   return memoryDatabase({
     [`hotels/${hotel}/members/counter`]: { permissions },
-    [`hotelSubscriptions/${hotel}`]: { status: "active", validUntil: null },
+    [`hotelSubscriptions/${hotel}`]: { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null },
     [`hotels/${hotel}/locations/store`]: { name: "Store" },
     [`hotels/${hotel}/locations/store/stockTemplates/template`]: { name: "Weekly", items: [{ supplierProductId: "coffee", outletId: "bar" }] },
     [`hotels/${hotel}/supplierproducts/coffee`]: { name: "Coffee", pricePerPurchaseUnit: 12.5 },
@@ -136,6 +142,9 @@ test("staff lookup returns only same-hotel display name and never falls back to 
   db.records.set("users/person", { firstName: "Ada", lastName: "Lovelace", email: "private@example.test", hotelUid: ["hotel-a", "hotel-b"] });
   const lookup = (userId, hotelUid = hotel) => getHotelUserDisplayNameHandler(request({ hotelUid, userId }), { firestore: db, auth: currentAuth });
   assert.deepEqual(await lookup("person"), { displayName: "Ada Lovelace" });
+  db.records.set(`hotels/${hotel}/members/person`, { permissions: [], firstName: "Local", lastName: "Colleague" });
+  assert.deepEqual(await lookup("person"), { displayName: "Local Colleague" });
+  assert.equal(db.records.get("users/person").firstName, "Ada");
   db.records.set("users/foreign", { firstName: "Private" });
   assert.deepEqual(await lookup("foreign"), { displayName: "foreign" });
   assert.deepEqual(await lookup("legacy@example.test"), { displayName: "legacy@example.test" });
@@ -169,7 +178,7 @@ test("access audit records exact added and removed hotel permissions", async () 
 test("queued dispatch rechecks current enabled and verified actor in addition to membership", async () => {
   const initial = { "hotels/hotel-a/dispatches/d": { orderId: "o", status: "pending", actorUid: "counter", order: { outletId: "bar" } },
     "hotels/hotel-a/orders/o": { status: "Created", dispatchRequestId: "d", dispatchStatus: "pending" },
-    "hotelSubscriptions/hotel-a": { status: "active", validUntil: null },
+    "hotelSubscriptions/hotel-a": { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null },
     "hotels/hotel-a/members/counter": { permissions: ["orders.approve"] }, "hotels/hotel-a/outlets/bar/approvers/counter": {} };
   for (const identity of [{ emailVerified: true, disabled: true }, { emailVerified: false }, null]) {
     const db = memoryDatabase(initial);

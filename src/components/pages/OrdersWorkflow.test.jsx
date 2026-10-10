@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import OrdersPage from "./OrdersPage";
 
 const mocks = vi.hoisted(() => ({ hotel: "hotel-a", permissions: [], orders: vi.fn(), suppliers: vi.fn(), display: vi.fn() }));
-vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, permissions: mocks.permissions, isPlatformAdmin: false, subscriptionActive: true }) }));
+vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, permissions: mocks.permissions, isPlatformAdmin: false, subscriptionActive: true, subscription: { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null } }) }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key) => key }) }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../layout/PageShell", () => ({ default: ({ children }) => <main>{children}</main> }));

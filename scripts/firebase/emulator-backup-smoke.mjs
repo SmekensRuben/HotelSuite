@@ -27,14 +27,16 @@ const objects = {
 const roomTypeDays = ["2026-10-10", "2026-10-11"].map((date) => ({ date, roomTypes: [{ code: "DBL", name: "Double", quantity: 2 }] }));
 const reservations = [{ id: "reservation-a", firstName: "Fictional", lastName: "Guest", arrivalDate: "2026-10-10", departureDate: "2026-10-12", roomType: "DBL", numberOfAdults: 1, numberOfChildren: 0, comment: "", createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z" }];
 const documents = {
-  "users/restore-a": { firstName: "Fictional", lastName: "A", hotelUid: "restore-hotel-a" },
-  "users/restore-b": { firstName: "Fictional", lastName: "B", hotelUid: "restore-hotel-b" },
-  "hotels/restore-hotel-a/members/restore-a": { permissions: ["orders.read"], enabled: true },
+  "users/restore-a": { firstName: "Fictional", lastName: "A", hotelUid: ["restore-hotel-a"], accessRevision: 2 },
+  "users/restore-b": { firstName: "Fictional", lastName: "B", hotelUid: ["restore-hotel-b"], accessRevision: 1 },
+  "hotels/restore-hotel-a/members/restore-a": { permissions: ["orders.read", "users.read", "users.create", "users.update", "users.delete"], hotelAdmin: true, moduleRoles: {}, additionalPermissions: ["orders.read"], rolePolicyVersion: 1, revision: 2 },
+  "hotels/restore-hotel-a/memberAdministration/state": { revision: 4, updatedAt: revisionTime, updatedBy: "restore-a" },
+  "hotels/restore-hotel-a/accessAudit/member-a": { action: "update-member", uid: "restore-a", actorUid: "restore-a", hotelAdmin: true, revision: 2, createdAt: revisionTime },
   "hotels/restore-hotel-a/settings/bootstrap": { hotelName: "Fictional hotel A", currency: "EUR" },
   "hotels/restore-hotel-a/settings/propertySettings": { hotelRooms: 100 },
   "hotels/restore-hotel-b/members/restore-b": { permissions: ["orders.read"], enabled: true },
-  "hotelSubscriptions/restore-hotel-a": { status: "active", validUntil: subscriptionExpiry },
-  "hotelSubscriptions/restore-hotel-b": { status: "trialing", validUntil: subscriptionExpiry },
+  "hotelSubscriptions/restore-hotel-a": { status: "active", validUntil: subscriptionExpiry, modules: ["procurement", "groups", "contracts", "revenue"], modulePolicyVersion: 1, seatLimit: null, revision: 3 },
+  "hotelSubscriptions/restore-hotel-b": { status: "trialing", validUntil: subscriptionExpiry, modules: ["procurement", "contracts"], modulePolicyVersion: 1, seatLimit: 10, revision: 1 },
   "hotels/restore-hotel-a/orders/order-a": { status: "Finalized", revision: 4, total: 42.5, updatedAt: revisionTime },
   "hotels/restore-hotel-a/orderAudit/audit-a": { orderId: "order-a", actorUid: "restore-a", action: "finalize", revision: 4, createdAt: revisionTime },
   "hotels/restore-hotel-a/groups/group-a": { arrival: "2026-10-10", departure: "2026-10-12", roomTypeDays, roomingListToken: roomingToken, roomingListStatus: "Submitted" },
@@ -82,7 +84,7 @@ try {
       assert.equal(metadata.contentType, "application/pdf");
       assert.equal(metadata.metadata.fixture, "restore-only");
     }
-    console.log("Verified all two-hotel documents, order audit, rooming-list token/version/change history, historical snapshot, Auth claims/state and private Storage bytes/metadata.");
+    console.log("Verified all two-hotel documents, module entitlements, hotel-admin roles and guard/audit, order audit, rooming-list token/version/change history, historical snapshot, Auth claims/state and private Storage bytes/metadata.");
   } else throw new Error("Expected seed or verify mode.");
 } finally {
   await deleteApp(app);

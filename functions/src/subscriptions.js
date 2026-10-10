@@ -1,6 +1,8 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { admin } = require("./config");
 const { requireVerifiedUser, requireCurrentVerifiedUser } = require("./validation");
+const { catalog, moduleAllows, modulesAreValid, validateModules, validateSeatLimit } = require("./modulePolicy");
+const { gated } = require("./saasRollout");
 
 const SUBSCRIPTION_STATUSES = ["trialing", "active", "suspended", "canceled"];
 
@@ -19,17 +21,18 @@ function subscriptionIsActive(subscription, now = Date.now()) {
   return Number.isFinite(expiry) && expiry > now;
 }
 
-async function requireHotelSubscription(db, hotelUid, transaction) {
+async function requireHotelSubscription(db, hotelUid, transaction, moduleId = "core") {
   const ref = db.doc(`hotelSubscriptions/${hotelUid}`);
   const snapshot = transaction ? await transaction.get(ref) : await ref.get();
-  if (!snapshot.exists || !subscriptionIsActive(snapshot.data())) {
-    throw new HttpsError("permission-denied", "An active hotel subscription is required.");
+  if (!snapshot.exists || !subscriptionIsActive(snapshot.data()) || !moduleAllows(snapshot.data(), moduleId)) {
+    throw new HttpsError("permission-denied", "An active subscription with the required hotel module is required.");
   }
+  return snapshot.data();
 }
 
-async function hotelHasActiveSubscription(db, hotelUid) {
+async function hotelHasActiveSubscription(db, hotelUid, moduleId = "core") {
   const snapshot = await db.doc(`hotelSubscriptions/${requireDocumentId(hotelUid, "hotelUid")}`).get();
-  return snapshot.exists && subscriptionIsActive(snapshot.data());
+  return snapshot.exists && subscriptionIsActive(snapshot.data()) && moduleAllows(snapshot.data(), moduleId);
 }
 
 async function subscribedHotels(db, hotelUids) {
@@ -55,7 +58,10 @@ function subscriptionOverview(subscription) {
   }
   // Return only administration fields, with an explicit timestamp wire format.
   return { status: subscription.status ?? null, planId: subscription.planId ?? null,
-    billingMode: subscription.billingMode ?? null, validUntilMillis, revision };
+    billingMode: subscription.billingMode ?? null, validUntilMillis, revision,
+    modules: modulesAreValid(subscription) ? subscription.modules : null,
+    modulePolicyVersion: modulesAreValid(subscription) ? subscription.modulePolicyVersion : null,
+    seatLimit: subscription.seatLimit ?? null, moduleMigrationRequired: !modulesAreValid(subscription) };
 }
 
 async function listHotelSubscriptionsHandler(request, services = {}) {
@@ -88,6 +94,8 @@ async function setHotelSubscriptionHandler(request, services = {}) {
   const planId = String(input.planId || "").trim();
   if (!/^[a-zA-Z0-9_-]{1,60}$/.test(planId)) throw new HttpsError("invalid-argument", "planId is required (letters, numbers, hyphens or underscores).");
   const expectedRevision = input.expectedRevision;
+  const modules = validateModules(input.modules);
+  const seatLimit = validateSeatLimit(input.seatLimit ?? null);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new HttpsError("invalid-argument", "expectedRevision is required.");
   const expiry = input.validUntil == null || input.validUntil === "" ? null : Date.parse(input.validUntil);
   if (expiry !== null && (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(input.validUntil)
@@ -108,6 +116,7 @@ async function setHotelSubscriptionHandler(request, services = {}) {
     if ((previous.revision || 0) !== expectedRevision) throw new HttpsError("aborted", "Subscription changed. Reload before saving.");
     const next = {
       status: input.status, planId, billingMode: "manual",
+      modules, modulePolicyVersion: catalog.policyVersion, seatLimit,
       validUntil: expiry === null ? null : admin.firestore.Timestamp.fromMillis(expiry),
       revision: expectedRevision + 1,
       updatedBy: request.auth.uid,
@@ -117,6 +126,8 @@ async function setHotelSubscriptionHandler(request, services = {}) {
     transaction.set(audit, {
       actorUid: request.auth.uid,
       previousStatus: previous.status || null,
+      previousModules: previous.modules ?? null, modules, modulePolicyVersion: catalog.policyVersion,
+      previousSeatLimit: previous.seatLimit ?? null, seatLimit,
       status: next.status, planId, validUntil: next.validUntil, revision: next.revision,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
@@ -124,6 +135,6 @@ async function setHotelSubscriptionHandler(request, services = {}) {
   });
 }
 
-const setHotelSubscription = onCall({ region: "us-central1", cors: true }, setHotelSubscriptionHandler);
+const setHotelSubscription = onCall({ region: "us-central1", cors: true }, gated(setHotelSubscriptionHandler));
 const listHotelSubscriptions = onCall({ region: "us-central1", cors: true }, listHotelSubscriptionsHandler);
 module.exports = { requirePlatformAdministrator, requireDocumentId, subscriptionIsActive, requireHotelSubscription, hotelHasActiveSubscription, subscribedHotels, setHotelSubscriptionHandler, setHotelSubscription, listHotelSubscriptionsHandler, listHotelSubscriptions };

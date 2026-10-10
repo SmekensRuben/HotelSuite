@@ -22,20 +22,39 @@ service firebase.storage {
         && request.auth.token.platformAdmin == true;
     }
 
-    function hasActiveSubscription(hotelUid) {
-      let subscription = firestore.get(/databases/(default)/documents/hotelSubscriptions/$(hotelUid)).data;
+    // BEGIN GENERATED MODULE POLICY: scripts/render-module-rules.mjs
+    function hasModule(subscription, moduleId) {
+      let modules = subscription.modules;
+      return subscription.modulePolicyVersion == 1
+        && modules is list && modules.size() <= 5
+        && modules.hasOnly(['procurement', 'contracts', 'frontoffice', 'groups', 'revenue'])
+        && modules.toSet().size() == modules.size()
+        && (moduleId == 'core' || moduleId in modules);
+    }
+    function featureModule(feature) {
+      return feature in ['catalogproducts', 'supplierproducts', 'suppliers', 'orders', 'stockcounts', 'catalogsettings', 'outlets', 'locations'] ? 'procurement' :
+        feature in ['contracts'] ? 'contracts' :
+        feature in ['reservations', 'auditupsells'] ? 'frontoffice' :
+        feature in ['groups', 'roominglists'] ? 'groups' :
+        feature in ['groupquotes', 'demandcalendar', 'commercialintelligence'] ? 'revenue' :
+        feature in ['dashboard', 'propertysettings', 'imports', 'integrations', 'notifications', 'users'] ? 'core' : 'unsupported';
+    }
+    // END GENERATED MODULE POLICY
+
+    function hasActiveSubscription(subscription) {
       return subscription.status in ['active', 'trialing']
         && ((subscription.status == 'active' && subscription.validUntil == null)
           || (subscription.validUntil is timestamp && subscription.validUntil > request.time));
     }
 
+    function hotelPermission(hotelUid, feature, action) {
+      let subscription = firestore.get(/databases/(default)/documents/hotelSubscriptions/$(hotelUid)).data;
+      let member = firestore.get(/databases/(default)/documents/hotels/$(hotelUid)/members/$(request.auth.uid)).data;
+      return hasActiveSubscription(subscription) && hasModule(subscription, featureModule(feature))
+        && member.permissions is list && member.permissions.hasAny([feature + '.' + action, feature + '.*']);
+    }
     function hasPermission(hotelUid, feature, action) {
-      return isPlatformAdmin()
-        || (signedIn()
-          && hasActiveSubscription(hotelUid)
-          && firestore.get(/databases/(default)/documents/hotels/$(hotelUid)/members/$(request.auth.uid)).data.permissions is list
-          && (firestore.get(/databases/(default)/documents/hotels/$(hotelUid)/members/$(request.auth.uid)).data.permissions.hasAny([feature + '.' + action])
-            || firestore.get(/databases/(default)/documents/hotels/$(hotelUid)/members/$(request.auth.uid)).data.permissions.hasAny([feature + '.*'])));
+      return isPlatformAdmin() || (signedIn() && hotelPermission(hotelUid, feature, action));
     }
 
     // Private contract objects and legacy paths cannot expose metadata or mint

@@ -1,0 +1,21 @@
+{
+  "policyVersion": 1,
+  "coreFeatures": ["dashboard", "propertysettings", "imports", "integrations", "notifications", "users"],
+  "modules": {
+    "procurement": {
+      "label": "Purchasing & Inventory",
+      "features": ["catalogproducts", "supplierproducts", "suppliers", "orders", "stockcounts", "catalogsettings", "outlets", "locations"],
+      "roles": {
+        "viewer": {"label": "Viewer", "permissions": ["catalogproducts.read", "supplierproducts.read", "suppliers.read", "orders.read", "stockcounts.read", "outlets.read", "locations.read", "catalogsettings.read"]},
+        "buyer": {"label": "Buyer", "permissions": ["catalogproducts.read", "supplierproducts.read", "suppliers.read", "orders.read", "orders.create", "orders.update", "outlets.read", "catalogsettings.read"]},
+        "approver": {"label": "Approver", "permissions": ["catalogproducts.read", "supplierproducts.read", "suppliers.read", "orders.read", "orders.approve", "outlets.read"]},
+        "stock-controller": {"label": "Stock Controller", "permissions": ["supplierproducts.read", "suppliers.read", "orders.read", "stockcounts.read", "stockcounts.create", "stockcounts.update", "outlets.read", "locations.read"]},
+        "module-manager": {"label": "Module Manager", "permissions": ["catalogproducts.read", "catalogproducts.create", "catalogproducts.update", "catalogproducts.delete", "supplierproducts.read", "supplierproducts.create", "supplierproducts.update", "supplierproducts.delete", "suppliers.read", "suppliers.create", "suppliers.update", "suppliers.delete", "suppliers.password", "orders.read", "orders.create", "orders.update", "orders.delete", "stockcounts.read", "stockcounts.create", "stockcounts.update", "stockcounts.delete", "catalogsettings.read", "catalogsettings.create", "catalogsettings.update", "catalogsettings.delete", "outlets.read", "outlets.create", "outlets.update", "outlets.delete", "outlets.approvers", "locations.read", "locations.create", "locations.update", "locations.delete"]}
+      }
+    },
+    "contracts": {"label": "Contract Management", "features": ["contracts"], "roles": {}},
+    "frontoffice": {"label": "Front Office & Upselling", "features": ["reservations", "auditupsells"], "roles": {}},
+    "groups": {"label": "Groups & Events", "features": ["groups", "roominglists"], "roles": {}},
+    "revenue": {"label": "Revenue & Forecasting", "features": ["groupquotes", "demandcalendar", "commercialintelligence"], "roles": {}}
+  }
+}

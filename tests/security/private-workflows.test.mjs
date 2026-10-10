@@ -53,9 +53,9 @@ beforeEach(async () => {
   const users = await auth.listUsers(); if (users.users.length) await auth.deleteUsers(users.users.map((u) => u.uid));
   for (const identity of [member, other, viewer, operator]) await auth.createUser({ uid: identity.uid, email: identity.token.email, emailVerified: true });
   await auth.setCustomUserClaims(operator.uid, { platformAdmin: true });
-  await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion: "saas-procurement-v1" });
+  await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion: "saas-modules-v2" });
   await db.doc("platformConfiguration/privateWorkflows").set({ enabled: true, rulesVersion: "private-workflows-v1" });
-  for (const id of ["hotel-a", "hotel-b"]) { await db.doc("hotels/" + id).set({ hotelName: id }); await db.doc("hotelSubscriptions/" + id).set({ status: "active", validUntil: null }); }
+  for (const id of ["hotel-a", "hotel-b"]) { await db.doc("hotels/" + id).set({ hotelName: id }); await db.doc("hotelSubscriptions/" + id).set({ modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null }); }
   await db.doc("hotels/hotel-a/members/member-a").set({ permissions: ["contracts.*", "roominglists.*"] });
   await db.doc("hotels/hotel-b/members/member-b").set({ permissions: ["contracts.*", "roominglists.*"] });
   await db.doc("hotels/hotel-a/members/viewer").set({ permissions: ["contracts.read", "roominglists.read"] });
@@ -89,7 +89,7 @@ describe("private documents with real emulator identity, Storage and transaction
     await db.doc("hotelSubscriptions/hotel-a").update({ status: "suspended" });
     await rejected(readContractFile(request(viewer), input, services), "permission-denied");
     await rejected(readContractFile(request(operator), input, services), "permission-denied");
-    await db.doc("hotelSubscriptions/hotel-a").update({ status: "active" });
+    await db.doc("hotelSubscriptions/hotel-a").update({ modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active" });
     await db.doc("hotels/hotel-a/members/viewer").delete();
     await rejected(readContractFile(request(viewer), input, services), "permission-denied");
     await saveContract(member, { creating: false, expectedRevision: snapshot.revision, contract: { ...contract, name: "Revised" } });

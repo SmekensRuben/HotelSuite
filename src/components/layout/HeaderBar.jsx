@@ -9,7 +9,7 @@ import { usePermission } from "../../hooks/usePermission";
 export default function HeaderBar({ today, onLogout }) {
   const navigate = useNavigate();
   const { t } = useTranslation(["common", "reservations"]);
-  const { hotelUid, hotelUids = [], selectHotel, isPlatformAdmin } = useHotelContext();
+  const { hotelUid, hotelUids = [], selectHotel, isPlatformAdmin, isHotelAdmin } = useHotelContext();
   const canViewCatalogProducts = usePermission("catalogproducts", "read");
   const canViewSupplierProducts = usePermission("supplierproducts", "read");
   const canViewSuppliers = usePermission("suppliers", "read");
@@ -43,6 +43,8 @@ export default function HeaderBar({ today, onLogout }) {
   const revenueMenuRef = useRef(null);
 
   const settingsMenuItems = [
+    { label: "Contracts", action: () => navigate("/contracts"), icon: FileText, visible: canViewContracts },
+    { label: "Hotel team", action: () => navigate("/settings/team"), icon: Users, visible: isPlatformAdmin || isHotelAdmin },
     {
       label: "Property Settings",
       action: () => navigate("/settings/property"),
@@ -108,12 +110,6 @@ export default function HeaderBar({ today, onLogout }) {
       icon: BriefcaseBusiness,
       visible: canViewGroups,
     },
-    {
-      label: "Demand Calendar",
-      action: () => navigate("/me/demand-calendar"),
-      icon: CalendarDays,
-      visible: canViewDemandCalendar,
-    },
   ].filter((item) => item.visible !== false);
 
   const frontOfficeMenuItems = [
@@ -138,6 +134,7 @@ export default function HeaderBar({ today, onLogout }) {
   ].filter((item) => item.visible !== false);
 
   const revenueMenuItems = [
+    { label: "Demand Calendar", action: () => navigate("/me/demand-calendar"), icon: CalendarDays, visible: canViewDemandCalendar },
     {
       label: "Commercial Intelligence",
       action: () => navigate("/revenue/commercial-intelligence"),
@@ -178,12 +175,6 @@ export default function HeaderBar({ today, onLogout }) {
       visible: canViewOrders,
     },
     {
-      label: "Contracts",
-      action: () => navigate("/contracts"),
-      icon: FileText,
-      visible: canViewContracts,
-    },
-    {
       label: "Stock Count",
       action: () => navigate("/catalog/stock-counts"),
       icon: ClipboardList,
@@ -196,7 +187,7 @@ export default function HeaderBar({ today, onLogout }) {
       const results = await Promise.all(
         hotelUids.map(async (uid) => {
           try {
-            const snap = await getDoc(doc(db, `hotels/${uid}/settings`, uid));
+            const snap = await getDoc(doc(db, `hotels/${uid}/settings`, "bootstrap"));
             const data = snap.exists() ? snap.data() : {};
             return { uid, name: data.hotelName || uid };
           } catch {
@@ -301,7 +292,7 @@ export default function HeaderBar({ today, onLogout }) {
                   className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
                   style={{ minHeight: 44 }}
                 >
-                  <span className="uppercase tracking-wide">Catalog</span>
+                  <span className="uppercase tracking-wide">Purchasing &amp; Inventory</span>
                   <span className="ml-3 text-base">▾</span>
                 </button>
                 {isCatalogOpen && (
@@ -347,7 +338,7 @@ export default function HeaderBar({ today, onLogout }) {
                   className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
                   style={{ minHeight: 44 }}
                 >
-                  <span className="uppercase tracking-wide">M&amp;E</span>
+                  <span className="uppercase tracking-wide">Groups &amp; Events</span>
                   <span className="ml-3 text-base">▾</span>
                 </button>
                 {isMeOpen && (
@@ -476,7 +467,7 @@ export default function HeaderBar({ today, onLogout }) {
                   style={{ minHeight: 44 }}
                 >
                   <div className="flex items-center gap-2">
-                    <span className="uppercase tracking-wide">Settings</span>
+                    <span className="uppercase tracking-wide">Administration</span>
                   </div>
                   <span className="ml-3 text-base">▾</span>
                 </button>
