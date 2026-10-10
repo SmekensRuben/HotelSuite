@@ -29,6 +29,8 @@ Code-only merges still deploy Functions and App Hosting automatically. The Funct
 
 Upload only `scripts/firebase/rollout-private-workflows.sh` through Cloud Shell's **Upload file** control. A Git clone is not required. Use Node 22 or newer as the existing reviewed operator:
 
+The script now installs only its locked operator dependencies and npm cache on `/tmp`, removes them on exit, and keeps reviewed sources and recovery backups on the persistent home disk. For an older script's ENOSPC failure, follow [the scoped disk recovery instructions](cloud-shell-rollout-runtime.md) and replace the uploaded wrapper before retrying.
+
 ```bash
 bash ~/rollout-private-workflows.sh --release-sha <reviewed-current-main-sha>
 ```

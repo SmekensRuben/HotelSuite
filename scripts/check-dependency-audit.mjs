@@ -21,7 +21,7 @@ function runAudit(prefix) {
 }
 
 let failed = false;
-for (const [scope, prefix] of [["root", ""], ["functions", "functions"]]) {
+for (const [scope, prefix] of [["root", ""], ["functions", "functions"], ["operator", "scripts/firebase/operator-runtime"]]) {
   const audit = runAudit(prefix);
   if (audit.error || !audit.metadata?.vulnerabilities || !audit.vulnerabilities) {
     throw new Error(`${scope}: npm audit did not return a valid report. Dependency verification cannot proceed.`);

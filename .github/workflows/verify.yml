@@ -43,12 +43,18 @@ jobs:
 
       - name: Validate Functions deployment scripts
         run: |
-          bash -n scripts/firebase/setup-functions-deployment.sh scripts/firebase/check-functions-runtime.sh scripts/firebase/rollout-saas-pilot.sh scripts/firebase/rollout-private-workflows.sh
+          bash -n scripts/firebase/setup-functions-deployment.sh scripts/firebase/check-functions-runtime.sh scripts/firebase/rollout-saas-pilot.sh scripts/firebase/rollout-private-workflows.sh scripts/firebase/install-operator-runtime.sh
           node --check scripts/firebase/check-functions-release.mjs
           node --check scripts/firebase/saas-rollout.mjs
           node --check scripts/firebase/saas-release-check.mjs
           node --check scripts/firebase/private-workflows-rollout.mjs
           node --check scripts/firebase/private-workflows-migration.mjs
+
+      - name: Verify the locked operator runtime
+        run: |
+          npm --prefix scripts/firebase/operator-runtime ci --omit=dev --ignore-scripts --no-audit --no-fund
+          cd scripts/firebase/operator-runtime
+          node -e 'Promise.all(["firebase-admin/app", "firebase-admin/auth", "firebase-admin/firestore", "firebase-admin/security-rules", "@google-cloud/firestore", "@google-cloud/storage", "google-auth-library"].map((name) => import(name))).catch((error) => { console.error(error); process.exitCode = 1; })'
 
       - name: Firestore and Storage security tests
         run: npm run test:security

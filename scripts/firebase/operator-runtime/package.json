@@ -1,0 +1,13 @@
+{
+  "name": "hotelsuite-operator-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Locked dependencies for operator-led Firebase Rules and data rollouts.",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@google-cloud/firestore": "9.3.1",
+    "@google-cloud/storage": "8.3.0",
+    "firebase-admin": "14.5.0",
+    "google-auth-library": "11.2.0"
+  }
+}

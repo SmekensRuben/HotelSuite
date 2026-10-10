@@ -34,7 +34,8 @@ rollout_dir=$(mktemp -d "${HOME}/hotelsuite-rollout-XXXXXX")
 echo "Reviewed release: $release_sha"
 echo "Operator-local workspace and Rules backup: $rollout_dir"
 source_url="https://raw.githubusercontent.com/SmekensRuben/HotelSuite/${release_sha}"
-files=(package.json package-lock.json functions/src/permissionCatalog.json firebase/firestore.rules firebase/storage.rules
+files=(scripts/firebase/operator-runtime/package.json scripts/firebase/operator-runtime/package-lock.json
+  scripts/firebase/install-operator-runtime.sh functions/src/permissionCatalog.json firebase/firestore.rules firebase/storage.rules
   scripts/firebase/saas-rollout.mjs scripts/firebase/saas-rules-release.mjs scripts/firebase/saas-release-check.mjs)
 for file in "${files[@]}"; do
   mkdir -p "$rollout_dir/$(dirname "$file")"
@@ -43,7 +44,8 @@ done
 cd "$rollout_dir"
 export SAAS_RELEASE_SHA="$release_sha"
 node scripts/firebase/saas-release-check.mjs
-npm ci --ignore-scripts --no-audit --no-fund >/dev/null
+source scripts/firebase/install-operator-runtime.sh
+install_operator_runtime
 node scripts/firebase/saas-rollout.mjs preflight
 
 storage_agent="service-358734544002@gcp-sa-firebasestorage.iam.gserviceaccount.com"
