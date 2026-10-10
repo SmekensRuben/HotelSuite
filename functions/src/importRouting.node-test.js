@@ -180,6 +180,41 @@ test("XML preserves split UTF-8 and crash replay accepts identical bytes with di
   assert.equal(db.records.get("hotels/hotel-a/reports/summary").name, "José 😀");
 });
 
+test("raw and reconciliation imports atomically invalidate every dependent model before becoming visible", async () => {
+  for (const targetPath of ["reports/staydatepattern/2025-12-31/guest", "reports/historyquotes/2026-01-01"]) {
+    const modelPath = "hotels/hotel-a/reports/stayPatternModel";
+    const annualPath = `${modelPath}/years/2026`;
+    const db = new ImportTestDb({ [modelPath]: { status: "VALID", sourceRevision: 4, buildRunId: "old" }, [annualPath]: { status: "VALID", marker: "historical" } });
+    const runRef = db.doc(`hotels/hotel-a/importRuns/${importRunId(object)}`), claim = await claimReceipt(db, runRef, object);
+    const changed = { ...config, targetPath };
+    db.failBefore = (writes) => writes.some((write) => write.path.includes("/chunks/"));
+    await assert.rejects(() => importRows(db, runRef, claim.owner, [{ rowIndex: 0, mappedDocument: { arrivalDate: "2025-12-31", departureDate: "2026-01-02" } }], changed), /before atomic/);
+    assert.equal(db.records.get(modelPath).status, "VALID");
+    assert.equal(db.records.has(`hotels/hotel-a/${targetPath}`), false);
+    db.failBefore = null;
+    const summary = await importRows(db, runRef, claim.owner, [{ rowIndex: 0, mappedDocument: { arrivalDate: "2025-12-31", departureDate: "2026-01-02" } }], changed);
+    assert.equal(summary.affectsStayPattern, true);
+    assert.deepEqual(db.records.get(annualPath), { status: "VALID", marker: "historical" });
+    assert.equal(db.records.get(modelPath).status, "STALE");
+    assert.equal(db.records.get(modelPath).sourceRevision, 5);
+    assert.equal(db.records.get(modelPath).buildRunId, null);
+    await importRows(db, runRef, claim.owner, [{ rowIndex: 0, mappedDocument: { arrivalDate: "2025-12-31", departureDate: "2026-01-02" } }], changed);
+    assert.equal(db.records.get(modelPath).sourceRevision, 5, "checkpoint replay must not invalidate twice");
+  }
+});
+
+test("corrupt explicit source revisions block import writes instead of resetting evidence", async () => {
+  for (const sourceRevision of [null, -1, "", false]) {
+    const modelPath = "hotels/hotel-a/reports/stayPatternModel";
+    const targetPath = "reports/historyquotes/consideredDates/2026-01-01";
+    const db = new ImportTestDb({ [modelPath]: { status: "VALID", sourceRevision } });
+    const runRef = db.doc(`hotels/hotel-a/importRuns/${importRunId(object)}`), claim = await claimReceipt(db, runRef, object);
+    await assert.rejects(() => importRows(db, runRef, claim.owner, [{ rowIndex: 0, mappedDocument: { individualRooms: 1 } }], { ...config, targetPath }), /Invalid Stay Pattern source revision/);
+    assert.equal(db.records.has(`hotels/hotel-a/${targetPath}`), false);
+    assert.equal(db.records.get(modelPath).sourceRevision, sourceRevision);
+  }
+});
+
 test("atomic import checkpoints resume partial progress without duplicate unkeyed list items", async () => {
   const db = new ImportTestDb(), runRef = db.doc(`hotels/hotel-a/importRuns/${importRunId(object)}`), rows = streamRows(55);
   const first = await claimReceipt(db, runRef, object, { initialData: { configuration: config } });

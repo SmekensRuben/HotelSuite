@@ -50,6 +50,17 @@ describe("Pricing Guidance V1", () => {
     expect(calculatePricingGuidance({ economicFloorRateInclVat: null, totalDisplacedRoomNights: 0, requestedRoomNights: 1, marketSummary: market }).confidence).toBe("UNAVAILABLE");
     expect(calculatePricingGuidance({ economicFloorRateInclVat: 100, totalDisplacedRoomNights: 0, requestedRoomNights: 1, marketSummary: {} }).targetRateInclVat).toBeNull();
   });
+  it.each([
+    { requestedRoomNights: 0 },
+    { economicFloorUnavailableReason: "ECONOMIC_FLOOR_UNAVAILABLE_PHYSICAL_CAPACITY" },
+    { economicFloorUnavailableReason: "ECONOMIC_FLOOR_UNAVAILABLE_REQUIRED_INPUT" },
+    { physicalFeasibility: { status: "PHYSICAL_CAPACITY_SHORTFALL" } },
+    { physicalFeasibility: { status: "PHYSICAL_CAPACITY_UNAVAILABLE" } },
+  ])("suppresses all commercial rates when an independent guard applies", (guard) => {
+    const result = calculatePricingGuidance({ economicFloorRateInclVat: 100, totalDisplacedRoomNights: 5, requestedRoomNights: 20, marketSummary: market, ...guard });
+    expect(result.economicFloorRateInclVat).toBeNull(); expect(result.targetRateInclVat).toBeNull(); expect(result.stretchRateInclVat).toBeNull();
+    expect(result.marketAnchorInclVat).not.toBeNull();
+  });
 });
 
 

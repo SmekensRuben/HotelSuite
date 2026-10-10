@@ -53,9 +53,10 @@ export function selectMarketAnchor(summary = {}) {
   return { value: null, source: "UNAVAILABLE" };
 }
 
-export function calculatePricingGuidance({ economicFloorRateInclVat, totalDisplacedRoomNights, requestedRoomNights, marketSummary = {}, roomsByDate = [], breakfastPax = 0, strategy: inputStrategy = {} }) {
+export function calculatePricingGuidance({ economicFloorRateInclVat, economicFloorUnavailableReason, physicalFeasibility, totalDisplacedRoomNights, requestedRoomNights, marketSummary = {}, roomsByDate = [], breakfastPax = 0, strategy: inputStrategy = {} }) {
   const strategy = normalizePricingStrategy(inputStrategy);
-  const floor = validNumber(economicFloorRateInclVat) ? Number(economicFloorRateInclVat) : null;
+  const blocked = economicFloorUnavailableReason || !(Number(requestedRoomNights) > 0) || (physicalFeasibility && physicalFeasibility.status !== "PHYSICALLY_FEASIBLE");
+  const floor = !blocked && validNumber(economicFloorRateInclVat) ? Number(economicFloorRateInclVat) : null;
   const displacementRatio = Number(requestedRoomNights) > 0 ? Math.max(0, Number(totalDisplacedRoomNights) || 0) / Number(requestedRoomNights) : null;
   const yieldBand = determineYieldBand(displacementRatio, strategy);
   const anchor = selectMarketAnchor(marketSummary);

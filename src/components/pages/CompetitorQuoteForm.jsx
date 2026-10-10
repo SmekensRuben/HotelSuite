@@ -13,6 +13,7 @@ export default function CompetitorQuoteForm({ hotelUid, quote, competitors, onSa
   const [sourceType, setSourceType] = useState("LOST_GROUP");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
   const rooms = quote.roomsByDate || [];
   const publicRate = useMemo(() => {
     const weighted = quote.marketContextSnapshot?.stayDates?.map((date) => ({
@@ -24,17 +25,19 @@ export default function CompetitorQuoteForm({ hotelUid, quote, competitors, onSa
   }, [competitorId, quote.marketContextSnapshot, rooms]);
   if (!enabled.length) return <p className="text-sm text-gray-600">No competitors are enabled for group intelligence.</p>;
   const submit = async (event) => {
-    event.preventDefault(); setSaving(true);
+    event.preventDefault(); setSaving(true); setError(null);
+    try {
     const competitor = enabled.find((item) => item.id === competitorId);
     await saveCompetitorGroupObservation(hotelUid, {
       competitorId, competitorName: competitor?.displayName || competitorId, observedAt: new Date(), sourceType,
       sourceQuoteId: quote.id, arrivalDate: quote.startDate, checkOutDate: quote.dateRangeSemantics === "CHECKOUT_EXCLUSIVE" ? quote.endDate : null, stayStartDate: quote.startDate, stayEndDate: quote.endDate, roomsByDate: rooms,
       requestedRoomsTotal: rooms.reduce((sum, item) => sum + Number(item.rooms || 0), 0),
       requestedRoomNights: rooms.reduce((sum, item) => sum + Number(item.rooms || 0), 0), segment: quote.segment || null,
-      competitorQuotedRateInclVat: Number(rate), mealBasis, occupancyBasis, publicRateAtObservationInclVat: publicRate,
+      competitorQuotedRateInclVat: rate.trim() === "" ? null : Number(rate), mealBasis, occupancyBasis, publicRateAtObservationInclVat: publicRate,
       publicRateMealBasis: "UNKNOWN", sourceConfidence, notes,
     });
-    setSaving(false); onSaved?.();
+    await onSaved?.();
+    } catch (error) { setError(error); } finally { setSaving(false); }
   };
   return <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
     <label className="text-sm font-semibold">Competitor<select value={competitorId} onChange={(e) => setCompetitorId(e.target.value)} className="mt-1 w-full rounded border px-3 py-2 font-normal">{enabled.map((item) => <option value={item.id} key={item.id}>{item.displayName}</option>)}</select></label>
@@ -45,5 +48,6 @@ export default function CompetitorQuoteForm({ hotelUid, quote, competitors, onSa
     <label className="text-sm font-semibold">Source Confidence<select value={sourceConfidence} onChange={(e) => setSourceConfidence(e.target.value)} className="mt-1 w-full rounded border px-3 py-2 font-normal">{options(["HIGH", "MEDIUM", "LOW"])}</select></label>
     <label className="text-sm font-semibold sm:col-span-2 lg:col-span-3">Notes<textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="mt-1 w-full rounded border px-3 py-2 font-normal" /></label>
     <div><button disabled={saving} className="rounded bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white disabled:bg-gray-400">{saving ? "Saving…" : "Record Competitor Quote"}</button></div>
+    {error && <p role="alert" className="text-sm font-semibold text-red-700">Could not save this observation. {error.message} Please try again.</p>}
   </form>;
 }

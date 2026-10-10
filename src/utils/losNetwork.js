@@ -1,8 +1,10 @@
 import { getBusinessSeason } from "./displacementForecast";
 import { toRoomRateInclVat } from "./roomRateVat";
+import { optimizeIntervalPortfolio, PORTFOLIO_POLICY } from "./intervalPortfolio";
+import { buildYear, classifyRateCode as canonicalClassifyRateCode, normalizeStatus, normalizeReservation, RESERVATION_STATUS as canonicalStatuses, reconcileStayPattern as canonicalReconcile } from "../../functions/src/stayPatternPreparation.mjs";
 
 export const STAY_PATTERN_MODEL_VERSION = "stay-pattern-v1";
-export const LOS_DISPLACEMENT_MODEL_VERSION = "los-network-v1";
+export const LOS_DISPLACEMENT_MODEL_VERSION = "los-network-v2-optimal-portfolio";
 export const LOS_NETWORK_DEFAULTS = Object.freeze({
   maxModeledLos: 14,
   absoluteToleranceRooms: 2,
@@ -18,148 +20,61 @@ export const LOS_NETWORK_DEFAULTS = Object.freeze({
 });
 
 const iso = /^\d{4}-\d{2}-\d{2}$/;
-const date = (value) => iso.test(String(value || "")) ? new Date(`${value}T00:00:00Z`) : null;
+const date = (value) => {
+  if (!iso.test(String(value || ""))) return null;
+  const result = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(result.getTime()) && result.toISOString().slice(0, 10) === value ? result : null;
+};
 export const addDays = (value, days) => {
   const parsed = date(value);
-  if (!parsed) return null;
+  if (!parsed || !Number.isFinite(days)) return null;
   parsed.setUTCDate(parsed.getUTCDate() + days);
   return parsed.toISOString().slice(0, 10);
-};
-const daysBetween = (start, end) => {
-  const left = date(start); const right = date(end);
-  return left && right ? Math.round((right - left) / 86400000) : null;
 };
 const datesBetween = (start, endExclusive) => {
   const output = [];
   for (let cursor = start; cursor && cursor < endExclusive; cursor = addDays(cursor, 1)) output.push(cursor);
   return output;
 };
-const finitePositive = (value) => Number.isFinite(Number(value)) && Number(value) > 0;
 
-export function classifyRateCode(rateCode) {
-  if (typeof rateCode !== "string" || !rateCode.trim()) return "UNCLASSIFIED";
-  const normalized = rateCode.trim().toUpperCase();
-  if (normalized === "NORATE") return "EXCLUDED_POSTMASTER";
-  return /^[0-9]{2}/.test(normalized) ? "TRANSIENT" : "GROUP";
-}
+export const classifyRateCode = canonicalClassifyRateCode;
 
-// Source values confirmed by the Opera extracts represented by this importer contract.
-export const RESERVATION_STATUS = Object.freeze({
-  CHECKED_OUT: "REALIZED",
-  CHECKEDOUT: "REALIZED",
-  DEPARTED: "REALIZED",
-  CKOT: "REALIZED",
-  CANCELLED: "CANCELLED",
-  CANCELED: "CANCELLED",
-  CXL: "CANCELLED",
-  NO_SHOW: "NO_SHOW",
-  NOSHOW: "NO_SHOW",
-  NOSH: "NO_SHOW",
-});
+export const RESERVATION_STATUS = canonicalStatuses;
 
-export function normalizeReservationStatus(value) {
-  if (typeof value !== "string" || !value.trim()) return "UNKNOWN";
-  const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, "_");
-  return RESERVATION_STATUS[normalized] || "UNKNOWN";
-}
-
+export const normalizeReservationStatus = normalizeStatus;
 export function normalizeHistoricalReservation(raw = {}) {
-  const arrivalDate = raw.arrivalDate || raw.ARRIVAL_DATE;
-  const departureDate = raw.departureDate || raw.DEPARTURE_DATE;
-  const statedNights = Number(raw.nights ?? raw.NIGHTS);
-  const lengthOfStay = daysBetween(arrivalDate, departureDate);
-  const numberOfRooms = Number(raw.numberOfRooms ?? raw.NUMBER_OF_ROOMS);
-  const businessType = classifyRateCode(raw.rateCode ?? raw.RATE_CODE);
-  const status = normalizeReservationStatus(raw.reservationStatus ?? raw.shortReservationStatus ?? raw.shortResevationStatus ?? raw.RESERVATION_STATUS);
-  let exclusionReason = null;
-  if (businessType === "EXCLUDED_POSTMASTER") exclusionReason = "EXCLUDED_POSTMASTER";
-  else if (businessType === "UNCLASSIFIED") exclusionReason = "UNCLASSIFIED_RATE_CODE";
-  else if (status !== "REALIZED") exclusionReason = status === "UNKNOWN" ? "UNKNOWN_STATUS" : status;
-  else if (!date(arrivalDate) || !date(departureDate) || !finitePositive(statedNights) || !finitePositive(numberOfRooms) || lengthOfStay <= 0) exclusionReason = "INVALID_STAY";
-  else if (lengthOfStay !== statedNights) exclusionReason = "NIGHTS_DATE_MISMATCH";
-  return {
-    reservationId: raw.reservationNameId ?? raw.RESV_NAME_ID ?? null,
-    arrivalDate, departureDate, lengthOfStay, statedNights, numberOfRooms,
-    businessType, status, exclusionReason,
-    possibleShare: finitePositive(raw.shareAmount) || finitePositive(raw.shareAmountPerStay),
-  };
+  const row = normalizeReservation(raw);
+  return { ...row, reservationId: raw.reservationNameId ?? raw.RESV_NAME_ID ?? null, lengthOfStay: row.los, numberOfRooms: row.rooms, exclusionReason: row.exclusionReason === "UNKNOWN" ? "UNKNOWN_STATUS" : row.exclusionReason };
 }
-
-const emptyType = () => ({ observations: [], modeledRoomArrivals: 0, modeledRoomNights: 0, longStayCount: 0, longStayRoomArrivals: 0, longStayRoomNights: 0 });
 
 export function buildStayPatternYear({ year, reservations = [], authoritativeByDate = {}, settings = {} }) {
-  const config = { ...LOS_NETWORK_DEFAULTS, ...settings };
-  const types = { TRANSIENT: emptyType(), GROUP: emptyType() };
-  const reconstructed = {};
-  const exclusions = {};
-  const sourceStatuses = {};
-  let possibleShareRecords = 0;
-  reservations.forEach((raw) => {
-    const row = normalizeHistoricalReservation(raw);
-    sourceStatuses[String(raw.reservationStatus ?? raw.shortReservationStatus ?? "").trim() || "(empty)"] = (sourceStatuses[String(raw.reservationStatus ?? raw.shortReservationStatus ?? "").trim() || "(empty)"] || 0) + 1;
-    if (row.possibleShare) possibleShareRecords += 1;
-    if (row.exclusionReason) { exclusions[row.exclusionReason] = (exclusions[row.exclusionReason] || 0) + 1; return; }
-    const target = types[row.businessType];
-    datesBetween(row.arrivalDate, row.departureDate).forEach((stayDate) => {
-      reconstructed[stayDate] ||= { TRANSIENT: 0, GROUP: 0 };
-      reconstructed[stayDate][row.businessType] += row.numberOfRooms;
-    });
-    if (row.lengthOfStay > config.maxModeledLos) {
-      target.longStayCount += 1; target.longStayRoomArrivals += row.numberOfRooms; target.longStayRoomNights += row.numberOfRooms * row.lengthOfStay;
-      return;
-    }
-    target.modeledRoomArrivals += row.numberOfRooms;
-    target.modeledRoomNights += row.numberOfRooms * row.lengthOfStay;
-    const observation = { arrivalDate: row.arrivalDate, dayOfWeek: date(row.arrivalDate).getUTCDay(), month: date(row.arrivalDate).getUTCMonth() + 1, businessSeason: getBusinessSeason(row.arrivalDate), lengthOfStay: row.lengthOfStay, roomArrivals: row.numberOfRooms };
-    const existingObservation = target.observations.find((item) => item.arrivalDate === observation.arrivalDate && item.lengthOfStay === observation.lengthOfStay);
-    if (existingObservation) existingObservation.roomArrivals += observation.roomArrivals;
-    else target.observations.push(observation);
-  });
-  const reconciliation = reconcileStayPattern(reconstructed, authoritativeByDate, config);
-  const coverage = Object.fromEntries(Object.entries(types).map(([key, value]) => {
-    const total = value.modeledRoomArrivals + value.longStayRoomArrivals;
-    return [key, total ? value.modeledRoomArrivals / total : 1];
-  }));
-  return { modelVersion: STAY_PATTERN_MODEL_VERSION, year: Number(year), types, reconciliation, quality: { sourceReservationCount: reservations.length, sourceStatuses, exclusions, unclassifiedRateCodeCount: exclusions.UNCLASSIFIED_RATE_CODE || 0, possibleShareRecords, modeledRoomArrivalCoverage: coverage } };
-}
-
-function metrics(rows, field, config) {
-  const differences = rows.map((row) => row[`reconstructed${field}`] - row[`authoritative${field}`]);
-  const absolutes = differences.map(Math.abs).sort((a, b) => a - b);
-  const authoritative = rows.reduce((sum, row) => sum + row[`authoritative${field}`], 0);
-  const matching = rows.filter((row) => Math.abs(row[`difference${field}`]) <= Math.max(config.absoluteToleranceRooms, row[`authoritative${field}`] * config.relativeTolerance)).length;
-  const medianAbsoluteError = !absolutes.length ? null : absolutes.length % 2 ? absolutes[(absolutes.length - 1) / 2] : (absolutes[absolutes.length / 2 - 1] + absolutes[absolutes.length / 2]) / 2;
-  const sumAbsoluteError = absolutes.reduce((a, b) => a + b, 0);
-  const reconstructedRooms = rows.reduce((sum, row) => sum + row[`reconstructed${field}`], 0);
-  const signedErrorRooms = differences.reduce((a, b) => a + b, 0);
-  const result = { comparedDates: rows.length, authoritativeRooms: authoritative, reconstructedRooms, sumAbsoluteError, signedErrorRooms, matchingDates: matching, absoluteErrors: absolutes, meanAbsoluteError: rows.length ? sumAbsoluteError / rows.length : null, medianAbsoluteError, wape: authoritative > 0 ? sumAbsoluteError / authoritative : null, signedAggregateBias: signedErrorRooms, matchingDateShare: rows.length ? matching / rows.length : null };
-  result.passes = result.comparedDates > 0 && result.matchingDateShare >= config.minimumMatchingDateShare && result.wape !== null && result.wape <= config.maximumWape;
-  return result;
+  return buildYear(year, reservations, authoritativeByDate, settings);
 }
 
 export function reconcileStayPattern(reconstructed = {}, authoritativeByDate = {}, settings = {}) {
-  const config = { ...LOS_NETWORK_DEFAULTS, ...settings };
-  const rows = Object.entries(authoritativeByDate).filter(([stayDate, row]) => date(stayDate) && Number.isFinite(Number(row.individualRooms)) && Number.isFinite(Number(row.groupRooms))).map(([stayDate, row]) => ({ stayDate, authoritativeTransient: Number(row.individualRooms), reconstructedTransient: reconstructed[stayDate]?.TRANSIENT || 0, differenceTransient: (reconstructed[stayDate]?.TRANSIENT || 0) - Number(row.individualRooms), authoritativeGroup: Number(row.groupRooms), reconstructedGroup: reconstructed[stayDate]?.GROUP || 0, differenceGroup: (reconstructed[stayDate]?.GROUP || 0) - Number(row.groupRooms) }));
-  const largestMismatches = rows.slice().sort((a, b) => (Math.abs(b.differenceTransient) + Math.abs(b.differenceGroup)) - (Math.abs(a.differenceTransient) + Math.abs(a.differenceGroup))).slice(0, config.largestMismatchLimit);
-  return { transient: metrics(rows, "Transient", config), group: metrics(rows, "Group", config), largestMismatches };
+  return canonicalReconcile(reconstructed, authoritativeByDate, { ...LOS_NETWORK_DEFAULTS, ...settings });
 }
 
-export function combineStayPatternYears(yearModels = [], selectedYears = []) {
+export function combineStayPatternYears(yearModels = [], selectedYears = [], rootMetadata = null) {
   const chosen = yearModels.filter((model) => !selectedYears.length || selectedYears.includes(Number(model.year)));
   const selectedYearsComplete = selectedYears.length > 0 && selectedYears.every((year) => chosen.some((model) => Number(model.year) === Number(year)));
+  const rootCurrent = rootMetadata?.modelVersion === STAY_PATTERN_MODEL_VERSION && rootMetadata.status === "VALID" && Number.isSafeInteger(rootMetadata.sourceRevision) && rootMetadata.sourceRevision >= 0 && rootMetadata.publishedSourceRevision === rootMetadata.sourceRevision && rootMetadata.publicationVersion === "stay-pattern-publication-v2" && rootMetadata.buildRunId && rootMetadata.latestCompletedBuildRunId === rootMetadata.buildRunId;
+  const publicationVerified = Boolean(rootCurrent && selectedYearsComplete && chosen.every((model) => model.modelVersion === STAY_PATTERN_MODEL_VERSION && model.status === "VALID" && model.buildRunId && rootMetadata.publishedYearBuildRunIds?.[String(model.year)] === model.buildRunId));
+  const publicationFallbackReason = publicationVerified ? null : !rootMetadata ? "STAY_PATTERN_ROOT_UNAVAILABLE" : rootMetadata.status !== "VALID" ? `STAY_PATTERN_ROOT_${rootMetadata.status || "UNAVAILABLE"}` : "STAY_PATTERN_PUBLICATION_MISMATCH";
   const observations = { TRANSIENT: [], GROUP: [] };
   chosen.forEach((model) => Object.keys(observations).forEach((type) => observations[type].push(...(model.types?.[type]?.observations || []))));
   const reconciliation = Object.fromEntries(["transient", "group"].map((type) => {
     const parts = chosen.map((model) => model.reconciliation?.[type]).filter(Boolean);
     const sum = (field) => parts.reduce((total, row) => total + Number(row[field] || 0), 0);
-    const comparedDates = sum("comparedDates"), authoritativeRooms = sum("authoritativeRooms"), reconstructedRooms = sum("reconstructedRooms"), sumAbsoluteError = sum("sumAbsoluteError"), signedErrorRooms = sum("signedErrorRooms"), matchingDates = sum("matchingDates");
+    const comparedDates = sum("comparedDates"), invalidDateCount = sum("invalidDateCount"), authoritativeRooms = sum("authoritativeRooms"), reconstructedRooms = sum("reconstructedRooms"), sumAbsoluteError = sum("sumAbsoluteError"), signedErrorRooms = sum("signedErrorRooms"), matchingDates = sum("matchingDates");
     const absoluteErrors = parts.flatMap((row) => row.absoluteErrors || []).sort((a, b) => a - b);
     const medianAbsoluteError = !absoluteErrors.length ? null : absoluteErrors.length % 2 ? absoluteErrors[(absoluteErrors.length - 1) / 2] : (absoluteErrors[absoluteErrors.length / 2 - 1] + absoluteErrors[absoluteErrors.length / 2]) / 2;
     const matchingDateShare = comparedDates ? matchingDates / comparedDates : null, wape = authoritativeRooms ? sumAbsoluteError / authoritativeRooms : null;
-    return [type, { comparedDates, authoritativeRooms, reconstructedRooms, sumAbsoluteError, signedErrorRooms, signedAggregateBias: signedErrorRooms, matchingDates, absoluteErrors, meanAbsoluteError: comparedDates ? sumAbsoluteError / comparedDates : null, medianAbsoluteError, wape, matchingDateShare, passes: selectedYearsComplete && comparedDates > 0 && matchingDateShare >= LOS_NETWORK_DEFAULTS.minimumMatchingDateShare && wape !== null && wape <= LOS_NETWORK_DEFAULTS.maximumWape }];
+    return [type, { comparedDates, invalidDateCount, authoritativeRooms, reconstructedRooms, sumAbsoluteError, signedErrorRooms, signedAggregateBias: signedErrorRooms, matchingDates, absoluteErrors, meanAbsoluteError: comparedDates ? sumAbsoluteError / comparedDates : null, medianAbsoluteError, wape, matchingDateShare, passes: publicationVerified && invalidDateCount === 0 && parts.every((part) => part.passes !== false) && comparedDates > 0 && matchingDateShare >= LOS_NETWORK_DEFAULTS.minimumMatchingDateShare && wape !== null && wape <= LOS_NETWORK_DEFAULTS.maximumWape }];
   }));
+  reconciliation.invalidDates = chosen.flatMap((model) => (model.reconciliation?.invalidDates || []).map((row) => ({ year: model.year, ...row })));
   const coverage = Object.fromEntries(["TRANSIENT", "GROUP"].map((type) => { const modeled = chosen.reduce((s, m) => s + Number(m.types?.[type]?.modeledRoomArrivals || 0), 0); const long = chosen.reduce((s, m) => s + Number(m.types?.[type]?.longStayRoomArrivals || 0), 0); return [type, modeled + long ? modeled / (modeled + long) : 0]; }));
-  return { modelVersion: STAY_PATTERN_MODEL_VERSION, years: chosen.map((model) => model.year), selectedYearsComplete, observations, reconciliation, coverage, quality: { possibleShareRecords: chosen.reduce((s, m) => s + Number(m.quality?.possibleShareRecords || 0), 0), unclassifiedRateCodeCount: chosen.reduce((s, m) => s + Number(m.quality?.unclassifiedRateCodeCount || 0), 0) } };
+  return { modelVersion: STAY_PATTERN_MODEL_VERSION, years: chosen.map((model) => model.year), selectedYearsComplete, publicationVerified, publicationFallbackReason, publicationEvidence: { publicationVersion: rootMetadata?.publicationVersion || null, sourceRevision: rootMetadata?.sourceRevision ?? null, publishedSourceRevision: rootMetadata?.publishedSourceRevision ?? null, rootStatus: rootMetadata?.status || null, buildRunId: rootMetadata?.buildRunId || null, latestCompletedBuildRunId: rootMetadata?.latestCompletedBuildRunId || null, selectedYearBuildRunIds: Object.fromEntries(chosen.map((model) => [String(model.year), model.buildRunId || null])) }, observations, reconciliation, coverage, quality: { possibleShareRecords: chosen.reduce((s, m) => s + Number(m.quality?.possibleShareRecords || 0), 0), unclassifiedRateCodeCount: chosen.reduce((s, m) => s + Number(m.quality?.unclassifiedRateCodeCount || 0), 0) } };
 }
 
 export function selectLosDistribution(model, businessType, arrivalDate, settings = {}) {
@@ -204,63 +119,88 @@ export function reconstructItineraries({ businessType, scenario, demandByDate, s
   return { itineraries, syntheticOccupancy: synthetic, fit: { wape, passes: wape <= config.maximumNetworkOccupancyWape, carryoverMismatchCount: mismatches.length, mismatches } };
 }
 
+export function createLosNetworkHorizon({ groupArrivalDate, groupCheckOutDate, maxModeledLos = LOS_NETWORK_DEFAULTS.maxModeledLos }) {
+  if (!date(groupArrivalDate) || !date(groupCheckOutDate) || groupArrivalDate >= groupCheckOutDate || !Number.isInteger(maxModeledLos) || maxModeledLos < 1 || maxModeledLos > 14) return { horizonDates: [], valuationDates: [] };
+  const start = addDays(groupArrivalDate, -2 * maxModeledLos), end = addDays(groupCheckOutDate, 2 * maxModeledLos);
+  return { horizonDates: datesBetween(start, end), valuationDates: datesBetween(start, addDays(end, maxModeledLos - 1)) };
+}
+
 export function allocateItineraries(itineraries, capacityByDate, settings = {}) {
-  const tolerance = ({ ...LOS_NETWORK_DEFAULTS, ...settings }).numericTolerance; const remaining = { ...capacityByDate }; const accepted = {};
-  const ordered = itineraries.slice().sort((a, b) => {
-    const av = a.averageContributionPerRN ?? -Infinity, bv = b.averageContributionPerRN ?? -Infinity;
-    if (Math.abs(av - bv) > tolerance) return bv - av;
-    if (a.businessType !== b.businessType) return a.businessType === "TRANSIENT" ? -1 : 1;
-    return a.arrivalDate.localeCompare(b.arrivalDate) || a.lengthOfStay - b.lengthOfStay || a.key.localeCompare(b.key);
-  });
-  ordered.forEach((itinerary) => {
-    const pathCapacity = Math.max(0, Math.min(...itinerary.occupiedDates.map((d) => Number(remaining[d]) || 0)));
-    const rooms = Math.min(itinerary.expectedRooms, pathCapacity); accepted[itinerary.key] = rooms;
-    itinerary.occupiedDates.forEach((d) => { remaining[d] = Math.max(0, (Number(remaining[d]) || 0) - rooms); });
-  });
-  return { accepted, remaining, orderedKeys: ordered.map((row) => row.key) };
+  return optimizeIntervalPortfolio(itineraries, capacityByDate, settings);
 }
 
 export function calculateNetworkDisplacement({ itineraries, capacityWithoutGroup, requestedRoomsByDate, groupArrivalDate, groupCheckOutDate, legacyStayDateDisplacedRN = 0, settings = {} }) {
-  const capacityWithGroup = Object.fromEntries(Object.entries(capacityWithoutGroup).map(([d, capacity]) => [d, Math.max(0, Number(capacity) - (Number(requestedRoomsByDate[d]) || 0))]));
+  const tolerance = ({ ...LOS_NETWORK_DEFAULTS, ...settings }).numericTolerance;
+  if (!Array.isArray(itineraries) || itineraries.some((row) => !["TRANSIENT", "GROUP"].includes(row?.businessType))) return { status: "UNAVAILABLE", reason: "LOS_NETWORK_INVALID_ITINERARY" };
+  if (Object.entries(requestedRoomsByDate).some(([d, rooms]) => !Number.isFinite(rooms) || rooms < 0 || !Number.isFinite(capacityWithoutGroup[d]) || rooms > capacityWithoutGroup[d] + tolerance)) return { status: "UNAVAILABLE", reason: "LOS_NETWORK_PHYSICAL_CAPACITY" };
+  const capacityWithGroup = Object.fromEntries(Object.entries(capacityWithoutGroup).map(([d, capacity]) => [d, capacity - (requestedRoomsByDate[d] || 0)]));
   const without = allocateItineraries(itineraries, capacityWithoutGroup, settings), withGroup = allocateItineraries(itineraries, capacityWithGroup, settings);
-  const byType = { TRANSIENT: { core: 0, shoulder: 0, lostContribution: 0 }, GROUP: { core: 0, shoulder: 0, lostContribution: 0 } };
+  if (without.status !== "OPTIMAL" || withGroup.status !== "OPTIMAL") return { status: "UNAVAILABLE", reason: without.reason || withGroup.reason, portfolioWithoutGroup: without, portfolioWithGroup: withGroup };
+  const byType = { TRANSIENT: { core: 0, shoulder: 0, grossLostContribution: 0, replacementContribution: 0, netLostContribution: 0 }, GROUP: { core: 0, shoulder: 0, grossLostContribution: 0, replacementContribution: 0, netLostContribution: 0 } };
   itineraries.forEach((itinerary) => {
-    const displaced = Math.max(0, (without.accepted[itinerary.key] || 0) - (withGroup.accepted[itinerary.key] || 0));
-    if (displaced <= ({ ...LOS_NETWORK_DEFAULTS, ...settings }).numericTolerance) return;
+    const difference = without.accepted[itinerary.key] - withGroup.accepted[itinerary.key];
+    const displaced = Math.max(0, difference), replacement = Math.max(0, -difference);
     const coreNights = itinerary.occupiedDates.filter((d) => d >= groupArrivalDate && d < groupCheckOutDate).length;
-    byType[itinerary.businessType].core += displaced * coreNights;
-    byType[itinerary.businessType].shoulder += displaced * (itinerary.lengthOfStay - coreNights);
-    byType[itinerary.businessType].lostContribution += displaced * itinerary.itineraryContributionPerRoom;
+    const type = byType[itinerary.businessType];
+    type.core += displaced * coreNights;
+    type.shoulder += displaced * (itinerary.occupiedDates.length - coreNights);
+    type.grossLostContribution += displaced * itinerary.itineraryContributionPerRoom;
+    type.replacementContribution += replacement * itinerary.itineraryContributionPerRoom;
+    type.netLostContribution += difference * itinerary.itineraryContributionPerRoom;
   });
   const totalCoreDisplacedRN = byType.TRANSIENT.core + byType.GROUP.core, totalShoulderDisplacedRN = byType.TRANSIENT.shoulder + byType.GROUP.shoulder, totalNetworkDisplacedRN = totalCoreDisplacedRN + totalShoulderDisplacedRN;
-  return { transientCoreDisplacedRN: byType.TRANSIENT.core, transientShoulderDisplacedRN: byType.TRANSIENT.shoulder, transientTotalDisplacedRN: byType.TRANSIENT.core + byType.TRANSIENT.shoulder, groupCoreDisplacedRN: byType.GROUP.core, groupShoulderDisplacedRN: byType.GROUP.shoulder, groupTotalDisplacedRN: byType.GROUP.core + byType.GROUP.shoulder, totalCoreDisplacedRN, totalShoulderDisplacedRN, totalNetworkDisplacedRN, legacyStayDateDisplacedRN, networkAdjustmentRN: totalNetworkDisplacedRN - legacyStayDateDisplacedRN, lostTransientContribution: byType.TRANSIENT.lostContribution, lostFutureGroupContribution: byType.GROUP.lostContribution };
+  return { status: "OPTIMAL", optimizationPolicy: PORTFOLIO_POLICY, portfolioWithoutGroup: without, portfolioWithGroup: withGroup, totalLostContribution: without.portfolioValue - withGroup.portfolioValue, grossLostContribution: byType.TRANSIENT.grossLostContribution + byType.GROUP.grossLostContribution, replacementContribution: byType.TRANSIENT.replacementContribution + byType.GROUP.replacementContribution, transientCoreDisplacedRN: byType.TRANSIENT.core, transientShoulderDisplacedRN: byType.TRANSIENT.shoulder, transientTotalDisplacedRN: byType.TRANSIENT.core + byType.TRANSIENT.shoulder, groupCoreDisplacedRN: byType.GROUP.core, groupShoulderDisplacedRN: byType.GROUP.shoulder, groupTotalDisplacedRN: byType.GROUP.core + byType.GROUP.shoulder, totalCoreDisplacedRN, totalShoulderDisplacedRN, totalNetworkDisplacedRN, legacyStayDateDisplacedRN, networkAdjustmentRN: totalNetworkDisplacedRN - legacyStayDateDisplacedRN, lostTransientContribution: byType.TRANSIENT.netLostContribution, lostFutureGroupContribution: byType.GROUP.netLostContribution, grossLostTransientContribution: byType.TRANSIENT.grossLostContribution, grossLostFutureGroupContribution: byType.GROUP.grossLostContribution, replacementTransientContribution: byType.TRANSIENT.replacementContribution, replacementFutureGroupContribution: byType.GROUP.replacementContribution };
 }
 
-export function buildLosNetworkSnapshot({ stayPattern, horizonDates, nightlyByDate, requestedRoomsByDate, groupArrivalDate, groupCheckOutDate, settings = {} }) {
+export function buildLosNetworkSnapshot({ stayPattern, horizonDates = [], valuationDates = [], nightlyByDate = {}, requestedRoomsByDate = {}, groupArrivalDate, groupCheckOutDate, settings = {} }) {
   const config = { ...LOS_NETWORK_DEFAULTS, ...settings }; const scenarios = {};
   const reconciliationPasses = stayPattern?.reconciliation?.transient?.passes && stayPattern?.reconciliation?.group?.passes;
   const coveragePasses = stayPattern?.coverage?.TRANSIENT >= config.minimumModeledRoomArrivalCoverage && stayPattern?.coverage?.GROUP >= config.minimumModeledRoomArrivalCoverage;
+  const knownNonNegative = (v) => Number.isFinite(v) && v >= 0;
+  const request = Object.entries(requestedRoomsByDate);
+  const requestedRN = request.reduce((sum, [, rooms]) => sum + (knownNonNegative(rooms) ? rooms : 0), 0);
+  const physicalConflict = request.some(([d, rooms]) => {
+    const n = nightlyByDate[d];
+    return knownNonNegative(rooms) && n && knownNonNegative(n.sellableInventory) && knownNonNegative(n.hardCommittedRooms) && rooms > Math.max(0, n.sellableInventory - n.hardCommittedRooms) + config.numericTolerance;
+  });
   for (const scenario of ["low", "base", "high"]) {
-    const transientDemand = {}, groupDemand = {}, transientValue = {}, groupValue = {}, capacity = {}; let inputsAvailable = true;
-    horizonDates.forEach((d) => { const night = nightlyByDate[d]; if (!night || !Number.isFinite(night.sellableInventory) || !Number.isFinite(night.hardCommittedRooms)) inputsAvailable = false; else { transientDemand[d] = night.futureTransientDemand; groupDemand[d] = night[`futureGroupDemand${scenario[0].toUpperCase()}${scenario.slice(1)}`]; transientValue[d] = night.futureTransientContributionPerRoom; groupValue[d] = night.futureGroupContributionPerRoom; capacity[d] = Math.max(0, night.sellableInventory - night.hardCommittedRooms); } });
+    const transientDemand = {}, groupDemand = {}, transientValue = {}, groupValue = {}, capacity = {}; let inputsAvailable = horizonDates.length > 0 && request.every(([d, rooms]) => knownNonNegative(rooms) && horizonDates.includes(d));
+    horizonDates.forEach((d) => {
+      const night = nightlyByDate[d];
+      const group = night?.[`futureGroupDemand${scenario[0].toUpperCase()}${scenario.slice(1)}`];
+      if (!night || night.requiredInputsAvailable === false || !knownNonNegative(night.futureTransientDemand) || !knownNonNegative(group)) inputsAvailable = false;
+      else { transientDemand[d] = night.futureTransientDemand; groupDemand[d] = group; }
+    });
+    Object.entries(nightlyByDate).forEach(([d, n]) => { transientValue[d] = n.futureTransientContributionPerRoom; groupValue[d] = n.futureGroupContributionPerRoom; });
     const transient = reconstructItineraries({ businessType: "TRANSIENT", scenario: scenario.toUpperCase(), demandByDate: transientDemand, stayPattern, contributionByDate: transientValue, settings: config });
     const group = reconstructItineraries({ businessType: "GROUP", scenario: scenario.toUpperCase(), demandByDate: groupDemand, stayPattern, contributionByDate: groupValue, settings: config });
-    const valuesAvailable = [...transient.itineraries, ...group.itineraries].every((row) => row.itineraryContributionPerRoom !== null);
-    const legacy = Object.values(nightlyByDate).reduce((sum, n) => sum + Number(n.scenarios?.[scenario]?.totalDisplacedFutureRooms || 0), 0);
-    const result = calculateNetworkDisplacement({ itineraries: [...transient.itineraries, ...group.itineraries], capacityWithoutGroup: capacity, requestedRoomsByDate, groupArrivalDate, groupCheckOutDate, legacyStayDateDisplacedRN: legacy, settings: config });
-    scenarios[scenario] = { ...result, transientNetworkFit: transient.fit, groupNetworkFit: group.fit, inputsAvailable, valuesAvailable };
+    const itineraries = [...transient.itineraries, ...group.itineraries];
+    const requiredDates = [...new Set([...horizonDates, ...itineraries.flatMap((row) => row.occupiedDates)])].sort();
+    requiredDates.forEach((d) => {
+      const n = nightlyByDate[d];
+      if (!n || n.requiredInputsAvailable === false || !knownNonNegative(n.sellableInventory) || !knownNonNegative(n.hardCommittedRooms)) inputsAvailable = false;
+      else capacity[d] = Math.max(0, n.sellableInventory - n.hardCommittedRooms);
+    });
+    const valuesAvailable = itineraries.every((row) => Number.isFinite(row.itineraryContributionPerRoom));
+    const legacy = Object.entries(nightlyByDate).filter(([d]) => d >= groupArrivalDate && d < groupCheckOutDate).reduce((sum, [, n]) => sum + Number(n.scenarios?.[scenario]?.totalDisplacedFutureRooms || 0), 0);
+    const result = inputsAvailable && valuesAvailable ? calculateNetworkDisplacement({ itineraries, capacityWithoutGroup: capacity, requestedRoomsByDate, groupArrivalDate, groupCheckOutDate, legacyStayDateDisplacedRN: legacy, settings: config }) : { status: "UNAVAILABLE", reason: "LOS_NETWORK_REQUIRED_INPUT_UNAVAILABLE" };
+    const compactPortfolio = (portfolio) => portfolio ? { status: portfolio.status, reason: portfolio.reason || null, portfolioValue: portfolio.portfolioValue ?? null, solverVersion: portfolio.solverVersion, policy: portfolio.policy || PORTFOLIO_POLICY, diagnostics: portfolio.diagnostics || null } : null;
+    scenarios[scenario] = { ...result, portfolioWithoutGroup: compactPortfolio(result.portfolioWithoutGroup), portfolioWithGroup: compactPortfolio(result.portfolioWithGroup), transientNetworkFit: transient.fit, groupNetworkFit: group.fit, inputsAvailable, valuesAvailable, requiredValuationDates: requiredDates };
   }
   const fitPasses = ["low", "base", "high"].every((key) => scenarios[key].transientNetworkFit.passes && scenarios[key].groupNetworkFit.passes);
   const inputsPass = ["low", "base", "high"].every((key) => scenarios[key].inputsAvailable && scenarios[key].valuesAvailable);
-  const active = Boolean(reconciliationPasses && coveragePasses && fitPasses && inputsPass);
-  const fallbackReason = active ? null : !reconciliationPasses ? "LOS_NETWORK_VALIDATION_FAILED" : !coveragePasses ? "LOS_NETWORK_LOS_COVERAGE_FAILED" : !fitPasses ? "LOS_NETWORK_FIT_FAILED" : "LOS_NETWORK_REQUIRED_INPUT_UNAVAILABLE";
-  return { modelVersion: LOS_DISPLACEMENT_MODEL_VERSION, stayPatternModelVersion: STAY_PATTERN_MODEL_VERSION, active, fallbackReason, warningCode: active ? null : "LOS_NETWORK_FALLBACK_TO_STAY_DATE", validation: { transientReconciliation: stayPattern?.reconciliation?.transient, groupReconciliation: stayPattern?.reconciliation?.group, modeledLosCoverage: stayPattern?.coverage, transientNetworkFit: scenarios.base.transientNetworkFit, groupNetworkFit: scenarios.base.groupNetworkFit }, settings: config, baseScenario: scenarios.base, lowScenario: scenarios.low, highScenario: scenarios.high, evidenceSummary: { selectedYears: stayPattern?.years || [], unclassifiedRateCodeCount: stayPattern?.quality?.unclassifiedRateCodeCount || 0, possibleShareRecords: stayPattern?.quality?.possibleShareRecords || 0 } };
+  const optimizationPasses = ["low", "base", "high"].every((key) => scenarios[key].status === "OPTIMAL");
+  const active = Boolean(requestedRN > 0 && !physicalConflict && reconciliationPasses && coveragePasses && fitPasses && inputsPass && optimizationPasses);
+  const fallbackReason = active ? null : physicalConflict ? "LOS_NETWORK_PHYSICAL_CAPACITY" : requestedRN <= 0 ? "LOS_NETWORK_NO_REQUESTED_ROOM_NIGHTS" : stayPattern?.publicationVerified === false ? stayPattern.publicationFallbackReason || "LOS_NETWORK_PUBLICATION_UNAVAILABLE" : !reconciliationPasses ? "LOS_NETWORK_VALIDATION_FAILED" : !coveragePasses ? "LOS_NETWORK_LOS_COVERAGE_FAILED" : !inputsPass ? "LOS_NETWORK_REQUIRED_INPUT_UNAVAILABLE" : !fitPasses ? "LOS_NETWORK_FIT_FAILED" : scenarios.base.reason || scenarios.low.reason || scenarios.high.reason || "LOS_NETWORK_OPTIMIZATION_FAILED";
+  return { modelVersion: LOS_DISPLACEMENT_MODEL_VERSION, optimizationPolicy: PORTFOLIO_POLICY, stayPatternModelVersion: STAY_PATTERN_MODEL_VERSION, active, fallbackReason, warningCode: active ? null : "LOS_NETWORK_FALLBACK_TO_STAY_DATE", horizonDates, valuationDates, validation: { transientReconciliation: stayPattern?.reconciliation?.transient, groupReconciliation: stayPattern?.reconciliation?.group, invalidAuthoritativeDates: stayPattern?.reconciliation?.invalidDates || [], modeledLosCoverage: stayPattern?.coverage, transientNetworkFit: scenarios.base.transientNetworkFit, groupNetworkFit: scenarios.base.groupNetworkFit, optimizationPasses }, settings: config, baseScenario: scenarios.base, lowScenario: scenarios.low, highScenario: scenarios.high, evidenceSummary: { publication: stayPattern?.publicationEvidence || null, selectedYears: stayPattern?.years || [], unclassifiedRateCodeCount: stayPattern?.quality?.unclassifiedRateCodeCount || 0, possibleShareRecords: stayPattern?.quality?.possibleShareRecords || 0 } };
 }
 
 export function applyLosNetworkOpportunityCost(contribution, snapshot) {
+  const unavailable = contribution.economicFloorUnavailableReason || !Number.isFinite(contribution.totalLostContribution) || !(contribution.totalRequestedGroupRoomNights > 0) || contribution.nightly?.some((night) => night.capacityConflictRooms > 0 || night.requiredInputsAvailable === false);
+  if (unavailable && snapshot?.active) snapshot = { ...snapshot, active: false, fallbackReason: "LOS_NETWORK_CONTRIBUTION_GUARD", warningCode: "LOS_NETWORK_FALLBACK_TO_STAY_DATE" };
   if (!snapshot?.active) return { ...contribution, legacyStayDateDisplacement: contribution.scenarioTotals, losNetworkDisplacement: snapshot };
   const scenarioLookup = { low: snapshot.lowScenario, base: snapshot.baseScenario, high: snapshot.highScenario };
-  const scenarioTotals = Object.fromEntries(Object.entries(scenarioLookup).map(([key, network]) => { const totalLostContribution = network.lostTransientContribution + network.lostFutureGroupContribution; const requiredNet = Math.max(0, totalLostContribution + contribution.groupVariableRoomCosts + contribution.groupBreakfastCosts - contribution.bqtContribution); const requiredGross = requiredNet / (1 - contribution.groupCommission); const floor = requiredGross / contribution.totalRequestedGroupRoomNights; return [key, { totalDisplacedRooms: network.totalNetworkDisplacedRN, displacedFutureTransientRooms: network.transientTotalDisplacedRN, displacedFutureGroupRooms: network.groupTotalDisplacedRN, lostFutureTransientContribution: network.lostTransientContribution, lostFutureGroupContribution: network.lostFutureGroupContribution, totalLostContribution, economicFloorRate: floor, requiredNet, requiredGross }]; }));
+  const scenarioTotals = Object.fromEntries(Object.entries(scenarioLookup).map(([key, network]) => { const totalLostContribution = network.totalLostContribution ?? (network.lostTransientContribution + network.lostFutureGroupContribution); const requiredNet = Math.max(0, totalLostContribution + contribution.groupVariableRoomCosts + contribution.groupBreakfastCosts - contribution.bqtContribution); const requiredGross = requiredNet / (1 - contribution.groupCommission); const floor = requiredGross / contribution.totalRequestedGroupRoomNights; return [key, { totalDisplacedRooms: network.totalNetworkDisplacedRN, displacedFutureTransientRooms: network.transientTotalDisplacedRN, displacedFutureGroupRooms: network.groupTotalDisplacedRN, lostFutureTransientContribution: network.lostTransientContribution, lostFutureGroupContribution: network.lostFutureGroupContribution, totalLostContribution, economicFloorRate: floor, requiredNet, requiredGross }]; }));
   const base = scenarioTotals.base;
   return { ...contribution, legacyStayDateDisplacement: contribution.scenarioTotals, losNetworkDisplacement: snapshot, scenarioTotals, totalDisplacedRooms: base.totalDisplacedRooms, totalLostContribution: base.totalLostContribution, totalLostFutureTransientContribution: base.lostFutureTransientContribution, totalLostFutureGroupContribution: base.lostFutureGroupContribution, requiredNetGroupRoomRevenue: base.requiredNet, requiredRoomRevenueAfterCostsExVat: base.requiredNet, requiredGrossGroupRoomRevenue: base.requiredGross, requiredCommissionableRoomRevenueExVat: base.requiredGross, economicFloorRate: base.economicFloorRate, economicFloorRateExVat: base.economicFloorRate, economicFloorRateInclVat: toRoomRateInclVat(base.economicFloorRate, contribution.roomVatPercentage), economicFloorLow: scenarioTotals.low.economicFloorRate, economicFloorBase: base.economicFloorRate, economicFloorHigh: scenarioTotals.high.economicFloorRate, economicFloorLowExVat: scenarioTotals.low.economicFloorRate, economicFloorBaseExVat: base.economicFloorRate, economicFloorHighExVat: scenarioTotals.high.economicFloorRate, economicFloorLowInclVat: toRoomRateInclVat(scenarioTotals.low.economicFloorRate, contribution.roomVatPercentage), economicFloorBaseInclVat: toRoomRateInclVat(base.economicFloorRate, contribution.roomVatPercentage), economicFloorHighInclVat: toRoomRateInclVat(scenarioTotals.high.economicFloorRate, contribution.roomVatPercentage) };
 }

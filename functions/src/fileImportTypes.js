@@ -1093,6 +1093,7 @@ async function processMappedDocumentStream({ db, fileImportType, hotelUid, fileT
   let writtenCount = 0;
   let firstWrittenPath = null;
   const affectedYears = new Set();
+  let affectsStayPattern = false;
   const flush = async () => {
     if (!pending.length) return;
     const years = new Set();
@@ -1120,13 +1121,14 @@ async function processMappedDocumentStream({ db, fileImportType, hotelUid, fileT
     writtenCount += summary.writtenCount;
     firstWrittenPath ||= summary.firstWrittenPath;
     summary.affectedStayPatternYears.forEach((year) => affectedYears.add(year));
+    affectsStayPattern ||= summary.affectsStayPattern === true;
   };
   await onEachMappedDocument(async (row) => {
     pending.push(row);
     if (pending.length >= 50) await flush();
   });
   await flush();
-  return { writtenCount, firstWrittenPath, affectedStayPatternYears: [...affectedYears].sort(), chunkCount: chunkIndex };
+  return { writtenCount, firstWrittenPath, affectedStayPatternYears: [...affectedYears].sort(), affectsStayPattern, chunkCount: chunkIndex };
 }
 
 const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", memory: "1GiB", retry: true }, async (event) => {
@@ -1233,9 +1235,11 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
       firstWrittenPath: writeSummary.firstWrittenPath,
     });
 
-    if (writeSummary.affectedStayPatternYears?.length) {
+    if (writeSummary.affectsStayPattern) {
       try {
-        const result = await rebuildStayPatternModel({ hotelUid, years: writeSummary.affectedStayPatternYears, trigger: "STAYDATEPATTERN_IMPORT_COMPLETED", db });
+        // Arrival-year corrections also affect next-year carry-in reconciliation;
+        // HistoryQuotes is another authoritative input. Refresh all published years.
+        const result = await rebuildStayPatternModel({ hotelUid, trigger: "STAY_PATTERN_INPUT_IMPORT_COMPLETED", db });
         logger.info("Stay Pattern model rebuilt after completed import batch", { hotelUid, affectedYears: result.affectedYears, status: result.status, runId: result.runId });
       } catch (error) {
         // The raw import is already durable. Keep it successful and expose the

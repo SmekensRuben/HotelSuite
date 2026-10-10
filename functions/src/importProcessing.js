@@ -24,9 +24,24 @@ async function commitImportChunk({ db, runRef, owner, chunkIndex, rows, mergeDoc
     }
     const targets = rows.map((row) => db.doc(row.docPath));
     const existing = await Promise.all(targets.map((ref) => tx.get(ref)));
+    const affectsStayPattern = rows.some((row) => {
+      const segments = row.docPath.split("/");
+      return segments[2] === "reports" && ["staydatepattern", "historyquotes"].includes(segments[3]);
+    });
+    const modelRef = affectsStayPattern ? db.doc(`hotels/${runRef.path.split("/")[1]}/reports/stayPatternModel`) : null;
+    const model = modelRef ? await tx.get(modelRef) : null;
     const ancestors = [...new Set(rows.flatMap((row) => ancestorPaths(row.docPath)))];
     if (rows.length + ancestors.length > 450) throw new Error("Import chunk exceeds atomic write bounds");
-    const summary = { writtenCount: rows.length, firstWrittenPath: rows[0]?.docPath || null, affectedStayPatternYears: years };
+    const summary = { writtenCount: rows.length, firstWrittenPath: rows[0]?.docPath || null, affectedStayPatternYears: years, affectsStayPattern };
+    if (modelRef) {
+      const storedRevision = model.data()?.sourceRevision;
+      const sourceRevision = storedRevision === undefined ? 0 : storedRevision;
+      if (!Number.isSafeInteger(sourceRevision) || sourceRevision < 0) throw new Error("Invalid Stay Pattern source revision; operator recovery required");
+      // The source write, invalidation and checkpoint are one atomic transition.
+      // Nulling the active build fences any model built from earlier input.
+      tx.set(modelRef, { status: "STALE", sourceRevision: sourceRevision + 1, buildRunId: null,
+        sourceChangedAt: Date.now(), sourceChangedByImportRun: runRef.id }, { merge: true });
+    }
     ancestors.forEach((path) => tx.set(db.doc(path), { queryable: true }, { merge: true }));
     rows.forEach((row, index) => {
       const payload = existing[index].exists ? mergeDocuments(existing[index].data() || {}, row.payload) : row.payload;

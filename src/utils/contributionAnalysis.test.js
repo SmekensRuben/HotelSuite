@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateAnalysisWarnings, calculateDemandCapacitySummary, calculateGroupContribution, normalizeContributionSettings, simulateGroupQuote } from "./contributionAnalysis";
+import { aggregateAnalysisWarnings, calculateDemandCapacitySummary, calculateGroupContribution, normalizeContributionSettings, optimizeNightlyPortfolio, simulateGroupQuote } from "./contributionAnalysis";
 import { calculateDisplacementDay, calculateDisplacementScenario } from "./displacementForecast";
 
 const settings = (overrides = {}) => ({ variableRoomCost: 20, breakfastCostPerPerson: 5, bqtContributionMarginPercentage: 30, defaultGroupCommissionPercentage: 10, transientAverageBreakfastPax: 1.5, transientAverageBreakfastRevenuePerPax: 12, transientDistributionCostPercentage: 8, inflationPercentage: 5, roomVatPercentage: 0, ...overrides });
@@ -274,5 +274,64 @@ describe("explicit meal basis is non-financial", () => {
     expect(ro.groupBreakfastCosts).toBe(200);
     expect(bb.groupBreakfastCosts).toBe(ro.groupBreakfastCosts);
     expect(bb.economicFloorRateInclVat).toBe(ro.economicFloorRateInclVat);
+  });
+});
+
+describe("contribution-optimal before/after portfolios", () => {
+  const optimal = (changes = {}, requested = 20) => calculateGroupContribution({
+    settings: settings({ variableRoomCost: 0, transientAverageBreakfastPax: 0, transientDistributionCostPercentage: 0, defaultGroupCommissionPercentage: 0, inflationPercentage: 0 }),
+    quote: quote({ breakfastPax: 0, roomsByDate: [{ date: "2027-09-08", rooms: requested, bqtRevenue: 0 }] }),
+    forecastByDate: { "2027-09-08": { sellableInventory: 100, currentTransientOtb: 0, existingGroupOtb: 0, transientDemandForecast: 90, expectedFutureTransientRoomRateExVat: 200, groupForecast: { forecastLow: 100, forecastBase: 100, forecastHigh: 100, comparables: [{ stayDate: "2026-09-08", finalGroupRooms: 100, sellableInventory: 100, groupRevenueDeductible: 10000 }] }, ...changes } },
+  });
+
+  it("values only business accepted in the baseline under compression", () => {
+    const result = optimal();
+    expect(result.nightly[0].scenarios.base.portfolioWithoutGroup).toMatchObject({ accepted: { TRANSIENT: 90, GROUP: 10 }, value: 19000 });
+    expect(result.nightly[0].scenarios.base.portfolioWithGroup).toMatchObject({ accepted: { TRANSIENT: 80, GROUP: 0 }, value: 16000 });
+    expect(result.totalLostContribution).toBe(3000); expect(result.economicFloorRateExVat).toBe(150);
+    expect(simulateGroupQuote(result, 125).netIncrementalContribution).toBe(-500);
+  });
+
+  it("prioritizes group when its net contribution is higher", () => {
+    const result = optimal({ expectedFutureTransientRoomRateExVat: 50 });
+    expect(result.nightly[0].scenarios.base.portfolioWithoutGroup.accepted).toEqual({ GROUP: 100, TRANSIENT: 0 });
+    expect(result.totalLostContribution).toBe(2000);
+  });
+
+  it.each([[210, 0], [200, 1000], [100, 3000]])("covers no, partial and full scarcity at capacity %i", (sellableInventory, loss) => expect(optimal({ sellableInventory }).totalLostContribution).toBe(loss));
+
+  it("protects existing commitments and declines unprofitable demand", () => {
+    const result = optimizeNightlyPortfolio({ futureTransientDemand: 90, futureGroupDemand: 100, capacity: 30, transientValue: -20, groupValue: 10 });
+    expect(result).toMatchObject({ accepted: { TRANSIENT: 0, GROUP: 30 }, value: 300 });
+    expect(optimal({ currentTransientOtb: 90 }, 20).economicFloorRate).toBeNull();
+  });
+
+  it.each([null, undefined, "", "bad"])("keeps missing forecast/capacity unavailable (%j)", (missing) => {
+    const result = optimal({ sellableInventory: missing });
+    expect(result.economicFloorRate).toBeNull(); expect(result.economicFloorUnavailableReason).toBeTruthy(); expect(simulateGroupQuote(result, 150)).toBeNull();
+  });
+
+  it("does not assign an invented value to unknown profitable demand", () => {
+    const result = optimal({ expectedFutureTransientRoomRateExVat: null });
+    expect(result.totalLostContribution).toBeNull(); expect(result.economicFloorRate).toBeNull();
+  });
+
+  it("keeps VAT, both commissions, breakfast and incremental BQT in their net bases", () => {
+    const source = { sellableInventory: 100, currentTransientOtb: 0, existingGroupOtb: 0, transientDemandForecast: 90, expectedFutureTransientRoomRateExVat: 200, groupForecast: { forecastLow: 100, forecastBase: 100, forecastHigh: 100, comparables: [{ stayDate: "2026-09-08", finalGroupRooms: 100, sellableInventory: 100, groupRevenueDeductible: 10000 }] } };
+    const result = calculateGroupContribution({ settings: settings({ variableRoomCost: 10, transientDistributionCostPercentage: 10, transientAverageBreakfastPax: 1, expectedFutureGroupCommissionPercentage: 20, inflationPercentage: 0, roomVatPercentage: 12 }), quote: quote({ quoteInputSchemaVersion: "group-quote-v3-meal-basis", groupCommissionPercentage: 10, roomsByDate: [{ date: "2027-09-08", rooms: 20, mealBasis: "BB", breakfastPax: 20, bqtRevenue: 1000 }] }), forecastByDate: { "2027-09-08": source } });
+    expect(result.nightly[0]).toMatchObject({ futureTransientContributionPerRoom: 177, futureGroupContributionPerRoom: 70 });
+    expect(result.totalLostContribution).toBe(2470);
+    expect(result).toMatchObject({ groupVariableRoomCosts: 200, groupBreakfastCosts: 100, bqtContribution: 300 });
+    expect(result.requiredNetGroupRoomRevenue).toBe(2470);
+    expect(result.economicFloorRateExVat).toBeCloseTo(2470 / .9 / 20, 10);
+    expect(result.economicFloorRateInclVat).toBeCloseTo(result.economicFloorRateExVat * 1.12, 10);
+    expect(simulateGroupQuote(result, result.economicFloorRateInclVat).netIncrementalContribution).toBeCloseTo(0, 9);
+  });
+
+  it.each(["breakfastPax", "bqtRevenue"])("blocks an unknown V3 %s and retains its unknown total", (field) => {
+    const result = calculateGroupContribution({ settings: settings({ variableRoomCost: 10, breakfastCostPerPerson: 20 }), quote: quote({ quoteInputSchemaVersion: "group-quote-v3-meal-basis", roomsByDate: [{ date: "2027-09-08", rooms: 20, mealBasis: "BB", breakfastPax: 20, bqtRevenue: 0, [field]: null }] }), forecastByDate: forecast({ displacedRooms: 0 }) });
+    expect(result.nightly[0].requiredInputsAvailable).toBe(false);
+    expect(result.economicFloorRate).toBeNull(); expect(simulateGroupQuote(result, 200)).toBeNull();
+    expect(field === "breakfastPax" ? result.groupBreakfastCosts : result.bqtContribution).toBeNull();
   });
 });
