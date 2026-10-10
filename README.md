@@ -6,6 +6,8 @@ All new development, interface copy, documentation and pull request descriptions
 
 For Firebase App Hosting configuration, verified rollout issues and manual hotel subscription activation, see [Firebase App Hosting and subscription setup](docs/firebase-app-hosting.md).
 
+For the Purchasing & Inventory module, explicit per-hotel entitlements, combined module roles, hotel-admin team management and reviewed existing-hotel migration, see [Hotel modules and delegated administration](docs/module-subscriptions.md).
+
 For automatic Functions deployment after successful main-branch verification and the one-time keyless Cloud Shell setup, see [Functions continuous deployment](docs/functions-continuous-deployment.md).
 
 ## Local setup

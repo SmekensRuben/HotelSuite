@@ -55,6 +55,8 @@ jobs:
           node --check scripts/firebase/saas-release-check.mjs
           node --check scripts/firebase/private-workflows-rollout.mjs
           node --check scripts/firebase/private-workflows-migration.mjs
+          node --check scripts/firebase/module-access-migration.mjs
+          node scripts/render-module-rules.mjs --check
 
       - name: Verify the locked operator runtime
         run: |

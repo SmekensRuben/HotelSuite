@@ -1,0 +1,45 @@
+{
+  "score": 4,
+  "summary": "The new module entitlement and delegated hotel-administration boundaries pass their scoped Rules/backend review and ordinary-user emulator controls. Existing operational schema debt remains. This assessment concerns repository code, not deployed Rules, IAM or production readiness.",
+  "findings": [
+    {
+      "check": "Storage abuse and type safety",
+      "severity": "minor",
+      "issue": "Inherited Firestore locations and outlet CRUD rules check licensed action authority but lack a per-document field/type/size schema. An authorized manager can corrupt that hotel's configuration or consume storage within Firestore's document limits. The separate approver child collection remains backend-only; this does not grant platform or another hotel's authority.",
+      "recommendation": "In a focused configuration-hardening task, define the real location/template/outlet payload contracts and enforce matching bounded create/update schemas with valid workflow and malformed-payload regressions. Do not replace the existing domain shapes blindly."
+    }
+  ],
+  "scope": [
+    "firebase/firestore.rules",
+    "firebase/storage.rules",
+    "functions/src/modulePolicy.js",
+    "functions/src/hotelTeam.js",
+    "functions/src/onboarding.js",
+    "functions/src/subscriptions.js",
+    "functions/src/userAccess.js",
+    "functions/src/importProcessing.js"
+  ],
+  "checks": [
+    { "check": "Update bypass", "result": "Subscription, membership, guard and audit writes are denied to browser clients, including platform clients on protected paths. Backend writes validate current authority, expected revisions and explicit entitlements; resends preserve grants." },
+    { "check": "Authority source", "result": "Ordinary delegation requires canonical hotelAdmin membership, verified enabled current Auth identity and rollout/subscription checks. Payload roles cannot grant platform claims or user-administration permission keys." },
+    { "check": "Business logic vs rules", "result": "Licensed positive create/read/update/stock/quote/file paths pass alongside denied paths. Full populated quote create/stale/outcome tests pass within the expression budget. Concurrent seats and last-admin mutations have one safe winner." },
+    { "check": "Storage abuse", "result": "Explicit module lists, role counts, advanced permissions, names, email, pages and optional seats are bounded. Image/import uploads retain positive-size, maximum-size and declared-type enforcement. Inherited configuration schema issue is listed above." },
+    { "check": "Type safety", "result": "Unknown/missing/malformed module policy denies access across frontend, backend and Rules. Boolean administrator selection, seat/revision integers and known unique role/module IDs are validated. Generated Rules match the shared catalog." },
+    { "check": "Field-level vs identity-level security", "result": "Hotel ID, caller membership and administrator authority are checked before listing/mutating members. Legacy identity hydration uses only paged selected-hotel member IDs. Local edits and removals preserve independent hotel memberships and shared account state." }
+  ],
+  "evidence": {
+    "frontend": "650 passing tests across 73 files",
+    "functions": "148 passing tests",
+    "security": "106 passing tests across 14 Auth/Firestore/Storage emulator suites",
+    "migration": "Real emulator dry-run, apply, idempotence, stale lease and invalid-manifest preflight tests",
+    "restore": "Two-hotel Firestore/Auth/private Storage export/import smoke including module entitlements, admin grants and guard/audit",
+    "status": "Locally verified; not deployed"
+  },
+  "remaining_checks": [
+    "Actual deployed matching Rules/Functions/frontend and Storage-to-Firestore IAM",
+    "Reviewed hotel module/admin migrations and backup/restore in an isolated real project",
+    "Ordinary-user browser acceptance and approved invitation/provider delivery",
+    "Human PR review and production release approval"
+  ],
+  "reference": "https://firebase.google.com/docs/rules/rules-behavior"
+}
