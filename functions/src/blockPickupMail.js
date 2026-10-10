@@ -1,4 +1,5 @@
 const { hotelHasActiveSubscription } = require("./subscriptions");
+const { resolveAuthorizedRecipients, configuredRecipientUids, deliverScheduledMail, hotelMailFailure, requireNoHotelMailFailures } = require("./scheduledMailDelivery");
 const { onSchedule, logger, admin, Resend, RESEND_API_KEY, RESEND_FROM } = require('./config');
 
 const db = admin.firestore();
@@ -48,13 +49,13 @@ function getPickupRoomsValue(allotmentDateEntry) {
   return Number(allotmentDateEntry?.pickupRooms ?? allotmentDateEntry?.pickuprooms ?? 0);
 }
 
-function getCurrentDateInTimezone(timeZone = DEFAULT_TIMEZONE) {
+function getCurrentDateInTimezone(timeZone = DEFAULT_TIMEZONE, now = new Date()) {
   const parts = new Intl.DateTimeFormat('en', {
     timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).formatToParts(new Date());
+  }).formatToParts(now);
   const dateParts = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
 }
@@ -227,45 +228,37 @@ async function getHotelName(hotelUid) {
   return String(hotelSnap.data()?.hotelName || hotelUid).trim() || hotelUid;
 }
 
-async function sendScheduledBlockPickupReportHandler() {
-  const scheduleSnap = await db.doc(SCHEDULED_MAIL_DOC_PATH).get();
-  if (!scheduleSnap.exists) {
-    logger.warn('scheduledBlockPickupMail config not found; skipping send');
-    return;
-  }
+async function sendBlockPickupForHotel(hotelUid, scheduleConfig, services = {}) {
+  const firestore = services.firestore || db;
+  const to = await resolveAuthorizedRecipients({ db: firestore, auth: services.auth, hotelUid, recipientUids: configuredRecipientUids(scheduleConfig, hotelUid), feature: 'groups' });
+  const cc = [];
+  const hotelUids = [hotelUid];
+  if (!to.length) return null;
 
-  const scheduleConfig = scheduleSnap.data() || {};
-  const to = sanitizeEmails(scheduleConfig.mailto);
-  const cc = sanitizeEmails(scheduleConfig.mailtoCC);
-  const hotelUids = sanitizeHotelUids(scheduleConfig.hotelUids);
-
-  if (!to.length) throw new Error('No valid mailto addresses found in scheduledBlockPickupMail');
-  if (!hotelUids.length) throw new Error('No hotelUids found in scheduledBlockPickupMail');
-
-  const currentDate = getCurrentDateInTimezone();
+  const currentDate = getCurrentDateInTimezone(DEFAULT_TIMEZONE, services.now?.());
   const hotelReports = [];
 
   for (const hotelUid of hotelUids) {
-    if (!await hotelHasActiveSubscription(db, hotelUid)) continue;
-    const snapshotDate = await getLatestSnapshotDate(hotelUid);
+    if (!await hotelHasActiveSubscription(firestore, hotelUid)) continue;
+    const snapshotDate = await (services.getLatestSnapshotDate || getLatestSnapshotDate)(hotelUid);
     if (!snapshotDate) {
       logger.info('No group pickup snapshot dates found', { hotelUid });
       continue;
     }
 
-    const groups = await getGroupsForSnapshotDate(hotelUid, snapshotDate, currentDate);
+    const groups = await (services.getGroups || getGroupsForSnapshotDate)(hotelUid, snapshotDate, currentDate);
     if (!groups.length) {
       logger.info('No qualifying groups found for block pickup report', { hotelUid, snapshotDate });
       continue;
     }
 
-    const hotelName = await getHotelName(hotelUid);
+    const hotelName = await (services.getHotelName || getHotelName)(hotelUid);
     hotelReports.push({ hotelUid, hotelName, snapshotDate, groups });
   }
 
   if (!hotelReports.length) {
     logger.info('No block pickup report entries found; skipping email send');
-    await db.doc(SCHEDULED_MAIL_DOC_PATH).set(
+    await firestore.doc(SCHEDULED_MAIL_DOC_PATH).set(
       {
         lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
         lastRunStatus: 'no_data',
@@ -276,29 +269,31 @@ async function sendScheduledBlockPickupReportHandler() {
     return;
   }
 
-  const resendApiKey = RESEND_API_KEY.value();
-  const resendFrom = RESEND_FROM.value();
+  const resendApiKey = services.send ? "test-transport" : RESEND_API_KEY.value();
+  const resendFrom = services.from || RESEND_FROM.value();
+  if (!resendApiKey || !resendFrom) throw new Error("Block pickup email configuration is incomplete.");
   const resend = new Resend(resendApiKey);
 
   const totalGroups = hotelReports.reduce((sum, report) => sum + report.groups.length, 0);
   const subject = `${currentDate} - Possible group washes & Rooming Lists`;
   const html = buildEmailHtml(hotelReports);
 
-  const response = await resend.emails.send({
+  const currentTo = await resolveAuthorizedRecipients({ db: firestore, auth: services.auth, hotelUid, recipientUids: configuredRecipientUids(scheduleConfig, hotelUid), feature: 'groups' });
+  if (!currentTo.length) return null;
+  const response = await deliverScheduledMail({ db: firestore, hotelUid, deliveryKey: `blockPickup/${currentDate}`, send: services.send || ((payload, options) => resend.emails.send(payload, options)), payload: {
     from: resendFrom,
-    to,
-    cc,
+    to: currentTo,
     subject,
     html,
     text:
       `Please review the open available rooms for possible group washes and request rooming lists from clients when possible. ` +
       `Open blocks: ${totalGroups} across ${hotelReports.length} hotel(s).`,
-  });
+  } });
 
-  await db.doc(SCHEDULED_MAIL_DOC_PATH).set(
+  await firestore.doc(SCHEDULED_MAIL_DOC_PATH).set(
     {
       lastSentAt: admin.firestore.FieldValue.serverTimestamp(),
-      lastSentTo: to,
+      lastSentTo: currentTo,
       lastSentCc: cc,
       lastHotelUids: hotelUids,
       lastGroupCount: totalGroups,
@@ -316,6 +311,30 @@ async function sendScheduledBlockPickupReportHandler() {
     hotelCount: hotelReports.length,
     groupCount: totalGroups,
   });
+  return response;
+}
+
+async function sendScheduledBlockPickupReportHandler(services = {}) {
+  const firestore = services.firestore || db, log = services.log || logger;
+  const scheduleSnap = await firestore.doc(SCHEDULED_MAIL_DOC_PATH).get();
+  if (!scheduleSnap.exists) return;
+  const scheduleConfig = scheduleSnap.data() || {};
+  const hotelUids = sanitizeHotelUids(scheduleConfig.hotelUids), failures = [];
+  let sent = 0;
+  for (const hotelUid of hotelUids) {
+    try {
+      if (!await hotelHasActiveSubscription(firestore, hotelUid)) continue;
+      if (await sendBlockPickupForHotel(hotelUid, scheduleConfig, services)) sent += 1;
+    } catch (error) {
+      const failure = hotelMailFailure(hotelUid, error);
+      failures.push(failure);
+      log.error("Block pickup hotel delivery failed", failure);
+    }
+  }
+  await firestore.doc(SCHEDULED_MAIL_DOC_PATH).set({ lastRunStatus: failures.length ? (sent ? "partial-failure" : "failed") : (sent ? "sent" : "no-delivery"), failedHotels: failures }, { merge: true });
+  log.info("Block pickup mail scan completed", { hotelCount: hotelUids.length, sentHotelCount: sent, failedHotelCount: failures.length });
+  requireNoHotelMailFailures(failures);
+  return { sent };
 }
 
 const sendScheduledBlockPickupReport = onSchedule(
@@ -329,4 +348,4 @@ const sendScheduledBlockPickupReport = onSchedule(
   }
 );
 
-module.exports = { sendScheduledBlockPickupReport };
+module.exports = { sendScheduledBlockPickupReport, sendScheduledBlockPickupReportHandler };

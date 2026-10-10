@@ -79,9 +79,10 @@ export async function createContract(hotelUid, contractData, files) {
 export async function updateContract(hotelUid, contractId, contractData, files, remainingFiles, _actor, expectedRevision = 0) {
   return saveContract(hotelUid, contractId, contractData, files, remainingFiles || [], false, expectedRevision);
 }
-export async function triggerContractReminders(hotelUid, actor) {
+export async function triggerContractReminders(hotelUid) {
   // Existing reminders retain their permission-checked queue boundary.
   const { collection, db, doc, setDoc, serverTimestamp } = await import("../firebaseConfig");
   if (!hotelUid) throw new Error("hotelUid is required.");
-  await setDoc(doc(collection(db, "hotels/" + hotelUid + "/contractReminderRuns")), { status: "queued", requestedAt: serverTimestamp(), requestedBy: actor || "unknown" });
+  if (!auth.currentUser?.uid) throw new Error("Sign in before requesting contract reminders.");
+  await setDoc(doc(collection(db, "hotels/" + hotelUid + "/contractReminderRuns")), { status: "queued", requestedAt: serverTimestamp(), requestedBy: auth.currentUser.uid });
 }

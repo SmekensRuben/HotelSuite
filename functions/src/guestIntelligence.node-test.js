@@ -12,6 +12,7 @@ const {
 test("calculateNights handles date-only stay boundaries", () => {
   assert.equal(calculateNights("2026-09-01", "2026-09-05"), 4);
   assert.equal(calculateNights("invalid", "2026-09-05"), null);
+  assert.equal(calculateNights("2026-02-30", "2026-03-10"), null);
   assert.equal(calculateNights("2026-09-05", "2026-09-01"), null);
 });
 

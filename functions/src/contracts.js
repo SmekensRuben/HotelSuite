@@ -1,11 +1,13 @@
 const { hotelHasActiveSubscription } = require("./subscriptions");
+const { resolveAuthorizedRecipients, deliverScheduledMail, hotelBusinessDate: hotelDate, hotelMailFailure, requireNoHotelMailFailures } = require("./scheduledMailDelivery");
 const { onDocumentCreated, onSchedule, logger, admin, Resend, React, RESEND_API_KEY, RESEND_FROM, getAppBaseUrl } = require("./config");
 
 function toDateOnly(value) {
   const raw = String(value || "").trim();
   if (!raw) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
   const parsed = new Date(`${raw}T00:00:00Z`);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== raw ? null : parsed;
 }
 
 function diffInDaysUtc(fromDate, toDate) {
@@ -18,8 +20,7 @@ function sanitizeReminderDays(value) {
   return [...new Set(
     value
       .map((day) => Number(day))
-      .filter((day) => Number.isFinite(day) && day >= 0)
-      .map((day) => Math.floor(day))
+      .filter((day) => Number.isSafeInteger(day) && day >= 0 && day <= 3650)
   )];
 }
 
@@ -217,31 +218,27 @@ function ContractReminderEmailTemplate({ hotelName, contractId, contractName, en
 }
 
 
-const hotelNameCache = new Map();
-
-async function resolveHotelName(hotelUid) {
+async function resolveHotelName(hotelUid, db = admin.firestore()) {
   const normalizedHotelUid = String(hotelUid || "").trim();
   if (!normalizedHotelUid) return "Hotel";
-  if (hotelNameCache.has(normalizedHotelUid)) return hotelNameCache.get(normalizedHotelUid);
 
-  const hotelSnap = await admin.firestore().doc(`hotels/${normalizedHotelUid}`).get();
+  const hotelSnap = await db.doc(`hotels/${normalizedHotelUid}`).get();
   const hotelData = hotelSnap.exists ? (hotelSnap.data() || {}) : {};
   const hotelName = String(hotelData.hotelName || "").trim() || normalizedHotelUid;
-  hotelNameCache.set(normalizedHotelUid, hotelName);
   return hotelName;
 }
 
-async function sendContractReminderEmail({ to, hotelName, contractId, contractName, endDate, cancelBefore, daysUntilCancel }) {
-  const resendApiKey = String(RESEND_API_KEY.value() || "").trim();
-  const from = String(RESEND_FROM.value() || "").trim();
+async function sendContractReminderEmail({ to, hotelUid, deliveryKey, hotelName, contractId, contractName, endDate, cancelBefore, daysUntilCancel }, services = {}) {
+  const resendApiKey = services.send ? "test-transport" : String(RESEND_API_KEY.value() || "").trim();
+  const from = services.from || String(RESEND_FROM.value() || "").trim();
   if (!resendApiKey) throw new Error("Missing RESEND_API_KEY secret");
   if (!from) throw new Error("Missing RESEND_FROM secret");
 
   const resend = new Resend(resendApiKey);
 
-  const contractDetailUrl = `${getAppBaseUrl()}/contracts/${encodeURIComponent(contractId)}`;
+  const contractDetailUrl = `${services.appBaseUrl || getAppBaseUrl()}/contracts/${encodeURIComponent(contractId)}`;
 
-  await resend.emails.send({
+  return deliverScheduledMail({ db: services.db || admin.firestore(), hotelUid, deliveryKey, send: services.send || ((payload, options) => resend.emails.send(payload, options)), payload: {
     from,
     to,
     subject: `Contract reminder: ${contractName || contractId}`,
@@ -262,73 +259,89 @@ Contract link: ${contractDetailUrl}`,
       daysUntilCancel,
       contractDetailUrl,
     }),
-  });
+  } });
 }
 
-async function processContractCancellationReminders({ hotelUidFilter } = {}) {
-  const now = new Date();
-  const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+async function processContractCancellationReminders({ hotelUidFilter, db = admin.firestore(), auth = admin.auth(), now = new Date(), send, from, appBaseUrl, log = logger } = {}) {
+  const todayUtc = new Date(`${hotelDate(now.getTime())}T00:00:00Z`);
 
   const contractsSnap = hotelUidFilter
-    ? await admin.firestore().collection(`hotels/${hotelUidFilter}/contracts`).get()
-    : await admin.firestore().collectionGroup("contracts").get();
+    ? await db.collection(`hotels/${hotelUidFilter}/contracts`).get()
+    : await db.collectionGroup("contracts").get();
 
+  const failureByHotel = new Map();
+  let sent = 0;
   for (const contractDoc of contractsSnap.docs) {
     const contract = contractDoc.data() || {};
     const pathSegments = contractDoc.ref.path.split("/");
-    const hotelUid = hotelUidFilter || pathSegments[1] || "unknown-hotel";
-    if (!await hotelHasActiveSubscription(admin.firestore(), hotelUid)) continue;
-    const hotelName = await resolveHotelName(hotelUid);
-    const cancelBefore = toDateOnly(contract.cancelBefore);
+    if (pathSegments.length !== 4 || pathSegments[0] !== "hotels") continue;
+    const hotelUid = pathSegments[1];
+    try {
+      if (!await hotelHasActiveSubscription(db, hotelUid)) continue;
+      const hotelName = await resolveHotelName(hotelUid, db);
+      const cancelBefore = toDateOnly(contract.cancelBefore);
 
-    if (!cancelBefore) {
-      logger.info("Contract reminder scan (skipped: missing cancelBefore)", {
+      if (!cancelBefore) {
+        log.info("Contract reminder scan (skipped: missing cancelBefore)", {
+          hotelUid,
+          hotelName,
+          contractId: contractDoc.id,
+          contractName: String(contract.name || "").trim() || null,
+        });
+        continue;
+      }
+
+      const reminderDays = sanitizeReminderDays(contract.reminderDays);
+      const daysUntilCancel = diffInDaysUtc(todayUtc, cancelBefore);
+
+      log.info("Contract reminder scan", {
         hotelUid,
         hotelName,
         contractId: contractDoc.id,
         contractName: String(contract.name || "").trim() || null,
+        cancelBefore: String(contract.cancelBefore || "").trim() || null,
+        daysUntilCancel,
+        reminderDays,
       });
-      continue;
+
+      if (!reminderDays.length) continue;
+      if (!reminderDays.includes(daysUntilCancel)) continue;
+
+      const followers = Array.isArray(contract.followers) ? contract.followers : [];
+      const recipientUids = followers.map((follower) => follower?.id || follower?.uid).filter(Boolean);
+      const to = await resolveAuthorizedRecipients({ db, auth, hotelUid, recipientUids, feature: "contracts" });
+      if (!to.length) continue;
+
+      await sendContractReminderEmail({
+        to,
+        hotelUid,
+        deliveryKey: `contract/${contractDoc.id}/${contract.cancelBefore}/${todayUtc.toISOString().slice(0, 10)}`,
+        hotelName,
+        contractId: contractDoc.id,
+        contractName: String(contract.name || "").trim(),
+        endDate: String(contract.endDate || "").trim(),
+        cancelBefore: String(contract.cancelBefore || "").trim(),
+        daysUntilCancel,
+      }, { db, send, from, appBaseUrl });
+
+      sent += 1;
+      log.info("Contract reminder email sent", {
+        hotelUid,
+        hotelName,
+        contractId: contractDoc.id,
+        daysUntilCancel,
+        recipients: to.length,
+      });
+    } catch (error) {
+      const failure = hotelMailFailure(hotelUid, error);
+      failureByHotel.set(hotelUid, failure);
+      log.error("Contract reminder hotel delivery failed", { ...failure, contractId: contractDoc.id });
     }
-
-    const reminderDays = sanitizeReminderDays(contract.reminderDays);
-    const daysUntilCancel = diffInDaysUtc(todayUtc, cancelBefore);
-
-    logger.info("Contract reminder scan", {
-      hotelUid,
-      hotelName,
-      contractId: contractDoc.id,
-      contractName: String(contract.name || "").trim() || null,
-      cancelBefore: String(contract.cancelBefore || "").trim() || null,
-      daysUntilCancel,
-      reminderDays,
-    });
-
-    if (!reminderDays.length) continue;
-    if (!reminderDays.includes(daysUntilCancel)) continue;
-
-    const followers = Array.isArray(contract.followers) ? contract.followers : [];
-    const to = [...new Set(followers.map((follower) => String(follower?.email || "").trim()).filter(Boolean))];
-    if (!to.length) continue;
-
-    await sendContractReminderEmail({
-      to,
-      hotelName,
-      contractId: contractDoc.id,
-      contractName: String(contract.name || "").trim(),
-      endDate: String(contract.endDate || "").trim(),
-      cancelBefore: String(contract.cancelBefore || "").trim(),
-      daysUntilCancel,
-    });
-
-    logger.info("Contract reminder email sent", {
-      hotelUid,
-      hotelName,
-      contractId: contractDoc.id,
-      daysUntilCancel,
-      recipients: to.length,
-    });
   }
+  const failures = [...failureByHotel.values()];
+  log.info("Contract reminder scan completed", { contractCount: contractsSnap.docs.length, sentContractCount: sent, failedHotelCount: failures.length });
+  requireNoHotelMailFailures(failures);
+  return { sent };
 }
 
 const sendContractCancellationReminders = onSchedule(
@@ -342,43 +355,48 @@ const sendContractCancellationReminders = onSchedule(
   }
 );
 
-const runContractCancellationRemindersNow = onDocumentCreated(
-  {
-    document: "hotels/{hotelUid}/contractReminderRuns/{runId}",
-    secrets: [RESEND_API_KEY, RESEND_FROM],
-  },
-  async (event) => {
-    if (!event.data?.exists) return;
-
-    const { hotelUid, runId } = event.params;
-    const runRef = event.data.ref;
-
-    await runRef.update({
-      status: "processing",
-      startedAt: admin.firestore.FieldValue.serverTimestamp(),
-      error: admin.firestore.FieldValue.delete(),
-    });
-
-    try {
-      await processContractCancellationReminders({ hotelUidFilter: hotelUid });
-      await runRef.update({
-        status: "completed",
-        completedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-      logger.info("Manual contract reminders run completed", { hotelUid, runId });
-    } catch (error) {
-      await runRef.update({
-        status: "failed",
-        failedAt: admin.firestore.FieldValue.serverTimestamp(),
-        error: String(error?.message || error),
-      });
-      throw error;
+async function runContractCancellationRemindersNowHandler(event, services = {}) {
+  if (!event.data?.exists) return;
+  const { hotelUid, runId } = event.params;
+  const db = services.db || admin.firestore();
+  const runRef = db.doc(`hotels/${hotelUid}/contractReminderRuns/${runId}`);
+  const claimed = await db.runTransaction(async (tx) => {
+    const current = await tx.get(runRef);
+    if (current.data()?.status !== "queued") return false;
+    const data = current.data();
+    if (typeof data.requestedBy !== "string" || !data.requestedBy || /[/]/.test(data.requestedBy)) {
+      tx.update(runRef, { status: "blocked", error: "The queued requesting UID needs operator review." });
+      return false;
     }
+    const recipients = await resolveAuthorizedRecipients({ db, auth: services.auth, hotelUid, recipientUids: [data.requestedBy], feature: "contracts", action: "notify", transaction: tx });
+    if (!recipients.length) {
+      tx.update(runRef, { status: "blocked", error: "The requesting user no longer has contract notification access." });
+      return false;
+    }
+    tx.update(runRef, { status: "processing", startedAt: admin.firestore.FieldValue.serverTimestamp() });
+    return true;
+  });
+  if (!claimed) return;
+  try {
+    await processContractCancellationReminders({ ...services, db, hotelUidFilter: hotelUid });
+    await runRef.update({ status: "completed", completedAt: admin.firestore.FieldValue.serverTimestamp() });
+    logger.info("Manual contract reminders run completed", { hotelUid, runId });
+  } catch (error) {
+    await runRef.update({ status: "failed", failedAt: admin.firestore.FieldValue.serverTimestamp(), error: "Contract notification failed. Reconcile delivery receipts before recovery." });
+    throw error;
   }
-);
+}
+
+const runContractCancellationRemindersNow = onDocumentCreated({
+  document: "hotels/{hotelUid}/contractReminderRuns/{runId}",
+  secrets: [RESEND_API_KEY, RESEND_FROM],
+}, runContractCancellationRemindersNowHandler);
 
 module.exports = {
   resolveHotelName,
+  processContractCancellationReminders,
+  sendContractReminderEmail,
   sendContractCancellationReminders,
   runContractCancellationRemindersNow,
+  runContractCancellationRemindersNowHandler,
 };
