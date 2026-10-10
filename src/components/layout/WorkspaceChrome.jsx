@@ -41,6 +41,16 @@ export default function WorkspaceChrome({
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const desktop = window.matchMedia("(min-width: 1024px)");
+    const closeOnDesktop = () => {
+      if (desktop.matches) setMobileOpen(false);
+    };
+    closeOnDesktop();
+    desktop.addEventListener("change", closeOnDesktop);
+    return () => desktop.removeEventListener("change", closeOnDesktop);
+  }, []);
   const label = platform ? "Platform navigation" : "Hotel navigation";
   return (
     <div className="ht-workspace-chrome">

@@ -97,7 +97,7 @@ No production record or credential was used for visual review.
 
 | Check | Result |
 | --- | --- |
-| Frontend Vitest | 82 files, 714 tests passed |
+| Frontend Vitest | 82 files, 715 tests passed |
 | Functions tests | 159 tests passed |
 | Firestore/Storage authorization and normal-user workflows | 126 tests passed |
 | Two-hotel Auth/Firestore/Storage restore smoke | Passed |
@@ -128,7 +128,7 @@ and the public rooming list. Six core surfaces were also checked at 320px and
 768px. The extra quote route existed only in the temporary review harness.
 
 Browser interactions verified preview switching, mobile focus containment,
-Escape and focus restoration, navigation closure after a route change, the
+Escape and focus restoration, desktop-resize dismissal, closure after a route change, the
 mobile hotel selector, an orders-only user's menu, table sorting and opening/
 dismissing the dispatch dialog without sending an order. Axe WCAG A/AA checks
 reported zero violations on ten representative surfaces after contrast and

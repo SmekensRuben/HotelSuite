@@ -1,6 +1,7 @@
 import React from "react";
 import {
   fireEvent,
+  act,
   render,
   screen,
   waitFor,
@@ -8,7 +9,7 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { LayoutDashboard, Package } from "lucide-react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import WorkspaceChrome from "./WorkspaceChrome";
 
 const groups = [
@@ -26,6 +27,7 @@ const show = () =>
       <WorkspaceChrome groups={groups} subtitle="Hotel workspace" />
     </MemoryRouter>,
   );
+afterEach(() => vi.unstubAllGlobals());
 describe("workspace navigation", () => {
   it("identifies the active route and preserves link destinations", () => {
     show();
@@ -60,5 +62,28 @@ describe("workspace navigation", () => {
     expect(
       screen.getByRole("link", { name: "Catalog Products" }),
     ).toHaveAttribute("aria-current", "page");
+  });
+  it("releases the mobile dialog when the desktop navigation becomes available", async () => {
+    const listeners = new Set();
+    const desktop = {
+      matches: false,
+      addEventListener: (_event, listener) => listeners.add(listener),
+      removeEventListener: (_event, listener) => listeners.delete(listener),
+    };
+    vi.stubGlobal("matchMedia", () => desktop);
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    act(() => {
+      desktop.matches = true;
+      listeners.forEach((listener) => listener({ matches: true }));
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 });
