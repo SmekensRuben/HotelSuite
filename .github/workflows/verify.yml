@@ -51,6 +51,8 @@ jobs:
         run: |
           bash -n scripts/firebase/setup-functions-deployment.sh scripts/firebase/check-functions-runtime.sh scripts/firebase/rollout-saas-pilot.sh scripts/firebase/rollout-private-workflows.sh scripts/firebase/install-operator-runtime.sh
           node --check scripts/firebase/check-functions-release.mjs
+          node --check scripts/firebase/deploy-reviewed-functions.mjs
+          node --check scripts/firebase/functions-retry-policy.mjs
           node --check scripts/firebase/saas-rollout.mjs
           node --check scripts/firebase/saas-release-check.mjs
           node --check scripts/firebase/private-workflows-rollout.mjs
