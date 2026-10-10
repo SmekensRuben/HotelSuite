@@ -97,7 +97,7 @@ No production record or credential was used for visual review.
 
 | Check | Result |
 | --- | --- |
-| Frontend Vitest | 82 files, 715 tests passed |
+| Frontend Vitest | 82 files, 717 tests passed |
 | Functions tests | 159 tests passed |
 | Firestore/Storage authorization and normal-user workflows | 126 tests passed |
 | Two-hotel Auth/Firestore/Storage restore smoke | Passed |
@@ -113,7 +113,7 @@ Builds still report large-chunk warnings. This redesign does not replace the
 existing route-loading/bundling architecture.
 
 New component/configuration regressions cover mobile navigation dismissal and
-route change, active destinations, dashboard access combinations, isolated
+route change, active destinations, dashboard access combinations (including supplier-only accounts), isolated
 preview switching and validated public contact configuration. Existing quote
 numerical assertions and order workflow tests remain intact; the former red
 quote-border assertion now expects the forest presentation class.

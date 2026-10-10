@@ -61,6 +61,25 @@ describe("hotel workspace shortcuts", () => {
       screen.getByText("Your workspace is ready for access setup"),
     ).toBeVisible();
   });
+  it.each([
+    ["supplierproducts.read", "/catalog/supplier-products"],
+    ["suppliers.read", "/catalog/suppliers"],
+  ])(
+    "routes a %s reader to their permitted purchasing workflow",
+    (permission, destination) => {
+      context.permissions = [permission];
+      show();
+      const workflows = screen.getByRole("region", {
+        name: "Available hotel workflows",
+      });
+      expect(
+        within(workflows).getByRole("link", { name: /Purchasing & Inventory/ }),
+      ).toHaveAttribute("href", destination);
+      expect(
+        screen.queryByText("Your workspace is ready for access setup"),
+      ).not.toBeInTheDocument();
+    },
+  );
   it("keeps platform administration separate from operational access", () => {
     context.isPlatformAdmin = true;
     context.permissions = [];

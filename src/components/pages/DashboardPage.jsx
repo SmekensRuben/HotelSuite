@@ -17,6 +17,8 @@ import { usePermission } from "../../hooks/usePermission";
 export default function DashboardPage() {
   const { hotelName, isHotelAdmin, isPlatformAdmin } = useHotelContext();
   const products = usePermission("catalogproducts", "read");
+  const supplierProducts = usePermission("supplierproducts", "read");
+  const suppliers = usePermission("suppliers", "read");
   const orders = usePermission("orders", "read");
   const stock = usePermission("stockcounts", "read");
   const contracts = usePermission("contracts", "read");
@@ -34,12 +36,16 @@ export default function DashboardPage() {
       description:
         "Find products, manage orders and keep stock counts organized.",
       icon: Package,
-      visible: products || orders || stock,
+      visible: products || supplierProducts || suppliers || orders || stock,
       to: products
         ? "/catalog/products"
-        : orders
-          ? "/orders"
-          : "/catalog/stock-counts",
+        : supplierProducts
+          ? "/catalog/supplier-products"
+          : suppliers
+            ? "/catalog/suppliers"
+            : orders
+              ? "/orders"
+              : "/catalog/stock-counts",
     },
     {
       title: "Contracts",
