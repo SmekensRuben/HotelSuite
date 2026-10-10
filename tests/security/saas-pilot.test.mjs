@@ -13,13 +13,13 @@ if (!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_AUTH_EMULATOR_
 process.env.FIREBASE_CONFIG = JSON.stringify({ projectId, storageBucket: `${projectId}.appspot.com` });
 const require = createRequire(import.meta.url);
 const { admin } = require("../../functions/src/config");
-const { createHotelHandler, inviteHotelUserHandler, listHotelUsersHandler, getHotelOnboardingStatusHandler } = require("../../functions/src/onboarding");
+const { createHotel, inviteHotelUser, createHotelHandler, inviteHotelUserHandler, listHotelUsersHandler, getHotelOnboardingStatusHandler } = require("../../functions/src/onboarding");
 const { saveSupplierHandler, listSuppliersHandler, getSupplierConnectionHandler, migrateSupplierCredentialsHandler } = require("../../functions/src/suppliers");
 const { mutateShoppingCartHandler } = require("../../functions/src/shoppingCarts");
 const { createOrdersFromCartHandler, updateOrderHandler, deleteOrderHandler, confirmOrderHandler, setOutletApproversHandler } = require("../../functions/src/orders");
 const { dispatchOrderHandler } = require("../../functions/src/sftpDispatch");
 const { processMailQueueHandler, enqueueOrderEmail } = require("../../functions/src/mailQueue");
-const { setHotelSubscriptionHandler } = require("../../functions/src/subscriptions");
+const { setHotelSubscription, setHotelSubscriptionHandler } = require("../../functions/src/subscriptions");
 const { reviewOrderDeliveryHandler } = require("../../functions/src/deliveryRecovery");
 const { requireSaasRollout, gated } = require("../../functions/src/saasRollout");
 const db = admin.firestore();
@@ -92,6 +92,69 @@ beforeEach(async () => {
 after(async () => environment.cleanup());
 
 describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
+  it("lets the deployed subscription callable prepare legacy modules before activation without opening hotel onboarding", async () => {
+    const flag = db.doc("platformConfiguration/saasProcurement");
+    const subscription = db.doc("hotelSubscriptions/hotel-a");
+    const legacy = (await subscription.get()).data();
+    delete legacy.modules; delete legacy.modulePolicyVersion; delete legacy.seatLimit;
+    const member = db.doc(`hotels/hotel-a/members/${managerA.uid}`);
+    const memberBefore = (await member.get()).data();
+    const claimsBefore = (await auth.getUser(operator.uid)).customClaims;
+    for (const state of [null, { enabled: true, rulesVersion: "saas-procurement-v1" }, { enabled: false, rulesVersion: "saas-modules-v2" }]) {
+      if (state) await flag.set(state); else await flag.delete();
+      await subscription.set(legacy);
+      const auditsBefore = (await db.collection("hotels/hotel-a/subscriptionAudit").get()).size;
+      const input = { hotelUid: "hotel-a", status: legacy.status, planId: legacy.planId,
+        validUntil: legacy.validUntil?.toDate().toISOString() ?? null,
+        modules: ["procurement"], seatLimit: null, expectedRevision: legacy.revision };
+      // Exercise the exported callable, not only its ungated internal handler.
+      const result = await setHotelSubscription.run(request(operator, input));
+      assert.deepEqual(result, { hotelUid: "hotel-a", revision: legacy.revision + 1 });
+      const saved = (await subscription.get()).data();
+      assert.deepEqual(saved.modules, ["procurement"]);
+      assert.equal(saved.modulePolicyVersion, 1);
+      assert.equal(saved.seatLimit, null);
+      assert.equal(saved.status, legacy.status);
+      assert.deepEqual(saved.validUntil, legacy.validUntil);
+      assert.equal(saved.updatedBy, operator.uid);
+      assert.equal((await db.collection("hotels/hotel-a/subscriptionAudit").get()).size, auditsBefore + 1);
+      await rejected(setHotelSubscription.run(request(operator, input)), "aborted");
+      assert.equal((await db.collection("hotels/hotel-a/subscriptionAudit").get()).size, auditsBefore + 1);
+      assert.deepEqual((await flag.get()).data(), state ?? undefined);
+      assert.deepEqual((await member.get()).data(), memberBefore);
+      assert.deepEqual((await auth.getUser(operator.uid)).customClaims, claimsBefore);
+      assert.deepEqual(await getHotelOnboardingStatusHandler(request(operator, {}), services), { enabled: false });
+      await rejected(createHotel.run(request(operator, { hotelUid: "blocked-hotel", name: "Blocked hotel", status: "active", requestId: nextId() })), "failed-precondition");
+      await rejected(inviteHotelUser.run(request(operator, { hotelUid: "hotel-a", email: "blocked@example.test", requestId: nextId() })), "failed-precondition");
+      assert.equal((await db.doc("hotels/blocked-hotel").get()).exists, false);
+      await assert.rejects(auth.getUserByEmail("blocked@example.test"), (error) => error.code === "auth/user-not-found");
+    }
+  });
+
+  it("keeps subscription recovery restricted to a currently verified platform operator", async () => {
+    const flag = db.doc("platformConfiguration/saasProcurement");
+    await flag.set({ enabled: false, rulesVersion: "saas-modules-v2" });
+    const subscription = db.doc("hotelSubscriptions/hotel-a");
+    const before = (await subscription.get()).data();
+    const auditsBefore = (await db.collection("hotels/hotel-a/subscriptionAudit").get()).size;
+    const input = { hotelUid: "hotel-a", status: "active", planId: "standard", modules: ["procurement"], seatLimit: null, expectedRevision: before.revision };
+    await rejected(setHotelSubscription.run(request(undefined, input)), "unauthenticated");
+    for (const caller of [managerA, { ...managerA, token: { ...managerA.token, platformAdmin: true } },
+      { ...operator, token: { ...operator.token, email_verified: false } }]) {
+      await rejected(setHotelSubscription.run(request(caller, input)), "permission-denied");
+    }
+    await auth.updateUser(operator.uid, { disabled: true });
+    await rejected(setHotelSubscription.run(request(operator, input)), "permission-denied");
+    await auth.updateUser(operator.uid, { disabled: false, emailVerified: false });
+    await rejected(setHotelSubscription.run(request(operator, input)), "permission-denied");
+    await auth.updateUser(operator.uid, { emailVerified: true });
+    await auth.setCustomUserClaims(operator.uid, {});
+    await rejected(setHotelSubscription.run(request(operator, input)), "permission-denied");
+    assert.deepEqual((await subscription.get()).data(), before);
+    assert.equal((await db.collection("hotels/hotel-a/subscriptionAudit").get()).size, auditsBefore);
+    assert.deepEqual((await flag.get()).data(), { enabled: false, rulesVersion: "saas-modules-v2" });
+  });
+
   it("blocks live write handlers until the reviewed Rules rollout is enabled", async () => {
     await rejected(requireSaasRollout(db), "failed-precondition");
     assert.deepEqual(await getHotelOnboardingStatusHandler(request(operator, {}), services), { enabled: false });
