@@ -209,10 +209,10 @@ export default function LocationStockTemplateDetailPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-3xl font-semibold">Stock Template Detail</h1>
           <button
             type="button"
@@ -232,17 +232,17 @@ export default function LocationStockTemplateDetailPage() {
           </Card>
         ) : (
           <>
-            <Card className="flex items-center justify-between gap-4">
+            <Card className="flex flex-wrap items-center justify-between gap-4">
               <h2 className="text-2xl font-semibold">
                 {location?.name || locationId || "-"} - {template.name || "-"}
               </h2>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setIsEditMode((current) => !current)}
                   className={`inline-flex items-center gap-2 rounded border px-3 py-2 text-sm ${
                     isEditMode
-                      ? "border-blue-600 bg-blue-50 text-blue-700"
+                      ? "border-blue-600 bg-blue-50 text-brand-800"
                       : "border-gray-300 text-gray-700 hover:bg-gray-100"
                   }`}
                   title="Toggle edit mode"
@@ -260,7 +260,7 @@ export default function LocationStockTemplateDetailPage() {
             </Card>
 
             <Card>
-              <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <h3 className="text-lg font-semibold">Stock Template Items</h3>
                 <select
                   value={activeOutletFilter}
@@ -376,7 +376,7 @@ export default function LocationStockTemplateDetailPage() {
             </button>
             <button
               type="button"
-              className="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-60"
+              className="rounded bg-brand-800 px-3 py-2 text-sm text-white disabled:opacity-60"
               disabled={!selectedProduct || !selectedOutletId}
               onClick={handleSaveItem}
             >

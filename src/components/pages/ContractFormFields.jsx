@@ -265,7 +265,7 @@ export default function ContractFormFields({
             type="text"
             value={formState.name}
             onChange={(event) => handleChange("name", event.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
             required
           />
         </label>
@@ -276,7 +276,7 @@ export default function ContractFormFields({
             type="date"
             value={formState.startDate}
             onChange={(event) => handleChange("startDate", event.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
           />
         </label>
 
@@ -286,7 +286,7 @@ export default function ContractFormFields({
             type="date"
             value={formState.endDate}
             onChange={(event) => handleChange("endDate", event.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
           />
         </label>
 
@@ -299,7 +299,7 @@ export default function ContractFormFields({
             value={formState.pricePerMonth}
             onChange={(event) => handleChange("pricePerMonth", event.target.value)}
             placeholder="e.g. 499.99"
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
           />
         </label>
 
@@ -312,7 +312,7 @@ export default function ContractFormFields({
             value={formState.terminationPeriodDays}
             onChange={(event) => handleChange("terminationPeriodDays", event.target.value)}
             placeholder="e.g. 30"
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
           />
         </label>
 
@@ -329,7 +329,7 @@ export default function ContractFormFields({
               }));
             }}
             required
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
           >
             <option value="">Select category</option>
             {categoryOptions.map((category) => (
@@ -347,7 +347,7 @@ export default function ContractFormFields({
             onChange={(event) => handleChange("subcategoryId", event.target.value)}
             disabled={!formState.categoryId || availableSubcategoryOptions.length === 0}
             required
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20 disabled:bg-gray-100"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20 disabled:bg-gray-100"
           >
             <option value="">Select subcategory</option>
             {availableSubcategoryOptions.map((subcategory) => (
@@ -369,7 +369,7 @@ export default function ContractFormFields({
             type="file"
             multiple
             onChange={(event) => setContractFiles(Array.from(event.target.files || []))}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-[#b41f1f] file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-brand-800 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white"
           />
           <p className="mt-2 text-xs text-gray-500">Up to 20 private documents, 20 MiB each. Downloads require current hotel access.</p>
           {contractFiles.length > 0 && (
@@ -385,7 +385,7 @@ export default function ContractFormFields({
                 {existingContractFiles.map((file, index) => (
                   <li
                     key={file.fileId || index}
-                    className="flex items-center justify-between rounded border border-gray-200 px-3 py-2 text-sm"
+                    className="flex flex-wrap items-center justify-between rounded border border-gray-200 px-3 py-2 text-sm"
                   >
                     <span className="truncate pr-2">{file.fileName || `Document ${index + 1}`}</span>
                     <button
@@ -424,7 +424,7 @@ export default function ContractFormFields({
             disabled={!selectedFollower}
             className={`rounded-lg px-4 py-2 text-sm font-semibold ${
               selectedFollower
-                ? "bg-[#b41f1f] text-white hover:bg-[#961919]"
+                ? "bg-brand-800 text-white hover:bg-brand-950"
                 : "bg-gray-300 text-gray-500"
             }`}
           >
@@ -439,7 +439,7 @@ export default function ContractFormFields({
             {formState.followers.map((follower) => (
               <li
                 key={follower.id}
-                className="flex items-center justify-between rounded border border-gray-200 px-3 py-2 text-sm"
+                className="flex flex-wrap items-center justify-between rounded border border-gray-200 px-3 py-2 text-sm"
               >
                 <span>
                   {follower.name || follower.email || follower.id} ({follower.email || "no-email"})
@@ -473,7 +473,7 @@ export default function ContractFormFields({
           <button
             type="button"
             onClick={addReminderDay}
-            className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white hover:bg-[#961919]"
+            className="rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-950"
           >
             Add day
           </button>
@@ -505,7 +505,7 @@ export default function ContractFormFields({
           type="submit"
           disabled={saving || disabled}
           className={`rounded-lg px-5 py-2 text-sm font-semibold ${
-            saving ? "bg-gray-300 text-gray-500" : "bg-[#b41f1f] text-white hover:bg-[#961919]"
+            saving ? "bg-gray-300 text-gray-500" : "bg-brand-800 text-white hover:bg-brand-950"
           }`}
         >
           {saving ? savingLabel : submitLabel}

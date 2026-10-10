@@ -418,19 +418,19 @@ export default function CreateBlockPage({ mode = "create" }) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-gray-100 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6 pb-10">
-        <Card className="border-0 bg-gradient-to-r from-[#b41f1f] via-[#a71c1c] to-[#7f1717] text-white shadow-lg">
+        <Card className="border-0 bg-gradient-to-r from-brand-800 via-brand-900 to-brand-950 text-white shadow-lg">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="space-y-2">
-              <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-red-100">
+              <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-brand-100">
                 <BedDouble className="h-3.5 w-3.5" /> M&amp;E block management
               </p>
               <h1 className="text-3xl font-semibold">
                 {isEditMode ? "Edit Group" : "Create Group"}
               </h1>
-              <p className="max-w-2xl text-sm text-red-100">
+              <p className="max-w-2xl text-sm text-brand-100">
                 {isEditMode
                   ? "Update a group block with daily room type allowances and organiser contacts."
                   : "Create a group block with daily room type allowances and organiser contacts."}
@@ -524,7 +524,7 @@ export default function CreateBlockPage({ mode = "create" }) {
                 can be set per group up to the configured maximum amount.
               </p>
             </div>
-            <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-[#b41f1f]">
+            <div className="mt-4 rounded-lg bg-brand-50 px-3 py-2 text-sm font-semibold text-brand-800">
               Total Blocked Rooms: {blockedRooms}
             </div>
           </Card>
@@ -552,14 +552,14 @@ export default function CreateBlockPage({ mode = "create" }) {
                         key={day.date}
                         className="rounded-xl border border-gray-200 bg-gray-50/60 p-4"
                       >
-                        <div className="flex items-start justify-between gap-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <h3 className="font-semibold text-gray-900">
                               {formatDate(day.date)}
                             </h3>
                             <p className="text-xs text-gray-500">{day.date}</p>
                           </div>
-                          <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-[#b41f1f]">
+                          <span className="rounded-full bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-800">
                             {day.roomTypes.reduce(
                               (total, roomType) =>
                                 total + Number(roomType.quantity || 0),
@@ -595,7 +595,7 @@ export default function CreateBlockPage({ mode = "create" }) {
                                           ?.focus(),
                                       );
                                   }}
-                                  className="mt-1 w-44 max-w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                                  className="mt-1 w-44 max-w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
                                   required
                                 >
                                   <option value="">Select Room Type</option>
@@ -629,7 +629,7 @@ export default function CreateBlockPage({ mode = "create" }) {
                                       event.target.value,
                                     )
                                   }
-                                  className="mt-1 w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                                  className="mt-1 w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
                                   required
                                 />
                                 <span className="ml-2 text-xs text-gray-500">
@@ -641,7 +641,7 @@ export default function CreateBlockPage({ mode = "create" }) {
                                 onClick={() =>
                                   removeRoomType(day.date, roomType.id)
                                 }
-                                className="mt-3 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-[#b41f1f]"
+                                className="mt-3 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-gray-500 hover:bg-gray-100 hover:text-brand-800"
                                 aria-label={`Remove ${roomType.name || "room type"}`}
                               >
                                 <Trash2 className="h-4 w-4" /> Remove
@@ -651,7 +651,7 @@ export default function CreateBlockPage({ mode = "create" }) {
                           <button
                             type="button"
                             onClick={() => addRoomType(day.date)}
-                            className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-[#b41f1f] px-3 py-2 text-sm font-semibold text-[#b41f1f] hover:bg-red-50"
+                            className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-brand-800 px-3 py-2 text-sm font-semibold text-brand-800 hover:bg-brand-50"
                           >
                             <Plus className="h-4 w-4" /> Add Room Type
                           </button>
@@ -724,7 +724,7 @@ export default function CreateBlockPage({ mode = "create" }) {
                 loadingRoomTypes ||
                 configuredRoomTypes.length === 0
                   ? "bg-gray-300 cursor-not-allowed"
-                  : "bg-[#b41f1f] hover:bg-[#961919]"
+                  : "bg-brand-800 hover:bg-brand-950"
               }`}
             >
               {saving
@@ -758,7 +758,7 @@ function Field({
         value={value}
         readOnly={readOnly}
         onChange={(event) => onChange?.(event.target.value)}
-        className={`mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20 ${
+        className={`mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20 ${
           readOnly ? "bg-gray-100 text-gray-700" : ""
         }`}
         {...props}

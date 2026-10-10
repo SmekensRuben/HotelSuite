@@ -360,10 +360,10 @@ export default function UpsellSettingsPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm uppercase tracking-wide text-gray-500">Front Office</p>
             <h1 className="text-3xl font-semibold">Upsell Settings</h1>
@@ -402,7 +402,7 @@ export default function UpsellSettingsPage() {
                   File
                   <input type="file" onChange={(event) => setManualImportForm((form) => ({ ...form, file: event.target.files?.[0] || null }))} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" disabled={saving} />
                 </label>
-                <button type="submit" disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:opacity-50"><Upload className="h-4 w-4" /> Upload import</button>
+                <button type="submit" disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-brand-950 disabled:opacity-50"><Upload className="h-4 w-4" /> Upload import</button>
               </form>
             </section>
 
@@ -419,7 +419,7 @@ export default function UpsellSettingsPage() {
                 <label className="text-sm font-semibold text-gray-700">Start<input type="date" value={occupancyRange.startDate} onChange={(event) => setOccupancyRange((range) => ({ ...range, startDate: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
                 <label className="text-sm font-semibold text-gray-700">End<input type="date" value={occupancyRange.endDate} onChange={(event) => setOccupancyRange((range) => ({ ...range, endDate: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
                 <label className="text-sm font-semibold text-gray-700">Bulk occupancy<input type="number" min="0" step="1" value={bulkOccupancy} onChange={(event) => setBulkOccupancy(event.target.value)} placeholder="Rooms" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
-                <button type="submit" disabled={saving} className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:opacity-50">Apply</button>
+                <button type="submit" disabled={saving} className="rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-brand-950 disabled:opacity-50">Apply</button>
               </form>
               <div className="mt-4 space-y-4">
                 {Object.entries(occupancyMonths).map(([monthKey, dateKeys]) => (
@@ -448,7 +448,7 @@ export default function UpsellSettingsPage() {
                 <label className="text-sm font-semibold text-gray-700">Minimum<input type="number" min="0" step="0.01" value={ruleForm.minimumTargetRevenuePerOccupiedRoom} onChange={(event) => setRuleForm((form) => ({ ...form, minimumTargetRevenuePerOccupiedRoom: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
                 <label className="text-sm font-semibold text-gray-700">Reach<input type="number" min="0" step="0.01" value={ruleForm.reachTargetRevenuePerOccupiedRoom} onChange={(event) => setRuleForm((form) => ({ ...form, reachTargetRevenuePerOccupiedRoom: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
                 <label className="text-sm font-semibold text-gray-700">Stretch<input type="number" min="0" step="0.01" value={ruleForm.stretchTargetRevenuePerOccupiedRoom} onChange={(event) => setRuleForm((form) => ({ ...form, stretchTargetRevenuePerOccupiedRoom: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" /></label>
-                <button type="submit" disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:opacity-50"><Plus className="h-4 w-4" /> Save rule</button>
+                <button type="submit" disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-brand-950 disabled:opacity-50"><Plus className="h-4 w-4" /> Save rule</button>
               </form>
               <div className="mt-4"><DataListTable columns={ruleColumns} rows={revenueTargetRules} emptyMessage="No revenue target rules added yet." /></div>
             </section>
@@ -460,7 +460,7 @@ export default function UpsellSettingsPage() {
                   <input id="package-code" type="text" value={packageCodeForm.packageCode} onChange={(event) => setPackageCodeForm((form) => ({ ...form, packageCode: event.target.value }))} placeholder="E.g. PKG_BREAKFAST" className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm uppercase" disabled={saving} />
                   <input type="text" value={packageCodeForm.category} onChange={(event) => setPackageCodeForm((form) => ({ ...form, category: event.target.value }))} placeholder="Category" className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" disabled={saving} />
                   <input type="text" value={packageCodeForm.description} onChange={(event) => setPackageCodeForm((form) => ({ ...form, description: event.target.value }))} placeholder="Description" className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" disabled={saving} />
-                  <button type="submit" disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:opacity-50"><Plus className="h-4 w-4" /> Add</button>
+                  <button type="submit" disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-brand-950 disabled:opacity-50"><Plus className="h-4 w-4" /> Add</button>
                 </div>
               </form>
               <div className="mt-4"><DataListTable columns={packageColumns} rows={packageRows} emptyMessage="No package codes added yet." /></div>

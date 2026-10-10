@@ -47,7 +47,7 @@ export default function CompetitorQuoteForm({ hotelUid, quote, competitors, onSa
     <label className="text-sm font-semibold">Occupancy Basis<select value={occupancyBasis} onChange={(e) => setOccupancyBasis(e.target.value)} className="mt-1 w-full rounded border px-3 py-2 font-normal">{options(["SINGLE", "DOUBLE", "MIXED", "UNKNOWN"])}</select></label>
     <label className="text-sm font-semibold">Source Confidence<select value={sourceConfidence} onChange={(e) => setSourceConfidence(e.target.value)} className="mt-1 w-full rounded border px-3 py-2 font-normal">{options(["HIGH", "MEDIUM", "LOW"])}</select></label>
     <label className="text-sm font-semibold sm:col-span-2 lg:col-span-3">Notes<textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="mt-1 w-full rounded border px-3 py-2 font-normal" /></label>
-    <div><button disabled={saving} className="rounded bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white disabled:bg-gray-400">{saving ? "Saving…" : "Record Competitor Quote"}</button></div>
+    <div><button disabled={saving} className="rounded bg-brand-800 px-4 py-2 text-sm font-semibold text-white disabled:bg-gray-400">{saving ? "Saving…" : "Record Competitor Quote"}</button></div>
     {error && <p role="alert" className="text-sm font-semibold text-red-700">Could not save this observation. {error.message} Please try again.</p>}
   </form>;
 }

@@ -78,15 +78,15 @@ export default function SupplierProductEditPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
             <h1 className="text-3xl font-semibold">Edit Supplier Product</h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => navigate(`/catalog/supplier-products/${productId}`)}
@@ -150,7 +150,7 @@ export default function SupplierProductEditPage() {
           <button
             type="button"
             onClick={handleConfirmOverwrite}
-            className="px-4 py-2 rounded bg-[#b41f1f] text-white hover:bg-[#961919]"
+            className="px-4 py-2 rounded bg-brand-800 text-white hover:bg-brand-950"
           >
             Overschrijven
           </button>

@@ -82,21 +82,21 @@ export default function ContractDetailPage() {
       : [];
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-gray-100 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6 pb-10">
-        <Card className="border-0 bg-gradient-to-r from-[#b41f1f] via-[#a71c1c] to-[#7f1717] text-white shadow-lg">
+        <Card className="border-0 bg-gradient-to-r from-brand-800 via-brand-900 to-brand-950 text-white shadow-lg">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="space-y-2">
-              <p className="text-xs uppercase tracking-[0.2em] text-red-100">Contract details</p>
+              <p className="text-xs uppercase tracking-[0.2em] text-brand-100">Contract details</p>
               <h1 className="text-3xl font-semibold">{contract?.name || "Contract information"}</h1>
-              <div className="flex flex-wrap gap-2 text-xs text-red-100">
+              <div className="flex flex-wrap gap-2 text-xs text-brand-100">
                 <span className="rounded-full bg-white/10 px-3 py-1">Category: {contract?.category || "-"}</span>
                 <span className="rounded-full bg-white/10 px-3 py-1">Subcategory: {contract?.subcategory || "-"}</span>
                 <span className="rounded-full bg-white/10 px-3 py-1">Files: {contractFiles.length}</span>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => navigate("/contracts")}
@@ -110,7 +110,7 @@ export default function ContractDetailPage() {
                 disabled={!canEditContracts}
                 className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold ${
                   canEditContracts
-                    ? "bg-white text-[#b41f1f] hover:bg-red-50"
+                    ? "bg-white text-brand-800 hover:bg-brand-50"
                     : "cursor-not-allowed bg-white/40 text-white"
                 }`}
                 title="Edit contract"
@@ -149,11 +149,11 @@ export default function ContractDetailPage() {
               <h2 className="mb-4 text-lg font-semibold">Notifications</h2>
               <div className="space-y-2">
                 <p className="inline-flex items-center gap-2 text-sm text-gray-700">
-                  <BellRing className="h-4 w-4 text-[#b41f1f]" />
+                  <BellRing className="h-4 w-4 text-brand-800" />
                   Reminders: {Array.isArray(contract.reminderDays) ? contract.reminderDays.join(", ") : "-"}
                 </p>
                 <p className="inline-flex items-center gap-2 text-sm text-gray-700">
-                  <CalendarClock className="h-4 w-4 text-[#b41f1f]" />
+                  <CalendarClock className="h-4 w-4 text-brand-800" />
                   Next action based on end date
                 </p>
               </div>
@@ -180,7 +180,7 @@ export default function ContractDetailPage() {
 
             <Card className="border border-gray-100 bg-white/95 shadow-sm xl:col-span-2">
               <h2 className="mb-4 inline-flex items-center gap-2 text-lg font-semibold">
-                <Files className="h-5 w-5 text-[#b41f1f]" /> Documents
+                <Files className="h-5 w-5 text-brand-800" /> Documents
               </h2>
               {downloadError && <p role="alert" className="mb-3 text-sm text-red-600">{downloadError}</p>}
               {contractFiles.length > 0 ? (
@@ -188,14 +188,14 @@ export default function ContractDetailPage() {
                   {contractFiles.map((file, index) => (
                     <li
                       key={file.fileId || index}
-                      className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2"
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2"
                     >
                       <span className="truncate text-sm text-gray-700">{file.fileName || `Document ${index + 1}`}</span>
                       <button
                         type="button"
                         onClick={() => download(file)}
                         disabled={Boolean(downloading)}
-                        className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[#961919]"
+                        className="inline-flex items-center gap-2 rounded-lg bg-brand-800 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-950"
                       >
                         <Download className="h-4 w-4" /> {downloading === file.fileId ? "Downloading..." : "Download"}
                       </button>

@@ -141,7 +141,7 @@ export default function ShoppingCartPage() {
             className="h-14 w-14 rounded object-cover border border-gray-200"
           />
         ) : (
-          <span className="text-xs text-gray-400">-</span>
+          <span className="text-xs text-gray-500">-</span>
         )
       ),
     },
@@ -233,13 +233,13 @@ export default function ShoppingCartPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-2xl font-semibold">Shopping Cart</h1>
-            <div className="flex items-center gap-2 ml-auto">
+            <div className="flex flex-wrap items-center gap-2 ml-auto">
               <button
                 type="button"
                 onClick={() => navigate("/orders/new")}
@@ -277,7 +277,7 @@ export default function ShoppingCartPage() {
                   setShowCreateOrderModal(true);
                 }}
                 disabled={hasMissingOutlets}
-                className="bg-blue-600 text-white px-4 py-2 rounded font-semibold hover:bg-blue-700 disabled:opacity-50"
+                className="bg-brand-800 text-white px-4 py-2 rounded font-semibold hover:bg-brand-950 disabled:opacity-50"
               >
                 Create Order
               </button>
@@ -332,7 +332,7 @@ export default function ShoppingCartPage() {
                 setCreatingOrder(false);
               }
             }}
-            className="px-4 py-2 rounded bg-[#b41f1f] text-white hover:bg-[#961919] disabled:opacity-50"
+            className="px-4 py-2 rounded bg-brand-800 text-white hover:bg-brand-950 disabled:opacity-50"
           >
             {creatingOrder ? "Creating..." : "Create"}
           </button>
@@ -385,7 +385,7 @@ export default function ShoppingCartPage() {
               setNoteDraft("");
               await refreshCart();
             }}
-            className="px-4 py-2 rounded bg-[#b41f1f] text-white hover:bg-[#961919]"
+            className="px-4 py-2 rounded bg-brand-800 text-white hover:bg-brand-950"
           >
             Save
           </button>
@@ -421,7 +421,7 @@ export default function ShoppingCartPage() {
               setShowDeliveryAdjustmentsModal(false);
               navigate("/orders");
             }}
-            className="px-4 py-2 rounded bg-[#b41f1f] text-white hover:bg-[#961919]"
+            className="px-4 py-2 rounded bg-brand-800 text-white hover:bg-brand-950"
           >
             Verder naar Orders
           </button>

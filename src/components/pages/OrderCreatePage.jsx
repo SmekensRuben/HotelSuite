@@ -168,7 +168,7 @@ export default function OrderCreatePage() {
             className="h-14 w-14 rounded object-cover border border-gray-200"
           />
         ) : (
-          <span className="text-xs text-gray-400">-</span>
+          <span className="text-xs text-gray-500">-</span>
         )
       ),
     },
@@ -215,7 +215,7 @@ export default function OrderCreatePage() {
             handleAddProduct(row);
           }}
           disabled={savingId === row.id}
-          className="bg-blue-600 text-white rounded px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
+          className="bg-brand-800 text-white rounded px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
         >
           {savingId === row.id ? "Toevoegen..." : "Toevoegen"}
         </button>
@@ -224,13 +224,13 @@ export default function OrderCreatePage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-2xl font-semibold">Nieuwe Order</h1>
-            <div className="flex items-center gap-2 ml-auto">
+            <div className="flex flex-wrap items-center gap-2 ml-auto">
               <button
                 type="button"
                 onClick={() => navigate("/orders")}
@@ -242,11 +242,11 @@ export default function OrderCreatePage() {
               <button
                 type="button"
                 onClick={() => shoppingCart?.id && navigate(`/orders/cart/${shoppingCart.id}`)}
-                className="relative inline-flex items-center gap-2 bg-blue-600 text-white rounded px-3 py-2 text-sm font-semibold hover:bg-blue-700"
+                className="relative inline-flex items-center gap-2 bg-brand-800 text-white rounded px-3 py-2 text-sm font-semibold hover:bg-brand-950"
               >
                 <ShoppingCart className="w-4 h-4" />
                 Shopping Cart
-                <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 rounded-full bg-white text-blue-700 text-xs px-1 font-bold">
+                <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 rounded-full bg-white text-brand-800 text-xs px-1 font-bold">
                   {cartCount}
                 </span>
               </button>

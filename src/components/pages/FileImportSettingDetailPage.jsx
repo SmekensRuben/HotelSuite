@@ -68,12 +68,12 @@ export default function FileImportSettingDetailPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-3xl font-semibold">File Import Setting Detail</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => navigate(`/settings/file-import/${fileImportSettingId}/edit`)}
@@ -81,7 +81,7 @@ export default function FileImportSettingDetailPage() {
               className={`inline-flex items-center justify-center rounded border p-2 ${
                 canUpdateSettings
                   ? "border-gray-300 text-gray-700 hover:bg-gray-100"
-                  : "border-gray-200 text-gray-400 cursor-not-allowed"
+                  : "border-gray-200 text-gray-500 cursor-not-allowed"
               }`}
               title="Edit file import setting"
             >
@@ -94,7 +94,7 @@ export default function FileImportSettingDetailPage() {
               className={`inline-flex items-center justify-center rounded border p-2 ${
                 canDeleteSettings
                   ? "border-red-200 text-red-700 hover:bg-red-50"
-                  : "border-gray-200 text-gray-400 cursor-not-allowed"
+                  : "border-gray-200 text-gray-500 cursor-not-allowed"
               }`}
               title="Delete file import setting"
             >

@@ -64,7 +64,7 @@ export default function SupplierProductCreatePage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div>
@@ -107,7 +107,7 @@ export default function SupplierProductCreatePage() {
           <button
             type="button"
             onClick={handleConfirmOverwrite}
-            className="px-4 py-2 rounded bg-[#b41f1f] text-white hover:bg-[#961919]"
+            className="px-4 py-2 rounded bg-brand-800 text-white hover:bg-brand-950"
           >
             Overschrijven
           </button>

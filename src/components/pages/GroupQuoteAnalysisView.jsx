@@ -9,7 +9,7 @@ const percent = (value) => value === null || value === undefined ? "—" : `${(N
 const criticalWarning = (warning) => warning.code === "ECONOMIC_FLOOR_ABOVE_MARKET" || /unavailable|required valuation/i.test(warning.message || "");
 
 function Metric({ label, value, prominent = false, helper, tone = "neutral" }) {
-  const styles = prominent ? "border-[#b41f1f] bg-red-50 lg:scale-[1.02]" : tone === "secondary" ? "border-indigo-200 bg-indigo-50" : "border-gray-200 bg-gray-50";
+  const styles = prominent ? "border-brand-800 bg-brand-50 lg:scale-[1.02]" : tone === "secondary" ? "border-indigo-200 bg-indigo-50" : "border-gray-200 bg-gray-50";
   return <div className={`rounded-xl border-2 p-5 ${styles}`}><p className="text-xs font-bold uppercase tracking-widest text-gray-600">{label}</p><p className={`${prominent ? "text-4xl" : "text-3xl"} mt-2 font-bold text-gray-900`}>{value}</p>{helper && <p className="mt-2 text-sm font-medium text-gray-600">{helper}</p>}</div>;
 }
 
@@ -39,7 +39,7 @@ export default function GroupQuoteAnalysisView({ contribution, physicalFeasibili
 
   return <div className="space-y-6">
     <Card className="overflow-hidden border border-gray-200 bg-white p-0 shadow-sm" aria-labelledby="commercial-decision-title">
-      <header className="border-b border-red-100 bg-red-50 px-5 py-4"><p className="text-xs font-semibold uppercase tracking-widest text-[#b41f1f]">Level 1 · Decision</p><h2 id="commercial-decision-title" className="mt-1 text-2xl font-semibold">Commercial Decision</h2><p className="mt-1 text-sm text-gray-600">Quote corridor and the commercial context behind it.</p></header>
+      <header className="border-b border-brand-100 bg-brand-50 px-5 py-4"><p className="text-xs font-semibold uppercase tracking-widest text-brand-800">Level 1 · Decision</p><h2 id="commercial-decision-title" className="mt-1 text-2xl font-semibold">Commercial Decision</h2><p className="mt-1 text-sm text-gray-600">Quote corridor and the commercial context behind it.</p></header>
       <div className="grid gap-4 p-5 lg:grid-cols-[1.2fr_1fr_1fr]">
         <Metric prominent label="Target Rate" value={money(pricingGuidance?.targetRateInclVat)} helper={`${productLabel} incl. VAT · ${productHelper}Suggested starting quote`} />
         <Metric tone="secondary" label="Stretch Rate" value={money(pricingGuidance?.stretchRateInclVat)} helper={`${productLabel} incl. VAT · ${productHelper}Upper negotiation anchor`} />

@@ -56,17 +56,17 @@ export default function ContractEditPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-gray-100 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6 pb-10">
-        <Card className="border-0 bg-gradient-to-r from-[#b41f1f] via-[#a71c1c] to-[#7f1717] text-white shadow-lg">
+        <Card className="border-0 bg-gradient-to-r from-brand-800 via-brand-900 to-brand-950 text-white shadow-lg">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="space-y-2">
-              <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-red-100">
+              <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-brand-100">
                 <Sparkles className="h-3.5 w-3.5" /> Contract management
               </p>
               <h1 className="text-3xl font-semibold">Edit contract</h1>
-              <p className="max-w-2xl text-sm text-red-100">
+              <p className="max-w-2xl text-sm text-brand-100">
                 Update fields and documents. Removed documents will no longer be kept.
               </p>
             </div>
@@ -93,7 +93,7 @@ export default function ContractEditPage() {
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="border border-gray-100 bg-white/90 shadow-sm lg:col-span-1">
               <div className="flex items-start gap-3">
-                <div className="rounded-lg bg-[#b41f1f]/10 p-2 text-[#b41f1f]">
+                <div className="rounded-lg bg-brand-800/10 p-2 text-brand-800">
                   <PencilLine className="h-5 w-5" />
                 </div>
                 <div>

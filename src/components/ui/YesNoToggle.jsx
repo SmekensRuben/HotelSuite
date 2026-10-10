@@ -14,7 +14,7 @@ export default function YesNoToggle({ value = false, onChange, className = "", d
       />
       <div
         className={`relative w-12 h-6 rounded-full transition-colors peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-offset-1 ${
-          value ? 'bg-green-600' : 'bg-red-600'
+          value ? 'bg-brand-700' : 'bg-gray-300'
         } ${disabled ? 'opacity-50' : ''}`}
       >
         <div
@@ -24,7 +24,7 @@ export default function YesNoToggle({ value = false, onChange, className = "", d
         />
       </div>
       <span className="ml-2 text-xs font-semibold">
-        {value ? "Ja" : "No"}
+        {value ? "Yes" : "No"}
       </span>
     </label>
   );

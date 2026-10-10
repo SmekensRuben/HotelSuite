@@ -133,7 +133,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
 
   if (loading && !order) {
     return (
-      <div className="min-h-screen bg-gray-50 text-gray-900">
+      <div className="min-h-screen bg-canvas text-gray-900">
         <HeaderBar today={today} onLogout={handleLogout} />
         <PageContainer>
           <p role="status" className="text-sm text-gray-600">Loading order...</p>
@@ -142,11 +142,11 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
     );
   }
 
-  if (query.error && !order) return <div className="min-h-screen bg-gray-50 text-gray-900"><HeaderBar today={today} onLogout={handleLogout} /><PageContainer><AsyncError error={query.error} onRetry={query.retry} label="Could not load this order." /></PageContainer></div>;
+  if (query.error && !order) return <div className="min-h-screen bg-canvas text-gray-900"><HeaderBar today={today} onLogout={handleLogout} /><PageContainer><AsyncError error={query.error} onRetry={query.retry} label="Could not load this order." /></PageContainer></div>;
 
   if (!order) {
     return (
-      <div className="min-h-screen bg-gray-50 text-gray-900">
+      <div className="min-h-screen bg-canvas text-gray-900">
         <HeaderBar today={today} onLogout={handleLogout} />
         <PageContainer>
           <Card>
@@ -270,15 +270,15 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <AsyncError error={query.error} onRetry={query.retry} label="Could not refresh this order." />
         {canReadSuppliers && <AsyncError error={supplierQuery.error} onRetry={supplierQuery.retry} label="Could not load supplier details. Saved order names remain available." />}
         {canApproveOrders && <AsyncError error={approvalQuery.error} onRetry={approvalQuery.retry} label="Could not verify outlet approval." />}
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-3xl font-semibold">Order Detail</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={downloadOrderPdf}
@@ -343,7 +343,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
                 setShowOrderConfirmModal(true);
               }}
               disabled={!canConfirmOrder}
-              className="px-4 py-2 border border-green-300 text-green-700 rounded font-semibold hover:bg-green-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 border border-brand-300 text-brand-800 rounded font-semibold hover:bg-brand-50 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Confirm Order
             </button>
@@ -357,6 +357,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
         onClose={closeConfirmModal}
         title="Confirm Order & Dispatch"
       >
+        <AsyncError error={query.error} onRetry={query.retry} label="Could not refresh this order." />
         <div className="space-y-3 text-sm text-gray-700">
           <p>
             {t("orderConfirm.description1", {
@@ -372,7 +373,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
 
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
             <p className="font-semibold text-gray-800">{t("orderConfirm.progress")}</p>
-            {ordering && <p className="mt-1 text-blue-700">Starting dispatch request...</p>}
+            {ordering && <p className="mt-1 text-brand-800">Starting dispatch request...</p>}
             {!ordering && confirmSubmitted && dispatchStatus === "processing" && (
               <p className="mt-1 text-amber-700">Dispatch is processing...</p>
             )}
@@ -394,7 +395,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
             <div className="mt-2">
               <div className="h-2 w-full rounded bg-gray-200 overflow-hidden">
                 <div
-                  className="h-full bg-blue-600 transition-all duration-300"
+                  className="h-full bg-brand-800 transition-all duration-300"
                   style={{ width: `${Math.max(0, Math.min(100, dispatchProgress))}%` }}
                 />
               </div>
@@ -441,7 +442,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
         </div>
       </Modal>
 
-      {isPlatformAdmin && ["failed", "blocked", "needs-review", "processing"].includes(dispatchStatus) && <PageContainer>
+      {isPlatformAdmin && ["failed", "blocked", "needs-review", "processing"].includes(dispatchStatus) && <PageContainer as="section" id="order-recovery">
         <Card>
           <h2 className="text-lg font-semibold">Delivery review</h2>
           <p className="mt-2 text-sm leading-6 text-gray-600">Check the email provider or supplier's SFTP receipt before recording delivery. An unconfirmed delivery cannot be resent. Preparation can be retried only when the backend confirms that no external send was attempted.</p>

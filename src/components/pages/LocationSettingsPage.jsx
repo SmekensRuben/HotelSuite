@@ -37,10 +37,10 @@ export default function LocationSettingsPage() {
   }, [hotelUid]);
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">Settings</p>
             <h1 className="text-3xl font-semibold">Location Settings</h1>
@@ -49,7 +49,7 @@ export default function LocationSettingsPage() {
           <button
             onClick={() => navigate("/settings/locations/new")}
             disabled={!canCreateLocations}
-            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow ${canCreateLocations ? "bg-[#b41f1f] text-white hover:bg-[#961919]" : "bg-gray-300 text-gray-500 cursor-not-allowed"}`}
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow ${canCreateLocations ? "bg-brand-800 text-white hover:bg-brand-950" : "bg-gray-300 text-gray-500 cursor-not-allowed"}`}
           >
             <Plus className="h-4 w-4" /> Add Location
           </button>
