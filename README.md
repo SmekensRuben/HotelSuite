@@ -8,6 +8,8 @@ For Firebase App Hosting configuration, verified rollout issues and manual hotel
 
 For the Purchasing & Inventory module, explicit per-hotel entitlements, combined module roles, hotel-admin team management and reviewed existing-hotel migration, see [Hotel modules and delegated administration](docs/module-subscriptions.md).
 
+For platform administration without a hotel assignment, per-hotel import monitoring, notifications and controlled support, see [Platform console and release procedure](docs/platform-console.md). The changed access boundary requires the reviewed one-time `saas-platform-v3` Rules rollout.
+
 For automatic Functions deployment after successful main-branch verification and the one-time keyless Cloud Shell setup, see [Functions continuous deployment](docs/functions-continuous-deployment.md).
 
 ## Local setup

@@ -1,0 +1,94 @@
+{
+  "score": 4,
+  "scale": "1 = critical exposure; 2 = major issues; 3 = moderate issues; 4 = minor inherited issues; 5 = no issue identified in the reviewed scope",
+  "summary": "The new platform console uses current verified platform authority, sanitized bounded administration DTOs and explicit hotel action boundaries. Local operator/ordinary-user emulator and real import replay checks pass. This is a scoped repository review by the implementing agent, not an independent reviewer attestation or production security certification.",
+  "findings": [
+    {
+      "check": "Storage abuse and type safety",
+      "severity": "minor",
+      "location": "firebase/firestore.rules: locations and outlets matches",
+      "issue": "Inherited operational configuration CRUD rules require licensed action authority but lack complete field/type/size schemas. This remains isolated to a permitted user's hotel and is outside the platform metadata work.",
+      "recommendation": "Define existing location/outlet payload contracts in a separate focused hardening change and enforce bounded create/update validation with normal-user and malformed-payload regressions."
+    }
+  ],
+  "scope": [
+    "firebase/firestore.rules",
+    "firebase/storage.rules",
+    "functions/src/authorization.js",
+    "functions/src/platformConsole.js",
+    "functions/src/platformMonitoring.js",
+    "functions/src/platformSupport.js",
+    "functions/src/platformUsers.js",
+    "functions/src/platformAudit.js",
+    "functions/src/importTelemetry.js",
+    "functions/src/importMonitoringPolicy.js",
+    "functions/src/onboarding.js",
+    "functions/src/hotelTeam.js",
+    "functions/src/userAccess.js",
+    "src/contexts/HotelContext.jsx",
+    "src/components/shared/PlatformRoute.jsx",
+    "src/components/platform",
+    "scripts/firebase/emulator-backup-smoke.mjs"
+  ],
+  "checks": [
+    {
+      "check": "Update bypass",
+      "result": "Browser create/update/delete of memberships, profiles, platform telemetry/policies/audit/sessions/incidents and hotel-root metadata are denied, including to platform tokens. Backend mutation revisions and source ownership are server-selected. Audit copies commit with the mutation."
+    },
+    {
+      "check": "Authority source",
+      "result": "Every new platform callable checks verified ID-token identity and current enabled verified Auth platform authority. Payload fields do not grant authority. Hotel operational callables and Rules require canonical membership, licensed module and action; platform claims do not bypass those checks."
+    },
+    {
+      "check": "Business logic vs rules",
+      "result": "Zero-hotel operators can use the exported platform callable wrappers and create hotels without operational assignment. Ordinary permitted hotel Firestore/Storage reads succeed; cross-hotel, unverified, disabled and live-revoked platform requests fail. Support actor/hotel/expiry and actual checkpoint-preserving parser recovery are covered."
+    },
+    {
+      "check": "Storage abuse",
+      "result": "Platform queries, policies, reasons, names, pages, historical occurrence reconciliation and cleanup batches are bounded. Upload limits and declared image/import MIME restrictions remain. No platform path exposes source bytes or grants broad recursive Storage access."
+    },
+    {
+      "check": "Type safety",
+      "result": "Monitoring validates known keys, IANA time zones, exact business dates, weekdays, booleans, finite bounded integer offsets/grace and optimistic revisions. Missing counts/dates/times stay unknown; invalid stored assignments block editing instead of becoming an empty assignment."
+    },
+    {
+      "check": "Field-level vs identity-level security",
+      "result": "DTOs whitelist administration/contact/status evidence and exclude raw guest/source/credential/mail payloads. Profile reads are owner-only in browser Rules; global directory access is an authorized backend projection. Source hotel and generation are checked independently of the session or caller payload."
+    }
+  ],
+  "review_corrections": [
+    "Removed blanket platform operational bypasses and automatic creator hotel assignment.",
+    "Fenced obsolete hotel responses, support redirects and actions; rejected unavailable user-record saves.",
+    "Kept required downstream model work pending/partial/unknown until evidenced complete.",
+    "Separated business import completion from optional telemetry persistence failures.",
+    "Kept incident expectations immutable across policy revisions and prevented older checks overwriting newer evidence.",
+    "Preserved source checkpoints; blocked leased/completed runs and replacement source generations; rechecked live authority after storage I/O.",
+    "Restored expired support stays denied; zero-hotel operator Auth authority and platform metadata survive the restore fixture.",
+    "Scoped hotel team state is reset on hotel changes; unmounted saves cannot refresh or populate another hotel."
+  ],
+  "evidence": {
+    "frontend": "693 passing frontend tests across 78 files in the final complete run.",
+    "functions": "159 passing tests.",
+    "security": "126 passing Auth/Firestore/Storage emulator tests across 17 suites, including immutable original-policy incident recovery and real Storage/parser/Firestore replay.",
+    "restore": "Two-hotel Auth/Firestore/private Storage export/import with platform records, zero-hotel operator and restored expired-session denial passed.",
+    "builds": "Lint, boundary type checking, generated Rules, shell syntax, dependency gate and both fictional test/App Hosting builds passed.",
+    "status": "Code implemented and locally checked; no merge, deployment or production acceptance performed."
+  },
+  "limitations": [
+    "Firebase Rules enforce token identity and current canonical memberships rather than querying live Auth disabled state. For direct operational access, use canonical membership removal as the immediate revocation control; backend callables also check live Auth.",
+    "Emulator tests do not establish production Rules propagation, GCS versioning/IAM behavior, real mail/provider delivery or scheduler operation.",
+    "Responsive browser visual acceptance was blocked in this runner by an absent Chromium executable; component workflow tests pass.",
+    "A separate human PR review remains required before the owner chooses a production release."
+  ],
+  "remaining_checks": [
+    "Latest-head GitHub CI and human review tracked on PR #226.",
+    "Owner-reviewed exact-SHA saas-platform-v3 Rules release with backup and verified activation.",
+    "Production operator with zero hotel memberships; ordinary-user and cross-hotel/disabled/revoked acceptance.",
+    "Real schedule, source receipt/date/count/model/incident recovery and bounded worker freshness.",
+    "Actor/hotel/session expiry and explicitly reviewed pinned-generation recovery against GCS.",
+    "Desktop/mobile browser acceptance and actual invitation delivery without unintended customer messages."
+  ],
+  "reference": "https://firebase.google.com/docs/rules/rules-behavior",
+  "pull_request": "https://github.com/SmekensRuben/HotelSuite/pull/226",
+  "verified_implementation_commit": "1aef596dbefb3801fca931da3c11e653f771c891"
+}
