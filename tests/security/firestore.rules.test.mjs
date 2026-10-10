@@ -19,6 +19,7 @@ import {
   query,
   where,
   setDoc,
+  serverTimestamp,
   Timestamp,
   updateDoc,
 } from "firebase/firestore";
@@ -212,7 +213,8 @@ describe("module and special-action boundaries", () => {
 
   it("allows explicit notify and demand-calendar actions only in hotel A", async () => {
     const database = databaseFor(profiles.specialistA);
-    await assertSucceeds(setDoc(doc(database, "hotels/hotel-a/contractReminderRuns", "run-a"), { status: "queued" }));
+    await assertSucceeds(setDoc(doc(database, "hotels/hotel-a/contractReminderRuns", "run-a"), { status: "queued", requestedBy: profiles.specialistA.uid, requestedAt: serverTimestamp() }));
+    await assertFails(setDoc(doc(database, "hotels/hotel-a/contractReminderRuns", "forged"), { status: "queued", requestedBy: "another-user", requestedAt: serverTimestamp() }));
     await assertSucceeds(setDoc(doc(database, "hotels/hotel-a/demandCalendarEvents", "event-a"), { name: "Fixture" }));
     await assertFails(setDoc(doc(database, "hotels/hotel-b/demandCalendarEvents", "event-b"), { name: "Cross tenant" }));
   });

@@ -9,6 +9,12 @@ service firebase.storage {
     function boundedUpload() {
       return request.resource.size > 0 && request.resource.size <= 20 * 1024 * 1024;
     }
+    function productImageUpload() {
+      return boundedUpload() && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    }
+    function importUpload() {
+      return boundedUpload() && request.resource.contentType in ['text/csv', 'text/plain', 'application/pdf', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/xml', 'text/xml', 'application/json'];
+    }
 
     function isPlatformAdmin() {
       return signedIn()
@@ -39,26 +45,26 @@ service firebase.storage {
 
     match /hotels/{hotelUid}/catalogproducts/{allPaths=**} {
       allow read: if hasPermission(hotelUid, 'catalogproducts', 'read');
-      allow create: if (hasPermission(hotelUid, 'catalogproducts', 'create') || hasPermission(hotelUid, 'catalogproducts', 'update')) && boundedUpload();
-      allow update: if hasPermission(hotelUid, 'catalogproducts', 'update') && boundedUpload();
+      allow create: if (hasPermission(hotelUid, 'catalogproducts', 'create') || hasPermission(hotelUid, 'catalogproducts', 'update')) && productImageUpload();
+      allow update: if hasPermission(hotelUid, 'catalogproducts', 'update') && productImageUpload();
       allow delete: if hasPermission(hotelUid, 'catalogproducts', 'delete');
     }
 
     match /hotels/{hotelUid}/supplierproducts/{allPaths=**} {
       allow read: if hasPermission(hotelUid, 'supplierproducts', 'read');
-      allow create: if (hasPermission(hotelUid, 'supplierproducts', 'create') || hasPermission(hotelUid, 'supplierproducts', 'update')) && boundedUpload();
-      allow update: if hasPermission(hotelUid, 'supplierproducts', 'update') && boundedUpload();
+      allow create: if (hasPermission(hotelUid, 'supplierproducts', 'create') || hasPermission(hotelUid, 'supplierproducts', 'update')) && productImageUpload();
+      allow update: if hasPermission(hotelUid, 'supplierproducts', 'update') && productImageUpload();
       allow delete: if hasPermission(hotelUid, 'supplierproducts', 'delete');
     }
 
     match /hotels/{hotelUid}/{collectionName}/{allPaths=**} {
       allow read, delete: if isPlatformAdmin() && collectionName != 'contracts';
-      allow create, update: if isPlatformAdmin() && collectionName != 'contracts' && boundedUpload();
+      allow create, update: if isPlatformAdmin() && !(collectionName in ['contracts', 'catalogproducts', 'supplierproducts']) && boundedUpload();
     }
 
     match /imports/{hotelUid}/{allPaths=**} {
       allow read: if hasPermission(hotelUid, 'imports', 'read');
-      allow create, update: if hasPermission(hotelUid, 'imports', 'execute') && boundedUpload();
+      allow create, update: if hasPermission(hotelUid, 'imports', 'execute') && importUpload();
       allow delete: if hasPermission(hotelUid, 'imports', 'execute');
     }
 

@@ -1,4 +1,4 @@
-import { db, collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp } from "../firebaseConfig";
+import { db, collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp, writeBatch } from "../firebaseConfig";
 
 const UPSELL_SETTINGS_DOC_ID = "upsells";
 
@@ -230,16 +230,17 @@ function getUpsellStatus(data) {
 export async function getUpsellSettings(hotelUid) {
   if (!hotelUid) return { packageCodes: [], dailyExpectedOccupancy: {}, revenueTargetRules: [] };
 
-  const settingsRef = doc(db, `hotels/${hotelUid}/settings`, UPSELL_SETTINGS_DOC_ID);
-  const packageCodesRef = collection(db, `hotels/${hotelUid}/settings/${UPSELL_SETTINGS_DOC_ID}/packagecodes`);
-  const [snapshot, packageCodesSnapshot] = await Promise.all([getDoc(settingsRef), getDocs(packageCodesRef)]);
-  const data = snapshot.exists() ? snapshot.data() : {};
+  const base = `hotels/${hotelUid}/settings/${UPSELL_SETTINGS_DOC_ID}`;
+  const [packageCodesSnapshot, occupancySnapshot, targetsSnapshot] = await Promise.all([
+    getDocs(collection(db, `${base}/packagecodes`)),
+    getDocs(collection(db, `${base}/occupancy`)),
+    getDocs(collection(db, `${base}/revenueTargets`)),
+  ]);
 
   return {
-    ...data,
     packageCodes: normalizePackageCodes(packageCodesSnapshot.docs.map((packageCodeDoc) => normalizePackageCodeDocument(packageCodeDoc.data() || {}, packageCodeDoc.id))),
-    dailyExpectedOccupancy: normalizeDailyExpectedOccupancy(data.dailyExpectedOccupancy, data.dailyRevenueTargets),
-    revenueTargetRules: normalizeRevenueTargetRules(data.revenueTargetRules, data.dailyRevenueTargets),
+    dailyExpectedOccupancy: Object.fromEntries(occupancySnapshot.docs.map((item) => [item.id, item.data().expectedOccupancy])),
+    revenueTargetRules: normalizeRevenueTargetRules(targetsSnapshot.docs.map((item) => ({ ...item.data(), id: item.id }))),
   };
 }
 
@@ -380,63 +381,54 @@ export async function saveUpsellPackageCode(hotelUid, packageCode) {
   const normalizedPackageCode = normalizePackageCodeDocument(packageCode);
   if (!normalizedPackageCode) return;
 
-  const settingsRef = doc(db, `hotels/${hotelUid}/settings`, UPSELL_SETTINGS_DOC_ID);
   const packageCodeRef = doc(
     db,
     `hotels/${hotelUid}/settings/${UPSELL_SETTINGS_DOC_ID}/packagecodes`,
     normalizedPackageCode.packageCode
   );
 
-  await Promise.all([
-    setDoc(settingsRef, { updatedAt: new Date() }, { merge: true }),
-    setDoc(packageCodeRef, {
+  await setDoc(packageCodeRef, {
       packageCode: normalizedPackageCode.packageCode,
       category: normalizedPackageCode.category,
       description: normalizedPackageCode.description,
-      updatedAt: new Date(),
-    }),
-  ]);
+      updatedAt: serverTimestamp(),
+    });
 }
 
 export async function deleteUpsellPackageCode(hotelUid, packageCodeId) {
   if (!hotelUid || !packageCodeId) return;
 
-  const settingsRef = doc(db, `hotels/${hotelUid}/settings`, UPSELL_SETTINGS_DOC_ID);
   const packageCodeRef = doc(db, `hotels/${hotelUid}/settings/${UPSELL_SETTINGS_DOC_ID}/packagecodes`, packageCodeId);
 
-  await Promise.all([
-    setDoc(settingsRef, { updatedAt: new Date() }, { merge: true }),
-    deleteDoc(packageCodeRef),
-  ]);
+  await deleteDoc(packageCodeRef);
 }
 
 
 export async function saveUpsellDailyExpectedOccupancy(hotelUid, dailyExpectedOccupancy) {
   if (!hotelUid) return;
-
-  const settingsRef = doc(db, `hotels/${hotelUid}/settings`, UPSELL_SETTINGS_DOC_ID);
-  await setDoc(
-    settingsRef,
-    {
-      dailyExpectedOccupancy: normalizeDailyExpectedOccupancy(dailyExpectedOccupancy),
-      updatedAt: new Date(),
-    },
-    { merge: true }
-  );
+  const normalized = normalizeDailyExpectedOccupancy(dailyExpectedOccupancy);
+  await replaceUpsellSettingsChildren(hotelUid, "occupancy", Object.entries(normalized).map(([date, expectedOccupancy]) => ({ id: date, data: { date, expectedOccupancy } })));
 }
 
 export async function saveUpsellRevenueTargetRules(hotelUid, revenueTargetRules) {
   if (!hotelUid) return;
+  await replaceUpsellSettingsChildren(hotelUid, "revenueTargets", normalizeRevenueTargetRules(revenueTargetRules).map((rule) => ({ id: rule.id, data: rule })));
+}
 
-  const settingsRef = doc(db, `hotels/${hotelUid}/settings`, UPSELL_SETTINGS_DOC_ID);
-  await setDoc(
-    settingsRef,
-    {
-      revenueTargetRules: normalizeRevenueTargetRules(revenueTargetRules),
-      updatedAt: new Date(),
-    },
-    { merge: true }
-  );
+async function replaceUpsellSettingsChildren(hotelUid, childCollection, records) {
+  const path = `hotels/${hotelUid}/settings/${UPSELL_SETTINGS_DOC_ID}/${childCollection}`;
+  const existing = await getDocs(collection(db, path));
+  const incoming = new Set();
+  for (const { id } of records) {
+    if (!id || id.length > 128 || /[\/\u0000-\u001f]/.test(id) || incoming.has(id)) throw new Error("Settings records require unique valid identifiers.");
+    incoming.add(id);
+  }
+  const removals = existing.docs.filter((item) => !incoming.has(item.id));
+  if (records.length + removals.length > 400) throw new Error("At most 400 settings records can change in one save.");
+  const batch = writeBatch(db);
+  records.forEach(({ id, data }) => batch.set(doc(db, path, id), { ...data, updatedAt: serverTimestamp() }));
+  removals.forEach((item) => batch.delete(item.ref));
+  await batch.commit();
 }
 
 export function getUpsellDateKeys(startDate, endDate) {

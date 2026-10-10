@@ -1,10 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getSettings, setSettings } from "../../services/firebaseSettings";
+import {
+  getOperaSettings, createOperaUserMapping, updateOperaUserMapping, deleteOperaUserMapping,
+} from "../../services/firebaseSettings";
 import { usePermission } from "../../hooks/usePermission";
 
 function normalizeMappings(rawMappings) {
@@ -24,19 +26,6 @@ function normalizeMappings(rawMappings) {
     );
 }
 
-function toMappingObject(mappings) {
-  return mappings.reduce((accumulator, mapping) => {
-    const operaUser = String(mapping.operaUser || "").trim();
-    const employeeName = String(mapping.employeeName || "").trim();
-
-    if (operaUser && employeeName) {
-      accumulator[operaUser] = employeeName;
-    }
-
-    return accumulator;
-  }, {});
-}
-
 export default function OperaSettingsPage() {
   const { hotelUid } = useHotelContext();
   const canCreateSettings = usePermission("integrations", "create");
@@ -51,6 +40,8 @@ export default function OperaSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const requestVersion = useRef(0);
 
   const todayLabel = useMemo(
     () =>
@@ -63,7 +54,16 @@ export default function OperaSettingsPage() {
   );
 
   useEffect(() => {
-    let active = true;
+    setOperaUser("");
+    setEmployeeName("");
+    setEditingOperaUser("");
+    setEditingEmployeeName("");
+  }, [hotelUid]);
+
+  useEffect(() => {
+    const version = ++requestVersion.current;
+    setMappings([]);
+    setSaving(false);
 
     async function loadOperaSettings() {
       if (!hotelUid) {
@@ -77,24 +77,24 @@ export default function OperaSettingsPage() {
       setMessage("");
 
       try {
-        const settings = await getSettings(hotelUid);
-        if (!active) return;
+        const settings = await getOperaSettings(hotelUid);
+        if (version !== requestVersion.current) return;
         setMappings(normalizeMappings(settings?.operaUserMappings));
       } catch (err) {
-        console.error("Fout bij laden van Opera settings:", err);
-        if (!active) return;
-        setError("De Opera settings konden niet geladen worden.");
+        console.error("Failed to load Opera settings:", err);
+        if (version !== requestVersion.current) return;
+        setError("Opera settings could not be loaded.");
       } finally {
-        if (active) setLoading(false);
+        if (version === requestVersion.current) setLoading(false);
       }
     }
 
     loadOperaSettings();
 
     return () => {
-      active = false;
+      ++requestVersion.current;
     };
-  }, [hotelUid]);
+  }, [hotelUid, loadAttempt]);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -102,52 +102,43 @@ export default function OperaSettingsPage() {
     window.location.href = "/login";
   };
 
-  const persistMappings = async (nextMappings, successMessage) => {
-    if (!hotelUid) {
-      setError("Geen hotel geselecteerd om Opera settings op te slaan.");
-      return false;
-    }
-
+  const persistMapping = async (mutation, successMessage) => {
+    if (!hotelUid || saving) return false;
+    const version = requestVersion.current;
     setSaving(true);
     setError("");
     setMessage("");
-
+    let saved = false;
     try {
-      await setSettings(hotelUid, { operaUserMappings: toMappingObject(nextMappings) });
-      setMappings(normalizeMappings(toMappingObject(nextMappings)));
+      await mutation();
+      saved = true;
+      if (version !== requestVersion.current) return false;
+      const settings = await getOperaSettings(hotelUid);
+      if (version !== requestVersion.current) return false;
+      setMappings(normalizeMappings(settings.operaUserMappings));
       setMessage(successMessage);
       return true;
-    } catch (err) {
-      console.error("Fout bij opslaan van Opera settings:", err);
-      setError("De Opera settings konden niet opgeslagen worden in Firebase.");
-      return false;
+    } catch (error) {
+      if (version === requestVersion.current) setError(saved ? "Changes saved, but Opera settings could not be refreshed. Reload settings." : error.message || "Opera settings could not be saved.");
+      return version === requestVersion.current && saved;
     } finally {
-      setSaving(false);
+      if (version === requestVersion.current) setSaving(false);
     }
   };
 
   const handleAddMapping = async (event) => {
     event.preventDefault();
     if (!canCreateSettings) return;
-
     const cleanedOperaUser = operaUser.trim();
     const cleanedEmployeeName = employeeName.trim();
-
     if (!cleanedOperaUser || !cleanedEmployeeName) {
-      setError("Vul zowel een Opera PMS username als een employee naam in.");
+      setError("Enter both an Opera PMS username and an employee name.");
       setMessage("");
       return;
     }
-
-    const nextMappings = [
-      ...mappings.filter(
-        (mapping) => mapping.operaUser.toLowerCase() !== cleanedOperaUser.toLowerCase()
-      ),
-      { operaUser: cleanedOperaUser, employeeName: cleanedEmployeeName },
-    ];
-
-    const saved = await persistMappings(nextMappings, "Opera user mapping opgeslagen.");
-    if (saved) {
+    if (await persistMapping(() => createOperaUserMapping(hotelUid, {
+      operaUser: cleanedOperaUser, employeeName: cleanedEmployeeName,
+    }), "Opera user mapping created.")) {
       setOperaUser("");
       setEmployeeName("");
     }
@@ -162,36 +153,22 @@ export default function OperaSettingsPage() {
 
   const handleSaveEdit = async () => {
     if (!canUpdateSettings || !editingOperaUser) return;
-
     const cleanedEmployeeName = editingEmployeeName.trim();
     if (!cleanedEmployeeName) {
-      setError("Employee naam mag niet leeg zijn.");
+      setError("Employee name cannot be empty.");
       setMessage("");
       return;
     }
-
-    const nextMappings = mappings.map((mapping) =>
-      mapping.operaUser === editingOperaUser
-        ? { ...mapping, employeeName: cleanedEmployeeName }
-        : mapping
-    );
-
-    const saved = await persistMappings(nextMappings, "Opera user mapping bijgewerkt.");
-    if (saved) {
+    if (await persistMapping(() => updateOperaUserMapping(hotelUid, editingOperaUser, cleanedEmployeeName), "Opera user mapping updated.")) {
       setEditingOperaUser("");
       setEditingEmployeeName("");
     }
   };
 
   const handleDelete = async (targetOperaUser) => {
-    if (!canDeleteSettings || !targetOperaUser) return;
-    const shouldDelete = window.confirm(`Mapping voor ${targetOperaUser} verwijderen?`);
-    if (!shouldDelete) return;
-
-    await persistMappings(
-      mappings.filter((mapping) => mapping.operaUser !== targetOperaUser),
-      "Opera user mapping verwijderd."
-    );
+    if (!canDeleteSettings || !targetOperaUser || saving) return;
+    if (!window.confirm(`Delete the mapping for ${targetOperaUser}?`)) return;
+    await persistMapping(() => deleteOperaUserMapping(hotelUid, targetOperaUser), "Opera user mapping deleted.");
   };
 
   return (
@@ -208,8 +185,9 @@ export default function OperaSettingsPage() {
 
         <Card className="space-y-6">
           {error ? (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
+              <button type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)} className="ml-3 underline">Reload settings</button>
             </div>
           ) : null}
 
@@ -224,6 +202,7 @@ export default function OperaSettingsPage() {
               Opera PMS username
               <input
                 type="text"
+                maxLength={128}
                 value={operaUser}
                 onChange={(event) => setOperaUser(event.target.value)}
                 className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
@@ -235,6 +214,7 @@ export default function OperaSettingsPage() {
               Employee naam
               <input
                 type="text"
+                maxLength={200}
                 value={employeeName}
                 onChange={(event) => setEmployeeName(event.target.value)}
                 className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
@@ -275,6 +255,7 @@ export default function OperaSettingsPage() {
                         {editingOperaUser === mapping.operaUser ? (
                           <input
                             type="text"
+                            maxLength={200}
                             value={editingEmployeeName}
                             onChange={(event) => setEditingEmployeeName(event.target.value)}
                             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
