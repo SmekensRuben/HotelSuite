@@ -6,7 +6,7 @@ The owner authorized automatic Functions deployments on 2026-10-09. This decisio
 
 `.github/workflows/deploy-functions.yml` waits for **Verify HotelSuite** to complete successfully for a push to `main`. It deploys the exact verified commit to Firebase project **hotel-toolkit**. A manual **Run workflow** on `main` can retry the current release, but also requires a successful verification run for that exact commit. PR verification cannot authorize a deployment.
 
-Deployments are serialized without cancelling an in-flight Firebase release. The workflow checks the current `main` SHA before setup and immediately before deployment; queued stale releases are skipped. Firebase CLI is installed from the repository lockfile, runs non-interactively and deploys only Functions. Function removal is not forced. A successful release lists the deployed functions and records its SHA in the job summary.
+Deployments are serialized without cancelling an in-flight Firebase release. The workflow checks the current `main` SHA before setup and immediately before deployment; queued stale releases are skipped. Firebase CLI is installed from the repository lockfile, runs non-interactively and deploys only Functions. The release wrapper may confirm the reviewed import retry transition with a narrowly scoped deployment; the full Functions release never forces removal. A successful release lists the deployed functions and records its SHA in the job summary.
 
 On 2026-10-09 the owner completed the Google setup in Cloud Shell, enabled deployment, bootstrapped Eventarc and configured preview-only artifact retention in all three deployment regions. Run `37956475706` (attempt 3) completed successfully for verified main `adf7fb6`: authentication, runtime checks, Functions deployment and inventory verification all passed. The inventory contained all 23 then-exported Functions. The agent browser could not access Cloud Shell or Google Cloud IAM; operator commands were executed by the owner. Subsequent verified main merges deploy Functions automatically. Artifact retention remains in dry-run, so it does not yet delete images or reduce accumulated artifact storage.
 
@@ -53,6 +53,18 @@ bash ~/setup-functions-deployment.sh --apply --configure-github
 This option validates the numeric repository ID and disables deployment while changing setup. It enables deployment only after all required secret versions are present and runtime access was granted. No GitHub secret is read or copied.
 
 ## Verification and recovery
+
+### Reviewed import retry transition
+
+Main `4ee131159e1519e673a6eb15d6e5324500e2f48d` includes `retry: true` for `processImportedFileToFirestore(us-west1)`. Deploy runs [38050875944](https://github.com/SmekensRuben/HotelSuite/actions/runs/38050875944) and [38050997880](https://github.com/SmekensRuben/HotelSuite/actions/runs/38050997880) both completed authentication, secret metadata checks and release verification, then stopped with `Pass the --force option to deploy functions with a failure policy`. Firebase requires explicit confirmation when enabling retries in a non-interactive release. Re-running the unchanged workflow cannot resolve this error.
+
+`scripts/firebase/deploy-reviewed-functions.mjs` uses the locked CLI to read the deployed inventory first. It validates the existing default-codebase import function's project, generation, region, Storage finalized trigger, project bucket and retry metadata against the reviewed source export. Prefix matches, multiple regions, missing inventory/export or a changed trigger stop the release before mutation. This matters because Firebase function selectors also match names beginning with the selected name followed by a hyphen.
+
+If retries are not yet enabled, the wrapper runs only `firebase deploy --only functions:default:processImportedFileToFirestore --project hotel-toolkit --non-interactive --force`. It then runs the full Functions deployment without `--force`, preserving the CLI's refusal to implicitly delete functions or enable other unreviewed retry policies. Once the reviewed retry policy is present, subsequent releases skip the forced step. Failure in either deployment prevents the inventory/release-success step. No Rules or hotel data migrations run here.
+
+The import's existing durable receipts and duplicate/chunk replay tests remain intact. Release regression tests reproduce the actual installed CLI's failure-policy prompt, confirm the scoped acknowledgement, and verify that the full release still blocks deletion. They also cover replay, scoped failure, invalid identities, missing/changed metadata, regions, triggers and prefix collisions.
+
+Repair status: code implemented; all 669 frontend/operator tests (including 19 new retry-release checks), 148 Functions tests, lint, incremental typecheck, workflow YAML parsing and script syntax checks passed locally. The actual SDK export also passed the retry-plan validation without cloud calls. GitHub verification and a successful production deploy must be recorded separately after the repair is published and merged. A passing non-production test does not prove that the production release succeeded. The separate Firebase App Hosting build failure is not resolved by this Functions repair.
 
 Confirm a successful Firebase deploy step and inspect **Functions** in the Firebase console; a successful setup-only/skipped job is not a release. Exercise an authenticated allowed and denied callable from the actual application origin. Keep Cloud Build/Functions logs and the released SHA with the result.
 

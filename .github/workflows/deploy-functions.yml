@@ -85,8 +85,9 @@ jobs:
 
       - name: Deploy Functions to hotel-toolkit
         if: steps.current.outputs.deploy == 'true'
-        # No --force: removing a deployed function requires a deliberate release.
-        run: npx --no-install firebase deploy --only functions --project hotel-toolkit --non-interactive
+        # Only the reviewed import retry transition may use a scoped --force.
+        # The full release still refuses implicit function deletions.
+        run: node scripts/firebase/deploy-reviewed-functions.mjs
 
       - name: Record deployed Functions inventory
         if: steps.current.outputs.deploy == 'true'
