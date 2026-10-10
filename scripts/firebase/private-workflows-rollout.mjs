@@ -8,6 +8,7 @@ import { Storage } from "@google-cloud/storage";
 import { OAuth2Client } from "google-auth-library";
 import { verifyPublishedRules, STORAGE_BUCKET } from "./saas-rules-release.mjs";
 import { inspectPrivateWorkflows, migratePrivateWorkflows } from "./private-workflows-migration.mjs";
+const { saasRulesVersion } = JSON.parse(await readFile(new URL("../../functions/src/platformReleasePolicy.json", import.meta.url), "utf8"));
 const args = process.argv.slice(2), mode = args[0], emulator = args.includes("--emulator");
 if (!["preflight", "pause", "migrate", "enable"].includes(mode) || args.some((v, i) => i > 0 && v !== "--emulator")) throw new Error("Use preflight, pause, migrate or enable, optionally with --emulator.");
 const storageHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST || process.env.STORAGE_EMULATOR_HOST;
@@ -57,7 +58,7 @@ try {
     }
     if (mode === "enable") {
       const procurement = (await db.doc("platformConfiguration/saasProcurement").get()).data();
-      if (procurement?.enabled !== true || procurement.rulesVersion !== "saas-modules-v2") throw new Error("Enable the verified procurement pilot before private workflow activation.");
+      if (procurement?.enabled !== true || procurement.rulesVersion !== saasRulesVersion) throw new Error("Enable the verified procurement pilot before private workflow activation.");
       if (inspection.summary.legacyFiles || inspection.summary.legacyUrls || inspection.summary.downloadTokens) throw new Error("Complete file migration and token revocation before activation.");
       const releaseSha = process.env.SAAS_RELEASE_SHA;
       if (!emulator && !/^[a-f0-9]{40}$/.test(releaseSha || "")) throw new Error("An exact reviewed release SHA is required.");

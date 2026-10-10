@@ -22,6 +22,7 @@ const { onObjectFinalized, logger, admin } = require("./config");
 const { rebuildStayPatternModel } = require("./stayPatternModel");
 const { stableId, claimReceipt, finishReceipt, releaseReceipt } = require("./importRouting");
 const { importRunId, commitImportChunk } = require("./importProcessing");
+const { recordImportReceived, recordPreflightImportFailure, syncImportTelemetry } = require("./importTelemetry");
 
 function normalizeDelimiter(value) {
   const raw = String(value || ",");
@@ -1164,19 +1165,24 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
   const runRef = db.doc(`hotels/${hotelUid}/importRuns/${runId}`);
   const existingRun = await runRef.get();
   if (existingRun.exists && existingRun.data().state === "complete") return;
+  await recordImportReceived(db, hotelUid, runId, object).catch(() => logger.error("Import receipt telemetry unavailable.", { hotelUid, runId }));
   let configuration = existingRun.data()?.configuration;
   if (!configuration) {
     // Canonical tenant sources remain available even before projection reindexing.
     // Legacy global projection IDs are never an authorization or parser boundary.
     const types = await db.collection(`hotels/${hotelUid}/fileImportTypes`).where("fileType", "==", fileType).get();
     const enabledTypes = types.docs.filter((snapshot) => snapshot.data().enabled !== false);
-    if (enabledTypes.length !== 1) throw new Error("Import requires exactly one enabled canonical file type");
+    if (enabledTypes.length !== 1) {
+      await recordPreflightImportFailure(db, hotelUid, runId).catch(() => logger.error("Import failure telemetry unavailable.", { hotelUid, runId }));
+      throw new Error("Import requires exactly one enabled canonical file type");
+    }
     configuration = { ...enabledTypes[0].data(), id: enabledTypes[0].id,
       targetDateOverride: targetDateOverride || resolveCurrentDateWithOffset(enabledTypes[0].data().targetDateOffsetDays) };
     if (!targetDateOverride && configuration.targetDateSourceType === "databaseField") delete configuration.targetDateOverride;
   }
   const claim = await claimReceipt(db, runRef, { bucket: String(object.bucket), name: objectName,
-    generation: String(object.generation), hotelUid, fileType }, { initialData: { configuration } });
+    generation: String(object.generation), hotelUid, fileType }, { initialData: { configuration,
+      receivedAtMillis: Number.isFinite(Date.parse(object.timeCreated || "")) ? Date.parse(object.timeCreated) : null } });
   if (claim.state === "complete") return;
   if (claim.state === "busy") throw new Error("Import run already processing; retry later");
   const fileImportType = claim.configuration;
@@ -1211,7 +1217,9 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
       },
     });
 
+    if (writeSummary.affectsStayPattern) await runRef.update({ downstreamStatus: "pending" });
     await finishReceipt(db, runRef, owner, writeSummary);
+    await syncImportTelemetry(db, hotelUid, runId).catch(() => logger.error("Import completion telemetry unavailable.", { hotelUid, runId }));
 
     if (writeSummary.writtenCount === 0) {
       logger.warn("Import skipped: no mapped rows found", {
@@ -1240,15 +1248,17 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
         // Arrival-year corrections also affect next-year carry-in reconciliation;
         // HistoryQuotes is another authoritative input. Refresh all published years.
         const result = await rebuildStayPatternModel({ hotelUid, trigger: "STAY_PATTERN_INPUT_IMPORT_COMPLETED", db });
+        await runRef.update({ downstreamStatus: "complete" });
         logger.info("Stay Pattern model rebuilt after completed import batch", { hotelUid, affectedYears: result.affectedYears, status: result.status, runId: result.runId });
       } catch (error) {
         // The raw import is already durable. Keep it successful and expose the
         // failed/stale model state instead of retrying every reservation write.
+        await runRef.update({ downstreamStatus: "failed" });
         logger.error("Post-import Stay Pattern rebuild failed", { hotelUid, affectedYears: writeSummary.affectedStayPatternYears, error: error.message });
       }
     }
   } catch (error) {
-    await releaseReceipt(db, runRef, owner).catch(() => {});
+    await releaseReceipt(db, runRef, owner, { failed: true }).catch(() => {});
     throw error;
   }
 });

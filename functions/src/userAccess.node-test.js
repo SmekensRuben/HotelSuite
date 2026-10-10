@@ -23,11 +23,12 @@ test("updateUserAccess writes profiles, memberships and server-owned membership 
   const operations = [];
   const firestore = {
     doc: (path) => ({ path }),
-    collection: () => ({ doc: () => ({ path: "userAccessAudit/event" }), where() { return this; }, limit() { return { query: true }; } }),
+    collection: () => ({ doc: () => ({ path: "userAccessAudit/event", id: "event" }), where() { return this; }, limit() { return { query: true }; } }),
     runTransaction: (callback) => callback({
       get: async (reference) => reference.query ? { docs: [], size: 0 } : ({ exists: true, data: () => reference.path === "users/user-a" ? { hotelUid: ["hotel-a", "hotel-b"], accessRevision: 0 } : {} }),
       update: (reference, data) => operations.push(["update", reference.path, data]),
       set: (reference, data) => operations.push(["set", reference.path, data]),
+      create: (reference, data) => operations.push(["create", reference.path, data]),
       delete: (reference) => operations.push(["delete", reference.path]),
     }),
   };
@@ -52,6 +53,8 @@ test("updateUserAccess writes profiles, memberships and server-owned membership 
   assert.equal(operations.some(([type, path]) => type === "delete" && path === "hotels/hotel-b/members/user-a"), true);
   assert.equal(claims, undefined);
   assert.equal(result.accessRevision, 1);
+  assert.equal(operations.filter(([type, path]) => type === "create" && path.startsWith("platformAudit/")).length, 2);
+  assert.equal(operations.filter(([type, path]) => type === "create" && path.includes("/platformAudit/")).length, 2);
 });
 
 test("stale user access saves cannot overwrite a more recent assignment", async () => {

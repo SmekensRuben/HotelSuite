@@ -21,7 +21,7 @@ service cloud.firestore {
     }
 
     function isHotelMember(hotelUid) {
-      return isPlatformAdmin() || (signedIn() && exists(membershipPath(hotelUid)));
+      return verified() && exists(membershipPath(hotelUid));
     }
 
     function memberPermissions(hotelUid) {
@@ -29,14 +29,13 @@ service cloud.firestore {
     }
 
     function hasPermissions(hotelUid, keys) {
-      return isPlatformAdmin()
-        || (verified()
+      return (verified()
           && hasModule(hotelUid, 'core')
           && memberPermissions(hotelUid).hasAny(licensedKeys(hotelUid, keys)));
     }
 
     function hasPermission(hotelUid, feature, action) {
-      return isPlatformAdmin() || (verified()
+      return (verified()
         && hasModule(hotelUid, featureModule(feature.lower()))
         && memberPermissions(hotelUid).hasAny([feature.lower() + '.' + action, feature.lower() + '.*']));
     }
@@ -313,20 +312,20 @@ service cloud.firestore {
     }
 
     match /users/{userUid} {
-      allow get: if isPlatformAdmin() || (signedIn() && request.auth.uid == userUid);
-      allow list: if isPlatformAdmin();
+      allow get: if signedIn() && request.auth.uid == userUid;
+      allow list: if false;
       allow create, update, delete: if false;
     }
 
     match /hotels/{hotelUid} {
       allow read: if isHotelMember(hotelUid);
-      allow update: if isPlatformAdmin();
+      allow update: if false;
       allow create, delete: if false;
 
       match /members/{memberUid} {
-        allow get: if isPlatformAdmin() || (signedIn() && request.auth.uid == memberUid)
+        allow get: if (signedIn() && request.auth.uid == memberUid)
           || hasPermission(hotelUid, 'users', 'read');
-        allow list: if isPlatformAdmin() || hasPermission(hotelUid, 'users', 'read');
+        allow list: if hasPermission(hotelUid, 'users', 'read');
         allow create, update, delete: if false;
       }
 
@@ -540,10 +539,9 @@ service cloud.firestore {
             && mayRead(hotelUid, 'groupquotes'));
         allow write: if false;
       }
-      match /{collectionName}/{document=**} {
-        allow read: if isPlatformAdmin() && !(collectionName in ['settings', 'compset', 'importRuns', 'importReceipts', 'importIngressReceipts', 'importReceivingIdentities', 'contracts', 'contractOperations', 'contractAttachments', 'contractAudit', 'suppliers', 'supplierSecrets', 'mailQueue', 'dispatches', 'orderOperations', 'cartOperations', 'invitations']);
-        allow write: if isPlatformAdmin() && !(collectionName in ['memberAdministration', 'reports', 'contractReminderRuns', 'scheduledMailReceipts', 'guestIntelligenceVersions', 'guestIntelligenceRuns', 'guestIntelligence', 'catalogproducts', 'supplierproducts', 'quotes', 'competitorGroupQuotes', 'settings', 'compset', 'stockCounts', 'importRuns', 'importReceipts', 'importIngressReceipts', 'importReceivingIdentities', 'contracts', 'contractOperations', 'contractAttachments', 'contractAudit', 'members', 'suppliers', 'supplierSecrets', 'supplierOutletAccounts', 'orders', 'shoppingCarts', 'outlets', 'subscriptionAudit', 'supplierAudit', 'orderAudit', 'accessAudit', 'mailQueue', 'dispatches', 'orderOperations', 'cartOperations', 'invitations']);
-      }
+      // Platform diagnostics are bounded, sanitized callable responses.
+      // A platform claim does not grant operational hotel data or browser writes.
+      match /{collectionName}/{document=**} { allow read, write: if false; }
     }
 
     match /roomingListLinks/{token} {

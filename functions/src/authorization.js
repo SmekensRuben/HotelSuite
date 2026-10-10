@@ -21,8 +21,7 @@ async function requireHotelPermission(db, request, hotelUid, feature, action, tr
   await requireCurrentVerifiedUser(request, auth);
   await enforceRequestRollout(db, request, transaction);
   hotelUid = requireDocumentId(hotelUid, "hotelUid");
-  if (request.auth.token?.platformAdmin === true) return;
-
+  // Platform administration is not an operational hotel membership.
   const ref = db.doc(`hotels/${hotelUid}/members/${request.auth.uid}`);
   const membership = transaction ? await transaction.get(ref) : await ref.get();
   const permissions = normalizedPermissions(membership.exists ? membership.data()?.permissions : []);

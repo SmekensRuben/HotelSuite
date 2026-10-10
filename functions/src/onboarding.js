@@ -6,6 +6,7 @@ const { requireVerifiedUser, text, email, digest } = require("./validation");
 const { catalog, validateModules, validateSeatLimit, compileMemberAccess } = require("./modulePolicy");
 const { requireHotelAdministrator, readTeamGuard, writeTeamGuard } = require("./hotelTeam");
 const { gated, enforceRequestRollout, SAAS_RULES_VERSION } = require("./saasRollout");
+const { writePlatformAudit } = require("./platformAudit");
 
 const ROLES = {
   manager: ["dashboard.read", ...catalog.modules.procurement.roles["module-manager"].permissions],
@@ -35,16 +36,12 @@ async function createHotelHandler(request, services = {}) {
   const operation = db.doc(`platformOperations/${key}`);
   return db.runTransaction(async (tx) => {
     await enforceRequestRollout(db, request, tx);
-    const profileRef = db.doc(`users/${request.auth.uid}`);
-    const [existing, op, profile] = await Promise.all([tx.get(ref), tx.get(operation), tx.get(profileRef)]);
+    const [existing, op] = await Promise.all([tx.get(ref), tx.get(operation)]);
     if (op.exists) {
       if (op.data().fingerprint !== fingerprint) throw new HttpsError("already-exists", "This request was used with different hotel details.");
       return op.data().result;
     }
     if (existing.exists) throw new HttpsError("already-exists", "This hotel ID is already in use.");
-    const profileData = profile.data() || {};
-    if ((profileData.hotelUid !== undefined && !Array.isArray(profileData.hotelUid))
-      || !Number.isSafeInteger(profileData.accessRevision || 0)) throw new HttpsError("failed-precondition", "Review your existing hotel assignments before onboarding another hotel.");
     const validUntil = input.status === "trialing"
       ? admin.firestore.Timestamp.fromMillis((services.now?.() ?? Date.now()) + trialDays * 86400000) : null;
     const result = { hotelUid, name, status: input.status, validUntilMillis: validUntil?.toMillis() ?? null };
@@ -54,7 +51,7 @@ async function createHotelHandler(request, services = {}) {
     tx.create(db.doc(`hotels/${hotelUid}/settings/propertySettings`), {});
     tx.create(db.doc(`hotelSubscriptions/${hotelUid}`), { status: input.status, planId: "standard", billingMode: "manual", modules, modulePolicyVersion: catalog.policyVersion, seatLimit, validUntil, revision: 1, updatedAt: stamp(), updatedBy: request.auth.uid });
     tx.create(db.doc(`hotels/${hotelUid}/subscriptionAudit/${key}`), { actorUid: request.auth.uid, previousStatus: null, status: input.status, planId: "standard", modules, modulePolicyVersion: catalog.policyVersion, seatLimit, validUntil, revision: 1, createdAt: stamp() });
-    tx.set(profileRef, { hotelUid: admin.firestore.FieldValue.arrayUnion(hotelUid), accessRevision: (profileData.accessRevision || 0) + 1 }, { merge: true });
+    writePlatformAudit(tx, db, { key, hotelUid, actorUid: request.auth.uid, action: "hotel-created", targetId: hotelUid });
     tx.create(operation, { type: "create-hotel", actorUid: request.auth.uid, fingerprint, result, createdAt: stamp() });
     return result;
   });
@@ -139,6 +136,7 @@ async function inviteHotelUserHandler(request, services = {}) {
     }
     tx.create(ref, { uid: user.uid, email: user.email, role: input.role || null, fingerprint, actorUid: request.auth.uid, createdAt: stamp });
     tx.create(db.doc(`hotels/${hotelUid}/accessAudit/${key}`), { uid: user.uid, action: member.exists ? "resend-invitation" : "invite", moduleRoles: member.data()?.moduleRoles || access?.moduleRoles || {}, hotelAdmin: member.data()?.hotelAdmin === true || access?.hotelAdmin === true, actorUid: request.auth.uid, createdAt: stamp });
+    writePlatformAudit(tx, db, { key, hotelUid, actorUid: request.auth.uid, action: member.exists ? "hotel-invitation-requeued" : "hotel-member-invited", targetId: user.uid });
     tx.create(mailRef, { type: "hotel-invitation", hotelUid, uid: user.uid, actorUid: request.auth.uid, status: "queued", queuedAt: stamp,
       payload: { to: [user.email], subject: `Your HotelSuite access: ${hotel.data().name || hotelUid}`,
         text: `You have been invited to ${hotel.data().name || hotelUid}.\n\n${resetLink ? `1. Set your password: ${resetLink}\n\n` : ""}${verificationLink ? `Verify your email: ${verificationLink}\n\n` : ""}Sign in: ${signInUrl}\n\nYour hotel administrators manage your access.` } });

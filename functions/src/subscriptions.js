@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { writePlatformAudit } = require("./platformAudit");
 const { admin } = require("./config");
 const { requireVerifiedUser, requireCurrentVerifiedUser } = require("./validation");
 const { catalog, moduleAllows, modulesAreValid, validateModules, validateSeatLimit } = require("./modulePolicy");
@@ -130,6 +131,7 @@ async function setHotelSubscriptionHandler(request, services = {}) {
       status: next.status, planId, validUntil: next.validUntil, revision: next.revision,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    writePlatformAudit(transaction, db, { key: audit.id, hotelUid, actorUid: request.auth.uid, action: "subscription-updated", revision: next.revision });
     return { hotelUid, revision: next.revision };
   });
 }
@@ -139,4 +141,4 @@ async function setHotelSubscriptionHandler(request, services = {}) {
 // this administrative endpoint does not activate onboarding or hotel mutations.
 const setHotelSubscription = onCall({ region: "us-central1", cors: true }, setHotelSubscriptionHandler);
 const listHotelSubscriptions = onCall({ region: "us-central1", cors: true }, listHotelSubscriptionsHandler);
-module.exports = { requirePlatformAdministrator, requireDocumentId, subscriptionIsActive, requireHotelSubscription, hotelHasActiveSubscription, subscribedHotels, setHotelSubscriptionHandler, setHotelSubscription, listHotelSubscriptionsHandler, listHotelSubscriptions };
+module.exports = { subscriptionOverview, requirePlatformAdministrator, requireDocumentId, subscriptionIsActive, requireHotelSubscription, hotelHasActiveSubscription, subscribedHotels, setHotelSubscriptionHandler, setHotelSubscription, listHotelSubscriptionsHandler, listHotelSubscriptions };

@@ -21,7 +21,7 @@ const { dispatchOrderHandler } = require("../../functions/src/sftpDispatch");
 const { processMailQueueHandler, enqueueOrderEmail } = require("../../functions/src/mailQueue");
 const { setHotelSubscription, setHotelSubscriptionHandler } = require("../../functions/src/subscriptions");
 const { reviewOrderDeliveryHandler } = require("../../functions/src/deliveryRecovery");
-const { requireSaasRollout, gated } = require("../../functions/src/saasRollout");
+const { requireSaasRollout, gated, SAAS_RULES_VERSION } = require("../../functions/src/saasRollout");
 const db = admin.firestore();
 const auth = admin.auth();
 const services = { firestore: db, auth, appBaseUrl: "https://pilot.example.test" };
@@ -164,7 +164,7 @@ describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
     await rejected(handler(request(operator, {})), "failed-precondition");
     await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion: "wrong" });
     await rejected(handler(request(operator, {})), "failed-precondition");
-    await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion: "saas-modules-v2" });
+    await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion: SAAS_RULES_VERSION });
     assert.deepEqual(await handler(request(operator, {})), { changed: true });
     assert.deepEqual(await getHotelOnboardingStatusHandler(request(operator, {}), services), { enabled: true });
     const pausedDuringRequest = gated(async (input) => {

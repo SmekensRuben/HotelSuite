@@ -10,11 +10,9 @@ async function getHotelUserDisplayNameHandler(request, services = {}) {
   const userId = text(request.data?.userId, "User identifier", 254, true);
   const db = services.firestore || admin.firestore();
   await requireHotelSubscription(db, hotelUid);
-  if (request.auth.token?.platformAdmin !== true) {
-    const caller = await db.doc(`hotels/${hotelUid}/members/${request.auth.uid}`).get();
-    if (!caller.exists || !normalizedPermissions(caller.data()?.permissions).length) {
-      throw new HttpsError("permission-denied", "Hotel membership and operational access are required.");
-    }
+  const caller = await db.doc(`hotels/${hotelUid}/members/${request.auth.uid}`).get();
+  if (!caller.exists || !normalizedPermissions(caller.data()?.permissions).length) {
+    throw new HttpsError("permission-denied", "Hotel membership and operational access are required.");
   }
   if (userId.includes("/") || [".", ".."].includes(userId)) return { displayName: userId };
   const member = await db.doc(`hotels/${hotelUid}/members/${userId}`).get();

@@ -16,11 +16,7 @@ service firebase.storage {
       return boundedUpload() && request.resource.contentType in ['text/csv', 'text/plain', 'application/pdf', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/xml', 'text/xml', 'application/json'];
     }
 
-    function isPlatformAdmin() {
-      return signedIn()
-        && 'platformAdmin' in request.auth.token
-        && request.auth.token.platformAdmin == true;
-    }
+
 
     // BEGIN GENERATED MODULE POLICY: scripts/render-module-rules.mjs
     function hasModule(subscription, moduleId) {
@@ -54,7 +50,7 @@ service firebase.storage {
         && member.permissions is list && member.permissions.hasAny([feature + '.' + action, feature + '.*']);
     }
     function hasPermission(hotelUid, feature, action) {
-      return isPlatformAdmin() || (signedIn() && hotelPermission(hotelUid, feature, action));
+      return signedIn() && hotelPermission(hotelUid, feature, action);
     }
 
     // Private contract objects and legacy paths cannot expose metadata or mint
@@ -77,8 +73,7 @@ service firebase.storage {
     }
 
     match /hotels/{hotelUid}/{collectionName}/{allPaths=**} {
-      allow read, delete: if isPlatformAdmin() && collectionName != 'contracts';
-      allow create, update: if isPlatformAdmin() && !(collectionName in ['contracts', 'catalogproducts', 'supplierproducts']) && boundedUpload();
+      allow read, write: if false;
     }
 
     match /imports/{hotelUid}/{allPaths=**} {

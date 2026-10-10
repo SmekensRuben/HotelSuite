@@ -50,7 +50,8 @@ async function claimReceipt(db, ref, descriptor, { now = Date.now(), leaseMs = 3
     if (existing?.state === "complete") return { state: "complete", descriptor: existing.descriptor, result: existing.result };
     if (existing?.leaseUntil > now) return { state: "busy" };
     tx.set(ref, { ...initialData, ...(existing || {}), schemaVersion: 1, descriptor, descriptorHash,
-      state: "processing", owner, leaseUntil: now + leaseMs, updatedAt: now });
+      state: "processing", owner, leaseUntil: now + leaseMs, updatedAt: now,
+      createdAt: existing?.createdAt ?? now, errorCode: null });
     return { state: "claimed", owner, descriptor, configuration: existing?.configuration || initialData.configuration };
   });
 }
@@ -61,11 +62,12 @@ async function finishReceipt(db, ref, owner, result) {
     tx.update(ref, { state: "complete", result, leaseUntil: 0, updatedAt: Date.now() });
   });
 }
-async function releaseReceipt(db, ref, owner) {
+async function releaseReceipt(db, ref, owner, { failed = false } = {}) {
   await db.runTransaction(async (tx) => {
     const snapshot = await tx.get(ref);
     if (snapshot.exists && snapshot.data().owner === owner && snapshot.data().state !== "complete") {
-      tx.update(ref, { leaseUntil: 0, updatedAt: Date.now() });
+      tx.update(ref, { leaseUntil: 0, updatedAt: Date.now(),
+        ...(failed ? { state: "failed", errorCode: "import-processing-failed" } : {}) });
     }
   });
 }
