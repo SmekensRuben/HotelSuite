@@ -2,7 +2,6 @@ const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { admin } = require("./config");
 const { requireVerifiedUser, requireCurrentVerifiedUser } = require("./validation");
 const { catalog, moduleAllows, modulesAreValid, validateModules, validateSeatLimit } = require("./modulePolicy");
-const { gated } = require("./saasRollout");
 
 const SUBSCRIPTION_STATUSES = ["trialing", "active", "suspended", "canceled"];
 
@@ -135,6 +134,9 @@ async function setHotelSubscriptionHandler(request, services = {}) {
   });
 }
 
-const setHotelSubscription = onCall({ region: "us-central1", cors: true }, gated(setHotelSubscriptionHandler));
+// Platform operators must prepare module entitlements before rollout preflight.
+// Current Auth authority, revisions and atomic audit writes remain mandatory;
+// this administrative endpoint does not activate onboarding or hotel mutations.
+const setHotelSubscription = onCall({ region: "us-central1", cors: true }, setHotelSubscriptionHandler);
 const listHotelSubscriptions = onCall({ region: "us-central1", cors: true }, listHotelSubscriptionsHandler);
 module.exports = { requirePlatformAdministrator, requireDocumentId, subscriptionIsActive, requireHotelSubscription, hotelHasActiveSubscription, subscribedHotels, setHotelSubscriptionHandler, setHotelSubscription, listHotelSubscriptionsHandler, listHotelSubscriptions };
