@@ -39,6 +39,8 @@ Functions and App Hosting deploy automatically from verified `main`. This script
 
 Download `scripts/firebase/rollout-saas-pilot.sh` from the reviewed merged release and upload that single file through Cloud Shell's **Upload file** control. A Git clone is not required. Run as `bestsmekens@gmail.com`, using Node 22 or newer:
 
+Only the separate locked operator runtime is installed, on `/tmp` with an ephemeral npm cache. Dependencies are cleaned on exit; Rules and recovery backups remain on the persistent home disk. For older scripts that fail with ENOSPC, replace the wrapper and follow [the scoped disk recovery instructions](cloud-shell-rollout-runtime.md).
+
 ```bash
 bash ~/rollout-saas-pilot.sh --release-sha <reviewed-main-sha>
 ```

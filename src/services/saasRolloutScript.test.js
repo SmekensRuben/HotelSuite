@@ -43,14 +43,18 @@ if (command === "gcloud") {
   const destination = args[args.indexOf("--output") + 1];
   if (!destination || !args.some((a) => a.startsWith("https://raw.githubusercontent.com/SmekensRuben/HotelSuite/"))) unsupported();
   fs.mkdirSync(path.dirname(destination), { recursive: true });
-  fs.writeFileSync(destination, "{}");
+  const source = args.find((a) => a.startsWith("https://raw.githubusercontent.com/SmekensRuben/HotelSuite/"));
+  const file = new URL(source).pathname.split("/").slice(4).join("/");
+  fs.copyFileSync(path.join(process.env.ROLLOUT_TEST_SOURCE, file), destination);
 } else if (command === "mktemp") {
   console.log(fs.mkdtempSync(path.join(process.env.ROLLOUT_TEST_ROOT, "hotelsuite-rollout-")));
 } else if (command === "node") {
   if (args[0] !== "-e" && args[0] !== "scripts/firebase/saas-release-check.mjs" && args[0] !== "scripts/firebase/saas-rollout.mjs") unsupported();
+} else if (command === "df") {
+  console.log("Filesystem total used available capacity mount\\nfixture 4000000 0 4000000 0% /tmp");
 } else if (command !== "npm" && command !== "sleep") unsupported();
 `;
-  for (const command of ["gcloud", "curl", "node", "npm", "sleep", "mktemp"]) {
+  for (const command of ["gcloud", "curl", "node", "npm", "sleep", "mktemp", "df"]) {
     writeFileSync(join(bin, command), commandFixture, { mode: 0o700 });
   }
   const result = spawnSync("bash", [script, "--release-sha", releaseSha, ...options], {
@@ -60,6 +64,7 @@ if (command === "gcloud") {
       ...process.env,
       PATH: `${bin}:${process.env.PATH}`,
       ROLLOUT_TEST_ROOT: directory,
+      ROLLOUT_TEST_SOURCE: process.cwd(),
       ROLLOUT_TEST_LOG: log,
       ROLLOUT_TEST_DENY_GRANT: String(denyGrant),
       ROLLOUT_TEST_POLICY: JSON.stringify({ bindings: existingRole ? [{ role: storageRole, members: [`serviceAccount:${storageAgent}`] }] : [] }),
