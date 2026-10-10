@@ -48,7 +48,7 @@ async function authorize(db, request, hotelUid, action, tx, auth = admin.auth())
   await requireCurrentStaff(request, auth);
   await requireHotelPermission(db, request, hotelUid, "contracts", action, tx);
   // Private operational files require an active subscription even for operators.
-  await requireHotelSubscription(db, hotelUid, tx);
+  await requireHotelSubscription(db, hotelUid, tx, "contracts");
 }
 async function listHotelContractsHandler(request, services = {}) {
   const hotelUid = strictId(request.data?.hotelUid, "hotelUid");

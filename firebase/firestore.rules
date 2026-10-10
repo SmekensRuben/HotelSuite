@@ -30,23 +30,49 @@ service cloud.firestore {
 
     function hasPermissions(hotelUid, keys) {
       return isPlatformAdmin()
-        || (verified() && exists(membershipPath(hotelUid))
-          && hasActiveSubscription(hotelUid)
-          && memberPermissions(hotelUid).hasAny(keys));
+        || (verified()
+          && hasModule(hotelUid, 'core')
+          && memberPermissions(hotelUid).hasAny(licensedKeys(hotelUid, keys)));
     }
 
     function hasPermission(hotelUid, feature, action) {
-      return hasPermissions(hotelUid, [feature.lower() + '.' + action, feature.lower() + '.*']);
+      return isPlatformAdmin() || (verified()
+        && hasModule(hotelUid, featureModule(feature.lower()))
+        && memberPermissions(hotelUid).hasAny([feature.lower() + '.' + action, feature.lower() + '.*']));
     }
 
-    function hasActiveSubscription(hotelUid) {
-      let path = /databases/$(database)/documents/hotelSubscriptions/$(hotelUid);
-      let subscription = get(path).data;
-      return exists(path)
-        && subscription.status in ['active', 'trialing']
+    // BEGIN GENERATED MODULE POLICY: scripts/render-module-rules.mjs
+    function hasModule(hotelUid, moduleId) {
+      let subscription = get(/databases/$(database)/documents/hotelSubscriptions/$(hotelUid)).data;
+      let modules = subscription.modules;
+      return subscription.status in ['active', 'trialing']
         && ((subscription.status == 'active' && subscription.validUntil == null)
-          || (subscription.validUntil is timestamp && subscription.validUntil > request.time));
+          || (subscription.validUntil is timestamp && subscription.validUntil > request.time))
+        && subscription.modulePolicyVersion == 1
+        && modules is list && modules.size() <= 5
+        && modules.hasOnly(['procurement', 'contracts', 'frontoffice', 'groups', 'revenue'])
+        && modules.toSet().size() == modules.size()
+        && (moduleId == 'core' || moduleId in modules);
     }
+    function licensedKeys(hotelUid, keys) {
+      let modules = get(/databases/$(database)/documents/hotelSubscriptions/$(hotelUid)).data.modules;
+      return keys
+        .removeAll('procurement' in modules ? [] : ['catalogproducts.create', 'catalogproducts.read', 'catalogproducts.update', 'catalogproducts.delete', 'catalogproducts.*', 'supplierproducts.create', 'supplierproducts.read', 'supplierproducts.update', 'supplierproducts.delete', 'supplierproducts.*', 'suppliers.create', 'suppliers.read', 'suppliers.update', 'suppliers.delete', 'suppliers.password', 'suppliers.*', 'orders.create', 'orders.read', 'orders.update', 'orders.delete', 'orders.approve', 'orders.*', 'stockcounts.create', 'stockcounts.read', 'stockcounts.update', 'stockcounts.delete', 'stockcounts.*', 'catalogsettings.create', 'catalogsettings.read', 'catalogsettings.update', 'catalogsettings.delete', 'catalogsettings.*', 'outlets.create', 'outlets.read', 'outlets.update', 'outlets.delete', 'outlets.approvers', 'outlets.*', 'locations.create', 'locations.read', 'locations.update', 'locations.delete', 'locations.*'])
+        .removeAll('contracts' in modules ? [] : ['contracts.create', 'contracts.read', 'contracts.update', 'contracts.delete', 'contracts.notify', 'contracts.settings', 'contracts.*'])
+        .removeAll('frontoffice' in modules ? [] : ['reservations.read', 'reservations.*', 'auditupsells.read', 'auditupsells.settings', 'auditupsells.*'])
+        .removeAll('groups' in modules ? [] : ['groups.create', 'groups.read', 'groups.update', 'groups.delete', 'groups.*', 'roominglists.create', 'roominglists.read', 'roominglists.update', 'roominglists.approve', 'roominglists.*'])
+        .removeAll('revenue' in modules ? [] : ['groupquotes.create', 'groupquotes.read', 'groupquotes.update', 'groupquotes.delete', 'groupquotes.*', 'demandcalendar.create', 'demandcalendar.read', 'demandcalendar.update', 'demandcalendar.delete', 'demandcalendar.import', 'demandcalendar.*', 'commercialintelligence.create', 'commercialintelligence.read', 'commercialintelligence.update', 'commercialintelligence.delete', 'commercialintelligence.*'])
+        ;
+    }
+    function featureModule(feature) {
+      return feature in ['catalogproducts', 'supplierproducts', 'suppliers', 'orders', 'stockcounts', 'catalogsettings', 'outlets', 'locations'] ? 'procurement' :
+        feature in ['contracts'] ? 'contracts' :
+        feature in ['reservations', 'auditupsells'] ? 'frontoffice' :
+        feature in ['groups', 'roominglists'] ? 'groups' :
+        feature in ['groupquotes', 'demandcalendar', 'commercialintelligence'] ? 'revenue' :
+        feature in ['dashboard', 'propertysettings', 'imports', 'integrations', 'notifications', 'users'] ? 'core' : 'unsupported';
+    }
+    // END GENERATED MODULE POLICY
 
     match /hotelSubscriptions/{hotelUid} {
       allow read: if isPlatformAdmin() || isHotelMember(hotelUid);
@@ -198,6 +224,18 @@ service cloud.firestore {
       let value = data.get(key, null);
       return value == null || (value is map && value.size() <= maximum);
     }
+    function numberBetween(value, minimum, maximum) {
+      return value is number && value >= minimum && value <= maximum;
+    }
+    function positiveNumber(value, maximum) {
+      return value is number && value > 0 && value <= maximum;
+    }
+    function boundedList(value, maximum) {
+      return value is list && value.size() <= maximum;
+    }
+    function boundedNullableMap(value, maximum) {
+      return value == null || (value is map && value.size() <= maximum);
+    }
     function productSchema(data, supplier) {
       return data.keys().hasOnly(supplier
           ? ['supplierId', 'supplierSku', 'supplierProductName', 'supplierName', 'currency', 'pricingModel', 'purchaseUnit', 'baseUnit', 'catalogProductId', 'imageUrl', 'active', 'hasVariants', 'pricePerBaseUnit', 'pricePerPurchaseUnit', 'baseUnitsPerPurchaseUnit', 'variants', 'priceUpdatedOn', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy']
@@ -217,35 +255,38 @@ service cloud.firestore {
     }
     function quoteInputSchema(data) {
       return boundedString(data.name, 300) && data.name.size() > 0 && businessDate(data.startDate) && businessDate(data.endDate) && data.startDate <= data.endDate
-        && (!('requestDate' in data) || businessDate(data.requestDate)) && optionalString(data, 'groupSegment', 128)
-        && optionalString(data, 'dateRangeSemantics', 80) && optionalString(data, 'quoteInputSchemaVersion', 100)
+        && (!('requestDate' in data) || businessDate(data.requestDate)) && boundedString(data.get('groupSegment', ''), 128)
+        && boundedString(data.get('dateRangeSemantics', ''), 80) && boundedString(data.get('quoteInputSchemaVersion', ''), 100)
         && data.roomsByDate is list && data.roomsByDate.size() <= 366
         && optionalNumber(data, 'breakfastPax', 100000) && optionalNumber(data, 'groupCommissionPercentage', 99.99) && optionalList(data, 'analysisYears', 20);
     }
     function quoteStatusSchema(data) {
       return data.get('commercialStatus', 'PENDING') in ['PENDING', 'WON', 'LOST', 'DECLINED', 'CANCELLED']
-        && data.get('analysisStatus', 'UNAVAILABLE') in ['CURRENT', 'STALE', 'UNAVAILABLE'] && optionalBool(data, 'draft')
-        && (!('analysisUnavailableReason' in data) || data.analysisUnavailableReason == null || boundedString(data.analysisUnavailableReason, 2000)) && optionalString(data, 'analysisStaleReason', 2000);
+        && data.get('analysisStatus', 'UNAVAILABLE') in ['CURRENT', 'STALE', 'UNAVAILABLE'] && data.get('draft', false) is bool
+        && (!('analysisUnavailableReason' in data) || data.analysisUnavailableReason == null || boundedString(data.analysisUnavailableReason, 2000)) && boundedString(data.get('analysisStaleReason', ''), 2000);
     }
-    function quoteSchema(data) {
-      return data.keys().hasOnly(['name', 'requestDate', 'startDate', 'endDate', 'groupSegment', 'dateRangeSemantics', 'quoteInputSchemaVersion', 'roomsByDate', 'breakfastPax', 'groupCommissionPercentage', 'analysisYears', 'displacementForecast', 'groupDemandForecast', 'integratedDisplacement', 'commercialStatus', 'quoteInputSnapshot', 'analysisStatus', 'analysisUnavailableReason', 'draft', 'analysisStaleReason', 'analysisModelVersion', 'contributionModelVersion', 'stayPatternModelVersion', 'displacementModelVersion', 'marketContextModelVersion', 'pricingGuidanceModelVersion', 'physicalFeasibilityVersion', 'physicalFeasibility', 'marketContextSnapshot', 'pricingGuidanceSnapshot', 'sourceAvailabilitySnapshot', 'analysisContributionSnapshot', 'legacyStayDateDisplacement', 'losNetworkDisplacement', 'createdAt', 'updatedAt'])
-        && quoteInputSchema(data) && quoteStatusSchema(data)
-        && optionalList(data, 'displacementForecast', 1500) && optionalList(data, 'groupDemandForecast', 1500) && optionalList(data, 'integratedDisplacement', 1500)
-        && optionalString(data, 'analysisModelVersion', 100) && optionalString(data, 'contributionModelVersion', 100) && optionalString(data, 'stayPatternModelVersion', 100)
-        && optionalString(data, 'displacementModelVersion', 100) && optionalString(data, 'marketContextModelVersion', 100) && optionalString(data, 'pricingGuidanceModelVersion', 100) && optionalString(data, 'physicalFeasibilityVersion', 100)
-        && nullableMap(data, 'quoteInputSnapshot', 30) && nullableMap(data, 'physicalFeasibility', 100) && nullableMap(data, 'marketContextSnapshot', 100)
-        && nullableMap(data, 'pricingGuidanceSnapshot', 100) && nullableMap(data, 'sourceAvailabilitySnapshot', 100) && nullableMap(data, 'analysisContributionSnapshot', 100)
-        && nullableMap(data, 'legacyStayDateDisplacement', 100) && nullableMap(data, 'losNetworkDisplacement', 100)
-        && (data.analysisStatus == 'CURRENT'
-          ? (data.analysisContributionSnapshot.economicFloorRateInclVat is number
-            && data.analysisContributionSnapshot.economicFloorRateInclVat >= -1000000 && data.analysisContributionSnapshot.economicFloorRateInclVat <= 1000000
+    function quoteSnapshotSchema(data) {
+      return boundedList(data.get('displacementForecast', []), 1500) && boundedList(data.get('groupDemandForecast', []), 1500) && boundedList(data.get('integratedDisplacement', []), 1500)
+        && boundedString(data.get('analysisModelVersion', ''), 100) && boundedString(data.get('contributionModelVersion', ''), 100) && boundedString(data.get('stayPatternModelVersion', ''), 100)
+        && boundedString(data.get('displacementModelVersion', ''), 100) && boundedString(data.get('marketContextModelVersion', ''), 100) && boundedString(data.get('pricingGuidanceModelVersion', ''), 100) && boundedString(data.get('physicalFeasibilityVersion', ''), 100)
+        && boundedNullableMap(data.get('quoteInputSnapshot', null), 30) && boundedNullableMap(data.get('physicalFeasibility', null), 100) && boundedNullableMap(data.get('marketContextSnapshot', null), 100)
+        && boundedNullableMap(data.get('pricingGuidanceSnapshot', null), 100) && boundedNullableMap(data.get('sourceAvailabilitySnapshot', null), 100) && boundedNullableMap(data.get('analysisContributionSnapshot', null), 100)
+        && boundedNullableMap(data.get('legacyStayDateDisplacement', null), 100) && boundedNullableMap(data.get('losNetworkDisplacement', null), 100);
+    }
+    function quoteAnalysisSchema(data) {
+      return data.analysisStatus == 'CURRENT'
+          ? (numberBetween(data.analysisContributionSnapshot.economicFloorRateInclVat, -1000000, 1000000)
             && data.physicalFeasibility.status == 'PHYSICALLY_FEASIBLE'
-            && data.physicalFeasibility.requestedRoomNights is number && data.physicalFeasibility.requestedRoomNights > 0 && data.physicalFeasibility.requestedRoomNights <= 10000000
+            && positiveNumber(data.physicalFeasibility.requestedRoomNights, 10000000)
             && data.sourceAvailabilitySnapshot != null && data.analysisModelVersion.size() > 0
             && data.roomsByDate.size() > 0 && data.get('draft', false) == false)
           : (data.analysisStatus == 'UNAVAILABLE' && data.draft == true
             && data.get('pricingGuidanceSnapshot', null) == null && data.get('analysisContributionSnapshot', null) == null
-            && data.analysisUnavailableReason is string && data.analysisUnavailableReason.size() > 0))
+            && data.analysisUnavailableReason is string && data.analysisUnavailableReason.size() > 0);
+    }
+    function quoteSchema(data) {
+      return data.keys().hasOnly(['name', 'requestDate', 'startDate', 'endDate', 'groupSegment', 'dateRangeSemantics', 'quoteInputSchemaVersion', 'roomsByDate', 'breakfastPax', 'groupCommissionPercentage', 'analysisYears', 'displacementForecast', 'groupDemandForecast', 'integratedDisplacement', 'commercialStatus', 'quoteInputSnapshot', 'analysisStatus', 'analysisUnavailableReason', 'draft', 'analysisStaleReason', 'analysisModelVersion', 'contributionModelVersion', 'stayPatternModelVersion', 'displacementModelVersion', 'marketContextModelVersion', 'pricingGuidanceModelVersion', 'physicalFeasibilityVersion', 'physicalFeasibility', 'marketContextSnapshot', 'pricingGuidanceSnapshot', 'sourceAvailabilitySnapshot', 'analysisContributionSnapshot', 'legacyStayDateDisplacement', 'losNetworkDisplacement', 'createdAt', 'updatedAt'])
+        && quoteInputSchema(data) && quoteStatusSchema(data) && quoteSnapshotSchema(data) && quoteAnalysisSchema(data)
         && data.get('createdAt', request.time) == request.time && data.get('updatedAt', request.time) == request.time;
     }
     function quoteUpdateSchema() {
@@ -354,8 +395,8 @@ service cloud.firestore {
       }
       match /quotes/{quoteId} {
         allow read: if mayRead(hotelUid, 'groupquotes');
-        allow create: if mayWrite(hotelUid, 'groupquotes', 'create') && quoteSchema(request.resource.data);
-        allow update: if mayWrite(hotelUid, 'groupquotes', 'update') && quoteUpdateSchema();
+        allow create: if resource == null && mayWrite(hotelUid, 'groupquotes', 'create') && quoteSchema(request.resource.data);
+        allow update: if resource != null && mayWrite(hotelUid, 'groupquotes', 'update') && quoteUpdateSchema();
         allow delete: if mayWrite(hotelUid, 'groupquotes', 'delete');
       }
       match /competitorGroupQuotes/{observationId} {
@@ -501,7 +542,7 @@ service cloud.firestore {
       }
       match /{collectionName}/{document=**} {
         allow read: if isPlatformAdmin() && !(collectionName in ['settings', 'compset', 'importRuns', 'importReceipts', 'importIngressReceipts', 'importReceivingIdentities', 'contracts', 'contractOperations', 'contractAttachments', 'contractAudit', 'suppliers', 'supplierSecrets', 'mailQueue', 'dispatches', 'orderOperations', 'cartOperations', 'invitations']);
-        allow write: if isPlatformAdmin() && !(collectionName in ['reports', 'contractReminderRuns', 'scheduledMailReceipts', 'guestIntelligenceVersions', 'guestIntelligenceRuns', 'guestIntelligence', 'catalogproducts', 'supplierproducts', 'quotes', 'competitorGroupQuotes', 'settings', 'compset', 'stockCounts', 'importRuns', 'importReceipts', 'importIngressReceipts', 'importReceivingIdentities', 'contracts', 'contractOperations', 'contractAttachments', 'contractAudit', 'members', 'suppliers', 'supplierSecrets', 'supplierOutletAccounts', 'orders', 'shoppingCarts', 'outlets', 'subscriptionAudit', 'supplierAudit', 'orderAudit', 'accessAudit', 'mailQueue', 'dispatches', 'orderOperations', 'cartOperations', 'invitations']);
+        allow write: if isPlatformAdmin() && !(collectionName in ['memberAdministration', 'reports', 'contractReminderRuns', 'scheduledMailReceipts', 'guestIntelligenceVersions', 'guestIntelligenceRuns', 'guestIntelligence', 'catalogproducts', 'supplierproducts', 'quotes', 'competitorGroupQuotes', 'settings', 'compset', 'stockCounts', 'importRuns', 'importReceipts', 'importIngressReceipts', 'importReceivingIdentities', 'contracts', 'contractOperations', 'contractAttachments', 'contractAudit', 'members', 'suppliers', 'supplierSecrets', 'supplierOutletAccounts', 'orders', 'shoppingCarts', 'outlets', 'subscriptionAudit', 'supplierAudit', 'orderAudit', 'accessAudit', 'mailQueue', 'dispatches', 'orderOperations', 'cartOperations', 'invitations']);
       }
     }
 

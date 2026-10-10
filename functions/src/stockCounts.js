@@ -87,7 +87,7 @@ async function canonicalCatalogItem(db, tx, hotelUid, identity) {
 async function authorize(db, tx, request, hotelUid, action, services) {
   await requireHotelPermission(db, request, hotelUid, "stockcounts", action, tx, services.auth);
   // Operational counts require an active hotel even for platform operators.
-  await requireHotelSubscription(db, hotelUid, tx);
+  await requireHotelSubscription(db, hotelUid, tx, "procurement");
 }
 async function listHotelStockCountSourcesHandler(request, services = {}) {
   const input = strictObject(request.data, ["hotelUid", "afterLocationId"], "Stock sources");

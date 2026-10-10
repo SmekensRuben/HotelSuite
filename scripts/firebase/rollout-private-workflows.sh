@@ -22,7 +22,7 @@ echo "Reviewed release: $release_sha"
 echo "Operator-local workspace and private backups: $rollout_dir"
 source_url="https://raw.githubusercontent.com/SmekensRuben/HotelSuite/${release_sha}"
 files=(scripts/firebase/operator-runtime/package.json scripts/firebase/operator-runtime/package-lock.json
-  scripts/firebase/install-operator-runtime.sh functions/src/permissionCatalog.json firebase/firestore.rules firebase/storage.rules
+  scripts/firebase/install-operator-runtime.sh functions/src/permissionCatalog.json functions/src/moduleCatalog.json firebase/firestore.rules firebase/storage.rules
   scripts/firebase/saas-rollout.mjs scripts/firebase/saas-rules-release.mjs scripts/firebase/saas-release-check.mjs
   scripts/firebase/private-workflows-rollout.mjs scripts/firebase/private-workflows-migration.mjs)
 for file in "${files[@]}"; do

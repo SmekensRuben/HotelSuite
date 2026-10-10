@@ -16,6 +16,6 @@ async function requireCurrentStaff(request, auth) {
 async function privateWorkflowsEnabled(db) {
   const [privateFlag, procurement] = await Promise.all([db.doc("platformConfiguration/privateWorkflows").get(), db.doc("platformConfiguration/saasProcurement").get()]);
   return privateFlag.data()?.enabled === true && privateFlag.data()?.rulesVersion === PRIVATE_WORKFLOWS_VERSION
-    && procurement.data()?.enabled === true && procurement.data()?.rulesVersion === "saas-procurement-v1";
+    && procurement.data()?.enabled === true && procurement.data()?.rulesVersion === "saas-modules-v2";
 }
 module.exports = { PRIVATE_WORKFLOWS_VERSION, requirePrivateWorkflows, requireCurrentStaff, privateWorkflowsEnabled };

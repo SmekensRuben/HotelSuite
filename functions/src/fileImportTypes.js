@@ -5,7 +5,7 @@ function importObjectMatchesHotel(objectName, hotelUid) {
 }
 function requireHotelImportTarget(path, hotelUid) {
   const segments = String(path || "").split("/");
-  const protectedCollections = ["stockCounts", "scheduledMailReceipts", "guestIntelligence", "guestIntelligenceRuns", "guestIntelligenceVersions", "contracts", "importRuns", "importIngressReceipts", "importReceivingIdentities", "contractOperations", "contractAttachments", "contractAudit", "members", "settings", "mailQueue", "subscriptionAudit", "contractReminderRuns", "fileImportTypes", "fileImportSettings", "supplierSecrets", "suppliers", "supplierOutletAccounts", "orders", "outlets", "invitations", "accessAudit", "supplierAudit", "orderAudit", "dispatches", "orderOperations", "cartOperations", "shoppingCarts"];
+  const protectedCollections = ["memberAdministration", "stockCounts", "scheduledMailReceipts", "guestIntelligence", "guestIntelligenceRuns", "guestIntelligenceVersions", "contracts", "importRuns", "importIngressReceipts", "importReceivingIdentities", "contractOperations", "contractAttachments", "contractAudit", "members", "settings", "mailQueue", "subscriptionAudit", "contractReminderRuns", "fileImportTypes", "fileImportSettings", "supplierSecrets", "suppliers", "supplierOutletAccounts", "orders", "outlets", "invitations", "accessAudit", "supplierAudit", "orderAudit", "dispatches", "orderOperations", "cartOperations", "shoppingCarts"];
   if (segments.length < 3 || segments.length > 20 || String(path).length > 1000 || segments[0] !== "hotels" || segments[1] !== hotelUid
     || segments.some((segment) => !segment || [".", ".."].includes(segment))
     || protectedCollections.includes(segments[2])

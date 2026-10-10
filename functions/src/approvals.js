@@ -7,7 +7,7 @@ async function orderApprovalNotificationHandler(event, services = {}) {
   if (!event.data?.exists) return;
   const { hotelUid, orderId } = event.params;
   const db = services.firestore || admin.firestore();
-  if (!await hotelHasActiveSubscription(db, hotelUid)) return;
+  if (!await hotelHasActiveSubscription(db, hotelUid, "procurement")) return;
   const order = event.data.data();
   if (!order.outletId) return;
   const approvers = await db.collection(`hotels/${hotelUid}/outlets/${order.outletId}/approvers`).limit(20).get();

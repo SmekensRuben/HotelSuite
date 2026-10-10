@@ -2,6 +2,7 @@ const { createHash } = require("node:crypto");
 const { admin } = require("./config");
 const { hotelHasActiveSubscription, requireDocumentId, subscriptionIsActive } = require("./subscriptions");
 const { permissionAllows, normalizedPermissions } = require("./authorization");
+const { featureModule, featureIsLicensed } = require("./modulePolicy");
 
 function hotelBusinessDate(now = Date.now()) {
   const parts = new Intl.DateTimeFormat("en", { timeZone: "Europe/Brussels", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(now));
@@ -55,8 +56,8 @@ async function resolveAuthorizedRecipients({ db, auth = admin.auth(), hotelUid, 
   const uids = [...new Set(recipientUids.map((uid) => requireDocumentId(uid, "recipientUid")))].sort();
   if (transaction) {
     const subscription = await transaction.get(db.doc(`hotelSubscriptions/${hotelUid}`));
-    if (!subscription.exists || !subscriptionIsActive(subscription.data())) return [];
-  } else if (!await hotelHasActiveSubscription(db, hotelUid)) return [];
+    if (!subscription.exists || !subscriptionIsActive(subscription.data()) || !featureIsLicensed(subscription.data(), feature)) return [];
+  } else if (!await hotelHasActiveSubscription(db, hotelUid, featureModule(feature))) return [];
   const recipients = await Promise.all(uids.map(async (uid) => {
     const memberRef = db.doc(`hotels/${hotelUid}/members/${uid}`);
     const member = transaction ? await transaction.get(memberRef) : await memberRef.get();

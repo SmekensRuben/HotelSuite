@@ -468,6 +468,7 @@ async function processMailQueueHandler(event, services = {}) {
   const db = services.firestore || admin.firestore();
   const ref = db.doc(`hotels/${hotelUid}/mailQueue/${mailId}`);
   const { subscriptionIsActive } = require("./subscriptions");
+  const { moduleAllows } = require("./modulePolicy");
   const { completeDispatch, dispatchActorIsCurrent } = require("./deliveryState");
   const { digest } = require("./validation");
   const mail = await db.runTransaction(async (tx) => {
@@ -482,7 +483,10 @@ async function processMailQueueHandler(event, services = {}) {
         const member = await tx.get(db.doc(`hotels/${hotelUid}/members/${data.uid}`));
         const user = await (services.auth || admin.auth()).getUser(data.uid);
         const actor = await (services.auth || admin.auth()).getUser(requireDocumentId(data.actorUid, "Invitation actor UID"));
-        permitted = permitted && !actor.disabled && actor.emailVerified === true && actor.customClaims?.platformAdmin === true && member.exists && !user.disabled && data.payload?.to?.length === 1 && data.payload.to[0] === user.email;
+        const actorMember = await tx.get(db.doc(`hotels/${hotelUid}/members/${data.actorUid}`));
+        permitted = permitted && !actor.disabled && actor.emailVerified === true
+          && (actor.customClaims?.platformAdmin === true || actorMember.data()?.hotelAdmin === true)
+          && member.exists && !user.disabled && data.payload?.to?.length === 1 && data.payload.to[0] === user.email;
       } catch { permitted = false; }
     }
     if (data.type === "order-approval") {
@@ -521,7 +525,8 @@ async function processMailQueueHandler(event, services = {}) {
         }
       } catch { permitted = false; }
     }
-    if (!permitted || !subscription.exists || !subscriptionIsActive(subscription.data())) {
+    if (!permitted || !subscription.exists || !subscriptionIsActive(subscription.data())
+      || !moduleAllows(subscription.data(), data.type === "hotel-invitation" ? "core" : "procurement")) {
       tx.update(ref, { status: "blocked", error: "Hotel subscription or delivery authorization is no longer valid." });
       return { ...data, blocked: true };
     }

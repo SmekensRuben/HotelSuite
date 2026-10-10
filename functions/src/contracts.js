@@ -277,7 +277,7 @@ async function processContractCancellationReminders({ hotelUidFilter, db = admin
     if (pathSegments.length !== 4 || pathSegments[0] !== "hotels") continue;
     const hotelUid = pathSegments[1];
     try {
-      if (!await hotelHasActiveSubscription(db, hotelUid)) continue;
+      if (!await hotelHasActiveSubscription(db, hotelUid, "contracts")) continue;
       const hotelName = await resolveHotelName(hotelUid, db);
       const cancelBefore = toDateOnly(contract.cancelBefore);
 

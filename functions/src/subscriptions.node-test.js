@@ -37,7 +37,7 @@ test("subscription discovery returns names, revisions and expiry without exposin
     validUntil: expiry(2000), updatedBy: "private-uid", updatedAt: expiry(1000) } });
   assert.deepEqual(await listHotelSubscriptionsHandler({ auth: platformAuth }, { firestore: db, auth: currentAuth }), {
     hotels: [
-      { hotelUid: "a", hotelName: "Test Hotel", subscription: { status: "trialing", planId: "standard", billingMode: "manual", revision: 3, validUntilMillis: 2000 } },
+      { hotelUid: "a", hotelName: "Test Hotel", subscription: { status: "trialing", planId: "standard", billingMode: "manual", revision: 3, validUntilMillis: 2000, modules: null, modulePolicyVersion: null, seatLimit: null, moduleMigrationRequired: true } },
       { hotelUid: "b", hotelName: "Second Hotel", subscription: null },
     ], nextCursor: null,
   });
@@ -62,7 +62,7 @@ test("subscription discovery validates cursors and fails closed on corrupt expir
   assert.deepEqual(reads, []);
   assert.deepEqual(await listHotelSubscriptionsHandler({ auth: platformAuth }, { firestore: db, auth: currentAuth }), { hotels: [], nextCursor: null });
   assert.deepEqual(reads, [["limit", 51], ["hotels"]]);
-  for (const subscription of [{ status: "active", validUntil: "invalid", revision: 1 }, { status: "active", validUntil: null, revision: -1 }]) {
+  for (const subscription of [{ modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: "invalid", revision: 1 }, { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null, revision: -1 }]) {
     const database = overviewDatabase([{ id: "a", data: () => ({}) }], { a: subscription });
     await assert.rejects(listHotelSubscriptionsHandler({ auth: platformAuth }, { firestore: database.db, auth: currentAuth }),
       (error) => error.code === "failed-precondition");
@@ -71,9 +71,9 @@ test("subscription discovery validates cursors and fails closed on corrupt expir
 
 test("subscription access expires at the boundary and fails closed", () => {
   assert.equal(subscriptionIsActive(null, 100), false);
-  assert.equal(subscriptionIsActive({ status: "active", validUntil: null }, 100), true);
+  assert.equal(subscriptionIsActive({ modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null }, 100), true);
   assert.equal(subscriptionIsActive({ status: "trialing", validUntil: null }, 100), false);
-  assert.equal(subscriptionIsActive({ status: "active", validUntil: expiry(100) }, 100), false);
+  assert.equal(subscriptionIsActive({ modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: expiry(100) }, 100), false);
   assert.equal(subscriptionIsActive({ status: "trialing", validUntil: expiry(101) }, 100), true);
   assert.equal(subscriptionIsActive({ status: "suspended", validUntil: expiry(200) }, 100), false);
 });
@@ -98,7 +98,7 @@ test("subscription changes and audit records are committed together; stale saves
       get: async (ref) => ({ exists: true, data: () => ref.path.startsWith("hotelSubscriptions/") ? { revision: 2, status: "active" } : {} }),
       set: (ref, data) => writes.push({ path: ref.path, data }),
     }) };
-  const request = { auth: { uid: "platform", token: { platformAdmin: true, email_verified: true } }, data: { hotelUid: "hotel-a", status: "suspended", planId: "standard", expectedRevision: 1 } };
+  const request = { auth: { uid: "platform", token: { platformAdmin: true, email_verified: true } }, data: { hotelUid: "hotel-a", status: "suspended", modules: ["procurement"], planId: "standard", expectedRevision: 1 } };
   await assert.rejects(setHotelSubscriptionHandler(request, { firestore: db, auth: currentAuth }), (error) => error.code === "aborted");
   assert.equal(writes.length, 0);
   request.data.expectedRevision = 2;

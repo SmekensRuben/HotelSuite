@@ -167,7 +167,7 @@ async function sendGuestIntelligenceMail({ firestore = db, auth = admin.auth(), 
   const failures = [];
   for (const hotelUid of hotelUids) {
     try {
-      if (!await hotelHasActiveSubscription(firestore, hotelUid)) { results.push({ hotelUid, status: "subscription-inactive" }); continue; }
+      if (!await hotelHasActiveSubscription(firestore, hotelUid, "frontoffice")) { results.push({ hotelUid, status: "subscription-inactive" }); continue; }
       const report = await getLatestGuestIntelligence(hotelUid, firestore, now());
       if (report.status !== "completed") { results.push({ hotelUid, status: "source-unavailable" }); continue; }
       const to = await resolveAuthorizedRecipients({ db: firestore, auth, hotelUid, recipientUids: configuredRecipientUids(configuration, hotelUid), feature: "reservations" });

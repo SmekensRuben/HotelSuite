@@ -38,8 +38,8 @@ beforeEach(async () => {
   await auth.setCustomUserClaims(operator.uid, { platformAdmin: true });
   await Promise.all([
     db.doc("hotels/hotel-a").set({ hotelName: "Stock fixture" }), db.doc("hotels/hotel-b").set({ hotelName: "Other hotel" }),
-    db.doc("hotelSubscriptions/hotel-a").set({ status: "active", validUntil: null }),
-    db.doc("hotelSubscriptions/hotel-b").set({ status: "active", validUntil: null }),
+    db.doc("hotelSubscriptions/hotel-a").set({ modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null }),
+    db.doc("hotelSubscriptions/hotel-b").set({ modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null }),
     db.doc(`hotels/hotel-a/members/${counter.uid}`).set({ permissions: ["stockcounts.create", "stockcounts.update", "stockcounts.read"] }),
     db.doc("users/stock-person").set({ firstName: "Ada", lastName: "Lovelace", email: "private@example.test", hotelUid: ["hotel-a", "hotel-b"] }),
     db.doc("hotels/hotel-a/members/stock-person").set({ permissions: [] }),

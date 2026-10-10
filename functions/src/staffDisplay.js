@@ -21,7 +21,8 @@ async function getHotelUserDisplayNameHandler(request, services = {}) {
   if (!member.exists) return { displayName: userId };
   // Return only a display name. Never expose email, assignments or global profiles.
   const profile = await db.doc(`users/${userId}`).get();
-  const data = profile.exists ? profile.data() : member.data();
+  const local = member.data();
+  const data = Object.hasOwn(local, "firstName") || Object.hasOwn(local, "lastName") ? local : (profile.data() || local);
   const displayName = [data.firstName, data.lastName].filter((value) => typeof value === "string")
     .map((value) => value.trim().slice(0, 80)).filter(Boolean).join(" ") || userId;
   return { displayName };

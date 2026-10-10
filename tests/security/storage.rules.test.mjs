@@ -32,7 +32,7 @@ beforeEach(async () => {
   await testEnvironment.clearStorage();
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
     await Promise.all([
-      ...["hotel-a", "hotel-b"].map((hotelUid) => setDoc(doc(context.firestore(), "hotelSubscriptions", hotelUid), { status: "active", validUntil: null })),
+      ...["hotel-a", "hotel-b"].map((hotelUid) => setDoc(doc(context.firestore(), "hotelSubscriptions", hotelUid), { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null })),
       setDoc(doc(context.firestore(), "hotels/hotel-a/members", "admin-a"), { permissions: ["contracts.*", "imports.*"] }),
       setDoc(doc(context.firestore(), "hotels/hotel-a/members", "employee-a"), { permissions: ["contracts.read"] }),
       setDoc(doc(context.firestore(), "hotels/hotel-a/members", "catalog-a"), { permissions: ["catalogproducts.read", "catalogproducts.update"] }),
@@ -121,7 +121,7 @@ describe("Storage tenant and action boundaries", () => {
     const storage = testEnvironment.authenticatedContext("catalog-a", { email_verified: true }).storage();
     const file = ref(storage, "hotels/hotel-a/catalogproducts/product-a/images/file.jpg");
     await assertSucceeds(getBytes(file));
-    for (const subscription of [{ status: "suspended", validUntil: null }, { status: "active", validUntil: new Date(0) }]) {
+    for (const subscription of [{ status: "suspended", validUntil: null }, { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: new Date(0) }]) {
       await testEnvironment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), "hotelSubscriptions", "hotel-a"), subscription));
       await assertFails(getBytes(file));
       await assertFails(uploadBytes(ref(storage, "hotels/hotel-a/catalogproducts/new.jpg"), new Uint8Array([1]), { contentType: "image/jpeg" }));

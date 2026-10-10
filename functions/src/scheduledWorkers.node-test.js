@@ -52,7 +52,7 @@ const guest = (name = "Ada Lovelace") => ({ fullName: name, arrivalDate: "2026-1
 const user = (uid, changes = {}) => ({ uid, email: `${uid}@example.test`, emailVerified: true, disabled: false, ...changes });
 const auth = (users) => ({ getUser: async (uid) => { if (!users[uid]) { const e = new Error("removed"); e.code = "auth/user-not-found"; throw e; } return users[uid]; } });
 function baseDb(extra = {}) {
-  return memoryDb({ "hotelSubscriptions/a": { status: "active" }, "hotels/a": { hotelName: "Hotel A" }, "apiKeys/hotelToolkitAIKey": { value: "fictional-secret", model: "gpt-4.1-mini" }, [`${sourcePath}/r1`]: guest(), ...extra });
+  return memoryDb({ "hotelSubscriptions/a": { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active" }, "hotels/a": { hotelName: "Hotel A" }, "apiKeys/hotelToolkitAIKey": { value: "fictional-secret", model: "gpt-4.1-mini" }, [`${sourcePath}/r1`]: guest(), ...extra });
 }
 function fetchResearch(counter, action) {
   return async (_url, options) => {
@@ -231,7 +231,7 @@ test("an expired lease is fenced so the original worker cannot overwrite a resum
 });
 
 test("two-hotel guest mail sends separate reports only to each hotel's current members", async () => {
-  const db = baseDb({ "hotels/a/members/alice": { permissions: ["reservations.read"] }, "hotelSubscriptions/b": { status: "active" }, "hotels/b": { hotelName: "Hotel B" }, "hotels/b/members/bob": { permissions: ["reservations.read"] },
+  const db = baseDb({ "hotels/a/members/alice": { permissions: ["reservations.read"] }, "hotelSubscriptions/b": { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active" }, "hotels/b": { hotelName: "Hotel B" }, "hotels/b/members/bob": { permissions: ["reservations.read"] },
     [`hotels/b/reports/arrivalsmadeyesterday/${DATE}/r-b`]: guest("B Only Guest"), "scheduledMails/guestIntelligence": { hotelUid: ["a", "b"], recipientUidsByHotel: { a: ["alice"], b: ["bob"] } } });
   await processGuestIntelligenceForHotel("a", options(db, fetchResearch([]))); await processGuestIntelligenceForHotel("b", options(db, fetchResearch([])));
   const sent = [];
@@ -243,7 +243,7 @@ test("two-hotel guest mail sends separate reports only to each hotel's current m
 
 
 test("older occupancy schedule sends one hotel per authorized recipient set and uses stable source receipts", async () => {
-  const db = baseDb({ "hotels/a/members/alice": { permissions: ["demandcalendar.read"] }, "hotelSubscriptions/b": { status: "active" }, "hotels/b/members/bob": { permissions: ["demandcalendar.read"] } });
+  const db = baseDb({ "hotels/a/members/alice": { permissions: ["demandcalendar.read"] }, "hotelSubscriptions/b": { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active" }, "hotels/b/members/bob": { permissions: ["demandcalendar.read"] } });
   const sent = []; let builds = 0;
   const scheduleConfig = { hotelUid: ["a", "b"], recipientUidsByHotel: { a: ["alice"], b: ["bob"] }, mailto: ["legacy@example.test"] };
   const services = { firestore: db, auth: auth({ alice: user("alice"), bob: user("bob") }), now: () => NOW, from: "app@example.test", getOccupancyRows: async (hotelUid) => ({ hotelUid, hotelName: `Hotel ${hotelUid.toUpperCase()}`, rows: [] }),
@@ -391,7 +391,7 @@ test("a failed hotel's scheduled deliveries do not prevent another hotel's guest
   for (const kind of ["guest", "occupancy", "block", "contract"]) {
     const permissions = { guest: "reservations.read", occupancy: "demandcalendar.read", block: "groups.read", contract: "contracts.read" };
     const recipients = { a: ["alice"], b: ["bob"] };
-    const db = baseDb({ "hotels/a/members/alice": { permissions: [permissions[kind]] }, "hotelSubscriptions/b": { status: "active" }, "hotels/b": { hotelName: "Hotel B" }, "hotels/b/members/bob": { permissions: [permissions[kind]] },
+    const db = baseDb({ "hotels/a/members/alice": { permissions: [permissions[kind]] }, "hotelSubscriptions/b": { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active" }, "hotels/b": { hotelName: "Hotel B" }, "hotels/b/members/bob": { permissions: [permissions[kind]] },
       [`hotels/b/reports/arrivalsmadeyesterday/${DATE}/r-b`]: guest("B Guest"),
       "scheduledMails/guestIntelligence": { hotelUid: ["a", "b"], recipientUidsByHotel: recipients }, "scheduledMails/scheduledBlockPickupMail": { hotelUids: ["a", "b"], recipientUidsByHotel: recipients },
       "hotels/a/contracts/c": { name: "Contract A", cancelBefore: DATE, reminderDays: [0], followers: [{ id: "alice" }] }, "hotels/b/contracts/c": { name: "Contract B", cancelBefore: DATE, reminderDays: [0], followers: [{ id: "bob" }] } });

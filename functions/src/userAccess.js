@@ -3,6 +3,9 @@ const { admin } = require("./config");
 const { text } = require("./validation");
 const catalog = require("./permissionCatalog.json");
 const { requireDocumentId, requirePlatformAdministrator } = require("./subscriptions");
+const { readTeamGuard, writeTeamGuard } = require("./hotelTeam");
+const { ADMIN_PERMISSIONS } = require("./modulePolicy");
+const { gated } = require("./saasRollout");
 
 function normalizeStrings(values) {
   return Array.isArray(values)
@@ -56,6 +59,17 @@ async function updateUserAccessHandler(request, services = {}) {
     const affectedHotels = [...new Set([...previousHotelUids, ...hotelUids])].sort();
     const previousMembers = await Promise.all(affectedHotels.map((hotelUid) =>
       transaction.get(firestore.doc(`hotels/${hotelUid}/members/${userId}`))));
+    const subscriptions = await Promise.all(affectedHotels.map((hotelUid) => transaction.get(firestore.doc(`hotelSubscriptions/${hotelUid}`))));
+    const guards = await Promise.all(affectedHotels.map((hotelUid, index) => readTeamGuard(firestore, transaction, hotelUid, {
+      removingAdminUid: previousMembers[index].data()?.hotelAdmin === true && !hotelUids.includes(hotelUid) ? userId : null,
+      addingMember: !previousMembers[index].exists && hotelUids.includes(hotelUid),
+      seatLimit: subscriptions[index].data()?.seatLimit ?? null,
+    })));
+    affectedHotels.forEach((hotelUid, index) => {
+      if (hotelUids.includes(hotelUid) && previousMembers[index].data()?.hotelAdmin === true) {
+        memberships[hotelUid] = [...new Set([...memberships[hotelUid], ...ADMIN_PERMISSIONS])].sort();
+      }
+    });
     const permissionDeltas = affectedHotels.map((hotelUid, index) => {
       const before = normalizeStrings(normalizeStrings(previousMembers[index].data()?.permissions).map((key) => key.toLowerCase())).sort();
       const after = (memberships[hotelUid] || []).slice().sort();
@@ -74,9 +88,12 @@ async function updateUserAccessHandler(request, services = {}) {
     });
     hotelUids.forEach((hotelUid) => transaction.set(firestore.doc(`hotels/${hotelUid}/members/${userId}`), {
       permissions: memberships[hotelUid],
+      moduleRoles: {}, additionalPermissions: memberships[hotelUid].filter((key) => !key.startsWith("users.")), rolePolicyVersion: 1,
       firstName, lastName,
+      revision: (previousMembers[affectedHotels.indexOf(hotelUid)].data()?.revision || 0) + 1,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true }));
+    guards.forEach((guard) => writeTeamGuard(transaction, guard, request.auth.uid));
     previousHotelUids.filter((hotelUid) => !hotelUids.includes(hotelUid))
       .forEach((hotelUid) => transaction.delete(firestore.doc(`hotels/${hotelUid}/members/${userId}`)));
     transaction.set(auditRef, {
@@ -92,6 +109,6 @@ async function updateUserAccessHandler(request, services = {}) {
 
 // Callable functions normally enable CORS by default. Keep it explicit because
 // this endpoint is invoked from Vercel preview origins as well as production.
-const updateUserAccess = onCall({ region: "us-central1", cors: true }, (request) => updateUserAccessHandler(request));
+const updateUserAccess = onCall({ region: "us-central1", cors: true }, gated(updateUserAccessHandler));
 
 module.exports = { normalizeStrings, normalizeMemberships, updateUserAccessHandler, updateUserAccess };

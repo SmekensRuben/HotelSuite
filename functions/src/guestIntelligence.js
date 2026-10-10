@@ -344,7 +344,7 @@ async function processNightlyGuestIntelligence({ db = getFirestore(), processHot
 
   for (const hotelUid of hotelUids) {
     try {
-      if (!await hotelHasActiveSubscription(db, hotelUid)) continue;
+      if (!await hotelHasActiveSubscription(db, hotelUid, "frontoffice")) continue;
       const result = await processHotel(hotelUid, { db });
       log.info("Guest intelligence completed", result);
     } catch {

@@ -239,7 +239,7 @@ async function sendBlockPickupForHotel(hotelUid, scheduleConfig, services = {}) 
   const hotelReports = [];
 
   for (const hotelUid of hotelUids) {
-    if (!await hotelHasActiveSubscription(firestore, hotelUid)) continue;
+    if (!await hotelHasActiveSubscription(firestore, hotelUid, "groups")) continue;
     const snapshotDate = await (services.getLatestSnapshotDate || getLatestSnapshotDate)(hotelUid);
     if (!snapshotDate) {
       logger.info('No group pickup snapshot dates found', { hotelUid });
@@ -323,7 +323,7 @@ async function sendScheduledBlockPickupReportHandler(services = {}) {
   let sent = 0;
   for (const hotelUid of hotelUids) {
     try {
-      if (!await hotelHasActiveSubscription(firestore, hotelUid)) continue;
+      if (!await hotelHasActiveSubscription(firestore, hotelUid, "groups")) continue;
       if (await sendBlockPickupForHotel(hotelUid, scheduleConfig, services)) sent += 1;
     } catch (error) {
       const failure = hotelMailFailure(hotelUid, error);

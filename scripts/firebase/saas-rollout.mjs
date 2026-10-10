@@ -40,6 +40,7 @@ const app = initializeApp({ projectId, ...(credential ? { credential } : {}) });
 const db = emulator ? getFirestore(app) : new Firestore({ projectId, preferRest: true, authClient: oauth });
 const auth = getAuth(app);
 const catalog = JSON.parse(await readFile(new URL("../../functions/src/permissionCatalog.json", import.meta.url), "utf8"));
+const moduleCatalog = JSON.parse(await readFile(new URL("../../functions/src/moduleCatalog.json", import.meta.url), "utf8"));
 const allowedPermissions = new Set(Object.entries(catalog).flatMap(([feature, actions]) => [...actions, "*"].map((action) => `${feature}.${action}`.toLowerCase())));
 const privateFields = ["username", "password", "sftpAddress", "sftpProtocol", "sftpPort", "sftpUser", "sftpPassword", "sftpHostKey"];
 const issues = [];
@@ -102,6 +103,11 @@ try {
     else {
       subscriptions++;
       const data = subscription.data();
+      if (data.modulePolicyVersion !== moduleCatalog.policyVersion || !Array.isArray(data.modules)
+        || data.modules.some((id) => !Object.hasOwn(moduleCatalog.modules, id)) || new Set(data.modules).size !== data.modules.length
+        || (data.seatLimit !== null && (!Number.isSafeInteger(data.seatLimit) || data.seatLimit < 1 || data.seatLimit > 10000))) {
+        issues.push({ hotelUid: hotel.id, issue: "Review and migrate explicit module entitlements and assigned-user limits before activation." });
+      }
       if (!["active", "trialing", "suspended", "canceled"].includes(data.status)
         || (data.validUntil != null && !Number.isFinite(data.validUntil?.toMillis?.()))
         || (data.status === "trialing" && data.validUntil == null)
@@ -156,7 +162,7 @@ try {
     if (legacySuppliers.length || normalizations.length) throw new Error("Complete migration before activating the pilot.");
     const releaseSha = process.env.SAAS_RELEASE_SHA;
     if (!emulator && !/^[a-f0-9]{40}$/.test(releaseSha || "")) throw new Error("An exact reviewed SAAS_RELEASE_SHA is required.");
-    await rolloutRef.set({ enabled: true, rulesVersion: "saas-procurement-v1", releaseSha: releaseSha || "emulator",
+    await rolloutRef.set({ enabled: true, rulesVersion: "saas-modules-v2", releaseSha: releaseSha || "emulator",
       reviewedBy: operator, reviewedAt: FieldValue.serverTimestamp() }, { merge: true });
     console.log("Verified SaaS procurement pilot enabled.");
   }

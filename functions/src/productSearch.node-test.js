@@ -7,7 +7,7 @@ function fixture() {
   const reads = [];
   const records = {
     "hotels/hotel-a/members/employee-a": { permissions: ["catalogproducts.read"] },
-    "hotelSubscriptions/hotel-a": { status: "active", validUntil: null },
+    "hotelSubscriptions/hotel-a": { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null },
     "hotels/hotel-a/catalogproducts/product-a": { name: "Canonical coffee" },
   };
   const firestore = { doc: (path) => ({ get: async () => {

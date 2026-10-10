@@ -73,7 +73,7 @@ function changesBetween(base, requested) {
 async function publicAccess(db, root, tx) {
   const expiry = root.publicAccessExpiresAt?.toMillis?.();
   if (root.publicAccessEnabled !== true || !Number.isFinite(expiry) || expiry <= Date.now()) throw new HttpsError("not-found", "This rooming-list link has expired or been disabled. Contact the hotel.");
-  await requireHotelSubscription(db, root.hotelUid, tx);
+  await requireHotelSubscription(db, root.hotelUid, tx, "groups");
 }
 function publicReservation(r) {
   return Object.fromEntries(["id", ...reservationFields, "createdAt", "updatedAt"].filter((k) => Object.hasOwn(r, k)).map((k) => [k, r[k]]));
@@ -95,7 +95,7 @@ async function getRoomingListHandler(request, services = {}) {
     if (request.data?.internal === true) {
       await requireCurrentStaff(request, services.auth || admin.auth());
       await requireHotelPermission(db, request, root.hotelUid, "roominglists", "read", tx);
-      await requireHotelSubscription(db, root.hotelUid, tx);
+      await requireHotelSubscription(db, root.hotelUid, tx, "groups");
       const [versions, requests] = await Promise.all([tx.get(rootRef.collection("versions").orderBy("number", "desc").limit(10)), tx.get(rootRef.collection("changeRequests").orderBy("number", "desc").limit(10))]);
       if (versions.size > MAX_REQUESTS || requests.size > MAX_REQUESTS) throw new HttpsError("resource-exhausted", "This rooming list needs archival review.");
       return { ...publicView(token, { ...root, publicAccessExpiresAt: root.publicAccessExpiresAt || admin.firestore.Timestamp.fromMillis(0) }, null), hotelUid: root.hotelUid, groupId: root.groupId,
@@ -115,7 +115,7 @@ async function createRoomingListHandler(request, services = {}) {
   return db.runTransaction(async (tx) => {
     await requirePrivateWorkflows(db, tx);
     await requireCurrentStaff(request, services.auth || admin.auth());
-    await requireHotelPermission(db, request, hotelUid, "roominglists", "create", tx); await requireHotelSubscription(db, hotelUid, tx);
+    await requireHotelPermission(db, request, hotelUid, "roominglists", "create", tx); await requireHotelSubscription(db, hotelUid, tx, "groups");
     const groupSnap = await tx.get(groupRef);
     if (!groupSnap.exists) throw new HttpsError("not-found", "Group not found.");
     const group = groupSnap.data();
@@ -228,7 +228,7 @@ async function reviewRoomingListHandler(request, services = {}) {
     if (!rootSnap.exists) throw new HttpsError("not-found", "Rooming list not found.");
     const root = rootSnap.data();
     await requireCurrentStaff(request, services.auth || admin.auth());
-    await requireHotelPermission(db, request, root.hotelUid, "roominglists", "approve", tx); await requireHotelSubscription(db, root.hotelUid, tx);
+    await requireHotelPermission(db, request, root.hotelUid, "roominglists", "approve", tx); await requireHotelSubscription(db, root.hotelUid, tx, "groups");
     const groupRef = db.doc("hotels/" + root.hotelUid + "/groups/" + root.groupId);
     const [change, previous, group] = await Promise.all([tx.get(changeRef), tx.get(receipt), tx.get(groupRef)]);
     if (!group.exists || group.data().roomingListToken !== token) throw new HttpsError("failed-precondition", "The linked group changed. Review it first.");
