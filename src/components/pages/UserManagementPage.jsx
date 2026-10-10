@@ -13,9 +13,11 @@ function formatHotelUid(user) {
   return userHotelUids.join(", ") || "-";
 }
 
-export default function UserManagementPage() {
+export default function UserManagementPage({ platform = false }) {
   const navigate = useNavigate();
-  const canUpdateUsers = usePermission("users", "update");
+  const usersPath = platform ? "/platform/users" : "/settings/users";
+  const hotelCanUpdateUsers = usePermission("users", "update");
+  const canUpdateUsers = platform || hotelCanUpdateUsers;
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -80,7 +82,7 @@ export default function UserManagementPage() {
       <PageContainer className="space-y-6">
         <div>
           <h1 className="text-3xl font-semibold">User Management</h1>
-          <p className="text-gray-600 mt-1">Overview van alle gebruikers.</p>
+          <p className="text-gray-600 mt-1">Manage named accounts and their explicit hotel assignments.</p>
         </div>
 
         <div>
@@ -103,7 +105,7 @@ export default function UserManagementPage() {
           <DataListTable
             columns={columns}
             rows={rows}
-            onRowClick={canUpdateUsers ? (user) => navigate(`/settings/users/${user.id}`) : undefined}
+            onRowClick={canUpdateUsers ? (user) => navigate(`${usersPath}/${user.id}`) : undefined}
             emptyMessage="Geen gebruikers gevonden."
           />
         )}

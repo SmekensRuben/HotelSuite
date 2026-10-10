@@ -1,8 +1,18 @@
 import React, { lazy, Suspense } from "react";
 const HotelOnboardingPage = lazy(() => import("./components/pages/HotelOnboardingPage.jsx"));
 const HotelTeamPage = lazy(() => import("./components/pages/HotelTeamPage.jsx"));
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useParams } from "react-router-dom";
 const SubscriptionsPage = lazy(() => import("./components/pages/SubscriptionsPage.jsx"));
+import PlatformRoute from "./components/shared/PlatformRoute";
+const PlatformLayout = lazy(() => import("./components/platform/PlatformLayout"));
+const PlatformHotelsPage = lazy(() => import("./components/platform/PlatformHotelsPage"));
+const PlatformHotelPage = lazy(() => import("./components/platform/PlatformHotelPage"));
+const PlatformImportsPage = lazy(() => import("./components/platform/PlatformImportsPage"));
+const PlatformActivityPage = lazy(() => import("./components/platform/PlatformActivityPage"));
+const PlatformIncidentsPage = lazy(() => import("./components/platform/PlatformIncidentsPage"));
+const PlatformUsersPage = lazy(() => import("./components/platform/PlatformUsersPage"));
+const PlatformSupportPage = lazy(() => import("./components/platform/PlatformSupportPage"));
+const NoHotelAccessPage = lazy(() => import("./components/pages/NoHotelAccessPage"));
 
 const LandingPage = lazy(() => import("./components/pages/LandingPage.jsx"));
 const LoginPage = lazy(() => import("./components/pages/LoginPage.jsx"));
@@ -36,7 +46,7 @@ const LocationCreatePage = lazy(() => import("./components/pages/LocationCreateP
 const LocationDetailPage = lazy(() => import("./components/pages/LocationDetailPage.jsx"));
 const LocationEditPage = lazy(() => import("./components/pages/LocationEditPage.jsx"));
 const LocationStockTemplateDetailPage = lazy(() => import("./components/pages/LocationStockTemplateDetailPage.jsx"));
-const UserManagementPage = lazy(() => import("./components/pages/UserManagementPage.jsx"));
+
 const UserDetailPage = lazy(() => import("./components/pages/UserDetailPage.jsx"));
 const OrdersPage = lazy(() => import("./components/pages/OrdersPage.jsx"));
 const OrderCreatePage = lazy(() => import("./components/pages/OrderCreatePage.jsx"));
@@ -86,12 +96,33 @@ const DemandCalendarEventDetailPage = lazy(() => import("./components/pages/Dema
 const DemandCalendarCategoriesPage = lazy(() => import("./components/pages/DemandCalendarCategoriesPage.jsx"));
 const CommercialIntelligencePage = lazy(() => import("./components/pages/CommercialIntelligencePage.jsx"));
 
+function LegacyUserRedirect() {
+  const { userId } = useParams();
+  return <Navigate to={`/platform/users/${encodeURIComponent(userId)}`} replace />;
+}
+
 export default function AppRouter() {
   return (
     <Suspense fallback={<div role="status" className="p-6 text-gray-600">Loading page...</div>}>
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/access" element={<NoHotelAccessPage />} />
+      <Route path="/platform" element={<PlatformRoute><PlatformLayout /></PlatformRoute>}>
+        <Route index element={<PlatformHotelsPage overview />} />
+        <Route path="hotels" element={<PlatformHotelsPage />} />
+        <Route path="hotels/new" element={<HotelOnboardingPage platform />} />
+        <Route path="hotels/:hotelUid" element={<PlatformHotelPage />} />
+        <Route path="hotels/:hotelUid/team" element={<HotelTeamPage platform />} />
+        <Route path="hotels/:hotelUid/imports" element={<PlatformImportsPage />} />
+        <Route path="hotels/:hotelUid/support/:sessionId" element={<PlatformSupportPage />} />
+        <Route path="subscriptions" element={<SubscriptionsPage platform />} />
+        <Route path="imports" element={<PlatformImportsPage />} />
+        <Route path="incidents" element={<PlatformIncidentsPage />} />
+        <Route path="activity" element={<PlatformActivityPage />} />
+        <Route path="users" element={<PlatformUsersPage />} />
+        <Route path="users/:userId" element={<UserDetailPage platform />} />
+      </Route>
       <Route path="/rooming-list/:token" element={<RoomingListPage />} />
       <Route
         path="/dashboard"
@@ -526,17 +557,17 @@ export default function AppRouter() {
       />
       <Route
         path="/settings/hotels"
-        element={<ProtectedRoute platformOnly><HotelOnboardingPage /></ProtectedRoute>}
+        element={<ProtectedRoute platformOnly><Navigate to="/platform/hotels/new" replace /></ProtectedRoute>}
       />
       <Route
         path="/settings/subscriptions"
-        element={<ProtectedRoute platformOnly><SubscriptionsPage /></ProtectedRoute>}
+        element={<ProtectedRoute platformOnly><Navigate to="/platform/subscriptions" replace /></ProtectedRoute>}
       />
       <Route
         path="/settings/users"
         element={
           <ProtectedRoute platformOnly feature="users" action="read">
-            <UserManagementPage />
+            <Navigate to="/platform/users" replace />
           </ProtectedRoute>
         }
       />
@@ -623,11 +654,7 @@ export default function AppRouter() {
       />
       <Route
         path="/settings/users/:userId"
-        element={
-          <ProtectedRoute platformOnly feature="users" action="update">
-            <UserDetailPage />
-          </ProtectedRoute>
-        }
+        element={<LegacyUserRedirect />}
       />
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>

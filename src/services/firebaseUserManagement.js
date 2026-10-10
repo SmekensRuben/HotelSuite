@@ -1,62 +1,17 @@
-import {
-  collection,
-  db,
-  doc,
-  getDoc,
-  getDocs,
-  functions,
-  httpsCallable,
-} from "../firebaseConfig";
+import { functions, httpsCallable } from "../firebaseConfig";
 
 export async function getAllUsers() {
-  try {
-    const usersCollection = collection(db, "users");
-    const snapshot = await getDocs(usersCollection);
-    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
-  } catch (error) {
-    console.error("Kon gebruikers niet ophalen:", error);
-    throw error;
-  }
+  const result = await httpsCallable(functions, "listPlatformUsers")({});
+  return result.data.users;
 }
-
 export async function getUserById(userId) {
-  if (!userId) {
-    throw new Error("userId is required");
-  }
-
-  try {
-    const userRef = doc(db, "users", userId);
-    const snapshot = await getDoc(userRef);
-
-    if (!snapshot.exists()) {
-      return null;
-    }
-
-    return {
-      id: snapshot.id,
-      ...snapshot.data(),
-    };
-  } catch (error) {
-    console.error("Kon gebruiker niet ophalen:", error);
-    throw error;
-  }
+  if (!userId) throw new Error("userId is required");
+  return (await httpsCallable(functions, "getPlatformUserAccess")({ userId })).data.user;
 }
-
 export async function getUserMemberships(userId, hotelUids) {
   if (!userId) throw new Error("userId is required");
-  const normalizedHotelUids = [...new Set((hotelUids || []).map((value) => String(value || "").trim()).filter(Boolean))];
-  const snapshots = await Promise.all(
-    normalizedHotelUids.map(async (hotelUid) => ({
-      hotelUid,
-      snapshot: await getDoc(doc(db, `hotels/${hotelUid}/members`, userId)),
-    })),
-  );
-  return Object.fromEntries(snapshots.map(({ hotelUid, snapshot }) => [
-    hotelUid,
-    snapshot.exists() && Array.isArray(snapshot.data()?.permissions)
-      ? snapshot.data().permissions
-      : [],
-  ]));
+  const result = (await httpsCallable(functions, "getPlatformUserAccess")({ userId })).data.memberships;
+  return Object.fromEntries((hotelUids || []).map((id) => [id, result[id] || []]));
 }
 
 export async function updateUserWithMemberships(userId, profile, memberships, expectedAccessRevision = 0) {

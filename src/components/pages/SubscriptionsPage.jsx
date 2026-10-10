@@ -10,7 +10,7 @@ import { MODULE_CATALOG } from "../../constants/moduleCatalog";
 const LABELS = { trialing: "Trial", active: "Active", suspended: "Paused", canceled: "Canceled" };
 const dateValue = (subscription) => subscription?.validUntil?.toDate?.().toISOString().slice(0, 10) || "";
 
-export default function SubscriptionsPage() {
+export default function SubscriptionsPage({ platform = false }) {
   const [hotels, setHotels] = useState([]);
   const [selected, setSelected] = useState("");
   const [status, setStatus] = useState("active");

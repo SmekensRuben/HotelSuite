@@ -35,6 +35,7 @@ function CurrentHotel() {
 const snapshot = (data) => ({ exists: () => data !== null, data: () => data });
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.currentUser.getIdTokenResult.mockResolvedValue({ claims: {} });
   mocks.listeners.clear();
   mocks.selectedHotel = "first";
   mocks.currentUser.uid = "operator";
@@ -45,6 +46,45 @@ beforeEach(() => {
     throw new Error(`Unexpected private read: ${reference.path}`);
   });
   mocks.getHotelBootstrap.mockImplementation(async (hotelUid) => ({ hotelName: `${hotelUid} identity`, language: "en" }));
+});
+
+it("authenticates a platform operator with zero hotels without waiting for a hotel bootstrap", async () => {
+  mocks.getDoc.mockResolvedValue(snapshot({ hotelUid: [] }));
+  mocks.currentUser.getIdTokenResult.mockResolvedValue({ claims: { platformAdmin: true } });
+  await login();
+  expect(context.isPlatformAdmin).toBe(true);
+  expect(context.hotelUid).toBeNull();
+  expect(context.authLoading).toBe(false);
+  expect(context.hotelUids).toEqual([]);
+  expect(mocks.getHotelBootstrap).not.toHaveBeenCalled();
+});
+it("allows platform routing with no legacy Firestore profile while keeping the hotel workspace empty", async () => {
+  mocks.getDoc.mockResolvedValue(snapshot(null));
+  mocks.currentUser.getIdTokenResult.mockResolvedValue({ claims: { platformAdmin: true } });
+  await login();
+  expect(context.isPlatformAdmin).toBe(true);
+  expect(context.hotelUids).toEqual([]);
+  expect(context.authLoading).toBe(false);
+});
+
+it("keeps legacy operator hotel links out of the workspace unless canonical membership exists", async () => {
+  mocks.currentUser.getIdTokenResult.mockResolvedValue({ claims: { platformAdmin: true } });
+  mocks.getDoc.mockImplementation(async (reference) => snapshot(reference.path === "users/operator" ? { hotelUid: ["first", "second"] }
+    : reference.path === "hotels/second/members/operator" ? { permissions: ["contracts.read"] } : null));
+  await login();
+  expect(context.hotelUids).toEqual(["second"]);
+  expect(context.hotelUid).toBe("second");
+});
+
+it("removes platform UI authority when an authentication token refresh removes the claim", async () => {
+  mocks.getDoc.mockResolvedValue(snapshot({ hotelUid: [] }));
+  mocks.currentUser.getIdTokenResult.mockResolvedValue({ claims: { platformAdmin: true } });
+  await login();
+  expect(context.isPlatformAdmin).toBe(true);
+  mocks.currentUser.getIdTokenResult.mockResolvedValue({ claims: {} });
+  await act(async () => mocks.authListener(mocks.currentUser));
+  expect(context.isPlatformAdmin).toBe(false);
+  expect(context.permissions).toEqual([]);
 });
 afterEach(cleanup);
 
