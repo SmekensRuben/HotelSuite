@@ -1,6 +1,8 @@
 const { Webhook } = require("svix");
 const { onRequest, logger, admin, RESEND_API_KEY, RESEND_WEBHOOK_SECRET } = require("./config");
-const { extractEmailAddress, toEmailList, getFirstAvailableImportAttachment, fetchResendAttachmentBuffer, normalizeFileType } = require("./common");
+const { extractEmailAddress, toEmailList, getFirstAvailableImportAttachment, fetchResendAttachmentBuffer } = require("./common");
+const { hotelHasActiveSubscription } = require("./subscriptions");
+const { stableId, resolveImportRoute, claimReceipt, finishReceipt, releaseReceipt } = require("./importRouting");
 
 function verifyResendWebhook(req) {
   const secret = String(RESEND_WEBHOOK_SECRET.value() || "").trim();
@@ -13,107 +15,77 @@ function verifyResendWebhook(req) {
   });
 }
 
-const handleResendEmailReceivedWebhook = onRequest({ secrets: [RESEND_API_KEY, RESEND_WEBHOOK_SECRET] }, async (req, res) => {
-  if (req.method !== "POST") {
-    res.status(405).json({ error: "Method Not Allowed" });
-    return;
-  }
-
-  let verifiedPayload;
-  try {
-    verifiedPayload = verifyResendWebhook(req);
-  } catch (error) {
-    logger.warn("Rejected Resend webhook", { message: error?.message || String(error) });
-    res.status(401).json({ error: "Invalid webhook signature" });
-    return;
-  }
-
-  try {
-    const payload = verifiedPayload && typeof verifiedPayload === "object" ? verifiedPayload : {};
-    const emailData = payload?.data && typeof payload.data === "object" ? payload.data : payload;
-    const fromEmail = extractEmailAddress(emailData.from || emailData.sender || emailData.fromEmail);
-    const toCandidates = [
-      ...toEmailList(emailData.to),
-      ...toEmailList(emailData.deliveredTo),
-      ...toEmailList(emailData.recipient),
-    ];
-    const toEmailSet = new Set(toCandidates);
-    const subject = String(emailData.subject || "").trim().toLowerCase();
-
-    if (!fromEmail || toEmailSet.size === 0 || !subject) {
-      res.status(400).json({ error: "Missing from/to/subject in payload" });
-      return;
+function createResendEmailReceivedHandler({ db, bucket, verify = verifyResendWebhook,
+  fetchAttachment = fetchResendAttachmentBuffer, activeSubscription = hotelHasActiveSubscription, log = logger }) {
+  return async (req, res) => {
+    if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
+    let payload;
+    try { payload = verify(req); }
+    catch (error) {
+      log.warn("Rejected Resend webhook", { message: error?.message || String(error) });
+      return res.status(401).json({ error: "Invalid webhook signature" });
     }
+    let receiptRef, owner;
+    try {
+      if (payload?.type !== "email.received") return res.status(200).json({ ok: true, ignored: true });
+      const emailData = payload?.data && typeof payload.data === "object" ? payload.data : {};
+      const fromEmail = extractEmailAddress(emailData.from || emailData.sender || emailData.fromEmail);
+      const toEmails = toEmailList(emailData.to);
+      const subject = String(emailData.subject || "").trim().toLowerCase();
+      const emailId = String(emailData.email_id || "").trim();
+      if (!emailId || !fromEmail || !toEmails.length || !subject) {
+        return res.status(400).json({ error: "Missing email_id/from/to/subject in payload" });
+      }
+      const attachment = getFirstAvailableImportAttachment(emailData);
+      if (!attachment?.id) return res.status(400).json({ error: "No supported attachment with a provider id" });
 
-    const importAttachment = getFirstAvailableImportAttachment(emailData);
-    if (!importAttachment) {
-      res.status(400).json({ error: "No CSV, TXT, XML, or JSON attachment found" });
-      return;
+      // A signed provider event authenticates bytes, while this operator-owned
+      // identity establishes the tenant before any tenant-editable rules are read.
+      const route = await resolveImportRoute(db, { fromEmail, toEmails, subject });
+      if (!await activeSubscription(db, route.hotelUid)) return res.status(403).json({ error: "Receiving hotel is inactive" });
+      const receiptId = stableId("resend", emailId, attachment.id);
+      const storagePath = `imports/${route.hotelUid}/${route.fileType}/${receiptId}.${attachment.extension}`;
+      const descriptor = { ...route, emailId, attachmentId: attachment.id, storagePath, contentType: attachment.contentType };
+      receiptRef = db.doc(`importIngressReceipts/${receiptId}`);
+      const claim = await claimReceipt(db, receiptRef, descriptor, { initialData: {
+        firstWebhookEventId: String(req.get("svix-id") || ""), eventType: "email.received", firstReceivedAt: Date.now(),
+      } });
+      if (claim.state === "complete") return res.status(200).json({ ...claim.result, duplicate: true });
+      if (claim.state === "busy") return res.status(503).json({ error: "Import delivery is already processing; retry later" });
+      owner = claim.owner;
+      const attachmentBuffer = await fetchAttachment(emailData, attachment.id);
+      const file = bucket.file(storagePath);
+      const descriptorHash = stableId(descriptor);
+      try {
+        await file.save(attachmentBuffer, {
+          resumable: false, preconditionOpts: { ifGenerationMatch: 0 },
+          contentType: attachment.contentType,
+          metadata: { cacheControl: "private, no-store", metadata: {
+            hotelUid: route.hotelUid, fileType: route.fileType, fromEmail, toEmail: route.receiver,
+            subject, matchedSettingId: route.settingId, receiverId: route.receiverId,
+            ingressReceiptId: receiptId, descriptorHash,
+          } },
+        });
+      } catch (error) {
+        if (Number(error.code) !== 412) throw error;
+        const [existing] = await file.getMetadata();
+        if (existing.metadata?.ingressReceiptId !== receiptId || existing.metadata?.descriptorHash !== descriptorHash
+          || existing.metadata?.hotelUid !== route.hotelUid || existing.metadata?.fileType !== route.fileType) {
+          throw new Error("Deterministic import object ownership conflict");
+        }
+      }
+      const result = { ok: true, storagePath, hotelUid: route.hotelUid, fileType: route.fileType };
+      await finishReceipt(db, receiptRef, owner, result);
+      log.info("Resend webhook import stored", { ...route, storagePath });
+      return res.status(200).json(result);
+    } catch (error) {
+      if (receiptRef && owner) await releaseReceipt(db, receiptRef, owner).catch(() => {});
+      log.error("handleResendEmailReceivedWebhook failed", { message: error?.message || String(error) });
+      return res.status(error.status || 500).json({ error: error.status ? error.message : "Internal Server Error" });
     }
+  };
+}
+const handleResendEmailReceivedWebhook = onRequest({ secrets: [RESEND_API_KEY, RESEND_WEBHOOK_SECRET] }, (req, res) =>
+  createResendEmailReceivedHandler({ db: admin.firestore(), bucket: admin.storage().bucket() })(req, res));
 
-    if (!importAttachment.id) {
-      res.status(400).json({ error: "Attachment metadata missing id" });
-      return;
-    }
-
-    const indexSnapshot = await admin.firestore().collection("fileImportSettingsIndex").get();
-    const matchedSetting = indexSnapshot.docs
-      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
-      .find((setting) => {
-        const settingFrom = extractEmailAddress(setting.fromEmail);
-        const settingTo = extractEmailAddress(setting.toEmail);
-        const subjectContains = String(setting.subjectContains || setting.subject || "").trim().toLowerCase();
-
-        if (!settingFrom || !settingTo || !subjectContains) return false;
-        return settingFrom === fromEmail && toEmailSet.has(settingTo) && subject.includes(subjectContains);
-      });
-
-    if (!matchedSetting) {
-      res.status(404).json({ error: "No matching file import setting found" });
-      return;
-    }
-
-    const hotelUid = String(matchedSetting.hotelUid || "").trim();
-    if (!hotelUid) {
-      res.status(422).json({ error: "Matched setting has no hotelUid" });
-      return;
-    }
-
-    const fileType = normalizeFileType(matchedSetting.fileType);
-    const timestamp = Date.now();
-    const storagePath = `imports/${hotelUid}/${fileType}/${timestamp}.${importAttachment.extension}`;
-
-    const bucket = admin.storage().bucket();
-    const file = bucket.file(storagePath);
-
-    const attachmentBuffer = await fetchResendAttachmentBuffer(emailData, importAttachment.id);
-
-    await file.save(attachmentBuffer, {
-      contentType: importAttachment.contentType,
-      metadata: {
-        metadata: {
-          hotelUid,
-          fileType,
-          fromEmail,
-          toEmail: Array.from(toEmailSet).join(","),
-          subject,
-          matchedSettingId: String(matchedSetting.id || ""),
-        },
-      },
-    });
-
-    logger.info("Resend webhook import stored", {
-      hotelUid,
-      fileType,
-      storagePath,
-      matchedSettingId: matchedSetting.id,
-    });
-
-    res.status(200).json({ ok: true, storagePath, hotelUid, fileType });
-  } catch (error) {
-    logger.error("handleResendEmailReceivedWebhook failed", { message: error?.message || String(error) });
-    res.status(500).json({ error: "Internal Server Error" });
-  }
-});
-
-module.exports = { handleResendEmailReceivedWebhook, verifyResendWebhook };
+module.exports = { handleResendEmailReceivedWebhook, verifyResendWebhook, createResendEmailReceivedHandler };

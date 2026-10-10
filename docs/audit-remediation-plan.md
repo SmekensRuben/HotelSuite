@@ -33,30 +33,30 @@ Hard physical feasibility overrides every engine and pricing/simulation output. 
 
 ## Finding register
 
-| ID | Finding / acceptance criteria | Status | Verification / remaining work |
-| --- | --- | --- | --- |
-| F01 | Server-owned unique receiving identity; two hotels cannot claim the same mailbox/route or read misrouted bytes | confirmed | Source VM reproduction; real-provider/staging acceptance remains |
-| F02 | Global projection IDs include hotel; source-owned update/delete; safe reindex/migration tool | confirmed | Same local ID across hotels and reordered trigger regressions required |
-| F03 | Durable event/attachment receipt and deterministic storage identity; concurrent replay does not duplicate work | confirmed | Crash/retry/concurrency regression required |
-| F04 | Domain/field-specific settings authority, action-consistent categories, bounded typed mutation schemas | confirmed | Rules emulator allow/deny role matrix required |
-| F05 | Actual compset paths work for ordinary revenue users; coupled saves atomic | confirmed | Non-admin reads/writes and partial-write regression required |
-| F06 | Finished stock counts/locations immutable to direct clients; authorized transactional finish with canonical actor/totals | confirmed | Parent/location tampering, concurrent finish, malformed input tests |
-| F07 | Split bootstrap and private settings reads; no zero-permission/unverified/suspended read of private config | confirmed | Emulator positive/negative tests and explicit legacy migration plan |
-| F08 | Removing category/subcategory/Opera map key persists after fresh read without erasing unrelated fields | confirmed | Map deletion and concurrent-change service regression |
-| F09 | Contribution-optimal before/after per-night allocation | confirmed | 90T/100G/100 capacity/20 request => loss 3000, floor150, -500 at125; reverse value priority |
-| F10 | Physical/no-RN/unknown guards survive active LOS and suppress floor/target/stretch/simulation | confirmed | Requested20/capacity10 active model regression |
-| F11 | LOS computes signed net portfolio difference, including replacement gains | confirmed | 400 lost/100 gained => net300 |
-| F12 | Core horizon plus complete capacity/valuation tail; no irrelevant artificial edge invalidation | confirmed | Boundary and genuine missing shoulder data regressions |
-| F13 | Missing-data quote saves as explicit draft/unavailable with safe error states | confirmed | Mounted UI/service save with absent nightly/source data |
-| F14 | Unknown competitor rate remains null; no zero-price observation from blank input | confirmed | Blank/null/explicit0 adapter cases |
-| F15 | Contract recipients revalidated at send-time; removed/disabled users skipped and current address used | confirmed | Fake transport with membership removal/disable/email change |
-| F16 | Shared mail acknowledgment/failure semantics and safe idempotency for older scheduled flows | confirmed | Resolved error/missing ID/ambiguous send/repeated run cases |
-| F17 | Source-fingerprinted fresh guest runs, checkpointing, full replacement/empty results; intended run mailed | confirmed | Unchanged/removed/empty/interrupted/concurrent source cases |
-| F18 | Minimal outbound guest identity, explicit <=24h retention/cleanup, tenant-scoped recipients | confirmed | Request body and expiry/cleanup tests; provider and TTL deployment unverified |
-| F19 | Complete paginated catalog export and independently loaded taxonomy | confirmed | >50 items, filters and later-page category coverage |
-| F20 | Shared scoped async state with recovery and stale response protection | confirmed | Rejected and reversed request tests across affected live pages |
-| F21 | Clear live/legacy boundary, smaller domain contracts, shared shell, canonical stay-pattern builder | confirmed | Preserve domain fixtures; lint/incremental type checks; inventory/documentation |
-| F22 | Remove actionable vulnerable dependency baseline, meaningful allowed-path Storage tests and fuller restore fixture; prepare branch-protection guidance | confirmed | Package gates/CI; GitHub administration unavailable unless exposed; deployment state remains unverified |
+| ID | Finding / acceptance criteria | Code | Local checks / review | Deployment / remaining work |
+| --- | --- | --- | --- | --- |
+| F01 | Server-owned unique receiving identity; two hotels cannot claim the same mailbox/route or read misrouted bytes | resolved | 27 focused import/parser tests; independent probes/review passed | Not deployed. Source VM reproduction; real-provider/staging acceptance remains |
+| F02 | Global projection IDs include hotel; source-owned update/delete; safe reindex/migration tool | resolved | 27 focused import/parser tests; independent probes/review passed | Not deployed. Same local ID across hotels and reordered trigger regressions required |
+| F03 | Durable event/attachment receipt and deterministic storage identity; concurrent replay does not duplicate work | resolved | 27 focused import/parser tests; independent probes/review passed | Not deployed. Crash/retry/concurrency regression required |
+| F04 | Domain/field-specific settings authority, action-consistent categories, bounded typed mutation schemas | implemented | Focused rules/settings tests passed; independent review pending | Not deployed. Rules emulator allow/deny role matrix required |
+| F05 | Actual compset paths work for ordinary revenue users; coupled saves atomic | implemented | Focused rules/settings tests passed; independent review pending | Not deployed. Non-admin reads/writes and partial-write regression required |
+| F06 | Finished stock counts/locations immutable to direct clients; authorized transactional finish with canonical actor/totals | implementing | Rules direct write denial + import bypass regression; backend tests in progress | Not deployed. Parent/location tampering, concurrent finish, malformed input tests |
+| F07 | Split bootstrap and private settings reads; no zero-permission/unverified/suspended read of private config | implemented | Focused rules/settings tests passed; independent review pending | Not deployed. Emulator positive/negative tests and explicit legacy migration plan |
+| F08 | Removing category/subcategory/Opera map key persists after fresh read without erasing unrelated fields | implemented | Focused rules/settings tests passed; independent review pending | Not deployed. Map deletion and concurrent-change service regression |
+| F09 | Contribution-optimal before/after per-night allocation | implementing | 127 focused engine tests; independent 1,500-portfolio oracle; review fixes in progress | Not deployed. 90T/100G/100 capacity/20 request => loss 3000, floor150, -500 at125; reverse value priority |
+| F10 | Physical/no-RN/unknown guards survive active LOS and suppress floor/target/stretch/simulation | implementing | 127 focused engine tests; independent 1,500-portfolio oracle; review fixes in progress | Not deployed. Requested20/capacity10 active model regression |
+| F11 | LOS computes signed net portfolio difference, including replacement gains | implementing | 127 focused engine tests; independent 1,500-portfolio oracle; review fixes in progress | Not deployed. 400 lost/100 gained => net300 |
+| F12 | Core horizon plus complete capacity/valuation tail; no irrelevant artificial edge invalidation | implementing | 127 focused engine tests; independent 1,500-portfolio oracle; review fixes in progress | Not deployed. Boundary and genuine missing shoulder data regressions |
+| F13 | Missing-data quote saves as explicit draft/unavailable with safe error states | implemented | 33 focused frontend tests + quote adapters; independent review pending | Not deployed. Mounted UI/service save with absent nightly/source data |
+| F14 | Unknown competitor rate remains null; no zero-price observation from blank input | implemented | 33 focused frontend tests + quote adapters; independent review pending | Not deployed. Blank/null/explicit0 adapter cases |
+| F15 | Contract recipients revalidated at send-time; removed/disabled users skipped and current address used | implementing | Scheduled-worker implementation/tests in progress | Not deployed. Fake transport with membership removal/disable/email change |
+| F16 | Shared mail acknowledgment/failure semantics and safe idempotency for older scheduled flows | implementing | Scheduled-worker implementation/tests in progress | Not deployed. Resolved error/missing ID/ambiguous send/repeated run cases |
+| F17 | Source-fingerprinted fresh guest runs, checkpointing, full replacement/empty results; intended run mailed | implementing | Scheduled-worker implementation/tests in progress | Not deployed. Unchanged/removed/empty/interrupted/concurrent source cases |
+| F18 | Minimal outbound guest identity, explicit <=24h retention/cleanup, tenant-scoped recipients | implementing | Scheduled-worker implementation/tests in progress | Not deployed. Request body and expiry/cleanup tests; provider and TTL deployment unverified |
+| F19 | Complete paginated catalog export and independently loaded taxonomy | implemented | 33 focused frontend tests + quote adapters; independent review pending | Not deployed. >50 items, filters and later-page category coverage |
+| F20 | Shared scoped async state with recovery and stale response protection | implemented | 33 focused frontend tests + quote adapters; independent review pending | Not deployed. Rejected and reversed request tests across affected live pages |
+| F21 | Clear live/legacy boundary, smaller domain contracts, shared shell, canonical stay-pattern builder | implementing | Lint/checkJS, compatibility, zero runtime audit and expanded restore passed; review followups in progress | Not deployed. Preserve domain fixtures; lint/incremental type checks; inventory/documentation |
+| F22 | Remove actionable vulnerable dependency baseline, meaningful allowed-path Storage tests and fuller restore fixture; prepare branch-protection guidance | implementing | Lint/checkJS, compatibility, zero runtime audit and expanded restore passed; review followups in progress | Not deployed. Package gates/CI; GitHub administration unavailable unless exposed; deployment state remains unverified |
 
 ## Additional linked audit observations
 
@@ -81,3 +81,7 @@ Mandatory optimizer checks: zero/partial/full scarcity; reverse group/transient 
 ## Deployment and policy checklist (not completed by local code work)
 
 Rules/Functions deployment parity; controlled import index/route migration; retired source settings migration; live IAM/tokens/private-file migrations; Auth/App Check/MFA settings; external providers and data retention; complete backup restore including Auth/Storage; normal two-hotel browser acceptance. Prepare commands/runbooks and record unverified items rather than claim deployment.
+
+- Checkpoint: import independent review closed protected stock/guest/mail/derived-model target bypasses and UTF-8 crash/replay corruption; actual pipeline regressions pass. No production ingress/migration performed.
+- Checkpoint: initial expanded restore passed all three emulators; independent review requires canonical domain fixture paths, corrected before final re-run. Memory cache rollout must explicitly clear legacy IndexedDB data on previously used shared devices.
+- Checkpoint: pricing independent review passed 1,500 exhaustive portfolios and found previous-year carry-in occupancy and unknown breakfast-pax gaps; fixes ongoing. Failed rebuild metadata must cause explicit LOS fallback.

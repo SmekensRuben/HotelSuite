@@ -1,6 +1,8 @@
 const { onDocumentWritten, logger, admin, MEILI_API_KEY, MEILI_HOST, MEILI_INDEX, SUPPLIER_PRODUCTS_INDEX_UID } = require("./config");
 const { getIndexUid, buildCatalogProductDocument, buildSupplierProductDocument, productSearchId, meiliRequest, meiliJson } = require("./common");
 
+const { syncImportProjection } = require("./importRouting");
+
 const ensuredIndexUids = new Set();
 
 async function ensureIndex(indexUid) {
@@ -131,28 +133,11 @@ const syncFileImportSettingsIndex = onDocumentWritten(
   },
   async (event) => {
     const { hotelUid, fileImportSettingId } = event.params;
-    const indexRef = admin.firestore().doc(`fileImportSettingsIndex/${fileImportSettingId}`);
-
-    if (!event.data?.after?.exists) {
-      await indexRef.delete();
-      logger.info("fileImportSettingsIndex delete ok", {
-        fileImportSettingId,
-        hotelUid,
-      });
-      return;
-    }
-
-    const data = event.data.after.data() || {};
-    await indexRef.set({
-      ...data,
-      id: fileImportSettingId,
-      hotelUid,
+    await syncImportProjection(admin.firestore(), {
+      hotelUid, localId: fileImportSettingId,
+      sourceCollection: "fileImportSettings", indexCollection: "fileImportSettingsIndex",
     });
-
-    logger.info("fileImportSettingsIndex upsert ok", {
-      fileImportSettingId,
-      hotelUid,
-    });
+    logger.info("fileImportSettingsIndex synchronized from canonical source", { hotelUid, fileImportSettingId });
   }
 );
 
@@ -163,28 +148,11 @@ const syncFileImportTypesIndex = onDocumentWritten(
   },
   async (event) => {
     const { hotelUid, fileImportTypeId } = event.params;
-    const indexRef = admin.firestore().doc(`fileImportTypesIndex/${fileImportTypeId}`);
-
-    if (!event.data?.after?.exists) {
-      await indexRef.delete();
-      logger.info("fileImportTypesIndex delete ok", {
-        fileImportTypeId,
-        hotelUid,
-      });
-      return;
-    }
-
-    const data = event.data.after.data() || {};
-    await indexRef.set({
-      ...data,
-      id: fileImportTypeId,
-      hotelUid,
+    await syncImportProjection(admin.firestore(), {
+      hotelUid, localId: fileImportTypeId,
+      sourceCollection: "fileImportTypes", indexCollection: "fileImportTypesIndex",
     });
-
-    logger.info("fileImportTypesIndex upsert ok", {
-      fileImportTypeId,
-      hotelUid,
-    });
+    logger.info("fileImportTypesIndex synchronized from canonical source", { hotelUid, fileImportTypeId });
   }
 );
 

@@ -5,10 +5,11 @@ function importObjectMatchesHotel(objectName, hotelUid) {
 }
 function requireHotelImportTarget(path, hotelUid) {
   const segments = String(path || "").split("/");
-  const protectedCollections = ["contracts", "contractOperations", "contractAttachments", "contractAudit", "members", "settings", "mailQueue", "subscriptionAudit", "contractReminderRuns", "fileImportTypes", "fileImportSettings", "supplierSecrets", "suppliers", "supplierOutletAccounts", "orders", "outlets", "invitations", "accessAudit", "supplierAudit", "orderAudit", "dispatches", "orderOperations", "cartOperations", "shoppingCarts"];
-  if (segments.length < 3 || segments[0] !== "hotels" || segments[1] !== hotelUid
+  const protectedCollections = ["stockCounts", "scheduledMailReceipts", "guestIntelligence", "guestIntelligenceRuns", "guestIntelligenceVersions", "contracts", "importRuns", "importIngressReceipts", "importReceivingIdentities", "contractOperations", "contractAttachments", "contractAudit", "members", "settings", "mailQueue", "subscriptionAudit", "contractReminderRuns", "fileImportTypes", "fileImportSettings", "supplierSecrets", "suppliers", "supplierOutletAccounts", "orders", "outlets", "invitations", "accessAudit", "supplierAudit", "orderAudit", "dispatches", "orderOperations", "cartOperations", "shoppingCarts"];
+  if (segments.length < 3 || segments.length > 20 || String(path).length > 1000 || segments[0] !== "hotels" || segments[1] !== hotelUid
     || segments.some((segment) => !segment || [".", ".."].includes(segment))
-    || protectedCollections.includes(segments[2])) {
+    || protectedCollections.includes(segments[2])
+    || (segments[2] === "reports" && segments[3] === "stayPatternModel")) {
     throw new Error("Import target must be operational data within the authorized hotel.");
   }
 }
@@ -16,8 +17,11 @@ const { parse } = require("csv-parse/sync");
 const { parse: parseStream } = require("csv-parse");
 const { XMLParser } = require("fast-xml-parser");
 const sax = require("sax");
+const { StringDecoder } = require("node:string_decoder");
 const { onObjectFinalized, logger, admin } = require("./config");
 const { rebuildStayPatternModel } = require("./stayPatternModel");
+const { stableId, claimReceipt, finishReceipt, releaseReceipt } = require("./importRouting");
+const { importRunId, commitImportChunk } = require("./importProcessing");
 
 function normalizeDelimiter(value) {
   const raw = String(value || ",");
@@ -644,7 +648,6 @@ async function processCsvDocumentsStream(fileStream, fileImportType, onMappedDoc
 
     const { mappedDocument, shouldSkip } = mapFlatObject(flatRecord, normalizedMappings);
     if (!shouldSkip && hasMappedValue(mappedDocument)) {
-      // eslint-disable-next-line no-await-in-loop
       await onMappedDocument({ rowIndex, mappedDocument }, normalizedMappings);
     }
 
@@ -671,6 +674,7 @@ function addXmlChild(parentObject, key, value) {
 }
 
 async function processXmlDocumentsStream(fileStream, fileImportType, onMappedDocument) {
+  const decoder = new StringDecoder("utf8");
   const normalizedMappings = normalizeColumnMappings(fileImportType);
   if (normalizedMappings.length === 0) return 0;
 
@@ -741,9 +745,11 @@ async function processXmlDocumentsStream(fileStream, fileImportType, onMappedDoc
   };
 
   for await (const chunk of fileStream) {
-    parser.write(chunk.toString("utf8"));
+    parser.write(decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    // Backpressure also surfaces write failures before consuming another chunk.
+    await pendingWrite;
   }
-
+  parser.write(decoder.end());
   parser.close();
   await pendingWrite;
   return processedCount;
@@ -754,7 +760,6 @@ async function processJsonDocumentsStream(fileStream, fileImportType, onMappedDo
   const mappedDocuments = parseJsonDocuments(content, fileImportType);
 
   for (const documentRow of mappedDocuments) {
-    // eslint-disable-next-line no-await-in-loop
     await onMappedDocument(documentRow);
   }
 
@@ -1069,335 +1074,62 @@ function aggregateMappedDocuments(mappedDocuments, buildRowDetails, mappings) {
   return Array.from(aggregatedDocuments.values());
 }
 
-function touchDocumentCache(documentCache, cacheKey, value) {
-  if (!documentCache) return;
-  if (documentCache.has(cacheKey)) {
-    documentCache.delete(cacheKey);
-  }
-  documentCache.set(cacheKey, value);
-}
-
-
 function getAncestorDocumentPaths(finalDocPath) {
   const segments = String(finalDocPath || "").split("/").filter(Boolean);
   const ancestorPaths = [];
-
-  for (let index = 0; index < segments.length - 2; index += 2) {
+  // Never change the hotel root as an import side effect.
+  for (let index = 2; index < segments.length - 2; index += 2) {
     ancestorPaths.push(segments.slice(0, index + 2).join("/"));
   }
-
   return ancestorPaths;
 }
 
-async function ensureQueryableAncestorDocuments({ db, batchWriter, finalDocPath, touchedAncestorPaths }) {
-  const ancestorPaths = getAncestorDocumentPaths(finalDocPath);
-
-  for (const ancestorPath of ancestorPaths) {
-    if (touchedAncestorPaths?.has(ancestorPath)) {
-      continue;
-    }
-
-    const docRef = db.doc(ancestorPath);
-    const payload = {
-      queryable: true,
-    };
-
-    batchWriter.set(docRef, payload, { merge: true });
-
-    touchedAncestorPaths?.add(ancestorPath);
-  }
-}
-
-async function commitFirestoreWrite({ db, batchWriter, fileImportType, resolvedPath, context, payload, touchedAncestorPaths }) {
-  if (!resolvedPath) {
-    throw new Error("Resolved Firestore path is leeg");
-  }
-
-  const writeMode = String(fileImportType?.writeMode || "overwrite").trim().toLowerCase();
-  const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
-
-  if (writeTarget.isExplicitDocument) {
-    await ensureQueryableAncestorDocuments({
-      db,
-      batchWriter,
-      finalDocPath: writeTarget.docPath,
-      touchedAncestorPaths,
-    });
-
-    const docRef = db.doc(writeTarget.docPath);
-    if (writeMode === "merge") {
-      batchWriter.set(docRef, payload, { merge: true });
-    } else {
-      batchWriter.set(docRef, payload);
-    }
-    return docRef.path;
-  }
-
-  const docRef = db.collection(resolvedPath).doc();
-  await ensureQueryableAncestorDocuments({
-    db,
-    batchWriter,
-    finalDocPath: docRef.path,
-    touchedAncestorPaths,
-  });
-  batchWriter.set(docRef, payload);
-  return docRef.path;
-}
-
-async function flushOldestCachedDocument({ db, batchWriter, fileImportType, documentCache, touchedAncestorPaths }) {
-  if (!documentCache.size) return null;
-
-  const oldestEntry = documentCache.entries().next().value;
-  if (!oldestEntry) return null;
-
-  const [cacheKey, cachedDocument] = oldestEntry;
-  documentCache.delete(cacheKey);
-
-  return commitFirestoreWrite({
-    db,
-    batchWriter,
-    fileImportType,
-    resolvedPath: cachedDocument.resolvedPath,
-    context: cachedDocument.context,
-    payload: cachedDocument.payload,
-    touchedAncestorPaths,
-  });
-}
-
-async function enqueueMappedDocumentWrite({
-  db,
-  batchWriter,
-  fileImportType,
-  resolvedPath,
-  context,
-  payload,
-  mappings,
-  documentCache,
-  maxCacheEntries = 100,
-  touchedAncestorPaths,
-}) {
-  const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
-
-  if (!writeTarget.isExplicitDocument) {
-    const writtenPath = await commitFirestoreWrite({
-      db,
-      batchWriter,
-      fileImportType,
-      resolvedPath,
-      context,
-      payload,
-      touchedAncestorPaths,
-    });
-
-    return { flushedPaths: [writtenPath] };
-  }
-
-  const cacheKey = writeTarget.docPath;
-  const existingEntry = documentCache.get(cacheKey);
-
-  if (existingEntry) {
-    existingEntry.payload = mergeMappedDocuments(existingEntry.payload, payload, mappings);
-    touchDocumentCache(documentCache, cacheKey, existingEntry);
-    return { flushedPaths: [] };
-  }
-
-  const docSnapshot = await db.doc(cacheKey).get();
-  const mergedPayload = docSnapshot.exists
-    ? mergeMappedDocuments(docSnapshot.data() || {}, payload, mappings)
-    : payload;
-
-  touchDocumentCache(documentCache, cacheKey, {
-    resolvedPath,
-    context,
-    payload: mergedPayload,
-  });
-
-  const flushedPaths = [];
-  while (documentCache.size > maxCacheEntries) {
-    // eslint-disable-next-line no-await-in-loop
-    const flushedPath = await flushOldestCachedDocument({
-      db,
-      batchWriter,
-      fileImportType,
-      documentCache,
-      touchedAncestorPaths,
-    });
-    if (flushedPath) {
-      flushedPaths.push(flushedPath);
-    }
-  }
-
-  return { flushedPaths };
-}
-
-async function processWithConcurrency(items, concurrency, handler) {
-  if (!Array.isArray(items) || items.length === 0) return;
-
-  let currentIndex = 0;
-  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
-
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (currentIndex < items.length) {
-      const item = items[currentIndex];
-      currentIndex += 1;
-      // eslint-disable-next-line no-await-in-loop
-      await handler(item);
-    }
-  });
-
-  await Promise.all(workers);
-}
-
-function createFirestoreBatchWriter(db, maxOperations = 500) {
-  let currentBatch = db.batch();
-  let operationCount = 0;
-  const pendingCommits = [];
-
-  const commitCurrentBatch = () => {
-    if (operationCount === 0) return;
-    pendingCommits.push(currentBatch.commit());
-    currentBatch = db.batch();
-    operationCount = 0;
-  };
-
-  const queueOperation = (operation) => {
-    if (operationCount >= maxOperations) {
-      commitCurrentBatch();
-    }
-
-    operation(currentBatch);
-    operationCount += 1;
-  };
-
-  return {
-    set(docRef, payload, options) {
-      queueOperation((batch) => {
-        if (options) {
-          batch.set(docRef, payload, options);
-        } else {
-          batch.set(docRef, payload);
-        }
-      });
-    },
-    async close() {
-      commitCurrentBatch();
-      await Promise.all(pendingCommits);
-    },
-  };
-}
-
-async function processMappedDocumentStream({
-  db,
-  fileImportType,
-  hotelUid,
-  fileType,
-  object,
-  onEachMappedDocument,
-}) {
-  const normalizedMappings = normalizeColumnMappings(fileImportType);
-  const batchWriter = createFirestoreBatchWriter(db);
-  const touchedAncestorPaths = new Set();
-  const documentCache = new Map();
-  const pendingDocuments = [];
-  const batchSize = 500;
-  const maxCacheEntries = 100;
-  const readConcurrency = 25;
+async function processMappedDocumentStream({ db, fileImportType, hotelUid, fileType, object,
+  onEachMappedDocument, runRef, owner }) {
+  const mappings = normalizeColumnMappings(fileImportType);
+  const pending = [];
+  const runId = importRunId(object);
+  let chunkIndex = 0;
   let writtenCount = 0;
   let firstWrittenPath = null;
-  const affectedStayPatternYears = new Set();
-
-  const registerWrittenPaths = (flushedPaths = []) => {
-    flushedPaths.forEach((writtenPath) => {
-      if (!writtenPath) return;
-      writtenCount += 1;
-      if (!firstWrittenPath) {
-        firstWrittenPath = writtenPath;
+  const affectedYears = new Set();
+  const flush = async () => {
+    if (!pending.length) return;
+    const years = new Set();
+    const rows = aggregateMappedDocuments(pending.splice(0), (row) => {
+      const context = buildTemplateContext({ hotelUid, fileType, fileImportType,
+        mappedRow: row.mappedDocument, object, rowIndex: row.rowIndex });
+      const resolvedPath = resolveFirestorePath(fileImportType, context);
+      requireHotelImportTarget(resolvedPath, hotelUid);
+      const target = resolveWriteTarget(fileImportType, resolvedPath, context);
+      const docPath = target.isExplicitDocument ? target.docPath
+        : `${resolvedPath}/${stableId(runId, row.rowIndex)}`;
+      requireHotelImportTarget(docPath, hotelUid);
+      if (resolvedPath.toLowerCase().includes("staydatepattern")) {
+        collectArrivalYears(row.mappedDocument, years);
+        const pathYear = Number(resolvedPath.match(/(?:^|\/)(\d{4})-\d{2}-\d{2}(?:\/|$)/)?.[1]);
+        if (Number.isInteger(pathYear) && pathYear > 1900) years.add(pathYear);
       }
-    });
+      return { aggregationKey: docPath, docPath, payload: row.mappedDocument,
+        writeMode: String(fileImportType.writeMode || "overwrite").toLowerCase() };
+    }, mappings);
+    const summary = await commitImportChunk({ db, runRef, owner, chunkIndex, rows,
+      mergeDocuments: (existing, incoming) => mergeMappedDocuments(existing, incoming, mappings),
+      ancestorPaths: getAncestorDocumentPaths, years: [...years].sort() });
+    chunkIndex += 1;
+    writtenCount += summary.writtenCount;
+    firstWrittenPath ||= summary.firstWrittenPath;
+    summary.affectedStayPatternYears.forEach((year) => affectedYears.add(year));
   };
-
-  const flushPendingDocuments = async () => {
-    if (pendingDocuments.length === 0) return;
-
-    const currentBatch = pendingDocuments.splice(0, pendingDocuments.length);
-    const rowsToWrite = aggregateMappedDocuments(
-      currentBatch,
-      (documentRow) => {
-        const context = buildTemplateContext({
-          hotelUid,
-          fileType,
-          fileImportType,
-          mappedRow: documentRow.mappedDocument,
-          object,
-          rowIndex: documentRow.rowIndex,
-        });
-
-        const resolvedPath = resolveFirestorePath(fileImportType, context);
-        requireHotelImportTarget(resolvedPath, hotelUid);
-        if (resolvedPath.toLowerCase().includes("staydatepattern")) {
-          const pathDate = resolvedPath.match(/(?:^|\/)(\d{4})-\d{2}-\d{2}(?:\/|$)/)?.[1];
-          collectArrivalYears(documentRow.mappedDocument, affectedStayPatternYears);
-          const pathYear = Number(pathDate);
-          if (Number.isInteger(pathYear) && pathYear > 1900) affectedStayPatternYears.add(pathYear);
-        }
-        const writeTarget = resolveWriteTarget(fileImportType, resolvedPath, context);
-        if (writeTarget.docPath) requireHotelImportTarget(writeTarget.docPath, hotelUid);
-
-        return {
-          aggregationKey: writeTarget.isExplicitDocument ? writeTarget.docPath : `${resolvedPath}#${documentRow.rowIndex}`,
-          context,
-          resolvedPath,
-          payload: documentRow.mappedDocument,
-        };
-      },
-      normalizedMappings
-    );
-
-    await processWithConcurrency(rowsToWrite, readConcurrency, async (rowToWrite) => {
-      const { flushedPaths } = await enqueueMappedDocumentWrite({
-        db,
-        batchWriter,
-        fileImportType,
-        resolvedPath: rowToWrite.resolvedPath,
-        context: rowToWrite.context,
-        payload: rowToWrite.payload,
-        mappings: normalizedMappings,
-        documentCache,
-        maxCacheEntries,
-        touchedAncestorPaths,
-      });
-
-      registerWrittenPaths(flushedPaths);
-    });
-  };
-
-  await onEachMappedDocument(async (documentRow) => {
-    pendingDocuments.push(documentRow);
-    if (pendingDocuments.length >= batchSize) {
-      await flushPendingDocuments();
-    }
+  await onEachMappedDocument(async (row) => {
+    pending.push(row);
+    if (pending.length >= 50) await flush();
   });
-
-  await flushPendingDocuments();
-
-  while (documentCache.size > 0) {
-    // eslint-disable-next-line no-await-in-loop
-    const flushedPath = await flushOldestCachedDocument({
-      db,
-      batchWriter,
-      fileImportType,
-      documentCache,
-      touchedAncestorPaths,
-    });
-    registerWrittenPaths(flushedPath ? [flushedPath] : []);
-  }
-
-  await batchWriter.close();
-
-  return { writtenCount, firstWrittenPath, affectedStayPatternYears: [...affectedStayPatternYears].sort() };
+  await flush();
+  return { writtenCount, firstWrittenPath, affectedStayPatternYears: [...affectedYears].sort(), chunkCount: chunkIndex };
 }
 
-const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", memory: "1GiB" }, async (event) => {
+const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", memory: "1GiB", retry: true }, async (event) => {
   const object = event.data || {};
   const objectName = String(object.name || "").trim();
   if (!objectName.startsWith("imports/")) {
@@ -1426,106 +1158,94 @@ const processImportedFileToFirestore = onObjectFinalized({ region: "us-west1", m
     logger.warn("Import skipped: tenant mismatch or inactive subscription", { objectName });
     return;
   }
-  const importTypeSnapshot = await db
-    .collection("fileImportTypesIndex")
-    .where("hotelUid", "==", hotelUid)
-    .where("fileType", "==", fileType)
-    .limit(1)
-    .get();
+  const runId = importRunId(object);
+  const runRef = db.doc(`hotels/${hotelUid}/importRuns/${runId}`);
+  const existingRun = await runRef.get();
+  if (existingRun.exists && existingRun.data().state === "complete") return;
+  let configuration = existingRun.data()?.configuration;
+  if (!configuration) {
+    // Canonical tenant sources remain available even before projection reindexing.
+    // Legacy global projection IDs are never an authorization or parser boundary.
+    const types = await db.collection(`hotels/${hotelUid}/fileImportTypes`).where("fileType", "==", fileType).get();
+    const enabledTypes = types.docs.filter((snapshot) => snapshot.data().enabled !== false);
+    if (enabledTypes.length !== 1) throw new Error("Import requires exactly one enabled canonical file type");
+    configuration = { ...enabledTypes[0].data(), id: enabledTypes[0].id,
+      targetDateOverride: targetDateOverride || resolveCurrentDateWithOffset(enabledTypes[0].data().targetDateOffsetDays) };
+    if (!targetDateOverride && configuration.targetDateSourceType === "databaseField") delete configuration.targetDateOverride;
+  }
+  const claim = await claimReceipt(db, runRef, { bucket: String(object.bucket), name: objectName,
+    generation: String(object.generation), hotelUid, fileType }, { initialData: { configuration } });
+  if (claim.state === "complete") return;
+  if (claim.state === "busy") throw new Error("Import run already processing; retry later");
+  const fileImportType = claim.configuration;
+  const owner = claim.owner;
+  try {
+    if (fileImportType.enabled === false) throw new Error("Frozen import configuration is disabled");
+    const parserType = String(fileImportType.parserType || "csv").trim().toLowerCase() || "csv";
+    if (!["csv", "xml", "json"].includes(parserType)) throw new Error("Unsupported import parserType");
 
-  if (importTypeSnapshot.empty) {
-    logger.warn("Import skipped: no matching file import type", {
-      objectName,
+    const bucket = admin.storage().bucket(object.bucket);
+    const sourceFile = bucket.file(objectName, { generation: String(object.generation) });
+
+    const writeSummary = await processMappedDocumentStream({
+      db,
+      fileImportType,
       hotelUid,
       fileType,
+      object,
+      runRef, owner,
+      onEachMappedDocument: async (onMappedDocument) => {
+        if (parserType === "xml") {
+          await processXmlDocumentsStream(sourceFile.createReadStream(), fileImportType, onMappedDocument);
+          return;
+        }
+
+        if (parserType === "json") {
+          await processJsonDocumentsStream(sourceFile.createReadStream(), fileImportType, onMappedDocument);
+          return;
+        }
+
+        await processCsvDocumentsStream(sourceFile.createReadStream(), fileImportType, onMappedDocument);
+      },
     });
-    return;
-  }
 
-  const importTypeDoc = importTypeSnapshot.docs[0];
-  const fileImportType = {
-    id: importTypeDoc.id,
-    ...(importTypeDoc.data() || {}),
-    ...(targetDateOverride ? { targetDateOverride } : {}),
-  };
+    await finishReceipt(db, runRef, owner, writeSummary);
 
-  if (fileImportType.enabled === false) {
-    logger.info("Import skipped: matching file import type is disabled", {
-      objectName,
-      hotelUid,
-      fileType,
-      fileImportTypeId: fileImportType.id,
-    });
-    return;
-  }
-
-  const parserType = String(fileImportType.parserType || "csv").trim().toLowerCase() || "csv";
-  if (!["csv", "xml", "json"].includes(parserType)) {
-    logger.warn("Import skipped: unsupported parserType", {
-      objectName,
-      hotelUid,
-      fileType,
-      fileImportTypeId: fileImportType.id,
-      parserType,
-    });
-    return;
-  }
-
-  const bucket = admin.storage().bucket(object.bucket);
-  const sourceFile = bucket.file(objectName);
-
-  const writeSummary = await processMappedDocumentStream({
-    db,
-    fileImportType,
-    hotelUid,
-    fileType,
-    object,
-    onEachMappedDocument: async (onMappedDocument) => {
-      if (parserType === "xml") {
-        await processXmlDocumentsStream(sourceFile.createReadStream(), fileImportType, onMappedDocument);
-        return;
-      }
-
-      if (parserType === "json") {
-        await processJsonDocumentsStream(sourceFile.createReadStream(), fileImportType, onMappedDocument);
-        return;
-      }
-
-      await processCsvDocumentsStream(sourceFile.createReadStream(), fileImportType, onMappedDocument);
-    },
-  });
-
-  if (writeSummary.writtenCount === 0) {
-    logger.warn("Import skipped: no mapped rows found", {
-      objectName,
-      hotelUid,
-      fileType,
-      fileImportTypeId: fileImportType.id,
-      parserType,
-    });
-    return;
-  }
-
-  logger.info("Import processed to Firestore", {
-    objectName,
-    hotelUid,
-    fileType,
-    fileImportTypeId: fileImportType.id,
-    parserType,
-    targetDateOverride: targetDateOverride || null,
-    writtenCount: writeSummary.writtenCount,
-    firstWrittenPath: writeSummary.firstWrittenPath,
-  });
-
-  if (writeSummary.affectedStayPatternYears?.length) {
-    try {
-      const result = await rebuildStayPatternModel({ hotelUid, years: writeSummary.affectedStayPatternYears, trigger: "STAYDATEPATTERN_IMPORT_COMPLETED", db });
-      logger.info("Stay Pattern model rebuilt after completed import batch", { hotelUid, affectedYears: result.affectedYears, status: result.status, runId: result.runId });
-    } catch (error) {
-      // The raw import is already durable. Keep it successful and expose the
-      // failed/stale model state instead of retrying every reservation write.
-      logger.error("Post-import Stay Pattern rebuild failed", { hotelUid, affectedYears: writeSummary.affectedStayPatternYears, error: error.message });
+    if (writeSummary.writtenCount === 0) {
+      logger.warn("Import skipped: no mapped rows found", {
+        objectName,
+        hotelUid,
+        fileType,
+        fileImportTypeId: fileImportType.id,
+        parserType,
+      });
+      return;
     }
+
+    logger.info("Import processed to Firestore", {
+      objectName,
+      hotelUid,
+      fileType,
+      fileImportTypeId: fileImportType.id,
+      parserType,
+      targetDateOverride: targetDateOverride || null,
+      writtenCount: writeSummary.writtenCount,
+      firstWrittenPath: writeSummary.firstWrittenPath,
+    });
+
+    if (writeSummary.affectedStayPatternYears?.length) {
+      try {
+        const result = await rebuildStayPatternModel({ hotelUid, years: writeSummary.affectedStayPatternYears, trigger: "STAYDATEPATTERN_IMPORT_COMPLETED", db });
+        logger.info("Stay Pattern model rebuilt after completed import batch", { hotelUid, affectedYears: result.affectedYears, status: result.status, runId: result.runId });
+      } catch (error) {
+        // The raw import is already durable. Keep it successful and expose the
+        // failed/stale model state instead of retrying every reservation write.
+        logger.error("Post-import Stay Pattern rebuild failed", { hotelUid, affectedYears: writeSummary.affectedStayPatternYears, error: error.message });
+      }
+    }
+  } catch (error) {
+    await releaseReceipt(db, runRef, owner).catch(() => {});
+    throw error;
   }
 });
 
@@ -1540,4 +1260,6 @@ module.exports = {
   normalizeColumnMappings,
   mergeMappedDocuments,
   aggregateMappedDocuments,
+  processMappedDocumentStream,
+  processXmlDocumentsStream,
 };
