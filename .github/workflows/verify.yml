@@ -21,8 +21,15 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version-file: "package.json"
           cache: "npm"
+
+      - name: Use the App Hosting npm version
+        run: |
+          build_npm_version=$(node -p 'require("./package.json").engines.npm')
+          npm install --global "npm@${build_npm_version}"
+          node --version
+          npm --version
 
       - uses: actions/setup-java@v4
         with:
@@ -86,4 +93,4 @@ jobs:
           EXPECTED_FIREBASE_PROJECT_ID: demo-hotel-suite-a00
           FIREBASE_WEBAPP_CONFIG: >-
             {"apiKey":"fictional-apphosting-key","authDomain":"demo-hotel-suite-a00.firebaseapp.com","projectId":"demo-hotel-suite-a00","storageBucket":"demo-hotel-suite-a00.appspot.com","messagingSenderId":"000000000000","appId":"fictional-apphosting-app"}
-        run: npm run build:apphosting
+        run: npm run apphosting:build
