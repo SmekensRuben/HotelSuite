@@ -1,15 +1,18 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CalendarRange, Plus } from "lucide-react";
-import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import PageShell from "../layout/PageShell";
+import AsyncError from "../shared/AsyncError";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { Card } from "../layout/Card";
 import DataListTable from "../shared/DataListTable";
-import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
+import { usePermission } from "../../hooks/usePermission";
 import { getOrders, listOrderStatuses } from "../../services/firebaseOrders";
 import { getSuppliers } from "../../services/firebaseSuppliers";
-import { getUserDisplayName } from "../../services/firebaseUserManagement";
+import { getHotelUserDisplayName } from "../../services/firebaseUserManagement";
+
+const EMPTY_ORDERS = Object.freeze([]);
 
 function toDateValue(value) {
   if (!value) return "";
@@ -70,12 +73,13 @@ function DateRangePopover({ open, title, from, until, onFromChange, onUntilChang
 }
 
 export default function OrdersPage() {
-  const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [createdByMap, setCreatedByMap] = useState({});
-  const [supplierNameMap, setSupplierNameMap] = useState({});
+  return <ScopedOrdersPage key={hotelUid} hotelUid={hotelUid} />;
+}
+
+function ScopedOrdersPage({ hotelUid }) {
+  const navigate = useNavigate();
+  const canReadSuppliers = usePermission("suppliers", "read");
 
   const [selectedStatus, setSelectedStatus] = useState("");
   const [createdFrom, setCreatedFrom] = useState("");
@@ -86,69 +90,27 @@ export default function OrdersPage() {
   const [selectedCreatedBy, setSelectedCreatedBy] = useState("");
   const [openRangePopover, setOpenRangePopover] = useState("");
 
-  const today = useMemo(
-    () =>
-      new Date().toLocaleDateString(undefined, {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }),
-    []
-  );
-
-  const handleLogout = async () => {
-    await signOut(auth);
-    sessionStorage.clear();
-    window.location.href = "/login";
-  };
-
-  useEffect(() => {
-    const loadOrders = async () => {
-      if (!hotelUid) return;
-      setLoading(true);
-      const result = await getOrders(hotelUid);
-      setOrders(result);
-      setLoading(false);
-    };
-
-    loadOrders();
-  }, [hotelUid]);
-
-
-  useEffect(() => {
-    const loadSupplierNames = async () => {
-      if (!hotelUid) return;
-      const suppliers = await getSuppliers(hotelUid);
-      const map = (suppliers || []).reduce((acc, supplier) => {
-        acc[supplier.id] = String(supplier.name || "").trim() || supplier.id;
-        return acc;
-      }, {});
-      setSupplierNameMap(map);
-    };
-
-    loadSupplierNames().catch(() => setSupplierNameMap({}));
-  }, [hotelUid]);
-
-  useEffect(() => {
-    const loadUserNames = async () => {
-      const userIds = Array.from(
-        new Set(orders.map((order) => String(order.createdBy || "").trim()).filter(Boolean))
-      );
-      const entries = await Promise.all(
-        userIds.map(async (userId) => [userId, await getUserDisplayName(userId)])
-      );
-      setCreatedByMap(Object.fromEntries(entries));
-    };
-
-    loadUserNames();
-  }, [orders]);
+  const loadOrders = useCallback(() => getOrders(hotelUid), [hotelUid]);
+  const query = useScopedAsync({ scopeKey: hotelUid, enabled: Boolean(hotelUid), load: loadOrders });
+  const orders = query.data || EMPTY_ORDERS;
+  const userIds = useMemo(() => [...new Set(orders.map((order) => String(order.createdBy || "").trim()).filter(Boolean))], [orders]);
+  const loadStaffNames = useCallback(async () => {
+    const names = await Promise.allSettled(userIds.map((userId) => getHotelUserDisplayName(hotelUid, userId)));
+    return Object.fromEntries(names.map((name, index) => [userIds[index], name.status === "fulfilled" ? name.value : null]));
+  }, [hotelUid, userIds]);
+  const staffQuery = useScopedAsync({ scopeKey: `${hotelUid}:${JSON.stringify(userIds)}`, enabled: Boolean(hotelUid && userIds.length), load: loadStaffNames });
+  const createdByMap = staffQuery.data || {};
+  const loadSuppliers = useCallback(() => getSuppliers(hotelUid), [hotelUid]);
+  const suppliersQuery = useScopedAsync({ scopeKey: `${hotelUid}:${canReadSuppliers}`, enabled: Boolean(hotelUid && canReadSuppliers), load: loadSuppliers });
+  const supplierNameMap = useMemo(() => Object.fromEntries((suppliersQuery.data || []).map((supplier) => [supplier.id, String(supplier.name || "").trim() || supplier.id])), [suppliersQuery.data]);
+  const loading = query.loading;
 
   const supplierOptions = useMemo(
     () =>
       Array.from(
         new Set(orders.map((order) => String(order.supplierId || "").trim()).filter(Boolean))
       )
-        .map((supplierId) => ({ id: supplierId, name: supplierNameMap[supplierId] || supplierId }))
+        .map((supplierId) => ({ id: supplierId, name: supplierNameMap[supplierId] || orders.find((order) => order.supplierId === supplierId && order.supplierName)?.supplierName || supplierId }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [orders, supplierNameMap]
   );
@@ -156,7 +118,7 @@ export default function OrdersPage() {
   const createdByOptions = useMemo(
     () =>
       Array.from(new Set(orders.map((order) => String(order.createdBy || "").trim()).filter(Boolean)))
-        .map((id) => ({ id, name: createdByMap[id] || id }))
+        .map((id) => ({ id, name: createdByMap[id] || orders.find((order) => order.createdBy === id && order.createdByName)?.createdByName || id }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [orders, createdByMap]
   );
@@ -182,9 +144,9 @@ export default function OrdersPage() {
       })
       .map((order) => ({
         ...order,
-        supplier: supplierNameMap[order.supplierId] || order.supplierId || "-",
+        supplier: supplierNameMap[order.supplierId] || order.supplierName || order.supplierId || "-",
         outlet: order.outletName || order.outletId || "-",
-        createdByLabel: createdByMap[order.createdBy] || order.createdBy || "-",
+        createdByLabel: createdByMap[order.createdBy] || order.createdByName || order.createdBy || "-",
         createdAtLabel: order.createdAtDate ? new Date(order.createdAtDate).toLocaleString() : "-",
         itemCount: Array.isArray(order.products) ? order.products.length : 0,
         totalLabel: `${Number(order.totalAmount || 0).toFixed(2)} ${order.currency || "EUR"}`,
@@ -214,9 +176,9 @@ export default function OrdersPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
-      <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+    <PageShell>
+      <AsyncError error={query.error} onRetry={query.retry} label="Could not load orders." />
+      {canReadSuppliers && <AsyncError error={suppliersQuery.error} onRetry={suppliersQuery.retry} label="Could not load supplier names. Saved order names remain available." />}
         <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-semibold">Orders</h1>
@@ -327,7 +289,7 @@ export default function OrdersPage() {
 
         {loading ? (
           <p className="text-sm text-gray-600">Orders laden...</p>
-        ) : (
+        ) : query.error ? null : (
           <DataListTable
             columns={columns}
             rows={filteredRows}
@@ -335,7 +297,6 @@ export default function OrdersPage() {
             emptyMessage="Geen orders gevonden."
           />
         )}
-      </PageContainer>
-    </div>
+    </PageShell>
   );
 }

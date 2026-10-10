@@ -6,7 +6,7 @@ import PageContainer from "../layout/PageContainer";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { createAuditUpsell, getUpsellSettings } from "../../services/firebaseUpsells";
-import { getSettings } from "../../services/firebaseSettings";
+import { getOperaSettings } from "../../services/firebaseSettings";
 
 const emptyPackage = () => ({
   packageCode: "",
@@ -67,7 +67,7 @@ export default function UpsellCreateAuditPage() {
 
       try {
         const [settings, upsellSettings] = await Promise.all([
-          getSettings(hotelUid),
+          getOperaSettings(hotelUid),
           getUpsellSettings(hotelUid),
         ]);
         if (!active) return;

@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { Combobox } from "../ui/combobox";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getSettings } from "../../services/firebaseSettings";
+import { getContractTaxonomy } from "../../services/firebaseSettings";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import AsyncError from "../shared/AsyncError";
 
 const INITIAL_STATE = {
   name: "",
@@ -60,35 +62,10 @@ export default function ContractFormFields({
   const [saveError, setSaveError] = useState("");
   const [selectedFollower, setSelectedFollower] = useState(null);
   const [newReminderDay, setNewReminderDay] = useState("");
-  const [categoryOptions, setCategoryOptions] = useState([]);
-  const [subcategoryOptions, setSubcategoryOptions] = useState([]);
-
-  useEffect(() => {
-    if (!hotelUid) return;
-
-    const loadContractSettings = async () => {
-      const settings = await getSettings(hotelUid);
-      const loadedCategories = Object.entries(settings?.contractCategories || {}).map(
-        ([id, value]) => ({
-          id,
-          name: String(value?.name || "").trim(),
-        })
-      );
-      const validCategoryIds = new Set(loadedCategories.map((category) => category.id));
-      const loadedSubcategories = Object.entries(settings?.contractSubcategories || {})
-        .map(([id, value]) => ({
-          id,
-          name: String(value?.name || "").trim(),
-          categoryId: String(value?.categoryId || "").trim(),
-        }))
-        .filter((subcategory) => subcategory.categoryId && validCategoryIds.has(subcategory.categoryId));
-
-      setCategoryOptions(loadedCategories);
-      setSubcategoryOptions(loadedSubcategories);
-    };
-
-    loadContractSettings();
-  }, [hotelUid]);
+  const loadTaxonomy = useCallback(() => getContractTaxonomy(hotelUid), [hotelUid]);
+  const taxonomy = useScopedAsync({ scopeKey: hotelUid, enabled: Boolean(hotelUid), load: loadTaxonomy });
+  const categoryOptions = taxonomy.data?.categories || [];
+  const subcategoryOptions = taxonomy.data?.subcategories || [];
 
   useEffect(() => {
     if (!initialValues) {
@@ -278,6 +255,7 @@ export default function ContractFormFields({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      <AsyncError error={taxonomy.error} onRetry={taxonomy.retry} label="Could not load contract categories." />
       {disabled && <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p className="font-semibold">Private documents are awaiting activation</p><p className="mt-1">Your platform administrator must complete the reviewed file migration before contract changes are available.</p></div>}
       {saveError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{saveError}</p>}
       <div className="grid gap-4 sm:grid-cols-2">

@@ -1,13 +1,14 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Plus, X } from "lucide-react";
-import * as XLSX from "xlsx";
-import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import PageShell from "../layout/PageShell";
+import AsyncError from "../shared/AsyncError";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { collectPaginatedProducts } from "../../services/paginatedExport";
 import DataListTable from "../shared/DataListTable";
 import Modal from "../shared/Modal";
-import { auth, signOut } from "../../firebaseConfig";
+import { auth } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSupplierProducts, importSupplierProducts } from "../../services/firebaseProducts";
 import { getSuppliers } from "../../services/firebaseSuppliers";
@@ -71,116 +72,54 @@ const EXPORT_TEMPLATE_ROW = {
 };
 
 export default function SupplierProductsPage() {
+  const { hotelUid } = useHotelContext();
+  return <ScopedSupplierProductsPage key={hotelUid} hotelUid={hotelUid} />;
+}
+
+function ScopedSupplierProductsPage({ hotelUid }) {
   const navigate = useNavigate();
   const { t } = useTranslation("common");
-  const { hotelUid } = useHotelContext();
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const fileInputRef = useRef(null);
   const canCreateProducts = usePermission("supplierproducts", "create");
-  const [products, setProducts] = useState([]);
-  const [suppliers, setSuppliers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const canReadSuppliers = usePermission("suppliers", "read");
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("");
-  const [pageIndex, setPageIndex] = useState(0);
-  const [hasMorePages, setHasMorePages] = useState(false);
   const [pageStartCursors, setPageStartCursors] = useState({ 0: null });
   const [showExportModal, setShowExportModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [pendingImportProducts, setPendingImportProducts] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [exportError, setExportError] = useState(null);
 
-  const today = useMemo(
-    () =>
-      new Date().toLocaleDateString(undefined, {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }),
-    []
-  );
-
-  const handleLogout = async () => {
-    await signOut(auth);
-    sessionStorage.clear();
-    window.location.href = "/login";
-  };
-
-  const loadProductsPage = async (nextPageIndex, cursor) => {
-    if (!hotelUid) return;
-    setLoading(true);
-
-    const normalizedStatus = selectedStatus.trim().toLowerCase();
-    const activeFilter = normalizedStatus === "active" ? true : normalizedStatus === "inactive" ? false : null;
-    const result = await getSupplierProducts(hotelUid, {
-      pageSize: PAGE_SIZE,
-      cursor,
-      searchTerm: debouncedSearchTerm,
-      supplierId: selectedSupplierId,
-      active: activeFilter,
-    });
-
-    setProducts(result.products);
-    setHasMorePages(result.hasMore);
-    setPageIndex(nextPageIndex);
-
-    if (result.hasMore && result.cursor) {
-      setPageStartCursors((prev) => ({
-        ...prev,
-        [nextPageIndex + 1]: result.cursor,
-      }));
-    }
-
-    setLoading(false);
-  };
+  const supplierIdFilter = canReadSuppliers ? selectedSupplierId : "";
+  const queryKey = `${hotelUid}:${debouncedSearchTerm}:${supplierIdFilter}:${selectedStatus}`;
+  const loadProducts = useCallback(async (nextPageIndex = 0, cursor = null) => ({
+    ...(await getSupplierProducts(hotelUid, { pageSize: PAGE_SIZE, cursor, searchTerm: debouncedSearchTerm, supplierId: supplierIdFilter, active: selectedStatus === "active" ? true : selectedStatus === "inactive" ? false : null })), pageIndex: nextPageIndex,
+  }), [hotelUid, debouncedSearchTerm, supplierIdFilter, selectedStatus]);
+  const query = useScopedAsync({ scopeKey: queryKey, enabled: Boolean(hotelUid), initialData: null, load: loadProducts });
+  const products = query.data?.products || [];
+  const loading = query.loading;
+  const pageIndex = query.data?.pageIndex || 0;
+  const hasMorePages = Boolean(query.data?.hasMore);
+  const loadProductsPage = query.run;
+  useEffect(() => { setPageStartCursors({ 0: null }); }, [queryKey]);
+  useEffect(() => {
+    if (query.data?.hasMore && query.data.cursor) setPageStartCursors((current) => ({ ...current, [query.data.pageIndex + 1]: query.data.cursor }));
+  }, [query.data]);
 
   useEffect(() => {
     const timeoutId = setTimeout(() => setDebouncedSearchTerm(searchTerm), 300);
     return () => clearTimeout(timeoutId);
   }, [searchTerm]);
 
-  useEffect(() => {
-    if (!hotelUid) return;
-    setPageStartCursors({ 0: null });
-    loadProductsPage(0, null);
-  }, [hotelUid, debouncedSearchTerm, selectedSupplierId, selectedStatus]);
 
-  useEffect(() => {
-    let active = true;
-
-    const loadSuppliers = async () => {
-      if (!hotelUid) {
-        setSuppliers([]);
-        return;
-      }
-
-      const supplierRows = await getSuppliers(hotelUid);
-      if (!active) return;
-
-      const normalizedSuppliers = supplierRows
-        .map((supplier) => ({
-          id: String(supplier?.id || "").trim(),
-          name: String(supplier?.name || "").trim(),
-        }))
-        .filter((supplier) => supplier.id)
-        .sort((left, right) => (left.name || left.id).localeCompare(right.name || right.id));
-
-      setSuppliers(normalizedSuppliers);
-    };
-
-    loadSuppliers();
-    return () => {
-      active = false;
-    };
-  }, [hotelUid]);
-
-  const supplierFilters = useMemo(() => {
-    return suppliers.map((supplier) => ({
-      id: supplier.id,
-      name: supplier.name || supplier.id,
-    }));
-  }, [suppliers]);
+  const loadSuppliers = useCallback(async () => (await getSuppliers(hotelUid)).map((supplier) => ({ id: String(supplier.id || "").trim(), name: String(supplier.name || "").trim() })).filter((supplier) => supplier.id).sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)), [hotelUid]);
+  const supplierQuery = useScopedAsync({ scopeKey: `${hotelUid}:${canReadSuppliers}`, enabled: Boolean(hotelUid && canReadSuppliers), initialData: [], load: loadSuppliers });
+  const supplierFilters = (supplierQuery.data || []).map((supplier) => ({ ...supplier, name: supplier.name || supplier.id }));
 
   const columns = [
     {
@@ -215,7 +154,10 @@ export default function SupplierProductsPage() {
     },
   ];
 
-  const downloadExcel = (rows, headers, filename) => {
+  const downloadExcel = async (rows, headers, filename) => {
+    if (!mounted.current) return;
+    const XLSX = await import("xlsx");
+    if (!mounted.current) return;
     const worksheet = XLSX.utils.json_to_sheet(rows, { header: headers });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "SupplierProducts");
@@ -241,40 +183,24 @@ export default function SupplierProductsPage() {
     variants: Array.isArray(row.variants) ? JSON.stringify(row.variants) : "",
   });
 
-  const handleExportTemplate = () => {
-    downloadExcel([EXPORT_TEMPLATE_ROW], TEMPLATE_HEADERS, "supplier-products-template.xlsx");
-    setShowExportModal(false);
+  const handleExportTemplate = async () => {
+    try { await downloadExcel([EXPORT_TEMPLATE_ROW], TEMPLATE_HEADERS, "supplier-products-template.xlsx");
+    if (mounted.current) setShowExportModal(false); } catch (error) { if (mounted.current) setExportError(error); }
   };
 
   const handleExportFullList = async () => {
-    if (!hotelUid) return;
-
-    setBusy(true);
+    if (!mounted.current || !hotelUid) return;
+    setBusy(true); setExportError(null);
     try {
-      const allProducts = [];
-      let cursor = null;
-      let hasMore = true;
-
-      while (hasMore) {
-        const result = await getSupplierProducts(hotelUid, {
-          pageSize: 200,
-          cursor,
-        });
-
-        allProducts.push(...(Array.isArray(result?.products) ? result.products : []));
-        cursor = result?.cursor || null;
-        hasMore = Boolean(result?.hasMore && cursor);
-      }
-
+      const allProducts = await collectPaginatedProducts((options) => {
+        if (!mounted.current) throw new Error("The catalog page is no longer active.");
+        return getSupplierProducts(hotelUid, options);
+      });
+      if (!mounted.current) return;
       const rows = allProducts.map((product) => normalizeExportRow({ documentId: product.id, ...product }));
-      downloadExcel(rows, EXCEL_HEADERS, "supplier-products-full.xlsx");
-      setShowExportModal(false);
-    } catch (error) {
-      console.error("Failed to export full supplier products list", error);
-      window.alert("Kon de volledige supplier products lijst niet exporteren.");
-    } finally {
-      setBusy(false);
-    }
+      await downloadExcel(rows, EXCEL_HEADERS, "supplier-products-full.xlsx");
+      if (mounted.current) setShowExportModal(false);
+    } catch (error) { if (mounted.current) setExportError(error); } finally { if (mounted.current) setBusy(false); }
   };
 
   const handleImportButton = () => {
@@ -284,10 +210,13 @@ export default function SupplierProductsPage() {
   const handleImportFileChange = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file) return;
+    if (!mounted.current || !file) return;
 
     try {
       const workbookData = await file.arrayBuffer();
+      if (!mounted.current) return;
+      const XLSX = await import("xlsx");
+      if (!mounted.current) return;
       const workbook = XLSX.read(workbookData, { type: "array" });
       const firstSheet = workbook.SheetNames[0];
       const worksheet = firstSheet ? workbook.Sheets[firstSheet] : null;
@@ -349,13 +278,14 @@ export default function SupplierProductsPage() {
       setPendingImportProducts(importedProducts);
       setShowImportModal(true);
     } catch (error) {
+      if (!mounted.current) return;
       console.error("Failed to parse import file", error);
       window.alert(t("products.import.invalidFile"));
     }
   };
 
   const submitImport = async (onExisting) => {
-    if (!hotelUid || pendingImportProducts.length === 0) return;
+    if (!mounted.current || !hotelUid || pendingImportProducts.length === 0) return;
 
     const actor =
       sessionStorage.getItem("userEmail") ||
@@ -369,10 +299,12 @@ export default function SupplierProductsPage() {
         onExisting,
         actor,
       });
+      if (!mounted.current) return;
       setShowImportModal(false);
       setPendingImportProducts([]);
       setPageStartCursors({ 0: null });
       await loadProductsPage(0, null);
+      if (!mounted.current) return;
       window.alert(
         t("products.import.result", {
           imported: result.imported,
@@ -380,17 +312,18 @@ export default function SupplierProductsPage() {
         })
       );
     } catch (error) {
+      if (!mounted.current) return;
       console.error("Failed to import products", error);
       window.alert(String(error?.message || t("products.import.failed")));
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
-      <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+    <PageShell>
+        <AsyncError error={query.error} onRetry={query.retry} label="Could not load products." />
+        {canReadSuppliers && <AsyncError error={supplierQuery.error} onRetry={supplierQuery.retry} label="Could not load suppliers." />}
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
@@ -450,7 +383,8 @@ export default function SupplierProductsPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <select
+          {canReadSuppliers && <select
+            aria-label="Filter by supplier"
             value={selectedSupplierId}
             onChange={(event) => setSelectedSupplierId(event.target.value)}
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
@@ -461,7 +395,7 @@ export default function SupplierProductsPage() {
                 {supplier.name}
               </option>
             ))}
-          </select>
+          </select>}
 
           <select
             value={selectedStatus}
@@ -476,7 +410,7 @@ export default function SupplierProductsPage() {
 
         {loading ? (
           <p className="text-gray-600">{t("products.loading")}</p>
-        ) : (
+        ) : query.error ? null : (
           <DataListTable
             columns={columns}
             rows={products}
@@ -512,7 +446,6 @@ export default function SupplierProductsPage() {
             </button>
           </div>
         </div>
-      </PageContainer>
 
       <Modal open={showExportModal} onClose={() => setShowExportModal(false)} title={t("products.export.title")}>
         <button
@@ -524,6 +457,8 @@ export default function SupplierProductsPage() {
           <X className="h-4 w-4" />
         </button>
         <p className="mb-4 text-sm text-gray-700">{t("products.export.message")}</p>
+        <p className="mb-3 text-sm text-gray-600">The full export includes every product in this hotel, regardless of the current filters.</p>
+        <AsyncError error={exportError} onRetry={handleExportFullList} label="Could not export products." />
         <div className="flex flex-col gap-2">
           <button
             type="button"
@@ -535,6 +470,7 @@ export default function SupplierProductsPage() {
           <button
             type="button"
             onClick={handleExportFullList}
+            disabled={busy}
             className="rounded-lg bg-[#b41f1f] px-3 py-2 text-sm font-semibold text-white hover:bg-[#961919]"
           >
             {t("products.export.full")}
@@ -563,6 +499,6 @@ export default function SupplierProductsPage() {
           </button>
         </div>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

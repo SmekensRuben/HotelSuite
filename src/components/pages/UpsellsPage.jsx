@@ -7,7 +7,7 @@ import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getAuditUpsells, getUpsellDateKeys, getUpsellSettings } from "../../services/firebaseUpsells";
-import { getSettings } from "../../services/firebaseSettings";
+import { getOperaSettings } from "../../services/firebaseSettings";
 import { usePermission } from "../../hooks/usePermission";
 import UpsellDateRangeFilter, { getDateRangeForPreset } from "./UpsellDateRangeFilter";
 
@@ -168,7 +168,7 @@ export default function UpsellsPage() {
       try {
         const [records, settings, upsellSettings] = await Promise.all([
           getAuditUpsells(hotelUid, dateRange.startDate, dateRange.endDate, { dateFilter: "departureDate" }),
-          getSettings(hotelUid),
+          getOperaSettings(hotelUid),
           getUpsellSettings(hotelUid),
         ]);
         if (!active) return;

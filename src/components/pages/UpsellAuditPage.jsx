@@ -1,14 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Download, Plus } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
-import * as XLSX from "xlsx";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getAuditUpsells } from "../../services/firebaseUpsells";
-import { getSettings } from "../../services/firebaseSettings";
+import { getOperaSettings } from "../../services/firebaseSettings";
 import { usePermission } from "../../hooks/usePermission";
 import UpsellDateRangeFilter, { getDateRangeForPreset } from "./UpsellDateRangeFilter";
 
@@ -212,7 +211,7 @@ export default function UpsellAuditPage() {
       try {
         const [records, settings] = await Promise.all([
           getAuditUpsells(hotelUid, dateRange.startDate, dateRange.endDate),
-          getSettings(hotelUid),
+          getOperaSettings(hotelUid),
         ]);
         if (!active) return;
         setAuditUpsells(records);
@@ -293,7 +292,7 @@ export default function UpsellAuditPage() {
     );
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const preferredKeys = [
       "logDate",
       "logTime",
@@ -347,6 +346,7 @@ export default function UpsellAuditPage() {
       }, {});
     });
 
+    const XLSX = await import("xlsx");
     const worksheet = XLSX.utils.json_to_sheet(rows, { header: exportKeys });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Upsell Audit");
