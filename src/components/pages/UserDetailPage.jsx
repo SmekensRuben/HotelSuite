@@ -6,6 +6,7 @@ import { auth, signOut } from "../../firebaseConfig";
 import { getUserById, getUserMemberships, updateUserWithMemberships } from "../../services/firebaseUserManagement";
 import { listAllPermissionKeys, PERMISSION_CATALOG } from "../../constants/permissionCatalog";
 import { usePermission } from "../../hooks/usePermission";
+import { usePlatformScope } from "../../hooks/usePlatformQuery";
 
 function normalizeCsvToArray(value) {
   return value
@@ -18,11 +19,19 @@ function unique(values) {
   return Array.from(new Set(values));
 }
 
-export default function UserDetailPage() {
-  const navigate = useNavigate();
+export default function UserDetailPage({ platform = false }) {
   const { userId } = useParams();
-  const canUpdateUsers = usePermission("users", "update");
+  return <ScopedUserDetailPage key={`${userId}:${platform}`} userId={userId} platform={platform} />;
+}
+
+function ScopedUserDetailPage({ userId, platform }) {
+  const navigate = useNavigate();
+  const usersPath = platform ? "/platform/users" : "/settings/users";
+  const capture = usePlatformScope(userId);
+  const hotelCanUpdateUsers = usePermission("users", "update");
+  const canUpdateUsers = platform || hotelCanUpdateUsers;
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -52,13 +61,18 @@ export default function UserDetailPage() {
   };
 
   useEffect(() => {
+    let active = true;
     const loadUser = async () => {
       if (!canUpdateUsers || !userId) return;
 
       setLoading(true);
+      setLoadError(false);
+      try {
       const user = await getUserById(userId);
+      if (!active) return;
 
       if (!user) {
+        setLoadError(true);
         setMessage("User not found.");
         setLoading(false);
         return;
@@ -69,15 +83,21 @@ export default function UserDetailPage() {
       setEmail(user.email || "");
 
       const hotelUids = Array.isArray(user.hotelUid) ? unique(user.hotelUid.filter(Boolean)) : [];
+      const loadedMemberships = await getUserMemberships(userId, hotelUids);
+      if (!active) return;
       setHotelUidsInput(hotelUids.join(", "));
       setAccessRevision(user.accessRevision || 0);
       setSelectedHotelUid(hotelUids[0] || "");
-      setMemberships(await getUserMemberships(userId, hotelUids));
+      setMemberships(loadedMemberships);
 
       setLoading(false);
+      } catch {
+        if (active) { setLoadError(true); setMessage("User access could not be loaded. Refresh before editing."); setLoading(false); }
+      }
     };
 
     loadUser();
+    return () => { active = false; };
   }, [canUpdateUsers, knownPermissionKeys, userId]);
 
   const hotelUids = normalizeCsvToArray(hotelUidsInput);
@@ -99,7 +119,8 @@ export default function UserDetailPage() {
 
   const handleSave = async (event) => {
     event.preventDefault();
-    if (!canUpdateUsers || !userId) return;
+    if (!canUpdateUsers || !userId || saving || loadError || loading) return;
+    const current = capture();
 
     setSaving(true);
     setMessage("");
@@ -113,9 +134,11 @@ export default function UserDetailPage() {
 
     try {
       const result = await updateUserWithMemberships(userId, payload, memberships, accessRevision);
+      if (!current()) return;
       setAccessRevision(result.accessRevision);
       setMessage("User profile and hotel permissions saved.");
     } catch (error) {
+      if (!current()) return;
       console.error(error);
       const unavailable = error?.code === "functions/not-found"
         || error?.code === "functions/internal"
@@ -126,7 +149,7 @@ export default function UserDetailPage() {
         ? "Saving failed: the user access service is unavailable. Check the Functions deployment before retrying."
         : "Saving failed. Retry or contact the platform operator.");
     } finally {
-      setSaving(false);
+      if (current()) setSaving(false);
     }
   };
 
@@ -143,7 +166,7 @@ export default function UserDetailPage() {
           </div>
           <button
             type="button"
-            onClick={() => navigate("/settings/users")}
+            onClick={() => navigate(usersPath)}
             className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"
           >
             Back to users
@@ -152,6 +175,8 @@ export default function UserDetailPage() {
 
         {loading ? (
           <p className="text-gray-600">Loading user...</p>
+        ) : loadError ? (
+          <div role="alert" className="rounded-xl border bg-white p-6"><p>{message}</p><button className="mt-4 rounded-lg border px-3 py-2" onClick={() => window.location.reload()}>Reload user access</button></div>
         ) : (
           <form
             onSubmit={handleSave}

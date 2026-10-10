@@ -8,15 +8,15 @@ import SubscriptionAccessPage from "../pages/SubscriptionAccessPage";
 import { featureIsLicensed, modulesAreValid } from "../../constants/moduleCatalog";
 
 export default function ProtectedRoute({ children, feature, action = "read", anyOf = [], platformOnly = false, hotelAdminOnly = false }) {
-  const { hotelUid, loading, permissionsLoading, permissions, isPlatformAdmin,
+  const { hotelUid, loading, authLoading, hotelUids, permissionsLoading, permissions, isPlatformAdmin,
     subscriptionLoading, subscriptionActive, subscription, isHotelAdmin } = useHotelContext();
   const permissionChecks = anyOf.length ? anyOf : feature ? [{ feature, action }] : [];
-  const hasAccess = isPlatformAdmin || (permissionChecks.length
+  const hasAccess = (permissionChecks.length
     ? permissionChecks.some((permission) => featureIsLicensed(subscription, permission.feature)
       && hasPermission({ permissions }, permission.feature, permission.action || "read"))
     : true);
 
-  if (loading || permissionsLoading || (!isPlatformAdmin && subscriptionLoading)) {
+  if (platformOnly ? (authLoading ?? loading) : loading || permissionsLoading || subscriptionLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-gray-600">
         Checking hotel access...
@@ -29,11 +29,15 @@ export default function ProtectedRoute({ children, feature, action = "read", any
     user?.emailVerified && (!authPolicy.requireMfa || multiFactor(user).enrolledFactors.length),
   );
 
-  if (!hotelUid || !authenticationComplete) {
+  if (!authenticationComplete) {
     return <Navigate to="/login" replace />;
   }
 
-  if (!isPlatformAdmin && (subscriptionActive !== true || !modulesAreValid(subscription))) {
+  if (platformOnly) {
+    return isPlatformAdmin ? children : <Navigate to={hotelUids?.length ? "/dashboard" : "/access"} replace />;
+  }
+  if (!hotelUid) return <Navigate to={isPlatformAdmin ? "/platform" : "/access"} replace />;
+  if (subscriptionActive !== true || !modulesAreValid(subscription)) {
     return <SubscriptionAccessPage />;
   }
 
@@ -41,10 +45,7 @@ export default function ProtectedRoute({ children, feature, action = "read", any
     return <Navigate to="/dashboard" replace />;
   }
 
-  if (platformOnly && !isPlatformAdmin) {
-    return <Navigate to="/dashboard" replace />;
-  }
-  if (hotelAdminOnly && !isPlatformAdmin && !isHotelAdmin) return <Navigate to="/dashboard" replace />;
+  if (hotelAdminOnly && !isHotelAdmin) return <Navigate to="/dashboard" replace />;
 
   return children;
 }

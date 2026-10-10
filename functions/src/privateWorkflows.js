@@ -1,6 +1,6 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const { requireCurrentVerifiedUser } = require("./validation");
-const { requireSaasRollout } = require("./saasRollout");
+const { requireSaasRollout, SAAS_RULES_VERSION } = require("./saasRollout");
 const PRIVATE_WORKFLOWS_VERSION = "private-workflows-v1";
 async function requirePrivateWorkflows(db, tx) {
   await requireSaasRollout(db, tx);
@@ -16,6 +16,6 @@ async function requireCurrentStaff(request, auth) {
 async function privateWorkflowsEnabled(db) {
   const [privateFlag, procurement] = await Promise.all([db.doc("platformConfiguration/privateWorkflows").get(), db.doc("platformConfiguration/saasProcurement").get()]);
   return privateFlag.data()?.enabled === true && privateFlag.data()?.rulesVersion === PRIVATE_WORKFLOWS_VERSION
-    && procurement.data()?.enabled === true && procurement.data()?.rulesVersion === "saas-modules-v2";
+    && procurement.data()?.enabled === true && procurement.data()?.rulesVersion === SAAS_RULES_VERSION;
 }
 module.exports = { PRIVATE_WORKFLOWS_VERSION, requirePrivateWorkflows, requireCurrentStaff, privateWorkflowsEnabled };

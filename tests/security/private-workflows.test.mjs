@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
 const { admin } = require("../../functions/src/config");
 const { listHotelContractsHandler, listContractFollowersHandler, saveHotelContractHandler, uploadContractDocument, readContractFile, contractDocumentHandler } = require("../../functions/src/contractFiles");
 const { createRoomingListHandler, getRoomingListHandler, mutateRoomingListHandler, reviewRoomingListHandler, setRoomingListAccessHandler } = require("../../functions/src/roomingLists");
+const { SAAS_RULES_VERSION } = require("../../functions/src/saasRollout");
 const db = admin.firestore(), auth = admin.auth(), bucket = admin.storage().bucket();
 const services = { firestore: db, auth, bucket, appBaseUrl: "https://pilot.example.test" };
 let environment, token, counter = 0;
@@ -53,7 +54,7 @@ beforeEach(async () => {
   const users = await auth.listUsers(); if (users.users.length) await auth.deleteUsers(users.users.map((u) => u.uid));
   for (const identity of [member, other, viewer, operator]) await auth.createUser({ uid: identity.uid, email: identity.token.email, emailVerified: true });
   await auth.setCustomUserClaims(operator.uid, { platformAdmin: true });
-  await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion: "saas-modules-v2" });
+  await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion: SAAS_RULES_VERSION });
   await db.doc("platformConfiguration/privateWorkflows").set({ enabled: true, rulesVersion: "private-workflows-v1" });
   for (const id of ["hotel-a", "hotel-b"]) { await db.doc("hotels/" + id).set({ hotelName: id }); await db.doc("hotelSubscriptions/" + id).set({ modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null }); }
   await db.doc("hotels/hotel-a/members/member-a").set({ permissions: ["contracts.*", "roominglists.*"] });

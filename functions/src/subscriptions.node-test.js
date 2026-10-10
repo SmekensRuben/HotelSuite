@@ -93,18 +93,21 @@ test("subscription updates validate IDs, revision and trial expiry before writin
 
 test("subscription changes and audit records are committed together; stale saves are rejected", async () => {
   const writes = [];
-  const db = { doc: (path) => ({ path }), collection: () => ({ doc: () => ({ path: "audit" }) }),
+  const db = { doc: (path) => ({ path }), collection: () => ({ doc: () => ({ path: "audit", id: "audit-key" }) }),
     runTransaction: (callback) => callback({
       get: async (ref) => ({ exists: true, data: () => ref.path.startsWith("hotelSubscriptions/") ? { revision: 2, status: "active" } : {} }),
       set: (ref, data) => writes.push({ path: ref.path, data }),
+      create: (ref, data) => writes.push({ path: ref.path, data }),
     }) };
   const request = { auth: { uid: "platform", token: { platformAdmin: true, email_verified: true } }, data: { hotelUid: "hotel-a", status: "suspended", modules: ["procurement"], planId: "standard", expectedRevision: 1 } };
   await assert.rejects(setHotelSubscriptionHandler(request, { firestore: db, auth: currentAuth }), (error) => error.code === "aborted");
   assert.equal(writes.length, 0);
   request.data.expectedRevision = 2;
   assert.equal((await setHotelSubscriptionHandler(request, { firestore: db, auth: currentAuth })).revision, 3);
-  assert.equal(writes.length, 2);
+  assert.equal(writes.length, 4);
   assert.equal(writes[0].data.billingMode, "manual");
+  assert.ok(writes.some((write) => write.path.startsWith("platformAudit/") && write.data.action === "subscription-updated"));
+  assert.ok(writes.some((write) => write.path.startsWith("hotels/hotel-a/platformAudit/")));
 });
 
 test("backend rejects missing or inactive subscription records", async () => {

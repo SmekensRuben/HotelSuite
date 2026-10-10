@@ -13,6 +13,7 @@ import {
 } from "firebase/auth";
 import { auth, authPolicy, signInWithEmailAndPassword } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
+import { workspaceHome } from "../../utils/workspace";
 import { useTranslation } from "react-i18next";
 
 const SCREENS = {
@@ -59,7 +60,8 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
   const navigate = useNavigate();
-  const { hotelUid, loading } = useHotelContext();
+  const { hotelUid, hotelUids, isPlatformAdmin, loading, authLoading } = useHotelContext();
+  const home = workspaceHome({ isPlatformAdmin, hotelUids: hotelUids || (hotelUid ? [hotelUid] : []) });
   const recaptchaVerifierRef = useRef(null);
   const phoneChallengeStartedRef = useRef(false);
 
@@ -213,8 +215,8 @@ export default function LoginPage() {
       return;
     }
 
-    if (hotelUid && !loading) navigate("/dashboard");
-  }, [hotelUid, loading, navigate, sendVerification, startEnrollment, t, verificationErrorMessage]);
+    if (!(authLoading ?? loading)) navigate(home);
+  }, [authLoading, loading, home, navigate, sendVerification, startEnrollment, t, verificationErrorMessage]);
 
   useEffect(() => {
     const user = auth.currentUser;
@@ -324,7 +326,7 @@ export default function LoginPage() {
       const assertion = PhoneMultiFactorGenerator.assertion(credential);
       await multiFactor(auth.currentUser).enroll(assertion, t("smsDisplayName"));
       setNotice(t("twoFactorEnabled"));
-      navigate("/dashboard");
+      navigate(home);
     } catch (err) {
       console.error(err);
       setError(t("invalidTwoFactorCode"));
@@ -383,7 +385,7 @@ export default function LoginPage() {
       if (!result.user.emailVerified) {
         await continueAfterPrimaryLogin(result.user);
       } else {
-        navigate("/dashboard");
+        navigate(home);
       }
     } catch (err) {
       console.error(err);

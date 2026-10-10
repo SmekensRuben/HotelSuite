@@ -228,10 +228,10 @@ describe("module and special-action boundaries", () => {
 
 
 describe("tenant isolation", () => {
-  it("allows the platform administrator to inspect both fictional hotels", async () => {
+  it("requires canonical membership instead of a platform claim for operational reads", async () => {
     const database = databaseFor(profiles.platformAdmin);
-    await assertSucceeds(getDoc(doc(database, "hotels/hotel-a/catalogproducts", "product-a")));
-    await assertSucceeds(getDoc(doc(database, "hotels/hotel-b/catalogproducts", "product-b")));
+    await assertFails(getDoc(doc(database, "hotels/hotel-a/catalogproducts", "product-a")));
+    await assertFails(getDoc(doc(database, "hotels/hotel-b/catalogproducts", "product-b")));
   });
 
   it("allows an employee to read only the assigned hotel", async () => {

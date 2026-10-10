@@ -66,3 +66,12 @@ for (const name of ["listHotelContracts", "listContractFollowers", "saveHotelCon
 
 const roomingLists = require("./src/roomingLists");
 for (const name of ["getRoomingList", "createRoomingList", "mutateRoomingList", "reviewRoomingList", "setRoomingListAccess"]) exports[name] = roomingLists[name];
+
+// Platform metadata and diagnostics do not require an operational hotel assignment.
+for (const module of ["platformConsole", "platformMonitoring", "platformSupport", "platformUsers"]) {
+  const boundaries = require(`./src/${module}`);
+  for (const [name, value] of Object.entries(boundaries)) {
+    if (value?.__endpoint) exports[name] = value;
+  }
+}
+exports.syncPlatformImportTelemetry = require("./src/importTelemetry").syncPlatformImportTelemetry;

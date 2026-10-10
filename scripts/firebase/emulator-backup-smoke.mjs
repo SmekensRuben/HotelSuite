@@ -3,6 +3,7 @@ import { deleteApp, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
+import { createRequire } from "node:module";
 
 const projectId = process.env.GCLOUD_PROJECT || "demo-hotel-suite-a00";
 if (projectId !== "demo-hotel-suite-a00") throw new Error("Only the fictional restore project is permitted.");
@@ -27,6 +28,13 @@ const objects = {
 const roomTypeDays = ["2026-10-10", "2026-10-11"].map((date) => ({ date, roomTypes: [{ code: "DBL", name: "Double", quantity: 2 }] }));
 const reservations = [{ id: "reservation-a", firstName: "Fictional", lastName: "Guest", arrivalDate: "2026-10-10", departureDate: "2026-10-12", roomType: "DBL", numberOfAdults: 1, numberOfChildren: 0, comment: "", createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z" }];
 const documents = {
+  "users/restore-platform": { firstName: "Fictional operator", hotelUid: [], accessRevision: 0 },
+  "platformSupportSessions/restore-session": { actorUid: "restore-platform", hotelUid: "restore-hotel-a", state: "active", reason: "Fictional diagnosis", expiresAt: revisionTime },
+  "platformAudit/restore-audit": { hotelUid: "restore-hotel-a", actorUid: "restore-platform", action: "support-started", createdAt: revisionTime },
+  "hotels/restore-hotel-a/platformAudit/restore-audit": { hotelUid: "restore-hotel-a", actorUid: "restore-platform", action: "support-started", createdAt: revisionTime },
+  "platformIncidents/restore-incident": { hotelUid: "restore-hotel-a", state: "open", code: "overdue", acknowledgedBy: "restore-platform", lastDetectedAtMillis: revisionTime.toMillis() },
+  "hotels/restore-hotel-a/importTelemetry/restore-run": { runId: "restore-run", fileType: "arrivals", status: "failed", writtenCount: null, receivedAtMillis: revisionTime.toMillis(), updatedAtMillis: revisionTime.toMillis() },
+  "hotels/restore-hotel-a/importRecovery/restore-recovery": { runId: "restore-run", actorUid: "restore-platform", state: "failed", startedAtMillis: revisionTime.toMillis() },
   "users/restore-a": { firstName: "Fictional", lastName: "A", hotelUid: ["restore-hotel-a"], accessRevision: 2 },
   "users/restore-b": { firstName: "Fictional", lastName: "B", hotelUid: ["restore-hotel-b"], accessRevision: 1 },
   "hotels/restore-hotel-a/members/restore-a": { permissions: ["orders.read", "users.read", "users.create", "users.update", "users.delete"], hotelAdmin: true, moduleRoles: {}, additionalPermissions: ["orders.read"], rolePolicyVersion: 1, revision: 2 },
@@ -55,10 +63,12 @@ const documents = {
 try {
   if (process.argv[2] === "seed") {
     await Promise.all([
+      auth.createUser({ uid: "restore-platform", email: "restore-platform@example.test", emailVerified: true }),
       auth.createUser({ uid: "restore-a", email: "restore-a@example.test", emailVerified: true, password: "Fictional-Restore-Only-42" }),
       auth.createUser({ uid: "restore-b", email: "restore-b@example.test", emailVerified: true, disabled: true }),
     ]);
     await auth.setCustomUserClaims("restore-a", { hotelUids: ["restore-hotel-a"], platformAdmin: false });
+    await auth.setCustomUserClaims("restore-platform", { platformAdmin: true });
     const batch = database.batch();
     for (const [path, value] of Object.entries(documents)) batch.set(database.doc(path), value);
     await batch.commit();
@@ -77,6 +87,11 @@ try {
     assert.equal(user.emailVerified, true);
     assert.deepEqual(user.customClaims, { hotelUids: ["restore-hotel-a"], platformAdmin: false });
     assert.equal((await auth.getUser("restore-b")).disabled, true);
+    assert.deepEqual((await auth.getUser("restore-platform")).customClaims, { platformAdmin: true });
+    assert.deepEqual((await database.doc("users/restore-platform").get()).data().hotelUid, []);
+    const { requireSupportSession } = createRequire(import.meta.url)("../../functions/src/platformSupport");
+    await assert.rejects(requireSupportSession({ auth: { uid: "restore-platform", token: { email_verified: true, platformAdmin: true } },
+      data: { hotelUid: "restore-hotel-a", sessionId: "restore-session" } }, { firestore: database, auth }), (error) => error.code === "permission-denied");
     for (const [path, bytes] of Object.entries(objects)) {
       const file = bucket.file(path);
       assert.deepEqual((await file.download())[0], bytes, `Restored bytes differ: ${path}`);
@@ -84,7 +99,7 @@ try {
       assert.equal(metadata.contentType, "application/pdf");
       assert.equal(metadata.metadata.fixture, "restore-only");
     }
-    console.log("Verified all two-hotel documents, module entitlements, hotel-admin roles and guard/audit, order audit, rooming-list token/version/change history, historical snapshot, Auth claims/state and private Storage bytes/metadata.");
+    console.log("Verified two-hotel data, entitlements, roles, domain history, platform monitoring/audit, zero-hotel operator, expired support denial, Auth state and private Storage bytes/metadata.");
   } else throw new Error("Expected seed or verify mode.");
 } finally {
   await deleteApp(app);

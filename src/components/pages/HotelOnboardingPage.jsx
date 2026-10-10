@@ -19,7 +19,7 @@ function messageFor(error) {
   return "The request could not be completed. Retry with the same details to safely resume it.";
 }
 
-export default function HotelOnboardingPage() {
+export default function HotelOnboardingPage({ platform = false }) {
   const { refreshHotelAssignments } = useHotelContext();
   const [hotels, setHotels] = useState([]);
   const [rolloutReady, setRolloutReady] = useState(null);
@@ -119,7 +119,7 @@ export default function HotelOnboardingPage() {
           <button disabled={Boolean(busy) || !selectedHotel || rolloutReady !== true} className={buttonClass}>{busy === "invite" && <Loader2 size={16} className="animate-spin" />}{resend ? "Resend invitation" : "Assign access and send invitation"}</button>
         </form>
       </div>
-      <Link to="/settings/subscriptions" className="inline-block text-sm font-semibold text-[#9b1c1c] hover:underline">Manage hotel subscriptions →</Link>
+      <Link to={platform ? "/platform/subscriptions" : "/settings/subscriptions"} className="inline-block text-sm font-semibold text-[#9b1c1c] hover:underline">Manage hotel subscriptions →</Link>
     </PageContainer>
   </div>;
 }

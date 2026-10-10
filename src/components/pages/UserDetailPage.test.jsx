@@ -28,3 +28,11 @@ it("shows existing wildcard access and removes it explicitly while preserving th
   fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
   await waitFor(() => expect(updateUserWithMemberships).toHaveBeenCalledWith("member", expect.objectContaining({ email: "member@example.test" }), { "hotel-a": [] }, 7));
 });
+
+it("does not permit a blank access save when the current user record is unavailable", async () => {
+  getUserById.mockRejectedValueOnce(new Error("unavailable"));
+  render(<MemoryRouter initialEntries={["/settings/users/member"]}><Routes><Route path="/settings/users/:userId" element={<UserDetailPage />} /></Routes></MemoryRouter>);
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("button", { name: "Save", exact: true })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Reload user access" })).toBeInTheDocument();
+});

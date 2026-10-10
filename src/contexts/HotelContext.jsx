@@ -3,6 +3,7 @@ import { auth, db, doc, getDoc, onSnapshot } from "../firebaseConfig";
 import { subscriptionIsActive } from "../utils/subscription";
 import { getHotelBootstrap } from "../services/firebaseSettings";
 import i18n from "../i18n";
+import { AuthContext } from "./AuthContext";
 import {
   getSelectedHotelUid,
   setSelectedHotelUid as persistSelectedHotelUid,
@@ -38,6 +39,10 @@ export function HotelProvider({ children }) {
     getSelectedHotelUid() || null
   );
   const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authError, setAuthError] = useState(null);
+  const authRequest = useRef(0);
   const [permissionsLoading, setPermissionsLoading] = useState(true);
   const [permissions, setPermissions] = useState([]);
   const [userData, setUserData] = useState(null);
@@ -121,67 +126,75 @@ export function HotelProvider({ children }) {
     return current();
   };
 
+  const operationalAssignments = async (data, platform, userUid) => {
+    const hotels = Array.isArray(data?.hotelUid) ? [...new Set(data.hotelUid.filter((id) => typeof id === "string" && id && !id.includes("/")))] : [];
+    if (!platform) return hotels;
+    const members = await Promise.all(hotels.map(async (hotelUid) => {
+      const member = await getDoc(doc(db, `hotels/${hotelUid}/members`, userUid));
+      return member.exists() ? hotelUid : null;
+    }));
+    return members.filter(Boolean);
+  };
+
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+    const observe = auth.onIdTokenChanged?.bind(auth) || auth.onAuthStateChanged.bind(auth);
+    const unsubscribe = observe(async (user) => {
+      const attempt = ++authRequest.current;
+      ++settingsRequest.current;
+      setAuthLoading(true);
+      setLoading(true);
+      setAuthError(null);
+      setCurrentUser(user || null);
+      setIsPlatformAdmin(false);
+      setHotelUids([]);
+      setPermissions([]);
+      setIsHotelAdmin(false);
+      setAuthorizationSource("none");
+      setSelectedHotelUid(null);
       if (!user?.uid) {
-        ++settingsRequest.current;
-        setPermissions([]);
-        setPermissionsLoading(false);
-        setHotelUids([]);
         setUserData(null);
-        setIsPlatformAdmin(false);
-        setIsHotelAdmin(false);
-        setAuthorizationSource("none");
         persistSelectedHotelUid(null);
-        setSelectedHotelUid(null);
+        setPermissionsLoading(false);
         setLoading(false);
+        setAuthLoading(false);
         return;
       }
-
       try {
-        const [userSnap, tokenResult] = await Promise.all([
-          getDoc(doc(db, "users", user.uid)),
-          user.getIdTokenResult(),
+        const [profileResult, token] = await Promise.allSettled([
+          getDoc(doc(db, "users", user.uid)), user.getIdTokenResult(),
         ]);
-        if (auth.currentUser?.uid !== user.uid) return;
-        setIsPlatformAdmin(tokenResult?.claims?.platformAdmin === true);
-
-        if (!userSnap.exists()) {
-          console.error("Gebruikersprofiel niet gevonden in database.");
-          setPermissions([]);
-          setPermissionsLoading(false);
-          setLoading(false);
-          return;
-        }
-
-        const data = userSnap.data();
+        if (token.status !== "fulfilled") throw token.reason;
+        const tokenResult = token.value;
+        if (attempt !== authRequest.current || auth.currentUser?.uid !== user.uid) return;
+        const platform = tokenResult?.claims?.platformAdmin === true;
+        const profile = profileResult.status === "fulfilled" ? profileResult.value : null;
+        const data = profile?.exists() ? profile.data() : {};
+        if (profileResult.status !== "fulfilled") setAuthError("profile-unavailable");
+        const hotels = await operationalAssignments(data, platform, user.uid);
+        if (attempt !== authRequest.current || auth.currentUser?.uid !== user.uid) return;
+        setIsPlatformAdmin(platform);
         setUserData(data);
-
-        const hotels = Array.isArray(data?.hotelUid) ? data.hotelUid : [];
+        setHotelUids(hotels);
+        setAuthLoading(false);
         if (!hotels.length) {
-          console.error("hotelUid ontbreekt in gebruikersprofiel.");
-          setPermissions([]);
+          persistSelectedHotelUid(null);
           setPermissionsLoading(false);
           setLoading(false);
           return;
         }
-
-        setHotelUids(hotels);
-
-        let uid = getSelectedHotelUid();
-        if (!uid || !hotels.includes(uid)) {
-          uid = hotels[0];
-          persistSelectedHotelUid(uid);
-        }
-
+        const saved = getSelectedHotelUid();
+        const uid = hotels.includes(saved) ? saved : hotels[0];
+        persistSelectedHotelUid(uid);
         setSelectedHotelUid(uid);
         if (await loadHotelSettings(uid, data, user.uid)) setLoading(false);
-      } catch (err) {
-        console.error("Fout bij laden van gebruikersgegevens:", err);
-        setPermissions([]);
+      } catch (error) {
+        if (attempt !== authRequest.current) return;
+        console.error("Authentication profile could not be loaded.", error.code);
+        setUserData(null);
+        setAuthError("authentication-unavailable");
         setPermissionsLoading(false);
-        setHotelUids([]);
         setLoading(false);
+        setAuthLoading(false);
       }
     });
 
@@ -199,23 +212,19 @@ export function HotelProvider({ children }) {
 
   const refreshHotelAssignments = async () => {
     const uid = auth.currentUser?.uid;
+    const attempt = authRequest.current;
     if (!uid) return;
     const profile = await getDoc(doc(db, "users", uid));
     if (auth.currentUser?.uid !== uid || !profile.exists()) return;
     const data = profile.data();
+    const hotels = await operationalAssignments(data, isPlatformAdmin, uid);
+    if (auth.currentUser?.uid !== uid || authRequest.current !== attempt) return;
     setUserData(data);
-    setHotelUids(Array.isArray(data.hotelUid) ? data.hotelUid : []);
+    setHotelUids(hotels);
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-blue-600 text-xl">
-        ⏳ Hotelgegevens laden...
-      </div>
-    );
-  }
-
   return (
+    <AuthContext.Provider value={{ currentUser, authLoading, authError, isPlatformAdmin, hotelUids }}>
     <HotelContext.Provider
       value={{
         hotelName,
@@ -224,6 +233,8 @@ export function HotelProvider({ children }) {
         hotelUids,
         language,
         loading,
+        authLoading,
+        currentUser,
         permissionsLoading,
         permissions,
         isPlatformAdmin,
@@ -245,6 +256,7 @@ export function HotelProvider({ children }) {
     >
       {children}
     </HotelContext.Provider>
+    </AuthContext.Provider>
   );
 }
 

@@ -4,6 +4,7 @@ const { requireCurrentVerifiedUser, text, revision, digest } = require("./valida
 const { requireDocumentId, requireHotelSubscription } = require("./subscriptions");
 const { compileMemberAccess, validateSeatLimit } = require("./modulePolicy");
 const { gated, enforceRequestRollout } = require("./saasRollout");
+const { writePlatformAudit } = require("./platformAudit");
 
 const stamp = () => admin.firestore.FieldValue.serverTimestamp();
 
@@ -99,6 +100,7 @@ async function updateHotelMemberHandler(request, services = {}) {
       previousPermissions: member.data().permissions || [], permissions: access.permissions,
       previousHotelAdmin: member.data().hotelAdmin === true, hotelAdmin: access.hotelAdmin,
       moduleRoles: access.moduleRoles, revision: expected + 1, createdAt: stamp() });
+    writePlatformAudit(tx, db, { key: auditRef.id, hotelUid, actorUid: request.auth.uid, action: "hotel-member-updated", targetId: userId, revision: expected + 1 });
     return { revision: expected + 1 };
   });
 }
@@ -129,6 +131,7 @@ async function removeHotelMemberHandler(request, services = {}) {
     writeTeamGuard(tx, guard, request.auth.uid);
     tx.create(receipt, { action: "remove-member", uid: userId, actorUid: request.auth.uid,
       previousPermissions: member.data().permissions || [], previousHotelAdmin: member.data().hotelAdmin === true, fingerprint, createdAt: stamp() });
+    writePlatformAudit(tx, db, { key: receipt.id, hotelUid, actorUid: request.auth.uid, action: "hotel-member-removed", targetId: userId, revision: expected + 1 });
     return { removed: true };
   });
 }

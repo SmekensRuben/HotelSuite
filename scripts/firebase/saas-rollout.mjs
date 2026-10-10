@@ -9,6 +9,7 @@ import { Firestore } from "@google-cloud/firestore";
 import { OAuth2Client } from "google-auth-library";
 import { publishReviewedRules, verifyPublishedRules } from "./saas-rules-release.mjs";
 
+const { saasRulesVersion } = JSON.parse(await readFile(new URL("../../functions/src/platformReleasePolicy.json", import.meta.url), "utf8"));
 const args = process.argv.slice(2);
 const mode = args[0];
 if (!["preflight", "pause", "deploy-rules", "migrate", "enable"].includes(mode) || args.some((v, i) => i > 0 && !["--emulator", "--rules-verified"].includes(v))) throw new Error("Use a supported mode with explicit rollout options.");
@@ -162,7 +163,7 @@ try {
     if (legacySuppliers.length || normalizations.length) throw new Error("Complete migration before activating the pilot.");
     const releaseSha = process.env.SAAS_RELEASE_SHA;
     if (!emulator && !/^[a-f0-9]{40}$/.test(releaseSha || "")) throw new Error("An exact reviewed SAAS_RELEASE_SHA is required.");
-    await rolloutRef.set({ enabled: true, rulesVersion: "saas-modules-v2", releaseSha: releaseSha || "emulator",
+    await rolloutRef.set({ enabled: true, rulesVersion: saasRulesVersion, releaseSha: releaseSha || "emulator",
       reviewedBy: operator, reviewedAt: FieldValue.serverTimestamp() }, { merge: true });
     console.log("Verified SaaS procurement pilot enabled.");
   }

@@ -94,6 +94,18 @@ describe("ProtectedRoute permissions", () => {
     expect(screen.getByText("protected content")).toBeInTheDocument();
   });
 
+  it("allows platform-only access with no selected hotel or active hotel subscription", () => {
+    hotelContext = { ...hotelContext, hotelUid: null, hotelUids: [], subscription: null, subscriptionActive: false, isPlatformAdmin: true };
+    renderProtected({ platformOnly: true });
+    expect(screen.getByText("protected content")).toBeInTheDocument();
+  });
+
+  it("does not use platform authority to bypass operational action permissions", () => {
+    hotelContext = { ...hotelContext, permissions: [], isPlatformAdmin: true };
+    renderProtected({ feature: "reservations", action: "read" });
+    expect(screen.getByText("dashboard")).toBeInTheDocument();
+  });
+
   it("does not require an enrolled factor when MFA is disabled", () => {
     authPolicy.requireMfa = false;
     enrolledFactors = [];

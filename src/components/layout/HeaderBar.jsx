@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { db, doc, getDoc } from "../../firebaseConfig";
@@ -8,6 +8,7 @@ import { usePermission } from "../../hooks/usePermission";
 
 export default function HeaderBar({ today, onLogout }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { t } = useTranslation(["common", "reservations"]);
   const { hotelUid, hotelUids = [], selectHotel, isPlatformAdmin, isHotelAdmin } = useHotelContext();
   const canViewCatalogProducts = usePermission("catalogproducts", "read");
@@ -43,8 +44,9 @@ export default function HeaderBar({ today, onLogout }) {
   const revenueMenuRef = useRef(null);
 
   const settingsMenuItems = [
+    { label: "Platform console", action: () => navigate("/platform"), icon: Settings2, visible: isPlatformAdmin },
     { label: "Contracts", action: () => navigate("/contracts"), icon: FileText, visible: canViewContracts },
-    { label: "Hotel team", action: () => navigate("/settings/team"), icon: Users, visible: isPlatformAdmin || isHotelAdmin },
+    { label: "Hotel team", action: () => navigate("/settings/team"), icon: Users, visible: isHotelAdmin },
     {
       label: "Property Settings",
       action: () => navigate("/settings/property"),
@@ -93,14 +95,6 @@ export default function HeaderBar({ today, onLogout }) {
       icon: BellRing,
       visible: canViewNotifications,
     },
-    {
-      label: "User Management",
-      action: () => navigate("/settings/users"),
-      icon: Users,
-      visible: isPlatformAdmin,
-    },
-    { label: "Hotel onboarding", action: () => navigate("/settings/hotels"), icon: Users, visible: isPlatformAdmin },
-    { label: "Subscriptions", action: () => navigate("/settings/subscriptions"), icon: FileText, visible: isPlatformAdmin },
   ].filter((item) => item.visible !== false);
 
   const meMenuItems = [
@@ -224,6 +218,8 @@ export default function HeaderBar({ today, onLogout }) {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  if (location.pathname.startsWith("/platform")) return null;
 
   return (
     <header className="bg-[#b41f1f] text-white shadow sticky top-0 z-20 px-2 py-2 mb-4">

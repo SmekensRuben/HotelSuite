@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import ModuleRolePicker from "../shared/ModuleRolePicker";
@@ -20,8 +21,18 @@ function errorMessage(error) {
   return error?.message || "The hotel team could not be updated. Please retry.";
 }
 
-export default function HotelTeamPage() {
-  const { hotelUid, hotelName, isHotelAdmin, isPlatformAdmin } = useHotelContext();
+export default function HotelTeamPage({ platform = false }) {
+  const context = useHotelContext();
+  const route = useParams();
+  const hotelUid = platform ? route.hotelUid : context.hotelUid;
+  return <ScopedHotelTeamPage key={`${hotelUid}:${platform}`} platform={platform} hotelUid={hotelUid} />;
+}
+
+function ScopedHotelTeamPage({ platform, hotelUid }) {
+  const context = useHotelContext();
+  const hotelName = platform ? hotelUid : context.hotelName;
+  const isHotelAdmin = context.isHotelAdmin;
+  const isPlatformAdmin = platform && context.isPlatformAdmin;
   const [team, setTeam] = useState({ users: [], modules: [], seatLimit: null });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -49,7 +60,7 @@ export default function HotelTeamPage() {
     operation.current++; setBusy(false);
     setEditing(null); setForm(blank()); setConfirmRemoval(false); setMessage(""); attempt.current = null;
     if (canManage) load();
-    return () => { request.current++; };
+    return () => { request.current++; operation.current++; };
   }, [hotelUid, canManage]);
   const change = (name, value) => { setForm((previous) => ({ ...previous, [name]: value })); attempt.current = null; };
   const select = (member) => { setEditing(member.id); setForm(editAccess(member)); setError(""); setMessage(""); setConfirmRemoval(false); attempt.current = null; };

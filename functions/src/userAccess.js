@@ -6,6 +6,7 @@ const { requireDocumentId, requirePlatformAdministrator } = require("./subscript
 const { readTeamGuard, writeTeamGuard } = require("./hotelTeam");
 const { ADMIN_PERMISSIONS } = require("./modulePolicy");
 const { gated } = require("./saasRollout");
+const { writePlatformAudit } = require("./platformAudit");
 
 function normalizeStrings(values) {
   return Array.isArray(values)
@@ -52,6 +53,7 @@ async function updateUserAccessHandler(request, services = {}) {
     if ((previous.accessRevision || 0) !== expectedRevision) {
       throw new HttpsError("aborted", "User access changed. Reload before saving.");
     }
+    if (previous.hotelUid !== undefined && !Array.isArray(previous.hotelUid)) throw new HttpsError("failed-precondition", "Review the user's stored hotel assignments before changing access.");
     const previousHotelUids = normalizeStrings(previous.hotelUid);
     previousHotelUids.forEach((hotelUid) => requireDocumentId(hotelUid, "stored hotelUid"));
     const hotelSnapshots = await Promise.all(hotelUids.map((hotelUid) => transaction.get(firestore.doc(`hotels/${hotelUid}`))));
@@ -103,6 +105,8 @@ async function updateUserAccessHandler(request, services = {}) {
       revision: expectedRevision + 1,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    (affectedHotels.length ? affectedHotels : [null]).forEach((hotelUid) => writePlatformAudit(transaction, firestore, { key: auditRef.id, hotelUid,
+      actorUid: request.auth.uid, action: "user-access-updated", targetId: userId, revision: expectedRevision + 1 }));
     return { hotelUids, permissionsUpdated: true, accessRevision: expectedRevision + 1 };
   });
 }
