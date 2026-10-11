@@ -119,7 +119,7 @@ export default function StockCountCreatePage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div>
@@ -191,7 +191,7 @@ export default function StockCountCreatePage() {
                             type="checkbox"
                             checked={row.selected}
                             onChange={() => toggleLocation(row.locationId)}
-                            className="h-4 w-4 rounded border-gray-300 text-[#b41f1f] focus:ring-[#b41f1f]"
+                            className="h-4 w-4 rounded border-gray-300 text-brand-800 focus:ring-brand-800"
                           />
                           <span>{row.locationName}</span>
                         </label>
@@ -232,7 +232,7 @@ export default function StockCountCreatePage() {
               <button
                 type="submit"
                 disabled={saving || loading || Boolean(sourceError) || selectedRows.length === 0 || selectedRows.length > 50 || hasSelectedLocationWithoutTemplate}
-                className="px-4 py-2 rounded-lg bg-[#b41f1f] text-white text-sm font-semibold hover:bg-[#961919] disabled:opacity-60"
+                className="px-4 py-2 rounded-lg bg-brand-800 text-white text-sm font-semibold hover:bg-brand-950 disabled:opacity-60"
               >
                 {saving ? "Saving..." : "Save Stock Count"}
               </button>

@@ -18,6 +18,9 @@ function editAccess(member) {
 }
 function errorMessage(error) {
   if (error?.code === "functions/aborted") return "This member changed. Refresh the team before trying again.";
+  if (error?.code === "functions/failed-precondition" && error.message?.includes("verified SaaS Rules rollout")) {
+    return "Hotel team access is temporarily unavailable until the platform administrator completes the required security update. Contact your platform administrator, then refresh the team.";
+  }
   return error?.message || "The hotel team could not be updated. Please retry.";
 }
 
@@ -33,7 +36,7 @@ function ScopedHotelTeamPage({ platform, hotelUid }) {
   const hotelName = platform ? hotelUid : context.hotelName;
   const isHotelAdmin = context.isHotelAdmin;
   const isPlatformAdmin = platform && context.isPlatformAdmin;
-  const [team, setTeam] = useState({ users: [], modules: [], seatLimit: null });
+  const [team, setTeam] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -47,9 +50,11 @@ function ScopedHotelTeamPage({ platform, hotelUid }) {
   const scope = useRef(hotelUid);
   scope.current = hotelUid;
   const canManage = isHotelAdmin || isPlatformAdmin;
+  const controlsDisabled = busy || loading || !team || Boolean(error);
   const load = async () => {
     const sequence = ++request.current;
-    setLoading(true); setError("");
+    setLoading(true); setTeam(null); setError("");
+    setEditing(null); setForm(blank()); setConfirmRemoval(false); attempt.current = null;
     try {
       const data = await getHotelTeam(hotelUid);
       if (sequence === request.current) setTeam(data);
@@ -67,7 +72,7 @@ function ScopedHotelTeamPage({ platform, hotelUid }) {
   const reset = () => { setEditing(null); setForm(blank()); setConfirmRemoval(false); attempt.current = null; };
   const save = async (event) => {
     event.preventDefault();
-    if (!canManage || busy || loading || error) return;
+    if (!canManage || controlsDisabled) return;
     const sequence = ++operation.current;
     const current = () => operation.current === sequence && scope.current === hotelUid;
     setBusy(true); setMessage("");
@@ -83,7 +88,7 @@ function ScopedHotelTeamPage({ platform, hotelUid }) {
     finally { if (current()) setBusy(false); }
   };
   const resend = async () => {
-    if (!editing || busy) return;
+    if (!canManage || !editing || controlsDisabled) return;
     const sequence = ++operation.current;
     const current = () => operation.current === sequence && scope.current === hotelUid;
     setBusy(true); setError(""); setMessage("");
@@ -95,7 +100,7 @@ function ScopedHotelTeamPage({ platform, hotelUid }) {
     finally { if (current()) setBusy(false); }
   };
   const remove = async () => {
-    if (!editing || busy) return;
+    if (!canManage || !editing || controlsDisabled) return;
     const sequence = ++operation.current;
     const current = () => operation.current === sequence && scope.current === hotelUid;
     setBusy(true); setError("");
@@ -107,46 +112,46 @@ function ScopedHotelTeamPage({ platform, hotelUid }) {
     } catch (failure) { if (current()) setError(errorMessage(failure)); }
     finally { if (current()) setBusy(false); }
   };
-  if (!canManage) return <PageContainer><p role="alert">Hotel administrator access is required.</p></PageContainer>;
+  if (!canManage) return <PageContainer as={platform ? "div" : "main"}><p role="alert">Hotel administrator access is required.</p></PageContainer>;
   return <div className="min-h-screen bg-slate-50 text-slate-900">
     <HeaderBar today={new Date().toLocaleDateString("en-GB")} onLogout={() => signOut(auth)} />
-    <PageContainer className="space-y-6">
+    <PageContainer as={platform ? "div" : "main"} className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-3xl font-semibold">Hotel team</h1>
         <p className="mt-2 text-sm text-slate-600">Manage named accounts and module roles for {hotelName}. Other hotels remain separate.</p></div>
         <button disabled={busy || loading} onClick={load} className="rounded-lg border bg-white px-4 py-2 text-sm">Refresh team</button></div>
       {error && <p role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-800">{error}</p>}
       {message && <p role="status" className="rounded-lg bg-emerald-50 p-4 text-sm text-emerald-800">{message}</p>}
-      {loading ? <p role="status">Loading hotel team...</p> : <div className="grid items-start gap-6 lg:grid-cols-2">
+      {loading ? <p role="status">Loading hotel team...</p> : !team ? <p role="status">Team members and subscription limits could not be loaded. Refresh the team to try again.</p> : <div className="grid items-start gap-6 lg:grid-cols-2">
         <div className="overflow-x-auto rounded-xl border bg-white p-5"><p className="mb-4 text-sm text-slate-600">{team.users.length} assigned accounts · {team.seatLimit === null ? "No user limit" : `Limit: ${team.seatLimit}`}. Invited accounts count as assigned users.</p>
           <table className="w-full text-left text-sm"><caption className="sr-only">Team members for this hotel</caption><thead><tr><th className="pb-3">Member</th><th className="pb-3">Administration</th></tr></thead>
-            <tbody>{team.users.map((member) => <tr key={member.id} className="border-t"><td className="py-3"><button disabled={busy} onClick={() => select(member)} className="text-left text-red-800 underline">{[member.firstName, member.lastName].filter(Boolean).join(" ") || member.email || member.id}</button><p className="mt-1 text-xs text-slate-500">{member.email}</p></td><td>{member.hotelAdmin ? "Hotel administrator" : "Member"}</td></tr>)}</tbody>
-          </table><button disabled={busy} onClick={reset} className="mt-5 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white">Invite a member</button>
+            <tbody>{team.users.map((member) => <tr key={member.id} className="border-t"><td className="py-3"><button disabled={controlsDisabled} onClick={() => select(member)} className="text-left text-brand-800 underline">{[member.firstName, member.lastName].filter(Boolean).join(" ") || member.email || member.id}</button><p className="mt-1 text-xs text-slate-500">{member.email}</p></td><td>{member.hotelAdmin ? "Hotel administrator" : "Member"}</td></tr>)}</tbody>
+          </table><button disabled={controlsDisabled} onClick={reset} className="mt-5 rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white">Invite a member</button>
         </div>
         <form onSubmit={save} className="space-y-5 rounded-xl border bg-white p-6">
           <h2 className="text-xl font-semibold">{editing ? "Edit hotel access" : "Invite a member"}</h2>
-          <fieldset disabled={busy} className="space-y-4"><div className="grid gap-4 sm:grid-cols-2">
+          <fieldset disabled={controlsDisabled} className="space-y-4"><div className="grid gap-4 sm:grid-cols-2">
             <label className="text-sm">First name<input maxLength={80} value={form.firstName} onChange={(event) => change("firstName", event.target.value)} className={inputClass} /></label>
             <label className="text-sm">Last name<input maxLength={80} value={form.lastName} onChange={(event) => change("lastName", event.target.value)} className={inputClass} /></label></div>
             <label className="block text-sm">Email<input required type="email" maxLength={254} readOnly={Boolean(editing)} value={form.email} onChange={(event) => change("email", event.target.value)} className={inputClass} /></label>
             <label className="flex items-start gap-3 text-sm"><input type="checkbox" checked={form.hotelAdmin} onChange={(event) => change("hotelAdmin", event.target.checked)} />Hotel administrator</label>
             <p className="text-xs leading-5 text-slate-500">Administrators can invite and manage this hotel's members and grant licensed module roles. Operational access is assigned separately. Keep two administrators where possible; the last administrator cannot be removed.</p>
           </fieldset>
-          <ModuleRolePicker modules={team.modules} value={form.moduleRoles} onChange={(value) => change("moduleRoles", value)} disabled={busy} />
+          <ModuleRolePicker modules={team.modules} value={form.moduleRoles} onChange={(value) => change("moduleRoles", value)} disabled={controlsDisabled} />
           <details className="rounded-lg border p-4"><summary className="cursor-pointer text-sm font-semibold">Advanced permissions ({form.additionalPermissions.length})</summary>
             <p className="mt-3 text-xs leading-5 text-slate-500">Existing custom permissions are preserved. Permissions for inactive modules remain stored and blocked. Hotel administration is managed by the separate checkbox.</p>
             {Object.entries(PERMISSION_CATALOG).filter(([feature]) => feature !== "users" && (CORE_FEATURES.includes(feature.toLowerCase()) || FEATURE_MODULE[feature.toLowerCase()])).map(([feature, actions]) => {
               const licensed = CORE_FEATURES.includes(feature.toLowerCase()) || team.modules.includes(FEATURE_MODULE[feature.toLowerCase()]);
               const displayed = [...actions, ...(form.additionalPermissions.includes(`${feature.toLowerCase()}.*`) ? ["*"] : [])];
               if (!licensed && !displayed.some((action) => form.additionalPermissions.includes(`${feature.toLowerCase()}.${action}`))) return null;
-              return <fieldset key={feature} disabled={busy || !licensed} className="mt-4"><legend className="text-xs font-semibold">{MODULE_CATALOG[FEATURE_MODULE[feature.toLowerCase()]]?.label || "Platform basics"} · {feature}</legend><div className="mt-2 flex flex-wrap gap-3">{displayed.map((action) => {
+              return <fieldset key={feature} disabled={controlsDisabled || !licensed} className="mt-4"><legend className="text-xs font-semibold">{MODULE_CATALOG[FEATURE_MODULE[feature.toLowerCase()]]?.label || "Platform basics"} · {feature}</legend><div className="mt-2 flex flex-wrap gap-3">{displayed.map((action) => {
                 const key = `${feature.toLowerCase()}.${action}`;
-                return <label key={key} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={form.additionalPermissions.includes(key)} onChange={() => change("additionalPermissions", form.additionalPermissions.includes(key) ? form.additionalPermissions.filter((item) => item !== key) : [...form.additionalPermissions, key])} />{action === "*" ? "All actions (legacy)" : action}</label>;
+                return <label key={key} className="flex flex-wrap items-center gap-2 text-xs"><input type="checkbox" checked={form.additionalPermissions.includes(key)} onChange={() => change("additionalPermissions", form.additionalPermissions.includes(key) ? form.additionalPermissions.filter((item) => item !== key) : [...form.additionalPermissions, key])} />{action === "*" ? "All actions (legacy)" : action}</label>;
               })}</div></fieldset>;
             })}
           </details>
-          <button disabled={busy || loading || Boolean(error)} className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Saving..." : editing ? "Save hotel access" : "Assign access and send invitation"}</button>
-          {editing && <div className="flex flex-wrap gap-4 border-t pt-4"><button type="button" disabled={busy} onClick={resend} className="text-sm text-red-800 underline">Resend invitation</button><button type="button" disabled={busy} onClick={() => setConfirmRemoval(true)} className="text-sm text-red-800 underline">Remove hotel access</button></div>}
-          {confirmRemoval && <div role="alertdialog" aria-label="Confirm hotel access removal" className="rounded-lg border border-red-200 bg-red-50 p-4"><p className="text-sm">Remove {form.email}'s access to this hotel? Their account and other hotel memberships are preserved.</p><div className="mt-3 flex gap-4"><button type="button" disabled={busy} onClick={remove} className="text-sm font-semibold text-red-800">Confirm removal</button><button type="button" disabled={busy} onClick={() => setConfirmRemoval(false)} className="text-sm">Keep access</button></div></div>}
+          <button disabled={controlsDisabled} className="rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Saving..." : editing ? "Save hotel access" : "Assign access and send invitation"}</button>
+          {editing && <div className="flex flex-wrap gap-4 border-t pt-4"><button type="button" disabled={controlsDisabled} onClick={resend} className="text-sm text-brand-800 underline">Resend invitation</button><button type="button" disabled={controlsDisabled} onClick={() => setConfirmRemoval(true)} className="text-sm text-red-800 underline">Remove hotel access</button></div>}
+          {confirmRemoval && <div role="alertdialog" aria-label="Confirm hotel access removal" className="rounded-lg border border-red-200 bg-red-50 p-4"><p className="text-sm">Remove {form.email}'s access to this hotel? Their account and other hotel memberships are preserved.</p><div className="mt-3 flex gap-4"><button type="button" disabled={controlsDisabled} onClick={remove} className="text-sm font-semibold text-red-800">Confirm removal</button><button type="button" disabled={controlsDisabled} onClick={() => setConfirmRemoval(false)} className="text-sm">Keep access</button></div></div>}
         </form>
       </div>}
     </PageContainer>

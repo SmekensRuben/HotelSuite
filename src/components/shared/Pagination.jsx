@@ -23,7 +23,7 @@ export default function Pagination({ currentPage, totalPages, onPageChange }) {
         type="button"
         onClick={() => onPageChange(currentPage - 1)}
         disabled={currentPage === 1}
-        className="px-3 py-1 border rounded disabled:text-gray-400 disabled:cursor-not-allowed"
+        className="px-3 py-1 border rounded disabled:text-gray-500 disabled:cursor-not-allowed"
       >
         &lt;
       </button>
@@ -32,7 +32,7 @@ export default function Pagination({ currentPage, totalPages, onPageChange }) {
         type="button"
         onClick={() => onPageChange(currentPage + 1)}
         disabled={currentPage === totalPages}
-        className="px-3 py-1 border rounded disabled:text-gray-400 disabled:cursor-not-allowed"
+        className="px-3 py-1 border rounded disabled:text-gray-500 disabled:cursor-not-allowed"
       >
         &gt;
       </button>

@@ -1,16 +1,39 @@
-import React, { useEffect, useRef, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { db, doc, getDoc } from "../../firebaseConfig";
-import { BedDouble, BellRing, BriefcaseBusiness, CalendarDays, ClipboardList, FileText, Package, Settings2, ShoppingBasket, Sparkles, TrendingUp, Truck, Users } from "lucide-react";
+import {
+  BedDouble,
+  BellRing,
+  BriefcaseBusiness,
+  CalendarDays,
+  ClipboardList,
+  FileText,
+  LayoutDashboard,
+  LogOut,
+  Package,
+  Settings2,
+  ShoppingBasket,
+  Sparkles,
+  TrendingUp,
+  Truck,
+  Users,
+} from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
+import WorkspaceChrome from "./WorkspaceChrome";
 
 export default function HeaderBar({ today, onLogout }) {
-  const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation(["common", "reservations"]);
-  const { hotelUid, hotelUids = [], selectHotel, isPlatformAdmin, isHotelAdmin } = useHotelContext();
+  const {
+    hotelUid,
+    hotelUids = [],
+    hotelName,
+    selectHotel,
+    isPlatformAdmin,
+    isHotelAdmin,
+  } = useHotelContext();
   const canViewCatalogProducts = usePermission("catalogproducts", "read");
   const canViewSupplierProducts = usePermission("supplierproducts", "read");
   const canViewSuppliers = usePermission("suppliers", "read");
@@ -30,472 +53,286 @@ export default function HeaderBar({ today, onLogout }) {
   const canViewGroups = usePermission("groups", "read");
   const canViewGroupQuotes = usePermission("groupquotes", "read");
   const canViewDemandCalendar = usePermission("demandcalendar", "read");
-  const canViewCommercialIntelligence = usePermission("commercialintelligence", "read");
+  const canViewCommercialIntelligence = usePermission(
+    "commercialintelligence",
+    "read",
+  );
   const [hotels, setHotels] = useState([]);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isCatalogOpen, setIsCatalogOpen] = useState(false);
-  const [isFrontOfficeOpen, setIsFrontOfficeOpen] = useState(false);
-  const [isMeOpen, setIsMeOpen] = useState(false);
-  const [isRevenueOpen, setIsRevenueOpen] = useState(false);
-  const settingsMenuRef = useRef(null);
-  const catalogMenuRef = useRef(null);
-  const frontOfficeMenuRef = useRef(null);
-  const meMenuRef = useRef(null);
-  const revenueMenuRef = useRef(null);
-
-  const settingsMenuItems = [
-    { label: "Platform console", action: () => navigate("/platform"), icon: Settings2, visible: isPlatformAdmin },
-    { label: "Contracts", action: () => navigate("/contracts"), icon: FileText, visible: canViewContracts },
-    { label: "Hotel team", action: () => navigate("/settings/team"), icon: Users, visible: isHotelAdmin },
-    {
-      label: "Property Settings",
-      action: () => navigate("/settings/property"),
-      icon: Settings2,
-      visible: canViewPropertySettings,
-    },
-    {
-      label: "Catalog Settings",
-      action: () => navigate("/settings/catalog"),
-      icon: Settings2,
-      visible: canViewCatalogSettings,
-    },
-    {
-      label: "Outlet Settings",
-      action: () => navigate("/settings/outlets"),
-      icon: Settings2,
-      visible: canViewOutlets,
-    },
-    {
-      label: "Location Settings",
-      action: () => navigate("/settings/locations"),
-      icon: Settings2,
-      visible: canViewLocations,
-    },
-    {
-      label: "File Import Settings",
-      action: () => navigate("/settings/file-import"),
-      icon: Settings2,
-      visible: canViewImports,
-    },
-    {
-      label: "File Import Types",
-      action: () => navigate("/settings/file-import-types"),
-      icon: Settings2,
-      visible: canViewImports,
-    },
-    {
-      label: "Opera Settings",
-      action: () => navigate("/settings/opera"),
-      icon: Settings2,
-      visible: canViewIntegrations,
-    },
-    {
-      label: "Notification Lists",
-      action: () => navigate("/settings/notification-lists"),
-      icon: BellRing,
-      visible: canViewNotifications,
-    },
-  ].filter((item) => item.visible !== false);
-
-  const meMenuItems = [
-    {
-      label: "Groups",
-      action: () => navigate("/me/groups"),
-      icon: BriefcaseBusiness,
-      visible: canViewGroups,
-    },
-  ].filter((item) => item.visible !== false);
-
-  const frontOfficeMenuItems = [
-    {
-      label: "Arrivals",
-      action: () => navigate("/front-office/arrivals"),
-      icon: BedDouble,
-      visible: canViewReservations,
-    },
-    {
-      label: "Made Reservations",
-      action: () => navigate("/front-office/made-reservations"),
-      icon: ClipboardList,
-      visible: canViewReservations,
-    },
-    {
-      label: "Upselling",
-      action: () => navigate(canReadAuditUpsells ? "/front-office/upselling" : "/front-office/upselling/audit"),
-      icon: Sparkles,
-      visible: canReadAuditUpsells || canManageAuditUpsells,
-    },
-  ].filter((item) => item.visible !== false);
-
-  const revenueMenuItems = [
-    { label: "Demand Calendar", action: () => navigate("/me/demand-calendar"), icon: CalendarDays, visible: canViewDemandCalendar },
-    {
-      label: "Commercial Intelligence",
-      action: () => navigate("/revenue/commercial-intelligence"),
-      icon: TrendingUp,
-      visible: canViewCommercialIntelligence,
-    },
-    {
-      label: "Group Quotes",
-      action: () => navigate("/revenue/group-quotes"),
-      icon: TrendingUp,
-      visible: canViewGroupQuotes,
-    },
-  ].filter((item) => item.visible !== false);
-
-  const catalogMenuItems = [
-    {
-      label: "Catalog Products",
-      action: () => navigate("/catalog/products"),
-      icon: Package,
-      visible: canViewCatalogProducts,
-    },
-    {
-      label: "Supplier Products",
-      action: () => navigate("/catalog/supplier-products"),
-      icon: Package,
-      visible: canViewSupplierProducts,
-    },
-    {
-      label: "Suppliers",
-      action: () => navigate("/catalog/suppliers"),
-      icon: Truck,
-      visible: canViewSuppliers,
-    },
-    {
-      label: "Orders",
-      action: () => navigate("/orders"),
-      icon: ShoppingBasket,
-      visible: canViewOrders,
-    },
-    {
-      label: "Stock Count",
-      action: () => navigate("/catalog/stock-counts"),
-      icon: ClipboardList,
-      visible: canViewStockCounts,
-    },
-  ].filter((item) => item.visible !== false);
+  const [switchError, setSwitchError] = useState("");
+  const hotelKey = hotelUids.join("\u0000");
 
   useEffect(() => {
-    async function fetchHotels() {
-      const results = await Promise.all(
-        hotelUids.map(async (uid) => {
-          try {
-            const snap = await getDoc(doc(db, `hotels/${uid}/settings`, "bootstrap"));
-            const data = snap.exists() ? snap.data() : {};
-            return { uid, name: data.hotelName || uid };
-          } catch {
-            return { uid, name: uid };
-          }
-        })
-      );
-      setHotels(results);
-    }
-    if (hotelUids.length) {
-      fetchHotels();
-    }
-  }, [hotelUids]);
-
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (settingsMenuRef.current && !settingsMenuRef.current.contains(event.target)) {
-        setIsSettingsOpen(false);
-      }
-      if (catalogMenuRef.current && !catalogMenuRef.current.contains(event.target)) {
-        setIsCatalogOpen(false);
-      }
-      if (frontOfficeMenuRef.current && !frontOfficeMenuRef.current.contains(event.target)) {
-        setIsFrontOfficeOpen(false);
-      }
-      if (meMenuRef.current && !meMenuRef.current.contains(event.target)) {
-        setIsMeOpen(false);
-      }
-      if (revenueMenuRef.current && !revenueMenuRef.current.contains(event.target)) {
-        setIsRevenueOpen(false);
-      }
+    let current = true;
+    const ids = hotelKey ? hotelKey.split("\u0000") : [];
+    setHotels(ids.map((uid) => ({ uid, name: uid })));
+    Promise.all(
+      ids.map(async (uid) => {
+        try {
+          const snap = await getDoc(
+            doc(db, `hotels/${uid}/settings`, "bootstrap"),
+          );
+          return {
+            uid,
+            name: snap.exists() ? snap.data().hotelName || uid : uid,
+          };
+        } catch {
+          return { uid, name: uid };
+        }
+      }),
+    ).then((next) => {
+      if (current) setHotels(next);
+    });
+    return () => {
+      current = false;
     };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  }, [hotelKey]);
+  useEffect(() => {
+    setSwitchError("");
+  }, [hotelUid]);
 
   if (location.pathname.startsWith("/platform")) return null;
-
+  const visible = (items) => items.filter((item) => item.visible === true);
+  const groups = [
+    {
+      label: "Workspace",
+      items: [
+        {
+          to: "/dashboard",
+          label: "Overview",
+          icon: LayoutDashboard,
+          end: true,
+        },
+      ],
+    },
+    {
+      label: "Purchasing & Inventory",
+      items: visible([
+        {
+          to: "/catalog/products",
+          label: "Catalog Products",
+          icon: Package,
+          visible: canViewCatalogProducts,
+        },
+        {
+          to: "/catalog/supplier-products",
+          label: "Supplier Products",
+          icon: Package,
+          visible: canViewSupplierProducts,
+        },
+        {
+          to: "/catalog/suppliers",
+          label: "Suppliers",
+          icon: Truck,
+          visible: canViewSuppliers,
+        },
+        {
+          to: "/orders",
+          label: "Orders",
+          icon: ShoppingBasket,
+          visible: canViewOrders,
+        },
+        {
+          to: "/catalog/stock-counts",
+          label: "Stock Count",
+          icon: ClipboardList,
+          visible: canViewStockCounts,
+        },
+      ]),
+    },
+    {
+      label: "Groups & Events",
+      items: visible([
+        {
+          to: "/me/groups",
+          label: "Groups",
+          icon: BriefcaseBusiness,
+          visible: canViewGroups,
+        },
+      ]),
+    },
+    {
+      label: "Revenue",
+      items: visible([
+        {
+          to: "/me/demand-calendar",
+          label: "Demand Calendar",
+          icon: CalendarDays,
+          visible: canViewDemandCalendar,
+        },
+        {
+          to: "/revenue/commercial-intelligence",
+          label: "Commercial Intelligence",
+          icon: TrendingUp,
+          visible: canViewCommercialIntelligence,
+        },
+        {
+          to: "/revenue/group-quotes",
+          label: "Group Quotes",
+          icon: TrendingUp,
+          visible: canViewGroupQuotes,
+        },
+      ]),
+    },
+    {
+      label: "Front Office",
+      items: visible([
+        {
+          to: "/front-office/arrivals",
+          label: "Arrivals",
+          icon: BedDouble,
+          visible: canViewReservations,
+        },
+        {
+          to: "/front-office/made-reservations",
+          label: "Made Reservations",
+          icon: ClipboardList,
+          visible: canViewReservations,
+        },
+        {
+          to: canReadAuditUpsells
+            ? "/front-office/upselling"
+            : "/front-office/upselling/audit",
+          label: "Upselling",
+          icon: Sparkles,
+          visible: canReadAuditUpsells || canManageAuditUpsells,
+        },
+      ]),
+    },
+    {
+      label: "Administration",
+      items: visible([
+        {
+          to: "/contracts",
+          label: "Contracts",
+          icon: FileText,
+          visible: canViewContracts,
+        },
+        {
+          to: "/settings/team",
+          label: "Hotel team",
+          icon: Users,
+          visible: isHotelAdmin,
+        },
+        {
+          to: "/settings/property",
+          label: "Property Settings",
+          icon: Settings2,
+          visible: canViewPropertySettings,
+        },
+        {
+          to: "/settings/catalog",
+          label: "Catalog Settings",
+          icon: Settings2,
+          visible: canViewCatalogSettings,
+        },
+        {
+          to: "/settings/outlets",
+          label: "Outlet Settings",
+          icon: Settings2,
+          visible: canViewOutlets,
+        },
+        {
+          to: "/settings/locations",
+          label: "Location Settings",
+          icon: Settings2,
+          visible: canViewLocations,
+        },
+        {
+          to: "/settings/file-import",
+          label: "File Import Settings",
+          icon: Settings2,
+          visible: canViewImports,
+        },
+        {
+          to: "/settings/file-import-types",
+          label: "File Import Types",
+          icon: Settings2,
+          visible: canViewImports,
+        },
+        {
+          to: "/settings/opera",
+          label: "Opera Settings",
+          icon: Settings2,
+          visible: canViewIntegrations,
+        },
+        {
+          to: "/settings/notification-lists",
+          label: "Notification Lists",
+          icon: BellRing,
+          visible: canViewNotifications,
+        },
+        {
+          to: "/platform",
+          label: "Platform console",
+          icon: Settings2,
+          visible: isPlatformAdmin,
+        },
+      ]),
+    },
+  ];
+  const changeHotel = async (uid) => {
+    setSwitchError("");
+    try {
+      await selectHotel?.(uid);
+    } catch {
+      setSwitchError("We could not switch hotels. Please try again.");
+    }
+  };
   return (
-    <header className="bg-[#b41f1f] text-white shadow sticky top-0 z-20 px-2 py-2 mb-4">
-      <div className="max-w-6xl mx-auto flex flex-col gap-3">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div
-            className="flex flex-row items-center justify-center sm:justify-start gap-2 sm:gap-4 w-full sm:w-auto cursor-pointer"
-            onClick={() => navigate("/dashboard")}
+    <WorkspaceChrome
+      groups={groups}
+      subtitle="Hotel workspace"
+      footer={
+        <>
+          <p className="font-medium text-brand-800">
+            Your hotel. Working better together.
+          </p>
+          {today && <p className="mt-1">{today}</p>}
+        </>
+      }
+      actions={
+        <>
+          <label className="block max-w-[128px] sm:max-w-[180px]">
+            <span className="sr-only">Selected hotel</span>
+            <select
+              aria-label="Selected hotel"
+              value={hotelUid || ""}
+              onChange={(event) => changeHotel(event.target.value)}
+              className="max-w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700"
+            >
+              {!hotels.length && (
+                <option value={hotelUid || ""}>
+                  {hotelName || hotelUid || "Hotel workspace"}
+                </option>
+              )}
+              {hotels.map((hotel) => (
+                <option key={hotel.uid} value={hotel.uid}>
+                  {hotel.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {switchError && (
+            <span
+              role="alert"
+              className="absolute right-4 top-[calc(100%+0.5rem)] max-w-[calc(100vw-2rem)] rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 shadow-panel sm:max-w-sm"
+            >
+              {switchError}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={onLogout}
+            className="ht-icon-button sm:w-auto sm:gap-2 sm:px-3"
+            aria-label={t("logout")}
           >
-            <img
-              src="/assets/breakfast_pilot_logo_black_circle.png"
-              alt="Hotel Toolkit Logo"
-              className="h-10 sm:h-16"
-            />
-            <h1 className="text-lg sm:text-2xl font-bold tracking-wide text-center flex-1">
-              Hotel Toolkit
-            </h1>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-end sm:items-center w-full sm:w-auto gap-2 sm:gap-3">
-            <div className="flex flex-row sm:flex-col gap-2 sm:gap-0 sm:mr-4 text-sm sm:text-base text-right w-full sm:w-auto">
-              <select
-                value={hotelUid || ""}
-                onChange={(e) => selectHotel && selectHotel(e.target.value)}
-                className="bg-white text-[#b41f1f] px-2 py-1 rounded font-semibold"
-              >
-                {hotels.map((hotel) => (
-                  <option key={hotel.uid} value={hotel.uid}>
-                    {hotel.name}
-                  </option>
-                ))}
-              </select>
-              <div className="text-white text-opacity-80">{today}</div>
-            </div>
-            <div className="flex flex-row gap-2 w-full sm:w-auto">
-              <button
-                onClick={() => navigate("/dashboard")}
-                className="bg-white text-[#b41f1f] px-3 py-2 rounded font-semibold w-1/2 sm:w-auto hover:bg-gray-100 text-sm"
-                style={{ minHeight: 44 }}
-              >
-                ← {t("backToDashboard")}
-              </button>
-              <button
-                onClick={onLogout}
-                className="bg-white text-[#b41f1f] px-3 py-2 rounded font-semibold w-1/2 sm:w-auto hover:bg-gray-100 text-sm"
-                style={{ minHeight: 44 }}
-              >
-                {t("logout")}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-col sm:flex-row gap-2">
-          {catalogMenuItems.length > 0 && (
-            <div ref={catalogMenuRef} className="flex justify-end w-full sm:w-auto">
-              <div className="relative w-full sm:w-auto">
-                <button
-                  onClick={() => {
-                    setIsCatalogOpen((prev) => !prev);
-                    setIsSettingsOpen(false);
-                    setIsFrontOfficeOpen(false);
-                    setIsMeOpen(false);
-                    setIsRevenueOpen(false);
-                  }}
-                  className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
-                  style={{ minHeight: 44 }}
-                >
-                  <span className="uppercase tracking-wide">Purchasing &amp; Inventory</span>
-                  <span className="ml-3 text-base">▾</span>
-                </button>
-                {isCatalogOpen && (
-                  <div className="absolute left-0 mt-2 w-64 rounded-lg shadow-xl ring-1 ring-black/5 z-30 overflow-hidden bg-white text-gray-900">
-                    <div className="py-2">
-                      {catalogMenuItems.map((item) => {
-                        const Icon = item.icon;
-                        return (
-                          <button
-                            key={item.label}
-                            onClick={() => {
-                              item.action();
-                              setIsCatalogOpen(false);
-                            }}
-                            className="w-full px-4 py-2 flex items-center gap-3 hover:bg-gray-100 transition-colors text-left"
-                          >
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100">
-                              {Icon && <Icon className="h-4 w-4" />}
-                            </span>
-                            <span className="text-sm font-semibold">{item.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-
-          {meMenuItems.length > 0 && (
-            <div ref={meMenuRef} className="flex justify-end w-full sm:w-auto">
-              <div className="relative w-full sm:w-auto">
-                <button
-                  onClick={() => {
-                    setIsMeOpen((prev) => !prev);
-                    setIsCatalogOpen(false);
-                    setIsFrontOfficeOpen(false);
-                    setIsSettingsOpen(false);
-                    setIsRevenueOpen(false);
-                  }}
-                  className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
-                  style={{ minHeight: 44 }}
-                >
-                  <span className="uppercase tracking-wide">Groups &amp; Events</span>
-                  <span className="ml-3 text-base">▾</span>
-                </button>
-                {isMeOpen && (
-                  <div className="absolute left-0 mt-2 w-64 rounded-lg shadow-xl ring-1 ring-black/5 z-30 overflow-hidden bg-white text-gray-900">
-                    <div className="py-2">
-                      {meMenuItems.map((item) => {
-                        const Icon = item.icon;
-                        return (
-                          <button
-                            key={item.label}
-                            onClick={() => {
-                              item.action();
-                              setIsMeOpen(false);
-                            }}
-                            className="w-full px-4 py-2 flex items-center gap-3 hover:bg-gray-100 transition-colors text-left"
-                          >
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100">
-                              {Icon && <Icon className="h-4 w-4" />}
-                            </span>
-                            <span className="text-sm font-semibold">{item.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {revenueMenuItems.length > 0 && (
-            <div ref={revenueMenuRef} className="flex justify-end w-full sm:w-auto">
-              <div className="relative w-full sm:w-auto">
-                <button
-                  onClick={() => {
-                    setIsRevenueOpen((previous) => !previous);
-                    setIsCatalogOpen(false);
-                    setIsFrontOfficeOpen(false);
-                    setIsSettingsOpen(false);
-                    setIsMeOpen(false);
-                  }}
-                  className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
-                  style={{ minHeight: 44 }}
-                >
-                  <span className="uppercase tracking-wide">Revenue</span>
-                  <span className="ml-3 text-base">▾</span>
-                </button>
-                {isRevenueOpen && (
-                  <div className="absolute left-0 mt-2 w-64 rounded-lg shadow-xl ring-1 ring-black/5 z-30 overflow-hidden bg-white text-gray-900">
-                    <div className="py-2">
-                      {revenueMenuItems.map((item) => {
-                        const Icon = item.icon;
-                        return (
-                          <button key={item.label} onClick={() => { item.action(); setIsRevenueOpen(false); }} className="w-full px-4 py-2 flex items-center gap-3 hover:bg-gray-100 transition-colors text-left">
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100"><Icon className="h-4 w-4" /></span>
-                            <span className="text-sm font-semibold">{item.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-
-          {frontOfficeMenuItems.length > 0 && (
-            <div ref={frontOfficeMenuRef} className="flex justify-end w-full sm:w-auto">
-              <div className="relative w-full sm:w-auto">
-                <button
-                  onClick={() => {
-                    setIsFrontOfficeOpen((prev) => !prev);
-                    setIsCatalogOpen(false);
-                    setIsSettingsOpen(false);
-                    setIsMeOpen(false);
-                    setIsRevenueOpen(false);
-                  }}
-                  className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
-                  style={{ minHeight: 44 }}
-                >
-                  <span className="uppercase tracking-wide">Front Office</span>
-                  <span className="ml-3 text-base">▾</span>
-                </button>
-                {isFrontOfficeOpen && (
-                  <div className="absolute left-0 mt-2 w-64 rounded-lg shadow-xl ring-1 ring-black/5 z-30 overflow-hidden bg-white text-gray-900">
-                    <div className="py-2">
-                      {frontOfficeMenuItems.map((item) => {
-                        const Icon = item.icon;
-                        return (
-                          <button
-                            key={item.label}
-                            onClick={() => {
-                              item.action();
-                              setIsFrontOfficeOpen(false);
-                            }}
-                            className="w-full px-4 py-2 flex items-center gap-3 hover:bg-gray-100 transition-colors text-left"
-                          >
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100">
-                              {Icon && <Icon className="h-4 w-4" />}
-                            </span>
-                            <span className="text-sm font-semibold">{item.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-
-          {settingsMenuItems.length > 0 && (
-            <div ref={settingsMenuRef} className="flex justify-end w-full sm:w-auto">
-              <div className="relative w-full sm:w-auto">
-                <button
-                  onClick={() => {
-                    setIsSettingsOpen((prev) => !prev);
-                    setIsCatalogOpen(false);
-                    setIsFrontOfficeOpen(false);
-                    setIsMeOpen(false);
-                    setIsRevenueOpen(false);
-                  }}
-                  className="bg-transparent text-white px-4 py-2 rounded font-semibold w-full sm:w-auto text-sm flex items-center justify-between shadow-sm"
-                  style={{ minHeight: 44 }}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="uppercase tracking-wide">Administration</span>
-                  </div>
-                  <span className="ml-3 text-base">▾</span>
-                </button>
-                {isSettingsOpen && (
-                  <div className="absolute left-0 mt-2 w-64 rounded-lg shadow-xl ring-1 ring-black/5 z-30 overflow-hidden bg-white text-gray-900">
-                    <div className="py-2">
-                      {settingsMenuItems.map((item) => {
-                        const Icon = item.icon;
-                        return (
-                          <button
-                            key={item.label}
-                            onClick={() => {
-                              item.action();
-                              setIsSettingsOpen(false);
-                            }}
-                            className="w-full px-4 py-2 flex items-center gap-3 hover:bg-gray-100 transition-colors text-left"
-                          >
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100">
-                              {Icon && <Icon className="h-4 w-4" />}
-                            </span>
-                            <span className="text-sm font-semibold">{item.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </header>
+            <LogOut size={16} aria-hidden="true" />
+            <span className="hidden text-xs font-medium sm:inline">
+              {t("logout")}
+            </span>
+          </button>
+        </>
+      }
+    />
   );
 }

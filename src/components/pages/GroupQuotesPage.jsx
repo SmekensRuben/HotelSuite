@@ -50,7 +50,7 @@ export default function GroupQuotesPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -59,13 +59,13 @@ export default function GroupQuotesPage() {
             <h1 className="text-3xl font-semibold">Group Quotes</h1>
             <p className="mt-1 text-gray-600">Manage group accommodation quotes.</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
           {canUpdate && <button type="button" onClick={() => navigate("/revenue/group-quotes/settings")} className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white p-2 text-gray-700 shadow hover:bg-gray-100" title="Group Quote Settings" aria-label="Group Quote Settings"><Settings className="h-5 w-5" /></button>}
           {canCreate && (
             <button
               type="button"
               onClick={() => navigate("/revenue/group-quotes/new")}
-              className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 font-semibold text-white shadow hover:bg-[#961919]"
+              className="inline-flex items-center gap-2 rounded-lg bg-brand-800 px-4 py-2 font-semibold text-white shadow hover:bg-brand-950"
             >
               <Plus className="h-5 w-5" /> Create Quote
             </button>

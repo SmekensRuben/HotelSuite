@@ -77,7 +77,7 @@ export default function UserManagementPage({ platform = false }) {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div>
@@ -95,7 +95,7 @@ export default function UserManagementPage({ platform = false }) {
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
             placeholder="Zoek op voornaam of achternaam"
-            className="w-full max-w-lg rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+            className="w-full max-w-lg rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
           />
         </div>
 

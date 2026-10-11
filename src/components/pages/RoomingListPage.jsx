@@ -434,10 +434,10 @@ export default function RoomingListPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-gray-100 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <PageContainer className="space-y-6 py-8">
-        <Card className="border-0 bg-gradient-to-r from-[#b41f1f] via-[#a71c1c] to-[#7f1717] text-white shadow-lg">
-          <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-red-100">
+        <Card className="!border-brand-800 !bg-brand-800 text-white shadow-panel">
+          <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-brand-100">
             <BedDouble className="h-3.5 w-3.5" /> Rooming list
           </p>
           <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
@@ -451,7 +451,7 @@ export default function RoomingListPage() {
                 Status: {roomingList?.status || "Not Started"}
               </p>
               {roomingList?.status === "Submitted" && (
-                <div className="mt-3 space-y-1 text-sm text-red-50">
+                <div className="mt-3 space-y-1 text-sm text-brand-50">
                   <p>
                     Current Official Version: Version{" "}
                     {roomingList.currentVersionNumber || 1}
@@ -472,7 +472,7 @@ export default function RoomingListPage() {
                     type="button"
                     onClick={handleMakeChangeRequest}
                     disabled={saving}
-                    className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-[#b41f1f] shadow hover:bg-red-50 disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-brand-800 shadow hover:bg-brand-50 disabled:opacity-60"
                   >
                     <Pencil className="h-4 w-4" /> Make Change Request
                   </button>
@@ -488,7 +488,7 @@ export default function RoomingListPage() {
                     <button
                       type="button"
                       onClick={() => setShowChangeRequestConfirmModal(true)}
-                      className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-[#b41f1f]"
+                      className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-brand-800"
                     >
                       <Send className="h-4 w-4" /> Send Change Request
                     </button>
@@ -501,7 +501,7 @@ export default function RoomingListPage() {
                   disabled={
                     submittingRoomingList || roomingList.status === "Submitted"
                   }
-                  className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-[#b41f1f] shadow hover:bg-red-50 disabled:cursor-not-allowed disabled:bg-white/40 disabled:text-white/70"
+                  className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-brand-800 shadow hover:bg-brand-50 disabled:cursor-not-allowed disabled:bg-white/40 disabled:text-white/70"
                 >
                   <Send className="h-4 w-4" />{" "}
                   {submittingRoomingList
@@ -610,7 +610,7 @@ export default function RoomingListPage() {
                     setIsReservationFormOpen((current) => !current)
                   }
                   disabled={!isEditable}
-                  className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:cursor-not-allowed disabled:bg-gray-300"
+                  className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-brand-950 disabled:cursor-not-allowed disabled:bg-gray-300"
                 >
                   <Plus className="h-4 w-4" />
                   {isReservationFormOpen ? "Close" : "Add Reservation"}
@@ -676,7 +676,7 @@ export default function RoomingListPage() {
                         onChange={(event) =>
                           updateForm("roomType", event.target.value)
                         }
-                        className="w-44 max-w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                        className="w-44 max-w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
                         aria-label="Room Type"
                         required
                       >
@@ -713,7 +713,7 @@ export default function RoomingListPage() {
                         onChange={(event) =>
                           updateForm("comment", event.target.value)
                         }
-                        className="mt-1 min-h-[4.5rem] w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                        className="mt-1 min-h-[4.5rem] w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
                       />
                     </label>
                   </div>
@@ -730,7 +730,7 @@ export default function RoomingListPage() {
                     <button
                       type="submit"
                       disabled={saving}
-                      className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:cursor-not-allowed disabled:bg-gray-300"
+                      className="inline-flex items-center gap-2 rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-brand-950 disabled:cursor-not-allowed disabled:bg-gray-300"
                     >
                       <Plus className="h-4 w-4" />{" "}
                       {saving
@@ -759,7 +759,7 @@ export default function RoomingListPage() {
                     Search reservations by guest name
                   </span>
                   <Search
-                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
+                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500"
                     aria-hidden="true"
                   />
                   <input
@@ -769,7 +769,7 @@ export default function RoomingListPage() {
                       setReservationSearch(event.target.value)
                     }
                     placeholder="Search by guest name..."
-                    className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+                    className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
                   />
                 </label>
               </div>
@@ -839,7 +839,7 @@ export default function RoomingListPage() {
                                     onClick={() =>
                                       handleEditReservation(reservation)
                                     }
-                                    className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-[#b41f1f]"
+                                    className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-brand-800"
                                     aria-label={`Edit reservation for ${reservation.firstName} ${reservation.lastName}`}
                                   >
                                     <Pencil className="h-4 w-4" />
@@ -849,7 +849,7 @@ export default function RoomingListPage() {
                                     onClick={() =>
                                       setReservationToDelete(reservation)
                                     }
-                                    className="rounded-lg p-2 text-gray-500 hover:bg-red-50 hover:text-[#b41f1f]"
+                                    className="rounded-lg p-2 text-gray-500 hover:bg-red-50 hover:text-red-700"
                                     aria-label={`Delete reservation for ${reservation.firstName} ${reservation.lastName}`}
                                   >
                                     <Trash2 className="h-4 w-4" />
@@ -956,7 +956,7 @@ function MessageModal({
           <button
             type="button"
             onClick={onConfirm}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${danger ? "bg-[#b41f1f] hover:bg-[#961919]" : "bg-gray-900 hover:bg-gray-800"}`}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${danger ? "bg-red-600 hover:bg-red-700" : "bg-gray-900 hover:bg-gray-800"}`}
           >
             {confirmLabel}
           </button>
@@ -974,7 +974,7 @@ function Field({ label, type = "text", value, onChange, ...props }) {
         type={type}
         value={value}
         onChange={(event) => onChange?.(event.target.value)}
-        className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+        className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
         {...props}
       />
     </label>

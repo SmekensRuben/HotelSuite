@@ -17,14 +17,14 @@ export default class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen flex flex-col justify-center items-center text-center text-red-700 bg-gray-100 p-6">
-          <h1 className="text-2xl font-bold mb-2">Er is iets misgelopen.</h1>
-          <p className="mb-4">{this.state.error?.message || "Onbekende fout"}</p>
+        <div className="min-h-screen flex flex-col justify-center items-center text-center text-gray-800 bg-canvas p-6">
+          <h1 className="font-display text-3xl text-brand-950 mb-2">Something went wrong.</h1>
+          <p className="mb-4">{this.state.error?.message || "Please reload the page to try again."}</p>
           <button
-            className="mt-4 bg-[#b41f1f] text-white px-4 py-2 rounded"
+            className="ht-button-primary mt-4"
             onClick={() => window.location.reload()}
           >
-            Herlaad pagina
+            Reload page
           </button>
         </div>
       );

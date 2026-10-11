@@ -172,7 +172,7 @@ export default function OperaSettingsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={todayLabel} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div>
@@ -225,7 +225,7 @@ export default function OperaSettingsPage() {
             <button
               type="submit"
               disabled={!canCreateSettings || saving}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-950 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving ? "Opslaan..." : "Toevoegen"}
             </button>
@@ -272,7 +272,7 @@ export default function OperaSettingsPage() {
                               type="button"
                               onClick={handleSaveEdit}
                               disabled={saving}
-                              className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                              className="rounded-lg bg-brand-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
                             >
                               Opslaan
                             </button>

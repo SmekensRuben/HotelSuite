@@ -45,7 +45,7 @@ describe("GroupQuoteAnalysisView hierarchy", () => {
   it("makes Target primary while preserving the unchanged quote corridor and decision values", () => {
     render(<GroupQuoteAnalysisView {...props} />);
     const decision = screen.getByRole("heading", { name: "Commercial Decision" }).closest("section, [aria-labelledby]");
-    expect(within(decision).getByText("Target Rate").parentElement).toHaveClass("border-[#b41f1f]");
+    expect(within(decision).getByText("Target Rate").parentElement).toHaveClass("border-brand-800");
     expect(within(decision).getByText("€239.00")).toBeVisible();
     expect(within(decision).getByText("€255.00")).toBeVisible();
     expect(within(decision).getByText("€176.00")).toBeVisible();

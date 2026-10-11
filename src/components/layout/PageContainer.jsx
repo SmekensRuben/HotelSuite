@@ -1,9 +1,19 @@
-import React from 'react';
+import React from "react";
 
-export default function PageContainer({ children, className = '', ...props }) {
+export default function PageContainer({
+  children,
+  className = "",
+  as: Component = "main",
+  ...props
+}) {
   return (
-    <div className={`max-w-6xl mx-auto py-6 px-4 ${className}`} {...props}>
+    <Component
+      id="page-content"
+      tabIndex={-1}
+      className={`ht-page-container ${className}`}
+      {...props}
+    >
       {children}
-    </div>
+    </Component>
   );
 }

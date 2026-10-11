@@ -382,20 +382,20 @@ export default function UpsellAuditPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm uppercase tracking-wide text-gray-500">Front Office</p>
             <h1 className="text-3xl font-semibold">Upsell Audit</h1>
             <p className="mt-1 text-gray-600">Audit upsells within the selected date range.</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => navigate("/front-office/upselling/audit/create")}
-              className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#981b1b]"
+              className="inline-flex items-center gap-2 rounded-lg bg-brand-800 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-950"
               aria-label="Create Audit Upsell"
               title="Create Audit Upsell"
             >
@@ -405,7 +405,7 @@ export default function UpsellAuditPage() {
               type="button"
               onClick={handleExport}
               disabled={!auditUpsells.length}
-              className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#981b1b] disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-lg bg-brand-800 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-950 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Download className="h-4 w-4" /> Export
             </button>
@@ -444,12 +444,12 @@ export default function UpsellAuditPage() {
               {operaUserDropdownOpen && (
                 <div className="absolute right-0 z-10 mt-2 max-h-72 w-64 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
                   {operaUserOptions.length ? operaUserOptions.map((operaUser) => (
-                    <label key={operaUser} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                    <label key={operaUser} className="flex flex-wrap items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
                       <input
                         type="checkbox"
                         checked={selectedOperaUsers.includes(operaUser)}
                         onChange={() => handleOperaUserToggle(operaUser)}
-                        className="h-4 w-4 rounded border-gray-300 text-[#b41f1f] focus:ring-[#b41f1f]"
+                        className="h-4 w-4 rounded border-gray-300 text-brand-800 focus:ring-brand-800"
                       />
                       {operaUserMappings[operaUser] || operaUserMappings[operaUser.toLowerCase()] || operaUser}
                     </label>
@@ -472,12 +472,12 @@ export default function UpsellAuditPage() {
               {statusDropdownOpen && (
                 <div className="absolute right-0 z-10 mt-2 w-64 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
                   {statusOptions.map((status) => (
-                    <label key={status} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                    <label key={status} className="flex flex-wrap items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
                       <input
                         type="checkbox"
                         checked={selectedStatuses.includes(status)}
                         onChange={() => handleStatusToggle(status)}
-                        className="h-4 w-4 rounded border-gray-300 text-[#b41f1f] focus:ring-[#b41f1f]"
+                        className="h-4 w-4 rounded border-gray-300 text-brand-800 focus:ring-brand-800"
                       />
                       {status}
                     </label>
@@ -510,7 +510,7 @@ export default function UpsellAuditPage() {
               <span>
                 Showing {filteredAuditUpsells.length ? (currentPage - 1) * pageSize + 1 : 0} - {Math.min(currentPage * pageSize, filteredAuditUpsells.length)} of {filteredAuditUpsells.length} audit upsells
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}

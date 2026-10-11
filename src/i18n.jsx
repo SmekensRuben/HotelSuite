@@ -56,8 +56,8 @@ i18n
   .use(initReactI18next)
   .init({
     resources,
-    lng: localStorage.getItem("lang") || "nl",
-    fallbackLng: "nl",
+    lng: localStorage.getItem("lang") || "en",
+    fallbackLng: "en",
     ns: ["common", "auth", "landing", "dashboard", "reservations", "calendar"],
     defaultNS: "common",
     interpolation: {

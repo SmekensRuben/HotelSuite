@@ -365,7 +365,7 @@ export default function UpsellDetailPage() {
   const backLabel = backToAudit ? "Back to Upsell Audit" : "Back to Upselling";
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <button
@@ -397,7 +397,7 @@ export default function UpsellDetailPage() {
                     {auditUpsell.roomNumber ? ` (${auditUpsell.roomNumber})` : ""}
                   </h1>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <Badge className="border-blue-200 bg-blue-50 text-blue-700">{formatValue(auditUpsell.packageCode)}</Badge>
+                    <Badge className="border-blue-200 bg-blue-50 text-brand-800">{formatValue(auditUpsell.packageCode)}</Badge>
                     <Badge className={statusBadgeClass(auditUpsell.validationStatus)}>
                       Validation: {formatValue(auditUpsell.validationStatus)}
                     </Badge>

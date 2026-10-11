@@ -1,160 +1,268 @@
-// src/components/pages/LandingPage.jsx
 import React from "react";
-import { useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import i18n from "../../i18n";
+import {
+  ArrowRight,
+  ArrowUpRight,
+  Building2,
+  Check,
+  ClipboardList,
+  FileText,
+  Package,
+  TrendingUp,
+  Users,
+} from "lucide-react";
+import Brand from "../layout/Brand";
+import ProductPreview from "../marketing/ProductPreview";
+import { MARKETING_MODULES } from "../../constants/marketingModules";
+import { publicDemoLink } from "../../utils/publicDemoLink";
 
+const icons = {
+  procurement: Package,
+  contracts: FileText,
+  frontoffice: ClipboardList,
+  groups: Users,
+  revenue: TrendingUp,
+};
 export default function LandingPage() {
-  const navigate = useNavigate();
   const { t } = useTranslation("landing");
-
-  const features = [
-    {
-      icon: "/assets/sync_icon.png",
-      alt: t("featureInventoryTitle"),
-      title: t("featureInventoryTitle"),
-      description: t("featureInventoryDesc"),
-    },
-    {
-      icon: "/assets/analytics_icon.png",
-      alt: t("featureOrderingTitle"),
-      title: t("featureOrderingTitle"),
-      description: t("featureOrderingDesc"),
-    },
-    {
-      icon: "/assets/tablet_checkin.png",
-      alt: t("featureApprovalsTitle"),
-      title: t("featureApprovalsTitle"),
-      description: t("featureApprovalsDesc"),
-    },
-    {
-      icon: "/assets/analytics_icon.png",
-      alt: t("featureOperaTitle"),
-      title: t("featureOperaTitle"),
-      description: t("featureOperaDesc"),
-    },
-    {
-      icon: "/assets/sync_icon.png",
-      alt: t("featureQuotesTitle"),
-      title: t("featureQuotesTitle"),
-      description: t("featureQuotesDesc"),
-    },
-    {
-      icon: "/assets/tablet_checkin.png",
-      alt: t("featureProcurementTitle"),
-      title: t("featureProcurementTitle"),
-      description: t("featureProcurementDesc"),
-    },
-  ];
-
+  const copy = (key) => t(`redesign.${key}`, { lng: "en" });
+  const demo = publicDemoLink({
+    url: import.meta.env.VITE_PUBLIC_DEMO_URL,
+    email: import.meta.env.VITE_PUBLIC_CONTACT_EMAIL,
+  });
+  const demoAction = (
+    <a href={demo || "#preview"} className="ht-button-gold">
+      {demo ? copy("bookDemo") : copy("viewPreview")}
+      <ArrowRight size={16} aria-hidden="true" />
+    </a>
+  );
   return (
-    <div className="min-h-screen bg-white text-gray-900 font-sans">
-      <header className="bg-[#b41f1f] text-white shadow-sm sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <img
-              src="/assets/breakfast_pilot_logo_black_circle.png"
-              alt="Hotel Toolkit Logo"
-              className="h-10"
-            />
-            <h1 className="text-2xl font-bold tracking-wide">Hotel Toolkit</h1>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="flex gap-1">
-              {["nl", "en", "fr"].map((lang) => (
-                <button
-                  key={lang}
-                  onClick={() => {
-                    i18n.changeLanguage(lang);
-                    localStorage.setItem("lang", lang);
-                  }}
-                  className={`px-2 py-1 rounded text-sm ${
-                    i18n.language === lang
-                      ? "bg-white text-[#b41f1f] font-semibold"
-                      : "text-white hover:underline"
-                  }`}
-                >
-                  {lang.toUpperCase()}
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={() => navigate("/login")}
-              className="bg-white text-[#b41f1f] px-4 py-2 rounded hover:bg-gray-100 text-sm font-semibold"
-            >
-              {t("login")}
-            </button>
+    <div className="min-h-screen bg-canvas text-gray-900">
+      <a href="#landing-content" className="ht-skip-link">
+        Skip to content
+      </a>
+      <header className="ht-public-header">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-5 sm:px-8 lg:px-10">
+          <Link to="/" aria-label="Hotel Toolkit home">
+            <Brand />
+          </Link>
+          <nav
+            aria-label="Main navigation"
+            className="order-3 flex w-full items-center justify-center gap-6 text-xs font-medium text-gray-700 md:order-none md:w-auto"
+          >
+            <a className="hover:text-brand-800" href="#modules">
+              {copy("modules")}
+            </a>
+            <a className="hover:text-brand-800" href="#how-it-works">
+              {copy("howItWorks")}
+            </a>
+            <a className="hover:text-brand-800" href="#pricing">
+              {copy("pricing")}
+            </a>
+          </nav>
+          <div className="flex flex-wrap items-center gap-3">
+            <Link to="/login" className="text-xs font-semibold text-gray-700">
+              {copy("logIn")}
+            </Link>
+            <span className="hidden sm:block">{demoAction}</span>
           </div>
         </div>
       </header>
-
-      <main>
-        <section className="bg-gray-50 py-20">
-          <div className="max-w-4xl mx-auto px-6 text-center">
-            <motion.h2
-              className="text-4xl sm:text-5xl font-bold mb-4 leading-tight"
-              initial={{ opacity: 0, y: 30 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6 }}
-            >
-              {t("heroTitle")}
-            </motion.h2>
-            <motion.p
-              className="text-lg text-gray-700 mb-8"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.6, delay: 0.2 }}
-            >
-              {t("heroSubtitle")}
-            </motion.p>
-            <motion.button
-              onClick={() => navigate("/login")}
-              className="bg-[#b41f1f] text-white px-6 py-3 rounded-lg text-lg hover:bg-red-700 transition"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.6, delay: 0.4 }}
-            >
-              {t("cta")}
-            </motion.button>
+      <main id="landing-content" tabIndex={-1}>
+        <section className="ht-landing-section grid items-center gap-12 pb-12 lg:grid-cols-[.9fr_1.1fr] lg:gap-12 lg:py-24">
+          <div>
+            <p className="ht-eyebrow">{copy("eyebrow")}</p>
+            <h1 className="ht-landing-title mt-6">
+              {copy("heroFirst")}
+              <br />
+              {copy("heroSecond")}
+            </h1>
+            <p className="mt-7 max-w-md text-base leading-7 text-gray-600 sm:text-lg">
+              {copy("heroDescription")}
+            </p>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <a href="#modules" className="ht-button-primary !px-5 !py-3">
+                {copy("exploreModules")}
+                <ArrowRight size={16} aria-hidden="true" />
+              </a>
+              {demoAction}
+            </div>
+            <p className="mt-6 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+              <Building2 size={15} aria-hidden="true" />
+              {copy("heroNote")}
+            </p>
+          </div>
+          <div id="preview" className="min-w-0 scroll-mt-6">
+            <ProductPreview compact />
           </div>
         </section>
-
-        <section className="py-20 bg-white">
-          <div className="max-w-6xl mx-auto px-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-12 text-center">
-            {features.map((feature, index) => (
-              <motion.div
-                key={feature.title}
-                initial={{ opacity: 0, y: 30 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.5, delay: index * 0.08 }}
-              >
-                <img src={feature.icon} alt={feature.alt} className="h-20 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold mb-2">{feature.title}</h3>
-                <p className="text-gray-600">{feature.description}</p>
-              </motion.div>
+        <div className="border-y border-gray-200 bg-white/50">
+          <div className="mx-auto grid max-w-7xl gap-5 px-5 py-6 text-sm text-gray-600 sm:grid-cols-3 sm:px-8 lg:px-10">
+            {["benefitOne", "benefitTwo", "benefitThree"].map((key) => (
+              <p key={key} className="flex flex-wrap items-center gap-3">
+                <Check
+                  size={16}
+                  className="text-brand-700"
+                  aria-hidden="true"
+                />
+                {copy(key)}
+              </p>
             ))}
           </div>
-        </section>
-
-        <section className="text-center py-16 bg-gray-50">
-          <h3 className="text-2xl font-semibold mb-4">{t("ctaFinalTitle")}</h3>
-          <button
-            onClick={() => navigate("/login")}
-            className="bg-[#b41f1f] text-white px-6 py-3 rounded-lg hover:bg-red-700 transition"
-          >
-            {t("ctaFinalButton")}
-          </button>
-        </section>
-
-        <footer className="bg-[#b41f1f] text-white py-6">
-          <div className="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row justify-between items-center text-sm">
-            <p>&copy; {new Date().getFullYear()} Hotel Toolkit</p>
-            <p className="mt-2 sm:mt-0">{t("footerMadeBy")}</p>
+        </div>
+        <section id="modules" className="ht-landing-section scroll-mt-6">
+          <div className="mb-9 flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
+            <div>
+              <p className="ht-eyebrow">{copy("moduleEyebrow")}</p>
+              <h2 className="mt-4 max-w-xl font-display text-4xl leading-tight tracking-tight text-brand-950 sm:text-5xl">
+                {copy("moduleTitle")}
+              </h2>
+            </div>
+            <p className="max-w-sm text-sm leading-6 text-gray-600">
+              {copy("moduleDescription")}
+            </p>
           </div>
-        </footer>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            {MARKETING_MODULES.map((module) => {
+              const Icon = icons[module.id];
+              return (
+                <article
+                  key={module.id}
+                  className="ht-panel flex flex-col p-5 transition-colors hover:border-brand-300"
+                >
+                  <Icon
+                    size={25}
+                    strokeWidth={1.5}
+                    className="text-brand-800"
+                    aria-hidden="true"
+                  />
+                  <h3 className="mt-5 min-h-12 font-display text-xl leading-6 text-brand-950">
+                    {module.label}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-gray-600">
+                    {module.description}
+                  </p>
+                  <ul className="mt-5 space-y-3 border-t border-gray-200 pt-5">
+                    {module.features.map((feature) => (
+                      <li
+                        key={feature}
+                        className="flex items-start gap-2 text-xs leading-5 text-gray-600"
+                      >
+                        <Check
+                          size={13}
+                          className="mt-1 shrink-0 text-brand-600"
+                          aria-hidden="true"
+                        />
+                        {feature}
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+        <section
+          id="how-it-works"
+          className="border-y border-gray-200 bg-white/50"
+        >
+          <div className="ht-landing-section grid gap-10 lg:grid-cols-[.8fr_1.2fr]">
+            <div>
+              <p className="ht-eyebrow">{copy("gettingStarted")}</p>
+              <h2 className="mt-4 font-display text-4xl tracking-tight text-brand-950">
+                {copy("startTitle")}
+              </h2>
+              <p className="mt-5 max-w-sm text-sm leading-7 text-gray-600">
+                {copy("startDescription")}
+              </p>
+            </div>
+            <ol className="grid gap-6 sm:grid-cols-3">
+              {[1, 2, 3].map((step) => (
+                <li key={step}>
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full border border-gold-300 bg-gold-50 font-display text-lg text-gold-700">
+                    0{step}
+                  </span>
+                  <h3 className="mt-5 font-semibold text-brand-950">
+                    {copy(`step${step}Title`)}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-gray-600">
+                    {copy(`step${step}Description`)}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+        <section id="pricing" className="ht-landing-section scroll-mt-6">
+          <div className="ht-panel grid gap-8 p-6 sm:p-10 lg:grid-cols-[1.1fr_.9fr]">
+            <div>
+              <p className="ht-eyebrow">{copy("pricing")}</p>
+              <h2 className="mt-4 font-display text-4xl tracking-tight text-brand-950">
+                {copy("pricingTitle")}
+              </h2>
+              <p className="mt-5 max-w-lg text-sm leading-7 text-gray-600">
+                {copy("pricingDescription")}
+              </p>
+              <a
+                href={demo || "#how-it-works"}
+                className="ht-button-primary mt-7"
+              >
+                {demo ? copy("requestProposal") : copy("planSetup")}
+                <ArrowUpRight size={16} aria-hidden="true" />
+              </a>
+            </div>
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-6">
+              <p className="text-sm font-semibold text-brand-950">
+                {copy("includedTitle")}
+              </p>
+              <ul className="mt-4 space-y-4">
+                {[
+                  "includedOne",
+                  "includedTwo",
+                  "includedThree",
+                  "includedFour",
+                ].map((key) => (
+                  <li
+                    key={key}
+                    className="flex items-start gap-3 text-sm leading-6 text-gray-600"
+                  >
+                    <Check
+                      size={15}
+                      className="mt-1 shrink-0 text-brand-700"
+                      aria-hidden="true"
+                    />
+                    {copy(key)}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-5 border-t border-gray-200 pt-4 text-xs leading-5 text-gray-500">
+                {copy("pricingNote")}
+              </p>
+            </div>
+          </div>
+        </section>
+        <section className="bg-brand-900 text-white">
+          <div className="ht-landing-section flex flex-col justify-between gap-8 py-12 md:flex-row md:items-center">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[.2em] text-brand-200">
+                {copy("closingEyebrow")}
+              </p>
+              <h2 className="mt-4 max-w-xl font-display text-3xl leading-tight sm:text-4xl">
+                {copy("closingTitle")}
+              </h2>
+            </div>
+            {demoAction}
+          </div>
+        </section>
       </main>
+      <footer className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-8 text-xs text-gray-500 sm:px-8 lg:px-10">
+        <Brand className="!text-lg" />
+        <p>© {new Date().getFullYear()} Hotel Toolkit</p>
+        <Link to="/login" className="font-medium text-gray-700">
+          {copy("logIn")}
+        </Link>
+      </footer>
     </div>
   );
 }

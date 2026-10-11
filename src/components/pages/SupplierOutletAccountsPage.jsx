@@ -50,15 +50,15 @@ export default function SupplierOutletAccountsPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
             <h1 className="text-3xl font-semibold">Supplier Outlet Accounts</h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => navigate(`/catalog/suppliers/${supplierId}`)}
@@ -69,7 +69,7 @@ export default function SupplierOutletAccountsPage() {
             <button
               type="button"
               onClick={() => navigate(`/catalog/suppliers/${supplierId}/outlet-accounts/new`)}
-              className="inline-flex h-10 items-center justify-center rounded-lg bg-[#b41f1f] px-4 text-sm font-medium text-white hover:bg-[#961919]"
+              className="inline-flex h-10 items-center justify-center rounded-lg bg-brand-800 px-4 text-sm font-medium text-white hover:bg-brand-950"
             >
               <Plus className="mr-2 h-4 w-4" /> Nieuw
             </button>

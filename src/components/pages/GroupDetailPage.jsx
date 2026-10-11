@@ -79,8 +79,8 @@ function formatDate(value) {
 function DetailItem({ icon: Icon, label, value }) {
   return (
     <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-        {Icon && <Icon className="h-4 w-4 text-[#b41f1f]" />}
+      <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+        {Icon && <Icon className="h-4 w-4 text-brand-800" />}
         {label}
       </div>
       <p className="mt-2 text-sm font-semibold text-gray-900">{value || "—"}</p>
@@ -251,19 +251,19 @@ export default function GroupDetailPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-gray-100 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6 pb-10">
-        <Card className="border-0 bg-gradient-to-r from-[#b41f1f] via-[#a71c1c] to-[#7f1717] text-white shadow-lg">
+        <Card className="border-0 bg-gradient-to-r from-brand-800 via-brand-900 to-brand-950 text-white shadow-lg">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="space-y-2">
-              <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-red-100">
+              <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-brand-100">
                 <BedDouble className="h-3.5 w-3.5" /> M&amp;E block management
               </p>
               <h1 className="text-3xl font-semibold">
                 {group?.groupName || "Group Details"}
               </h1>
-              <p className="max-w-2xl text-sm text-red-100">
+              <p className="max-w-2xl text-sm text-brand-100">
                 View group block details, organiser contacts, and daily room
                 type allowances.
               </p>
@@ -280,7 +280,7 @@ export default function GroupDetailPage() {
                 type="button"
                 onClick={() => navigate(`/me/groups/${groupId}/edit`)}
                 disabled={!canEditGroups || !group}
-                className="inline-flex items-center justify-center rounded-lg border border-white/30 bg-white px-3 py-2 text-[#b41f1f] shadow hover:bg-red-50 disabled:cursor-not-allowed disabled:bg-white/40 disabled:text-white/70"
+                className="inline-flex items-center justify-center rounded-lg border border-white/30 bg-white px-3 py-2 text-brand-800 shadow hover:bg-brand-50 disabled:cursor-not-allowed disabled:bg-white/40 disabled:text-white/70"
                 aria-label="Edit group"
               >
                 <Pencil className="h-4 w-4" />
@@ -289,7 +289,7 @@ export default function GroupDetailPage() {
                 type="button"
                 onClick={() => setShowDeleteModal(true)}
                 disabled={!canDeleteGroups || !group || deletingGroup}
-                className="inline-flex items-center justify-center rounded-lg border border-white/30 bg-white px-3 py-2 text-[#b41f1f] shadow hover:bg-red-50 disabled:cursor-not-allowed disabled:bg-white/40 disabled:text-white/70"
+                className="inline-flex items-center justify-center rounded-lg border border-white/30 bg-white px-3 py-2 text-red-700 shadow hover:bg-red-50 disabled:cursor-not-allowed disabled:bg-white/40 disabled:text-white/70"
                 aria-label="Delete group"
               >
                 <Trash2 className="h-4 w-4" />
@@ -380,7 +380,7 @@ export default function GroupDetailPage() {
                     Scroll horizontally to review availability per day.
                   </p>
                 </div>
-                <span className="rounded-full bg-red-50 px-3 py-1 text-sm font-semibold text-[#b41f1f]">
+                <span className="rounded-full bg-brand-50 px-3 py-1 text-sm font-semibold text-brand-800">
                   Rooming List Status:{" "}
                   {group.roomingListStatus || "Not Started"}
                 </span>
@@ -397,14 +397,14 @@ export default function GroupDetailPage() {
                         key={day.date}
                         className="rounded-xl border border-gray-200 bg-gray-50/60 p-4"
                       >
-                        <div className="flex items-start justify-between gap-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <h3 className="font-semibold text-gray-900">
                               {formatDate(day.date)}
                             </h3>
                             <p className="text-xs text-gray-500">{day.date}</p>
                           </div>
-                          <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-[#b41f1f]">
+                          <span className="rounded-full bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-800">
                             {(day.roomTypes || []).reduce(
                               (total, roomType) =>
                                 total + Number(roomType.quantity || 0),
@@ -425,7 +425,7 @@ export default function GroupDetailPage() {
                               <p className="text-gray-600">
                                 Quantity: {roomType.quantity || 0}
                               </p>
-                              <p className="text-xs font-semibold text-[#b41f1f]">
+                              <p className="text-xs font-semibold text-brand-800">
                                 Picked up:{" "}
                                 {getPickedUpRoomsForDayAndType(
                                   day.date,
@@ -449,7 +449,7 @@ export default function GroupDetailPage() {
                 <p className="mt-2 text-sm">{roomingList.publicAccessEnabled ? "Enabled" : "Disabled"} · Expires: {roomingList.publicAccessExpiresAtMillis ? new Date(roomingList.publicAccessExpiresAtMillis).toLocaleString() : "Not set"}</p>
                 <div className="mt-3 flex flex-wrap items-end gap-3">
                   <label className="text-sm">New expiry date (UTC)<input type="date" value={accessExpiry} onChange={(event) => setAccessExpiry(event.target.value)} className="mt-1 block rounded-lg border border-gray-300 p-2" /></label>
-                  <button disabled={savingAccess} onClick={() => changePublicAccess(true)} className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white">{savingAccess ? "Saving..." : "Enable or extend link"}</button>
+                  <button disabled={savingAccess} onClick={() => changePublicAccess(true)} className="rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white">{savingAccess ? "Saving..." : "Enable or extend link"}</button>
                   <button disabled={savingAccess || !roomingList.publicAccessEnabled} onClick={() => changePublicAccess(false)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm">Disable link</button>
                 </div>
               </Card>
@@ -475,7 +475,7 @@ export default function GroupDetailPage() {
                         `/me/groups/${groupId}/rooming-list-change-request/${group.roomingListToken}`,
                       )
                     }
-                    className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white"
+                    className="rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white"
                   >
                     Review Change Request
                   </button>
@@ -551,7 +551,7 @@ export default function GroupDetailPage() {
                   disabled={
                     !canCreateRoomingLists || creatingRoomingList || Boolean(group.roomingListLink)
                   }
-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-[#961919] disabled:cursor-not-allowed disabled:bg-gray-300"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-brand-950 disabled:cursor-not-allowed disabled:bg-gray-300"
                 >
                   <Link className="h-4 w-4" />
                   {group.roomingListLink
@@ -603,7 +603,7 @@ export default function GroupDetailPage() {
                   type="button"
                   onClick={handleDeleteGroup}
                   disabled={deletingGroup}
-                  className="rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-semibold text-white hover:bg-[#961919] disabled:cursor-not-allowed disabled:bg-gray-300"
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-gray-300"
                 >
                   {deletingGroup ? "Deleting..." : "Delete Group"}
                 </button>

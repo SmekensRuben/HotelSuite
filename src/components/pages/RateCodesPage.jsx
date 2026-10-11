@@ -113,20 +113,20 @@ export default function RateCodesPage() {
     { key: "roomType", label: "Room Type" },
     { key: "breakfastIncluded", label: "Breakfast Included", render: (item) => item.breakfastIncluded ? "Yes" : "No" },
     { key: "actions", label: "Actions", sortable: false, render: (item) => <div className="flex gap-2">
-      <button aria-label={`Edit ${item.id}`} onClick={() => edit(item)} className="rounded-lg border p-2 text-blue-700 hover:bg-blue-50"><Pencil className="h-4 w-4" /></button>
+      <button aria-label={`Edit ${item.id}`} onClick={() => edit(item)} className="rounded-lg border p-2 text-brand-800 hover:bg-blue-50"><Pencil className="h-4 w-4" /></button>
       <button aria-label={`Delete ${item.id}`} onClick={async () => { if (window.confirm(`Delete Rate Code ${item.id}?`)) await deleteRateCode(hotelUid, item.id); }} className="rounded-lg border p-2 text-red-700 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
     </div> },
   ], [hotelUid]);
 
   const handleLogout = async () => { await signOut(auth); sessionStorage.clear(); window.location.href = "/login"; };
-  return <div className="min-h-screen bg-gray-50 text-gray-900">
+  return <div className="min-h-screen bg-canvas text-gray-900">
     <HeaderBar today={todayLabel} onLogout={handleLogout} />
     <PageContainer className="space-y-6">
       <div>
-        <button onClick={() => navigate("/settings/property")} className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-blue-700"><ArrowLeft className="h-4 w-4" />Property Settings</button>
+        <button onClick={() => navigate("/settings/property")} className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-brand-800"><ArrowLeft className="h-4 w-4" />Property Settings</button>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div><p className="text-sm uppercase tracking-wide text-gray-500">Property Settings</p><h1 className="text-3xl font-semibold">Rate Codes</h1><p className="mt-2 text-gray-600">Manage the rate codes available for this property.</p></div>
-          {!showForm && <button onClick={() => { setForm(createEmptyForm()); setShowForm(true); }} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"><Plus className="h-4 w-4" />Add Rate Code</button>}
+          {!showForm && <button onClick={() => { setForm(createEmptyForm()); setShowForm(true); }} className="inline-flex items-center gap-2 rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-950"><Plus className="h-4 w-4" />Add Rate Code</button>}
         </div>
       </div>
 
@@ -144,7 +144,7 @@ export default function RateCodesPage() {
             {roomTypes.map((roomType) => <option key={roomType.id} value={roomType.code}>{roomType.code} — {roomType.description}</option>)}
           </select></label>
           <div><span className="mb-2 block text-sm font-semibold">Breakfast Included</span><YesNoToggle value={form.breakfastIncluded} onChange={(value) => setForm({ ...form, breakfastIncluded: value })} /></div>
-          <button disabled={saving} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Saving..." : "Save"}</button>
+          <button disabled={saving} className="rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Saving..." : "Save"}</button>
         </form>
         {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
       </Card>}

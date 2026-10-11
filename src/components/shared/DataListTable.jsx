@@ -52,7 +52,7 @@ export default function DataListTable({ columns, rows, onRowClick, emptyMessage,
   };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+    <div className="ht-panel overflow-hidden">
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
@@ -63,7 +63,7 @@ export default function DataListTable({ columns, rows, onRowClick, emptyMessage,
                 return (
                   <th
                     key={column.key}
-                    className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500"
+                    className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-600"
                   >
                     {isSortable ? (
                       <button
@@ -106,7 +106,7 @@ export default function DataListTable({ columns, rows, onRowClick, emptyMessage,
                   {...restRowProps}
                 >
                   {columns.map((column) => (
-                    <td key={`${row.id}-${column.key}`} className="px-4 py-3 text-sm text-gray-700">
+                    <td key={`${row.id}-${column.key}`} className="px-4 py-3.5 text-sm text-gray-700">
                       {column.render ? column.render(row) : row[column.key]}
                     </td>
                   ))}

@@ -307,17 +307,17 @@ export default function UpsellsPage() {
       <div className="mt-4">
         <div className="relative pt-7">
           <div
-            className={`absolute top-0 rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 ring-1 ring-blue-200 ${targetSummary.scheduleMarker >= 95 ? "-translate-x-full" : targetSummary.scheduleMarker <= 5 ? "translate-x-0" : "-translate-x-1/2"}`}
+            className={`absolute top-0 rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-brand-800 ring-1 ring-blue-200 ${targetSummary.scheduleMarker >= 95 ? "-translate-x-full" : targetSummary.scheduleMarker <= 5 ? "translate-x-0" : "-translate-x-1/2"}`}
             style={{ left: `${targetSummary.scheduleMarker}%` }}
           >
             Today: {formatPrice(targetSummary.scheduleTarget)}
           </div>
           <div className="relative h-5 rounded-full bg-gray-200">
-            <div className={`h-full rounded-full transition-all ${targetSummary.onSchedule ? "bg-emerald-500" : "bg-[#b41f1f]"}`} style={{ width: `${targetSummary.progress}%` }} />
+            <div className={`h-full rounded-full transition-all ${targetSummary.onSchedule ? "bg-emerald-500" : "bg-brand-800"}`} style={{ width: `${targetSummary.progress}%` }} />
           {[{ label: "Minimum", left: targetSummary.minimumMarker }, { label: "Reach", left: targetSummary.reachMarker }].map((marker) => (
             <div key={marker.label} className="absolute top-0 h-full w-0.5 bg-gray-900/70" style={{ left: `${marker.left}%` }} title={marker.label} />
           ))}
-            <div className="absolute -top-1 h-7 w-1 rounded-full bg-blue-600 shadow-sm ring-2 ring-white" style={{ left: `${targetSummary.scheduleMarker}%` }} title={`Minimum on schedule: ${formatPrice(targetSummary.scheduleTarget)}`} />
+            <div className="absolute -top-1 h-7 w-1 rounded-full bg-brand-800 shadow-sm ring-2 ring-white" style={{ left: `${targetSummary.scheduleMarker}%` }} title={`Minimum on schedule: ${formatPrice(targetSummary.scheduleTarget)}`} />
           </div>
         </div>
         <div className="relative mt-2 h-10 text-xs text-gray-600">
@@ -353,7 +353,7 @@ export default function UpsellsPage() {
               const content = (
                 <>
                   <div className="flex min-w-0 items-center gap-3">
-                    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${rowIsSelected ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-600"}`}>
+                    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${rowIsSelected ? "bg-blue-100 text-brand-800" : "bg-gray-100 text-gray-600"}`}>
                       {index + 1}
                     </span>
                     <span className="truncate text-sm font-medium text-gray-800">{row.label}</span>
@@ -407,10 +407,10 @@ export default function UpsellsPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm uppercase tracking-wide text-gray-500">Front Office</p>
             <h1 className="text-3xl font-semibold">Upselling</h1>

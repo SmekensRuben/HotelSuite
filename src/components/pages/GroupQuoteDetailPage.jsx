@@ -51,11 +51,11 @@ export default function GroupQuoteDetailPage() {
   return <PageShell afterContent={<ConfirmModal open={confirmDelete} title="Delete Group Quote" message={`Are you sure you want to delete ${quote?.name || "this Group Quote"}?`} onCancel={() => setConfirmDelete(false)} onConfirm={async () => { try { await deleteQuote(hotelUid, quoteId); navigate("/revenue/group-quotes"); } catch (error) { setConfirmDelete(false); setMutationError(error); } }} />}>
     <AsyncError error={query.error} onRetry={query.retry} label="Could not load this quote." />
     <AsyncError error={mutationError} label="Could not delete this quote. Please try again." />
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div><p className="text-sm uppercase tracking-wide text-gray-500">Revenue / Group Quotes</p><h1 className="text-3xl font-semibold">Group Quote Detail</h1></div>
         <div className="flex gap-2">
           <button type="button" onClick={() => navigate("/revenue/group-quotes")} className="rounded-lg border border-gray-300 bg-white p-2 hover:bg-gray-100" title="Back to Group Quotes"><ArrowLeft className="h-5 w-5" /></button>
-          {canEdit && <button type="button" onClick={() => navigate(`/revenue/group-quotes/${quoteId}/edit`)} className="rounded-lg bg-[#b41f1f] p-2 text-white hover:bg-[#961919]" title="Edit Group Quote" aria-label="Edit Group Quote"><Pencil className="h-5 w-5" /></button>}
+          {canEdit && <button type="button" onClick={() => navigate(`/revenue/group-quotes/${quoteId}/edit`)} className="rounded-lg bg-brand-800 p-2 text-white hover:bg-brand-950" title="Edit Group Quote" aria-label="Edit Group Quote"><Pencil className="h-5 w-5" /></button>}
           {canDelete && <button type="button" onClick={() => setConfirmDelete(true)} className="rounded-lg border border-red-200 bg-white p-2 text-red-700 hover:bg-red-50" title="Delete Group Quote" aria-label="Delete Group Quote"><Trash2 className="h-5 w-5" /></button>}
         </div>
       </div>

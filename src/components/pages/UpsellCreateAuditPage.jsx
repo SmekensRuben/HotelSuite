@@ -158,10 +158,10 @@ export default function UpsellCreateAuditPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm uppercase tracking-wide text-gray-500">Front Office</p>
             <h1 className="text-3xl font-semibold">Create Audit Upsell</h1>
@@ -228,7 +228,7 @@ export default function UpsellCreateAuditPage() {
           </section>
 
           <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">Packages</h2>
                 <p className="text-sm text-gray-600">Add one or more packages with separate dates and prices.</p>
@@ -241,7 +241,7 @@ export default function UpsellCreateAuditPage() {
             <div className="mt-4 space-y-4">
               {packages.map((packageRecord, index) => (
                 <div key={index} className="rounded-lg border border-gray-200 p-4">
-                  <div className="mb-3 flex items-center justify-between">
+                  <div className="mb-3 flex flex-wrap items-center justify-between">
                     <h3 className="font-medium text-gray-900">Package {index + 1}</h3>
                     {packages.length > 1 && (
                       <button type="button" onClick={() => removePackage(index)} className="inline-flex items-center gap-1 text-sm font-medium text-red-600 hover:text-red-700">
@@ -282,7 +282,7 @@ export default function UpsellCreateAuditPage() {
 
           <div className="flex justify-end gap-3">
             <button type="button" onClick={() => navigate("/front-office/upselling/audit")} className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
-            <button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-[#b41f1f] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[#981b1b] disabled:cursor-not-allowed disabled:opacity-60">
+            <button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-brand-800 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-950 disabled:cursor-not-allowed disabled:opacity-60">
               <Plus className="h-4 w-4" /> {saving ? "Creating..." : "Create Audit Upsell"}
             </button>
           </div>

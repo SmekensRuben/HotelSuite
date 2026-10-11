@@ -62,7 +62,7 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 text-gray-900">
+      <div className="min-h-screen bg-canvas text-gray-900">
         <HeaderBar today={today} onLogout={handleLogout} />
         <PageContainer>
           <p role="status" className="text-sm text-gray-600">Loading order...</p>
@@ -71,11 +71,11 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
     );
   }
 
-  if (query.error) return <div className="min-h-screen bg-gray-50 text-gray-900"><HeaderBar today={today} onLogout={handleLogout} /><PageContainer><AsyncError error={query.error} onRetry={query.retry} label="Could not load this order." /></PageContainer></div>;
+  if (query.error) return <div className="min-h-screen bg-canvas text-gray-900"><HeaderBar today={today} onLogout={handleLogout} /><PageContainer><AsyncError error={query.error} onRetry={query.retry} label="Could not load this order." /></PageContainer></div>;
 
   if (!order) {
     return (
-      <div className="min-h-screen bg-gray-50 text-gray-900">
+      <div className="min-h-screen bg-canvas text-gray-900">
         <HeaderBar today={today} onLogout={handleLogout} />
         <PageContainer>
           <Card><p className="text-sm text-gray-600">Order niet gevonden.</p></Card>
@@ -86,7 +86,7 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
 
   if (order.status !== "Created" || order.dispatchRequestId) {
     return (
-      <div className="min-h-screen bg-gray-50 text-gray-900">
+      <div className="min-h-screen bg-canvas text-gray-900">
         <HeaderBar today={today} onLogout={handleLogout} />
         <PageContainer>
           <Card>
@@ -155,13 +155,13 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         {saveError && <p role="alert" className="rounded-lg bg-red-50 p-4 text-red-800">{saveError}</p>}
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-3xl font-semibold">Edit order detail</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={async () => {
@@ -176,7 +176,7 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
                 finally { if (mounted.current) setBusy(false); }
               }}
               disabled={!deliveryDate || editableItems.length === 0 || busy}
-              className="px-4 py-2 rounded bg-[#b41f1f] text-white font-semibold hover:bg-[#961919] disabled:opacity-50"
+              className="px-4 py-2 rounded bg-brand-800 text-white font-semibold hover:bg-brand-950 disabled:opacity-50"
             >
               {busy ? "Saving..." : "Save"}
             </button>

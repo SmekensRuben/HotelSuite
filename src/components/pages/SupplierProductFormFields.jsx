@@ -288,7 +288,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
         </label>
 
         {formState.pricingModel === "Per Base Unit" && (
-          <label className="sm:col-span-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
+          <label className="sm:col-span-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-700">
             <input type="checkbox" checked={formState.hasVariants} onChange={(event) => updateField("hasVariants", event.target.checked)} />
             Has variants
           </label>
@@ -372,14 +372,14 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
           Image URL
           <input value={formState.imageUrl} onChange={(event) => updateField("imageUrl", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
         </label>
-        <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+        <label className="flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-700">
           <input type="checkbox" checked={formState.active} onChange={(event) => updateField("active", event.target.checked)} />
           Active
         </label>
       </SectionCard>
 
-      <div className="sm:col-span-2 flex items-center gap-3 pt-2">
-        <button type="submit" disabled={saving} className="bg-[#b41f1f] text-white px-4 py-2 rounded font-semibold shadow hover:bg-[#961919] transition-colors disabled:opacity-60">
+      <div className="sm:col-span-2 flex flex-wrap items-center gap-3 pt-2">
+        <button type="submit" disabled={saving} className="bg-brand-800 text-white px-4 py-2 rounded font-semibold shadow hover:bg-brand-950 transition-colors disabled:opacity-60">
           {saving ? savingLabel : submitLabel}
         </button>
       </div>

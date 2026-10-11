@@ -1,11 +1,8 @@
-import React from 'react';
+import React from "react";
 
-export function Card({ children, className = '', ...props }) {
+export function Card({ children, className = "", ...props }) {
   return (
-    <div
-      className={`bg-white rounded-xl shadow p-6 ${className}`}
-      {...props}
-    >
+    <div className={`ht-panel p-5 sm:p-6 ${className}`} {...props}>
       {children}
     </div>
   );

@@ -98,16 +98,16 @@ export default function ContractsPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
             <h1 className="text-3xl font-semibold">Contracts</h1>
             <p className="text-gray-600 mt-1">Manage supplier and service contracts.</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => navigate("/contracts/settings")}
               disabled={!canReadSettings}
@@ -126,7 +126,7 @@ export default function ContractsPage() {
               className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold shadow ${
                 !canRunReminders || runningReminders
                   ? "bg-gray-300 text-gray-500"
-                  : "bg-white text-[#b41f1f] border border-[#b41f1f] hover:bg-red-50"
+                  : "bg-white text-brand-800 border border-brand-800 hover:bg-brand-50"
               }`}
               title="Run reminders now"
             >
@@ -137,7 +137,7 @@ export default function ContractsPage() {
               disabled={!canCreateContracts}
               className={`inline-flex items-center justify-center rounded-lg p-2 shadow ${
                 canCreateContracts
-                  ? "bg-[#b41f1f] text-white hover:bg-[#961919]"
+                  ? "bg-brand-800 text-white hover:bg-brand-950"
                   : "bg-gray-300 text-gray-500 cursor-not-allowed"
               }`}
               title="Create contract"
@@ -158,7 +158,7 @@ export default function ContractsPage() {
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
               placeholder="Search by contract name or category"
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
             />
           </div>
           <select

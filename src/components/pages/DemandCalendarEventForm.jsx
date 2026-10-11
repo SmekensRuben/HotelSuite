@@ -1,7 +1,7 @@
 import React from "react";
 import { categoryDefaultsForEvent, DEMAND_EFFECTS, IMPACT_LEVELS, SYSTEM_TYPES, optionEntries } from "../../constants/demandCalendar";
 
-const control = "mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-[#b41f1f] focus:outline-none focus:ring-2 focus:ring-red-100";
+const control = "mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-800 focus:outline-none focus:ring-2 focus:ring-brand-100";
 function Field({ label, name, error, required, children }) {
   return <label className="block text-sm font-medium text-gray-700">{label}{required && <span className="text-red-600"> *</span>}{children}<span className="mt-1 block text-xs text-red-600">{error || ""}</span></label>;
 }
@@ -36,7 +36,7 @@ export default function DemandCalendarEventForm({ value, setValue, errors = {}, 
       <Field label="Expected Attendance" error={errors.expectedAttendance}><Text type="number" min="0" name="expectedAttendance" value={value.expectedAttendance} onChange={change} /></Field>
       <Field label="Source"><Text name="source" value={value.source} onChange={change} /></Field>
       <Field label="Source URL" error={errors.sourceUrl}><Text type="url" name="sourceUrl" value={value.sourceUrl} onChange={change} /></Field>
-      <label className="flex items-center gap-3 self-center text-sm font-medium"><input type="checkbox" name="active" checked={value.active} onChange={change} className="h-4 w-4 accent-[#b41f1f]" />Active</label>
+      <label className="flex flex-wrap items-center gap-3 self-center text-sm font-medium"><input type="checkbox" name="active" checked={value.active} onChange={change} className="h-4 w-4 accent-brand-800" />Active</label>
       <Field label="Notes"><textarea className={`${control} min-h-24`} name="notes" value={value.notes} onChange={change} /></Field>
     </div></section>
   </div>;

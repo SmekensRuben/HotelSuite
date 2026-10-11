@@ -23,7 +23,7 @@ export default function GeneralSettingsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={todayLabel} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div>
@@ -35,15 +35,15 @@ export default function GeneralSettingsPage() {
           {options.map(({ title, description, icon: Icon, path, available }) => (
             <Card key={title} className={`flex min-h-44 flex-col justify-between ${available ? "transition hover:-translate-y-0.5 hover:shadow-md" : "opacity-65"}`}>
               <div>
-                <div className="flex items-start justify-between gap-4">
-                  <span className="rounded-xl bg-blue-50 p-3 text-blue-700"><Icon className="h-6 w-6" /></span>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <span className="rounded-xl bg-blue-50 p-3 text-brand-800"><Icon className="h-6 w-6" /></span>
                   {!available && <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-600">Coming later</span>}
                 </div>
                 <h2 className="mt-4 text-lg font-semibold">{title}</h2>
                 <p className="mt-1 text-sm text-gray-600">{description}</p>
               </div>
               {available && (
-                <button type="button" onClick={() => navigate(path)} className="mt-5 inline-flex items-center gap-1 self-start text-sm font-semibold text-blue-700 hover:text-blue-900">
+                <button type="button" onClick={() => navigate(path)} className="mt-5 inline-flex items-center gap-1 self-start text-sm font-semibold text-brand-800 hover:text-brand-950">
                   Manage {title}<ChevronRight className="h-4 w-4" />
                 </button>
               )}

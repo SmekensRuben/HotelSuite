@@ -221,7 +221,7 @@ export default function SettingsCatalogPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={todayLabel} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <div>
@@ -244,7 +244,7 @@ export default function SettingsCatalogPage() {
               <button
                 type="submit"
                 disabled={!canCreateSettings || savingCategory}
-                className="bg-[#b41f1f] text-white px-4 py-2 rounded font-semibold shadow hover:bg-[#961919] transition-colors disabled:opacity-60"
+                className="bg-brand-800 text-white px-4 py-2 rounded font-semibold shadow hover:bg-brand-950 transition-colors disabled:opacity-60"
               >
                 {savingCategory ? "Adding..." : "Add category"}
               </button>
@@ -273,7 +273,7 @@ export default function SettingsCatalogPage() {
                       <span className="flex-1">{category.name}</span>
                     )}
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       {editingCategoryId === category.id ? (
                         <>
                           <button
@@ -351,7 +351,7 @@ export default function SettingsCatalogPage() {
               <button
                 type="submit"
                 disabled={!canCreateSettings || savingSubcategory || sortedCategories.length === 0}
-                className="bg-[#b41f1f] text-white px-4 py-2 rounded font-semibold shadow hover:bg-[#961919] transition-colors disabled:opacity-60 sm:col-span-1"
+                className="bg-brand-800 text-white px-4 py-2 rounded font-semibold shadow hover:bg-brand-950 transition-colors disabled:opacity-60 sm:col-span-1"
               >
                 {savingSubcategory ? "Adding..." : "Add subcategory"}
               </button>
@@ -405,7 +405,7 @@ export default function SettingsCatalogPage() {
                               <span className="flex-1">{subcategory.name}</span>
                             )}
 
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               {editingSubcategoryId === subcategory.id ? (
                                 <>
                                   <button

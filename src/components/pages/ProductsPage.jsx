@@ -308,13 +308,13 @@ function ScopedProductsPage({ hotelUid }) {
     <PageShell>
         <AsyncError error={query.error} onRetry={query.retry} label="Could not load products." />
         <AsyncError error={taxonomy.error} onRetry={taxonomy.retry} label="Could not load catalog categories." />
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
             <h1 className="text-3xl font-semibold">{t("products.title")}</h1>
             <p className="text-gray-600 mt-1">{t("products.subtitle")}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={handleImportButton}
@@ -336,7 +336,7 @@ function ScopedProductsPage({ hotelUid }) {
               disabled={!canCreateProducts}
               className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow ${
                 canCreateProducts
-                  ? "bg-[#b41f1f] text-white hover:bg-[#961919]"
+                  ? "bg-brand-800 text-white hover:bg-brand-950"
                   : "bg-gray-300 text-gray-500 cursor-not-allowed"
               }`}
             >
@@ -363,7 +363,7 @@ function ScopedProductsPage({ hotelUid }) {
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
               placeholder={t("products.filter.placeholder")}
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
             />
           </div>
           <div>
@@ -374,7 +374,7 @@ function ScopedProductsPage({ hotelUid }) {
               id="products-category-filter"
               value={selectedCategory}
               onChange={(event) => setSelectedCategory(event.target.value)}
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
             >
               <option value="">{t("products.filter.allCategories")}</option>
               {categories.map((category) => (
@@ -392,7 +392,7 @@ function ScopedProductsPage({ hotelUid }) {
               id="products-subcategory-filter"
               value={selectedSubcategory}
               onChange={(event) => setSelectedSubcategory(event.target.value)}
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#b41f1f]/20"
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
             >
               <option value="">{t("products.filter.allSubcategories")}</option>
               {subcategories.map((subcategory) => (
@@ -414,11 +414,11 @@ function ScopedProductsPage({ hotelUid }) {
               onRowClick={(product) => navigate(`/catalog/products/${product.id}`)}
               emptyMessage={t("products.table.empty")}
             />
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <span className="text-sm text-gray-500">
                 Pagina {pageIndex + 1} · Max. {PAGE_SIZE} producten per pagina{debouncedSearchTerm.trim() ? " · Server-side naamfilter actief" : ""}
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -441,7 +441,7 @@ function ScopedProductsPage({ hotelUid }) {
                     loadProductsPage(nextPage, nextCursor);
                   }}
                   disabled={!hasMorePages || loading}
-                  className="rounded-lg border border-[#b41f1f] bg-[#b41f1f] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-lg border border-brand-800 bg-brand-800 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Volgende
                 </button>
@@ -474,7 +474,7 @@ function ScopedProductsPage({ hotelUid }) {
             type="button"
             onClick={handleExportFullList}
             disabled={busy}
-            className="rounded-lg bg-[#b41f1f] px-3 py-2 text-sm font-semibold text-white hover:bg-[#961919]"
+            className="rounded-lg bg-brand-800 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-950"
           >
             {t("products.export.full")}
           </button>
@@ -488,7 +488,7 @@ function ScopedProductsPage({ hotelUid }) {
             type="button"
             onClick={() => submitImport("overwrite")}
             disabled={busy}
-            className="rounded-lg bg-[#b41f1f] px-3 py-2 text-sm font-semibold text-white hover:bg-[#961919] disabled:opacity-50"
+            className="rounded-lg bg-brand-800 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-950 disabled:opacity-50"
           >
             {t("products.import.overwrite")}
           </button>

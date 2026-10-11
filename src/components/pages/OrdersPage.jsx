@@ -64,7 +64,7 @@ function DateRangePopover({ open, title, from, until, onFromChange, onUntilChang
       <button
         type="button"
         onClick={onClear}
-        className="mt-3 text-xs font-semibold text-blue-700 hover:text-blue-900"
+        className="mt-3 text-xs font-semibold text-brand-800 hover:text-brand-950"
       >
         Range wissen
       </button>
@@ -179,7 +179,7 @@ function ScopedOrdersPage({ hotelUid }) {
     <PageShell>
       <AsyncError error={query.error} onRetry={query.retry} label="Could not load orders." />
       {canReadSuppliers && <AsyncError error={suppliersQuery.error} onRetry={suppliersQuery.retry} label="Could not load supplier names. Saved order names remain available." />}
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-semibold">Orders</h1>
             <p className="text-sm text-gray-500 mt-1">Overzicht van orders.</p>
@@ -187,7 +187,7 @@ function ScopedOrdersPage({ hotelUid }) {
           <button
             type="button"
             onClick={() => navigate("/orders/new")}
-            className="inline-flex items-center gap-2 bg-blue-600 text-white rounded px-4 py-2 font-semibold hover:bg-blue-700"
+            className="inline-flex items-center gap-2 bg-brand-800 text-white rounded px-4 py-2 font-semibold hover:bg-brand-950"
           >
             <Plus className="w-4 h-4" />
             Nieuwe order
@@ -241,7 +241,7 @@ function ScopedOrdersPage({ hotelUid }) {
                 onClick={() =>
                   setOpenRangePopover((prev) => (prev === "created" ? "" : "created"))
                 }
-                className="w-full inline-flex items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                className="w-full inline-flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
               >
                 <span>{formatRangeLabel(createdFrom, createdUntil, "Created at range")}</span>
                 <CalendarRange className="h-4 w-4 text-gray-500" />
@@ -266,7 +266,7 @@ function ScopedOrdersPage({ hotelUid }) {
                 onClick={() =>
                   setOpenRangePopover((prev) => (prev === "delivery" ? "" : "delivery"))
                 }
-                className="w-full inline-flex items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                className="w-full inline-flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
               >
                 <span>{formatRangeLabel(deliveryFrom, deliveryUntil, "Delivery date range")}</span>
                 <CalendarRange className="h-4 w-4 text-gray-500" />

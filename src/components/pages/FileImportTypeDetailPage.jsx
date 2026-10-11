@@ -158,15 +158,15 @@ export default function FileImportTypeDetailPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">Settings</p>
             <h1 className="text-3xl font-semibold">File Import Type Detail</h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={handleExport}
@@ -202,7 +202,7 @@ export default function FileImportTypeDetailPage() {
               className={`inline-flex items-center justify-center rounded border p-2 ${
                 canUpdateSettings
                   ? "border-gray-300 text-gray-700 hover:bg-gray-100"
-                  : "border-gray-200 text-gray-400 cursor-not-allowed"
+                  : "border-gray-200 text-gray-500 cursor-not-allowed"
               }`}
               title="Edit file import type"
             >
@@ -215,7 +215,7 @@ export default function FileImportTypeDetailPage() {
               className={`inline-flex items-center justify-center rounded border p-2 ${
                 canDeleteSettings
                   ? "border-red-200 text-red-700 hover:bg-red-50"
-                  : "border-gray-200 text-gray-400 cursor-not-allowed"
+                  : "border-gray-200 text-gray-500 cursor-not-allowed"
               }`}
               title="Delete file import type"
             >

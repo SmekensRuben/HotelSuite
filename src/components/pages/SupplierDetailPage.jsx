@@ -115,16 +115,16 @@ function ScopedSupplierDetailPage({ hotelUid, supplierId }) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 text-gray-900">
+    <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
         <AsyncError error={query.error} onRetry={query.retry} label="Could not load supplier." />
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
             <h1 className="text-3xl font-semibold">Supplier Detail</h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => navigate("/catalog/suppliers")}
@@ -148,7 +148,7 @@ function ScopedSupplierDetailPage({ hotelUid, supplierId }) {
               className={`inline-flex items-center justify-center rounded border p-2 ${
                 canEditSuppliers
                   ? "border-gray-300 text-gray-700 hover:bg-gray-100"
-                  : "border-gray-200 text-gray-400 cursor-not-allowed"
+                  : "border-gray-200 text-gray-500 cursor-not-allowed"
               }`}
               title="Edit supplier"
             >
@@ -161,7 +161,7 @@ function ScopedSupplierDetailPage({ hotelUid, supplierId }) {
               className={`inline-flex items-center justify-center rounded border p-2 ${
                 canDeleteSuppliers
                   ? "border-red-200 text-red-700 hover:bg-red-50"
-                  : "border-gray-200 text-gray-400 cursor-not-allowed"
+                  : "border-gray-200 text-gray-500 cursor-not-allowed"
               }`}
               title="Delete supplier"
             >

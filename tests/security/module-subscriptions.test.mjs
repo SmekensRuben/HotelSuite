@@ -16,7 +16,7 @@ process.env.FIREBASE_CONFIG = JSON.stringify({ projectId, storageBucket: `${proj
 const require = createRequire(import.meta.url);
 const { admin } = require("../../functions/src/config");
 const { createHotelHandler, inviteHotelUserHandler } = require("../../functions/src/onboarding");
-const { listHotelTeamHandler, updateHotelMemberHandler, removeHotelMemberHandler } = require("../../functions/src/hotelTeam");
+const { listHotelTeam, listHotelTeamHandler, updateHotelMemberHandler, removeHotelMemberHandler } = require("../../functions/src/hotelTeam");
 const { updateUserAccessHandler } = require("../../functions/src/userAccess");
 const { requireHotelPermission } = require("../../functions/src/authorization");
 const { processMailQueueHandler } = require("../../functions/src/mailQueue");
@@ -68,6 +68,24 @@ beforeEach(async () => {
 after(async () => environment.cleanup());
 
 describe("module subscriptions and delegated hotel administration", () => {
+  it("keeps the deployed team callable gated until activation, then permits a scoped hotel administrator", async () => {
+    assert.equal((await auth.getUser(adminA.uid)).customClaims?.platformAdmin === true, false);
+    const flag = db.doc("platformConfiguration/saasProcurement");
+    await flag.delete();
+    await assert.rejects(listHotelTeam.run(req(adminA, { hotelUid: "hotel-a" })),
+      (error) => error.code === "failed-precondition" && error.message.includes("verified SaaS Rules rollout"));
+    for (const status of [{ enabled: false, rulesVersion: SAAS_RULES_VERSION }, { enabled: true, rulesVersion: "saas-modules-v2" }]) {
+      await flag.set(status);
+      await rejected(listHotelTeam.run(req(adminA, { hotelUid: "hotel-a" })), "failed-precondition");
+    }
+    await flag.set({ enabled: true, rulesVersion: SAAS_RULES_VERSION });
+    const result = await listHotelTeam.run(req(adminA, { hotelUid: "hotel-a" }));
+    assert.equal(result.users.length, 3);
+    assert.equal(result.users.some((user) => user.id === adminA.uid), true);
+    assert.equal(result.users.some((user) => user.id === adminB.uid), false);
+    await rejected(listHotelTeam.run(req(adminA, { hotelUid: "hotel-b" })), "permission-denied");
+    await rejected(listHotelTeam.run(req(buyer, { hotelUid: "hotel-a" })), "permission-denied");
+  });
   it("onboards a procurement-only hotel and keeps hotel administration separate from operational grants", async () => {
     const subscription = (await db.doc("hotelSubscriptions/hotel-a").get()).data();
     assert.deepEqual(subscription.modules, ["procurement"]);
