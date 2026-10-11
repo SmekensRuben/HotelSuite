@@ -50,6 +50,85 @@ it("does not enumerate users without hotel-administrator authority", () => {
   expect(screen.getByRole("alert")).toHaveTextContent("Hotel administrator access is required");
   expect(mocks.getHotelTeam).not.toHaveBeenCalled();
 });
+it("shows the rollout block without inventing an empty team or unlimited subscription", async () => {
+  mocks.getHotelTeam.mockRejectedValue({ code: "functions/failed-precondition", message: "The platform operator must finish the verified SaaS Rules rollout before making this change. [400]" });
+  render(<HotelTeamPage />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("platform administrator completes the required security update");
+  expect(screen.getByRole("status")).toHaveTextContent("Team members and subscription limits could not be loaded");
+  expect(screen.queryByText(/0 assigned accounts|No user limit/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Invite a member" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Assign access and send invitation" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Refresh team" })).toBeEnabled();
+  expect(mocks.inviteHotelUser).not.toHaveBeenCalled();
+});
+it("recovers after a failed load and distinguishes a confirmed empty team", async () => {
+  mocks.getHotelTeam.mockRejectedValueOnce(new Error("The team request failed."))
+    .mockResolvedValue({ users: [], modules: ["procurement"], seatLimit: 5 });
+  render(<HotelTeamPage />);
+  await screen.findByRole("alert");
+  expect(screen.queryByText(/assigned accounts/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh team" }));
+  expect(await screen.findByText(/0 assigned accounts · Limit: 5/)).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Assign access and send invitation" })).toBeEnabled();
+  fireEvent.change(screen.getByLabelText("Email"), { target: { value: "new@example.test" } });
+  fireEvent.click(screen.getByRole("button", { name: "Assign access and send invitation" }));
+  await waitFor(() => expect(mocks.inviteHotelUser).toHaveBeenCalledWith(expect.objectContaining({ hotelUid: "hotel-a", email: "new@example.test" })));
+});
+it("removes a stale team and editor when refreshing fails", async () => {
+  mocks.getHotelTeam.mockResolvedValueOnce({ users: [legacy], modules: ["procurement"], seatLimit: null })
+    .mockRejectedValue(new Error("Access is unavailable."));
+  render(<HotelTeamPage />);
+  fireEvent.click(await screen.findByText("Existing Member"));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh team" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Access is unavailable.");
+  expect(screen.queryByText("Existing Member")).not.toBeInTheDocument();
+  expect(screen.queryByText(/assigned accounts|No user limit/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Save hotel access" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Resend invitation" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Remove hotel access" })).not.toBeInTheDocument();
+});
+it("blocks every edit action after a mutation fails and requires a refresh", async () => {
+  mocks.updateHotelMember.mockRejectedValue({ code: "functions/aborted", message: "Member changed." });
+  render(<HotelTeamPage />);
+  fireEvent.click(await screen.findByText("Existing Member"));
+  fireEvent.click(screen.getByRole("button", { name: "Save hotel access" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("This member changed. Refresh the team");
+  for (const name of ["Save hotel access", "Resend invitation", "Remove hotel access", "Invite a member", "Existing Member"]) {
+    expect(screen.getByRole("button", { name })).toBeDisabled();
+  }
+  expect(screen.getByLabelText("Email")).toBeDisabled();
+  expect(screen.getByLabelText("Buyer")).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Resend invitation" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove hotel access" }));
+  expect(mocks.inviteHotelUser).not.toHaveBeenCalled();
+  expect(mocks.removeHotelMember).not.toHaveBeenCalled();
+});
+it("closes the stale editor and uses the refreshed member revision for the next save", async () => {
+  mocks.getHotelTeam.mockResolvedValueOnce({ users: [legacy], modules: ["procurement"], seatLimit: null })
+    .mockResolvedValue({ users: [{ ...legacy, revision: 9 }], modules: ["procurement"], seatLimit: null });
+  mocks.updateHotelMember.mockRejectedValueOnce({ code: "functions/aborted" });
+  render(<HotelTeamPage />);
+  fireEvent.click(await screen.findByText("Existing Member"));
+  fireEvent.click(screen.getByRole("button", { name: "Save hotel access" }));
+  await screen.findByRole("alert");
+  fireEvent.click(screen.getByRole("button", { name: "Refresh team" }));
+  await screen.findByText("Existing Member");
+  expect(screen.queryByRole("button", { name: "Save hotel access" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText("Existing Member"));
+  fireEvent.click(screen.getByRole("button", { name: "Save hotel access" }));
+  await waitFor(() => expect(mocks.updateHotelMember).toHaveBeenLastCalledWith(expect.objectContaining({ expectedRevision: 9 })));
+});
+it("preserves unrelated precondition errors instead of diagnosing them as a rollout block", async () => {
+  mocks.removeHotelMember.mockRejectedValue({ code: "functions/failed-precondition", message: "Appoint another hotel administrator before removing the last one." });
+  render(<HotelTeamPage />);
+  fireEvent.click(await screen.findByText("Existing Member"));
+  fireEvent.click(screen.getByRole("button", { name: "Remove hotel access" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm removal" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Appoint another hotel administrator before removing the last one.");
+  expect(screen.getByRole("button", { name: "Confirm removal" })).toBeDisabled();
+});
 it("ignores an obsolete save completion after the selected hotel changes", async () => {
   let finish;
   mocks.updateHotelMember.mockReturnValue(new Promise((resolve) => { finish = resolve; }));

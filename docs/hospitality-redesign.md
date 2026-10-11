@@ -97,9 +97,9 @@ No production record or credential was used for visual review.
 
 | Check | Result |
 | --- | --- |
-| Frontend Vitest | 82 files, 717 tests passed |
+| Frontend Vitest | 82 files, 723 tests passed |
 | Functions tests | 159 tests passed |
-| Firestore/Storage authorization and normal-user workflows | 126 tests passed |
+| Firestore/Storage authorization and normal-user workflows | 127 tests passed |
 | Two-hotel Auth/Firestore/Storage restore smoke | Passed |
 | Domain-settings migration safeguards | 10 tests passed |
 | Correctness lint and incremental boundary typecheck | Passed |
@@ -142,10 +142,37 @@ Functions and emulator tests supply separate permission/workflow evidence.
 Visual review does not prove a real Firebase MFA or production import run.
 
 A source/AST review confirmed that operational page changes are presentation
-changes, apart from the documented content landmarks and visibility of refresh
-errors in the modal. Login state, effect and callback declarations are unchanged.
+changes, apart from the documented content landmarks, visibility of refresh
+errors in the modal and the Hotel Team failure-state correction below. Login
+state, effect and callback declarations are unchanged.
 There are no changes to domain utilities, Firestore services, hotel/auth context,
 route guards, Firebase Rules, Functions, saved analysis snapshots or dependencies.
+
+### Hotel Team failure-state correction
+
+The reported ordinary-hotel-administrator error matches the server release
+guard on `listHotelTeam`: current Functions require the independently verified
+`saas-platform-v3` Rules activation. Successful Functions/App Hosting deploy
+checks do not establish that activation. The source permits this same error for
+an absent, paused or obsolete marker; the live marker was not read or changed.
+
+Hotel Team now keeps unavailable data separate from a loaded empty team. Failed
+reads show no invented account count, unlimited subscription or editor. Failed
+mutations disable every further edit/invitation/removal action. Refresh closes
+the old editor, so reselecting a member uses the latest revision. The release
+error explains that the platform administrator must complete the security update;
+other server errors retain their meaning. The server guard is unchanged.
+
+All six new component regressions fail against the original component and pass
+after the correction. An additional emulator test invokes the actual exported
+team callable as an ordinary hotel administrator: missing/paused/older activation
+fails, matching activation succeeds, and another hotel/non-administrator remains
+denied. Desktop/mobile browser checks cover the unavailable state and successful
+refresh, with no page errors, horizontal overflow or scoped Axe violations.
+
+Code status: fixed and locally verified. Production activation/browser acceptance:
+not performed. Exact reviewed rollout steps are in
+[platform-console.md](platform-console.md#hotel-team-unavailable-after-a-functions-deployment).
 
 ## Remaining release checks and resume point
 

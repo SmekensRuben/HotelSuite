@@ -113,6 +113,31 @@ effort on worker rotations, not an exact deletion-time guarantee.
 No new dependencies, global customer-data index, production credentials or billing
 provider are introduced. Tenant source data retains its existing retention policy.
 
+## Hotel team unavailable after a Functions deployment
+
+The message "The platform operator must finish the verified SaaS Rules rollout"
+comes from the server's release guard, including on `listHotelTeam`. It is not a
+hotel-administrator permission error. Deploying Functions and App Hosting alone
+does not complete this release. The server requires
+`platformConfiguration/saasProcurement` to have `enabled: true` and the Rules
+version from `functions/src/platformReleasePolicy.json` (currently
+`saas-platform-v3`). An absent, paused or older marker blocks the request.
+
+Use steps 2–3 below with the reviewed **current main SHA** to complete the
+one-time security-boundary release. Keep the printed Rules backup, allow the
+propagation wait to finish, and require the final activation-success message.
+This is not a script per hotel or member. Do not manually change the marker or
+grant a hotel administrator platform authority to bypass it. If preflight stops,
+resolve its reported prerequisite before applying; a green Functions deployment
+does not prove that the live Rules or activation marker match.
+
+After activation, the hotel administrator can refresh Hotel Team. The updated
+screen distinguishes unavailable data from a successfully loaded empty team:
+failed reads show neither a fabricated account count/user limit nor an editor.
+Failed mutations disable all further edit/removal/invitation actions until a
+successful refresh. Refresh closes the old editor; select a member again to use
+their current revision. Backend authorization and rollout checks are unchanged.
+
 ## Review and release
 
 I've set up prototype Security Rules to keep the data in Firestore safe. They are
