@@ -50,7 +50,7 @@ async function searchHotelProductsHandler(request, services = {}) {
     .filter((id) => typeof id === "string" && id.length <= 128 && id && !id.includes("/") && ![".", ".."].includes(id));
   // Never return indexed customer data directly. Hydrate only documents from the
   // authorized hotel's canonical Firestore collection, including for stale hits.
-  const snapshots = await Promise.all(ids.map((id) => db.doc(`hotels/${query.hotelUid}/${query.collection}/${id}`).get()));
+  const snapshots = ids.length ? await db.getAll(...ids.map((id) => db.doc(`hotels/${query.hotelUid}/${query.collection}/${id}`))) : [];
   const products = snapshots.filter((snapshot) => snapshot.exists).map((snapshot) => ({ ...snapshot.data(), id: snapshot.id }));
   const nextOffset = query.body.offset + hits.length;
   const hasMore = hits.length > 0 && nextOffset < Math.min(Number(payload?.estimatedTotalHits || 0), 10000);

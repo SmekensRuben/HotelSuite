@@ -52,6 +52,10 @@ export function validateReviewedInventoryIndexes(configuration) {
   }
   return configuration.indexes.map((index) => structuredClone(index));
 }
+export function validateReviewedInventoryRulesPolicy(policy) {
+  if (policy?.saasRulesVersion !== "saas-platform-v5") throw new Error("The reviewed inventory Rules policy must be saas-platform-v5.");
+  return policy.saasRulesVersion;
+}
 function requireTarget({ projectId, projectNumber, databaseId, operator, releaseSha }) {
   if (projectId !== INDEX_PROJECT || String(projectNumber) !== INDEX_PROJECT_NUMBER || databaseId !== INDEX_DATABASE || operator !== INDEX_OPERATOR) {
     throw new Error("The reviewed project, project number, default database and release operator are required. No index was changed.");
@@ -194,7 +198,7 @@ async function main() {
   const configuration = JSON.parse(await readFile(new URL("../../firebase/firestore.indexes.json", import.meta.url), "utf8"));
   validateReviewedInventoryIndexes(configuration);
   const policy = JSON.parse(await readFile(new URL("../../functions/src/platformReleasePolicy.json", import.meta.url), "utf8"));
-  if (policy.saasRulesVersion !== "saas-platform-v4") throw new Error("The reviewed inventory Rules policy must be saas-platform-v4.");
+  validateReviewedInventoryRulesPolicy(policy);
   // A direct helper invocation must satisfy the same exact-main/CI/runtime
   // release authorization as the enclosing operator rollout.
   execFileSync(process.execPath, [fileURLToPath(new URL("./saas-release-check.mjs", import.meta.url))], { stdio: "inherit" });

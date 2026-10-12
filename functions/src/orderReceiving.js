@@ -9,6 +9,7 @@ const { validTimeZone } = require("./hotelSetupPolicy");
 const { localDate } = require("./importMonitoringPolicy");
 const { multiplyQuantities, calculateNetValue } = require("./productPolicy");
 const { prepareReceiptMovement, prepareReversalMovement } = require("./inventoryMovements");
+const { isArchived } = require("./procurementResources");
 const stamp = () => admin.firestore.FieldValue.serverTimestamp();
 const referenceKey = (value) => digest(value.normalize("NFKC").replace(/\s+/g, " ").toLowerCase());
 function orderRevision(data) {
@@ -141,7 +142,7 @@ async function getHotelOrderReceivingHandler(request, services = {}) {
       today: validTimeZone(hotel.data()?.timeZone) ? localDate(services.now?.() ?? Date.now(), hotel.data().timeZone) : null,
       status: data.status, availability, reason, receivingState: aggregate?.state ?? null,
       releaseReady: release.data()?.enabled === true && release.data().rulesVersion === SAAS_RULES_VERSION,
-      inventoryLocations: locations.docs.slice(0, 100).map((location) => ({ id: location.id,
+      inventoryLocations: locations.docs.slice(0, 100).filter((location) => !isArchived(location.data())).map((location) => ({ id: location.id,
         name: typeof location.data().name === "string" ? location.data().name.slice(0, 200) : location.id })),
       inventoryLocationsTruncated: locations.docs.length > 100,
       inventoryCoverageReasons: [...new Set((data.products || []).map((product) => product.inventoryTerms?.reason

@@ -409,9 +409,12 @@ describe("catalog products and periodic inventory acceptance with real ordinary-
     assert.equal((await db.doc(`hotels/hotel-a/stockCounts/${existing.stockCountId}/locations/store`).get()).data().status, "Finished");
   });
   it("generic imports cannot overwrite product contracts/templates/immutable inventory evidence", () => {
-    for (const path of ["catalogproducts/water", "supplierproducts/offer", "locations/store/stockTemplates/weekly", "productOperations/spoof", "productSkuKeys/spoof", "inventoryMovements/spoof",
+    for (const path of ["catalogproducts/water", "supplierproducts/offer", "productOperations/spoof", "productSkuKeys/spoof", "inventoryMovements/spoof",
       "inventoryLocationStates/store", "inventoryCheckpoints/spoof", "inventoryReversals/spoof", "inventoryPeriodReports/spoof", "stockTemplateOperations/spoof"]) {
       assert.throws(() => requireHotelImportTarget(`hotels/hotel-a/${path}`, "hotel-a"), /authorized hotel/i, path);
+    }
+    for (const path of ["locations/store", "locations/store/stockTemplates/weekly", "procurementResourceOperations/spoof", "procurementResourceAudit/spoof"]) {
+      assert.throws(() => requireHotelImportTarget(`hotels/hotel-a/${path}`, "hotel-a"), /protected procurement resources or command evidence/i, path);
     }
     assert.doesNotThrow(() => requireHotelImportTarget("hotels/hotel-a/arrivals/example", "hotel-a"));
   });

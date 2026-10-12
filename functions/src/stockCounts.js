@@ -9,6 +9,7 @@ const movements = require("./inventoryMovements");
 const { compatibleUnits } = require("./productPolicy");
 const { validTimeZone } = require("./hotelSetupPolicy");
 const { localDate } = require("./importMonitoringPolicy");
+const { isArchived } = require("./procurementResources");
 
 const TYPES = ["Ad Hoc", "Daily", "Weekly", "Month-End"];
 const MAX_LOCATIONS = 50;
@@ -78,7 +79,7 @@ async function canonicalCatalogItem(db, tx, hotelUid, identity) {
     tx.get(db.doc(`hotels/${hotelUid}/supplierproducts/${identity.supplierProductId}`)),
     tx.get(db.doc(`hotels/${hotelUid}/outlets/${identity.outletId}`)),
   ]);
-  if (!product.exists || !outlet.exists) throw new HttpsError("failed-precondition", "A supplier product or outlet no longer exists in this hotel.");
+  if (!product.exists || !outlet.exists || isArchived(outlet.data())) throw new HttpsError("failed-precondition", "Choose an available supplier product and active outlet in this hotel.");
   const data = product.data();
   const price = data.pricePerPurchaseUnit;
   if (typeof price !== "number" || !Number.isFinite(price) || price < 0 || price > 1000000) {
@@ -99,7 +100,7 @@ async function canonicalInventoryItem(db, tx, hotelUid, identity, hotelCurrency)
     const legacy = itemIdentity(identity, "Template");
     const [supplier, outlet] = await Promise.all([tx.get(db.doc(`hotels/${hotelUid}/supplierproducts/${legacy.supplierProductId}`)),
       tx.get(db.doc(`hotels/${hotelUid}/outlets/${legacy.outletId}`))]);
-    if (!supplier.exists || !outlet.exists || !supplier.data().catalogProductId) throw new HttpsError("failed-precondition", `Template supplier product ${legacy.supplierProductId} needs a valid catalog link in this hotel.`);
+    if (!supplier.exists || !outlet.exists || isArchived(outlet.data()) || !supplier.data().catalogProductId) throw new HttpsError("failed-precondition", `Template supplier product ${legacy.supplierProductId} needs an active outlet and valid catalog link in this hotel.`);
     catalogProductId = requireDocumentId(supplier.data().catalogProductId, "Stored catalogProductId");
     const catalog = await tx.get(db.doc(`hotels/${hotelUid}/catalogproducts/${catalogProductId}`));
     if (!catalog.exists || !compatibleUnits(supplier.data().baseUnit, catalog.data().baseUnit)) throw new HttpsError("failed-precondition", `Template supplier product ${legacy.supplierProductId} has an incompatible or missing catalog unit.`);
@@ -125,7 +126,7 @@ async function listHotelStockCountSourcesHandler(request, services = {}) {
   if (afterLocationId) query = query.startAfter(afterLocationId);
   const snapshot = await query.limit(MAX_LOCATIONS + 1).get();
   const page = snapshot.docs.slice(0, MAX_LOCATIONS);
-  const locations = await Promise.all(page.map(async (location) => {
+  const locations = await Promise.all(page.filter((location) => !isArchived(location.data())).map(async (location) => {
     const templates = await db.collection(`${location.ref.path}/stockTemplates`).orderBy(admin.firestore.FieldPath.documentId()).limit(MAX_ITEMS + 1).get();
     if (templates.docs.length > MAX_ITEMS) throw new HttpsError("resource-exhausted", "A location has more than 250 templates; operator review is required.");
     return { locationId: location.id, locationName: text(location.data().name, "Location name", 200, true),
@@ -178,6 +179,7 @@ async function createHotelStockCountHandler(request, services = {}) {
         tx.get(db.doc(`hotels/${hotelUid}/locations/${locationId}/stockTemplates/${stockTemplateId}`)),
       ]);
       if (!location.exists || !template.exists) throw new HttpsError("not-found", "Location or stock template not found in this hotel.");
+      if (isArchived(location.data())) throw new HttpsError("failed-precondition", "Choose an active inventory location.");
       if (template.data().archived === true) throw new HttpsError("failed-precondition", "Choose an active stock template.");
       const identities = boundedArray(template.data().items, "Stored template items", 1);
       itemCount += identities.length;
@@ -303,6 +305,8 @@ async function mutateHotelStockCountHandler(request, services = {}) {
       if (additions.length) {
         const templateRef = db.doc(`hotels/${hotelUid}/locations/${locationId}/stockTemplates/${requireDocumentId(current.stockTemplateId, "Stored template ID")}`);
         const template = await tx.get(templateRef);
+        const liveLocation = await tx.get(db.doc(`hotels/${hotelUid}/locations/${locationId}`));
+        if (!liveLocation.exists || isArchived(liveLocation.data())) throw new HttpsError("failed-precondition", "The source location is archived or unavailable. Finish without template additions.");
         if (!template.exists) throw new HttpsError("failed-precondition", "The source template no longer exists. Finish without template additions.");
         if (template.data().archived === true) throw new HttpsError("failed-precondition", "The source template is archived. Finish without template additions.");
         const templateRevision = template.data().revision ?? 0;

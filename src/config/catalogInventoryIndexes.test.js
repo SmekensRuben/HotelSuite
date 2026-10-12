@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { createIndexRequest, prepareCatalogInventoryIndexes, validateReviewedInventoryIndexes, indexSignature,
+import { createIndexRequest, prepareCatalogInventoryIndexes, validateReviewedInventoryIndexes, validateReviewedInventoryRulesPolicy, indexSignature,
   INDEX_PROJECT, INDEX_PROJECT_NUMBER, INDEX_DATABASE, INDEX_OPERATOR } from "../../scripts/firebase/catalog-inventory-indexes.mjs";
 
 const releaseSha = "a".repeat(40);
@@ -56,6 +56,11 @@ function prepare(api, patch = {}) {
 }
 
 describe("reviewed periodic inventory index manifest", () => {
+  it("accepts the actual release policy and refuses the old archive-incompatible Rules gate", () => {
+    const policy = JSON.parse(readFileSync(new URL("../../functions/src/platformReleasePolicy.json", import.meta.url), "utf8"));
+    expect(() => validateReviewedInventoryRulesPolicy(policy)).not.toThrow();
+    expect(() => validateReviewedInventoryRulesPolicy({ saasRulesVersion: "saas-platform-v4" })).toThrow("saas-platform-v5");
+  });
   it("accepts exactly the four reviewed composite indexes with no field overrides", () => {
     expect(reviewed()).toHaveLength(4);
     expect(new Set(reviewed().map(indexSignature)).size).toBe(4);
