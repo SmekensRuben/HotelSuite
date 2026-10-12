@@ -63,7 +63,8 @@ describe("scoped procurement records and optional staff labels", () => {
     mocks[service].mockResolvedValue(record());
     render(<Component />);
     expect((await screen.findAllByText("Current record")).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText("creator")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Unknown hotel user")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("creator")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(mocks.display).toHaveBeenCalledWith("hotel-a", "creator");
   });

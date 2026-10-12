@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import SupplierFormFields from "./SupplierFormFields";
 import { auth, signOut } from "../../firebaseConfig";
@@ -39,7 +39,7 @@ export default function SupplierCreatePage() {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage width="form" className="space-y-6">
         <div>
           <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
           <h1 className="text-3xl font-semibold">Add Supplier</h1>
@@ -53,7 +53,7 @@ export default function SupplierCreatePage() {
             submitLabel="Create Supplier"
           />
         </Card>
-      </PageContainer>
+      </ProcurementPage>
     </div>
   );
 }

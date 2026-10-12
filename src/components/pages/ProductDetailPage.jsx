@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Pencil, Trash2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import PendingProductCommand from "../catalog/PendingProductCommand";
@@ -14,6 +14,7 @@ import AsyncError from "../shared/AsyncError";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 import { usePermission } from "../../hooks/usePermission";
+import { productUnitLabel } from "../../utils/productUnitDisplay";
 
 function formatDate(value) {
   if (!value) return "-";
@@ -84,7 +85,7 @@ function ScopedProductDetailPage({ hotelUid, productId }) {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage className="space-y-6">
         <PendingProductCommand hotelUid={hotelUid} collection="catalogproducts" productId={productId} onComplete={() => { if (mounted.current) navigate("/catalog/products"); }} />
         <AsyncError error={query.error} onRetry={query.retry} label="Could not load product." />
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -183,13 +184,14 @@ function ScopedProductDetailPage({ hotelUid, productId }) {
               <Card>
                 <h2 className="text-lg font-semibold mb-3">{t("products.sections.units")}</h2>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <DetailField label={t("products.fields.baseUnit")} value={product.baseUnit} />
+                  <DetailField label="Stock-count unit" value={productUnitLabel(product.baseUnit)} />
                   <DetailField label="Physical inventory counts" value={product.inventoryTracked === true ? "Tracked" : product.inventoryTracked === false ? "Not tracked" : "Needs review"} />
                   <DetailField
-                    label={t("products.fields.baseQtyPerUnit")}
+                    label="Legacy quantity metadata"
                     value={product.baseQtyPerUnit}
                   />
                 </div>
+                <p className="mt-4 text-sm text-gray-600">Count quantities in the catalog stock unit. Supplier package contents use their own compatible unit and are converted on receiving.</p>
               </Card>
 
               <Card>
@@ -224,7 +226,7 @@ function ScopedProductDetailPage({ hotelUid, productId }) {
             </div>
           </>
         )}
-      </PageContainer>
+      </ProcurementPage>
 
       <Modal
         open={showDeleteModal}

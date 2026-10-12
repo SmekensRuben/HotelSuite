@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import ProductFormFields from "./ProductFormFields";
 import PendingProductCommand from "../catalog/PendingProductCommand";
@@ -58,7 +58,7 @@ function ScopedProductEditPage() {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage width="form" className="space-y-6">
         <PendingProductCommand hotelUid={hotelUid} collection="catalogproducts" productId={productId} onComplete={(result) => { if (mounted.current) navigate(`/catalog/products/${result.productId}`); }} />
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -126,7 +126,7 @@ function ScopedProductEditPage() {
             </Card>
           </>
         )}
-      </PageContainer>
+      </ProcurementPage>
     </div>
   );
 }

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Pencil, Settings, Trash2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import { auth, signOut } from "../../firebaseConfig";
@@ -24,13 +24,13 @@ function formatDeliveryDays(deliveryDays) {
   if (!Array.isArray(deliveryDays) || deliveryDays.length === 0) return "-";
 
   const dayLabels = {
-    0: "Zondag",
-    1: "Maandag",
-    2: "Dinsdag",
-    3: "Woensdag",
-    4: "Donderdag",
-    5: "Vrijdag",
-    6: "Zaterdag",
+    0: "Sunday",
+    1: "Monday",
+    2: "Tuesday",
+    3: "Wednesday",
+    4: "Thursday",
+    5: "Friday",
+    6: "Saturday",
   };
 
   const sortedDays = [...new Set(deliveryDays
@@ -117,7 +117,7 @@ function ScopedSupplierDetailPage({ hotelUid, supplierId }) {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage className="space-y-6">
         <AsyncError error={query.error} onRetry={query.retry} label="Could not load supplier." />
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -199,7 +199,7 @@ function ScopedSupplierDetailPage({ hotelUid, supplierId }) {
               <h2 className="text-lg font-semibold mb-3">Ordering</h2>
               <div className="grid gap-4 sm:grid-cols-2">
                 <DetailField label="Order System" value={supplier.orderSystem} />
-                <DetailField label="Leverdagen" value={formatDeliveryDays(supplier.deliveryDays)} />
+                <DetailField label="Delivery days" value={formatDeliveryDays(supplier.deliveryDays)} />
                 <DetailField label="Category" value={supplier.category} />
                 <DetailField label="Subcategory" value={supplier.subcategory} />
               </div>
@@ -228,7 +228,7 @@ function ScopedSupplierDetailPage({ hotelUid, supplierId }) {
             </Card>
           </div>
         )}
-      </PageContainer>
+      </ProcurementPage>
 
       <Modal open={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete supplier">
         <p className="text-sm text-gray-700">Are you sure you want to delete this supplier?</p>

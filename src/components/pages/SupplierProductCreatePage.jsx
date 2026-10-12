@@ -2,7 +2,7 @@ import React, { useMemo, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import SupplierProductFormFields from "./SupplierProductFormFields";
 import PendingProductCommand from "../catalog/PendingProductCommand";
@@ -42,7 +42,7 @@ function ScopedSupplierProductCreatePage() {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage width="form" className="space-y-6">
         <PendingProductCommand hotelUid={hotelUid} collection="supplierproducts" productId={"create"} onComplete={(result) => { if (mounted.current) navigate(`/catalog/supplier-products/${result.productId}`); }} />
         <div>
           <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
@@ -57,7 +57,7 @@ function ScopedSupplierProductCreatePage() {
             submitLabel={t("products.actions.create")}
           />
         </Card>
-      </PageContainer>
+      </ProcurementPage>
 
     </div>
   );

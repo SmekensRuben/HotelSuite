@@ -8,6 +8,8 @@ import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { collectPaginatedProducts } from "../../services/paginatedExport";
 import DataListTable from "../shared/DataListTable";
 import Modal from "../shared/Modal";
+import { Combobox } from "../ui/combobox";
+import { productUnitLabel } from "../../utils/productUnitDisplay";
 import { auth } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSupplierProducts, importSupplierProducts } from "../../services/firebaseProducts";
@@ -137,6 +139,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
     },
     { key: "supplierSku", label: "Supplier SKU" },
     { key: "supplierProductName", label: "Supplier Product Name" },
+    { key: "packageContent", label: "Supplier package content", sortable: false, render: (product) => <span className="text-sm">{typeof product.baseUnitsPerPurchaseUnit === "number" ? product.baseUnitsPerPurchaseUnit : "Unknown"} {productUnitLabel(product.baseUnit)}<span className="mt-1 block text-xs text-gray-500">per {product.purchaseUnit || "unknown purchase unit"}</span></span> },
     {
       key: "price",
       label: "Price",
@@ -335,7 +338,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
   };
 
   return (
-    <PageShell>
+    <PageShell variant="procurement">
         <AsyncError error={query.error} onRetry={query.retry} label="Could not load products." />
         {canReadSuppliers && <AsyncError error={supplierQuery.error} onRetry={supplierQuery.retry} label="Could not load suppliers." />}
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -397,19 +400,18 @@ function ScopedSupplierProductsPage({ hotelUid }) {
         </div>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {canReadSuppliers && <select
+          {canReadSuppliers && <Combobox
             aria-label="Filter by supplier"
-            value={selectedSupplierId}
-            onChange={(event) => setSelectedSupplierId(event.target.value)}
+            value={supplierFilters.find((supplier) => supplier.id === selectedSupplierId) || null}
+            options={supplierFilters}
+            displayValue={(supplier) => supplier.name}
+            getOptionValue={(supplier) => supplier.id}
+            onChange={(supplier) => setSelectedSupplierId(supplier?.id || "")}
+            placeholder="All suppliers"
+            allowClear
+            loading={supplierQuery.loading}
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
-          >
-            <option value="">All suppliers</option>
-            {supplierFilters.map((supplier) => (
-              <option key={supplier.id} value={supplier.id}>
-                {supplier.name}
-              </option>
-            ))}
-          </select>}
+          />}
 
           <select
             value={selectedStatus}

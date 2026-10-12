@@ -1,22 +1,34 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import SupplierFormFields from "./SupplierFormFields";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSupplier, getSupplierConnection, updateSupplier } from "../../services/firebaseSuppliers";
 import { usePermission } from "../../hooks/usePermission";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import AsyncError from "../shared/AsyncError";
 
 export default function SupplierEditPage() {
-  const navigate = useNavigate();
   const { supplierId } = useParams();
   const { hotelUid } = useHotelContext();
+  return <ScopedSupplierEditPage key={`${hotelUid}:${supplierId}`} supplierId={supplierId} hotelUid={hotelUid} />;
+}
+
+function ScopedSupplierEditPage({ supplierId, hotelUid }) {
+  const navigate = useNavigate();
   const canViewSupplierPassword = usePermission("suppliers", "password");
-  const [supplier, setSupplier] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const load = useCallback(async () => {
+    const [data, connection] = await Promise.all([getSupplier(hotelUid, supplierId), canViewSupplierPassword ? getSupplierConnection(hotelUid, supplierId) : Promise.resolve({})]);
+    return data ? { ...data, ...connection } : null;
+  }, [hotelUid, supplierId, canViewSupplierPassword]);
+  const query = useScopedAsync({ scopeKey: `${hotelUid}:${supplierId}:${canViewSupplierPassword}`, enabled: Boolean(hotelUid && supplierId), load });
+  const supplier = query.data;
+  const loading = query.loading;
 
   const today = useMemo(
     () =>
@@ -34,37 +46,25 @@ export default function SupplierEditPage() {
     window.location.href = "/login";
   };
 
-  useEffect(() => {
-    const loadSupplier = async () => {
-      if (!hotelUid || !supplierId) return;
-      setLoading(true);
-      const data = await getSupplier(hotelUid, supplierId);
-      const connection = data && canViewSupplierPassword ? await getSupplierConnection(hotelUid, supplierId) : {};
-      setSupplier(data ? { ...data, ...connection } : null);
-      setLoading(false);
-    };
-    loadSupplier().catch((error) => { setLoadError(error.message || "Unable to load supplier settings."); setLoading(false); });
-  }, [hotelUid, supplierId, canViewSupplierPassword]);
-
   const handleUpdate = async (payload) => {
     const actor = auth.currentUser?.uid || "unknown";
     await updateSupplier(hotelUid, supplierId, payload, actor);
-    navigate(`/catalog/suppliers/${supplierId}`);
+    if (mounted.current) navigate(`/catalog/suppliers/${supplierId}`);
   };
 
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage width="form" className="space-y-6">
         <div>
           <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
           <h1 className="text-3xl font-semibold">Edit Supplier</h1>
         </div>
 
-        {loadError && <p role="alert" className="rounded-lg bg-red-50 p-4 text-red-800">{loadError}</p>}
+        <AsyncError error={query.error} onRetry={query.retry} label="Could not load supplier settings." />
         {loading ? (
           <p className="text-gray-600">Loading supplier...</p>
-        ) : !supplier ? (
+        ) : query.error ? null : !supplier ? (
           <Card>
             <p className="text-gray-600">Supplier not found.</p>
           </Card>
@@ -79,7 +79,7 @@ export default function SupplierEditPage() {
             />
           </Card>
         )}
-      </PageContainer>
+      </ProcurementPage>
     </div>
   );
 }
