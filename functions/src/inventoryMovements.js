@@ -91,4 +91,6 @@ async function prepareReversalMovement(db, tx, input) {
     tx.set(stateRef(db, hotelUid, locationId), { inventoryPolicyVersion: 1, sequence: next, updatedAt: stamp() }, { merge: true });
   } };
 }
-module.exports = { readLocationSequence, checkpointId, prepareCheckpoint, prepareReceiptMovement, prepareReversalMovement };
+// Manual periodic postings share this same location sequence with receipts and
+// count checkpoints. Exporting the primitives avoids a second, competing ledger.
+module.exports = { stateRef, sequence, readLocationSequence, checkpointId, prepareCheckpoint, prepareReceiptMovement, prepareReversalMovement };

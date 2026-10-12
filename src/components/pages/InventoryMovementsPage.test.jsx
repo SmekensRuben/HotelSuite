@@ -1,0 +1,142 @@
+import React from "react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, expect, it, vi } from "vitest";
+import InventoryMovementsPage from "./InventoryMovementsPage";
+const mocks = vi.hoisted(() => ({ hotel: "hotel-a", permissions: { read: true, create: true, reverse: false }, auth: { currentUser: { uid: "operator" } },
+  history: vi.fn(), choices: vi.fn(), pending: vi.fn(), record: vi.fn(), reverse: vi.fn(), retry: vi.fn() }));
+vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel }) }));
+vi.mock("../../hooks/usePermission", () => ({ usePermission: (_feature, action) => mocks.permissions[action] === true }));
+vi.mock("../../hooks/useStaffDisplayNames", () => ({ useStaffDisplayNames: () => ({ createdByName: "Jamie Hoteluser" }) }));
+vi.mock("../../firebaseConfig", () => ({ auth: mocks.auth, signOut: vi.fn() }));
+vi.mock("../layout/HeaderBar", () => ({ default: () => null }));
+vi.mock("../../services/firebaseInventoryAdjustments", () => ({ getInventoryAdjustments: mocks.history, getInventoryAdjustmentChoices: mocks.choices,
+  getPendingInventoryAdjustment: mocks.pending, recordInventoryAdjustment: mocks.record, reverseInventoryAdjustment: mocks.reverse, retryPendingInventoryAdjustment: mocks.retry }));
+const event = (hotel = "hotel-a") => ({ adjustmentId: "movement-1", kind: "waste", reasonType: "breakage", catalogProductId: "juice", catalogProductName: hotel === "hotel-a" ? "Orange juice" : "Other hotel coffee", baseUnit: "l", quantity: 0.5,
+  sourceLocationId: "store", sourceLocationName: "Storeroom", destinationLocationId: null, netUnitCost: null, netValue: null, currency: null, actorUid: "operator", postedAtMillis: 1234, businessDate: "2026-10-12", reference: "WASTE-1", note: "Bottle broke", reversedByAdjustmentId: null });
+const deferred = () => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; };
+beforeEach(() => {
+  vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.auth.currentUser = { uid: "operator" }; mocks.permissions = { read: true, create: true, reverse: false };
+  mocks.pending.mockReturnValue(null); mocks.record.mockResolvedValue({}); mocks.reverse.mockResolvedValue({}); mocks.retry.mockResolvedValue({});
+  mocks.history.mockImplementation(async (hotelUid) => ({ hotelUid, adjustments: [event(hotelUid)], nextCursor: null }));
+  mocks.choices.mockImplementation(async (hotelUid, kind) => ({ hotelUid, kind, hotelCurrency: "EUR", choices: kind === "catalogproducts" ? [{ id: "juice", name: "Orange juice", baseUnit: "l" }] : [{ id: "store", name: "Storeroom" }, { id: "bar", name: "Lobby bar" }], nextCursor: null }));
+});
+async function choose(name, option) { const input = await screen.findByRole("combobox", { name }); fireEvent.focus(input); fireEvent.click(await screen.findByRole("option", { name: option })); }
+async function prepareTransfer() {
+  fireEvent.click(await screen.findByRole("button", { name: "Load movement sources" }));
+  await choose("Catalog article", "Orange juice · l"); await choose("From physical location", "Storeroom"); await choose("To physical location", "Lobby bar");
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Movement quantity" }), { target: { value: "12.5" } });
+  fireEvent.change(screen.getByLabelText("Business date"), { target: { value: "2026-10-12" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Reference" }), { target: { value: "TRANSFER-7" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Reason / evidence" }), { target: { value: "Moved bottles to lobby bar" } });
+}
+it("loads immutable history separately and keeps optional source projections lazy", async () => {
+  render(<InventoryMovementsPage />);
+  expect(await screen.findByText("Breakage · Orange juice")).toBeInTheDocument();
+  expect(screen.getByText(/Jamie Hoteluser/)).toBeInTheDocument();
+  expect(mocks.choices).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Reverse this event" })).not.toBeInTheDocument();
+  expect(screen.getByText(/do not create a live on-hand balance/)).toBeInTheDocument();
+});
+it("records a distinct-location transfer in canonical units and keeps unknown cost explicit", async () => {
+  render(<InventoryMovementsPage />); await prepareTransfer();
+  fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+  await waitFor(() => expect(mocks.record).toHaveBeenCalledWith({ hotelUid: "hotel-a", kind: "transfer", catalogProductId: "juice", quantity: 12.5,
+    sourceLocationId: "store", destinationLocationId: "bar", businessDate: "2026-10-12", reference: "TRANSFER-7", note: "Moved bottles to lobby bar", netUnitCost: null, currency: null }));
+  expect(await screen.findByText(/Movement evidence recorded/)).toBeInTheDocument();
+});
+it("records an explicit zero estimate in its selected hotel currency", async () => {
+  render(<InventoryMovementsPage />); await prepareTransfer();
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Estimated net unit cost" }), { target: { value: "0" } });
+  fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+  await waitFor(() => expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ netUnitCost: 0, currency: "EUR" })));
+});
+it("does not reinterpret an entered estimate when a refreshed source reports another currency", async () => {
+  render(<InventoryMovementsPage />); await prepareTransfer();
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Estimated net unit cost" }), { target: { value: "5" } });
+  mocks.choices.mockImplementation(async (hotelUid, kind) => ({ hotelUid, kind, hotelCurrency: "USD", choices: kind === "locations" ? [{ id: "store", name: "Storeroom" }, { id: "bar", name: "Lobby bar" }] : [{ id: "juice", name: "Orange juice", baseUnit: "l" }], nextCursor: null }));
+  fireEvent.change(screen.getByRole("combobox", { name: "To physical location" }), { target: { value: "Lobby" } });
+  await waitFor(() => expect(mocks.choices).toHaveBeenCalledWith("hotel-a", "locations", null, "lobby"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Record movement" })).not.toBeDisabled());
+  expect(screen.getByRole("spinbutton", { name: "Estimated net unit cost" }).closest("label")).toHaveTextContent("(EUR)");
+  fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+  expect(await screen.findByText(/explicit currency no longer matches/)).toBeInTheDocument();
+  expect(mocks.record).not.toHaveBeenCalled();
+});
+it("shows ordinary progress during submission and reconciliation only after an uncertain response", async () => {
+  const waiting = deferred(); mocks.record.mockReturnValueOnce(waiting.promise);
+  render(<InventoryMovementsPage />); await prepareTransfer();
+  fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+  expect(await screen.findByRole("status", { name: "" })).toHaveTextContent("Recording movement evidence");
+  expect(screen.queryByText("A saved movement request needs reconciliation")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Record movement" })).toBeDisabled();
+  mocks.pending.mockReturnValue({ operation: "record", input: { quantity: 12.5 }, requestId: "original-id" });
+  await act(async () => waiting.reject(new Error("Response lost")));
+  expect(await screen.findByText("A saved movement request needs reconciliation")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Retry saved movement request" }));
+  await waitFor(() => expect(mocks.retry).toHaveBeenCalledWith("hotel-a"));
+  expect(mocks.record).toHaveBeenCalledTimes(1);
+});
+it("restores an exact pending request after remount and prevents a replacement operation", async () => {
+  mocks.pending.mockReturnValue({ operation: "record", input: { quantity: 4 }, requestId: "original-id" });
+  render(<InventoryMovementsPage />);
+  expect(await screen.findByText("A saved movement request needs reconciliation")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Load movement sources" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Retry saved movement request" }));
+  await waitFor(() => expect(mocks.retry).toHaveBeenCalledWith("hotel-a"));
+  expect(mocks.record).not.toHaveBeenCalled();
+});
+it("uses a separate reversal grant and offsets the original by identity without editable quantities", async () => {
+  mocks.permissions = { read: true, create: false, reverse: true };
+  render(<InventoryMovementsPage />);
+  expect(screen.queryByRole("button", { name: "Load movement sources" })).not.toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Reverse this event" }));
+  expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Reversal business date"), { target: { value: "2026-10-12" } });
+  fireEvent.change(screen.getByLabelText("Reversal reference"), { target: { value: "FIX-7" } });
+  fireEvent.change(screen.getByLabelText("Reversal reason"), { target: { value: "Recorded twice" } });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm compensating reversal" }));
+  await waitFor(() => expect(mocks.reverse).toHaveBeenCalledWith({ hotelUid: "hotel-a", adjustmentId: "movement-1", businessDate: "2026-10-12", reference: "FIX-7", note: "Recorded twice" }));
+});
+it("ignores a late mutation response after switching hotel", async () => {
+  const waiting = deferred(); mocks.record.mockReturnValueOnce(waiting.promise);
+  const view = render(<InventoryMovementsPage />); await prepareTransfer();
+  fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+  await waitFor(() => expect(mocks.record).toHaveBeenCalledTimes(1));
+  mocks.hotel = "hotel-b"; view.rerender(<InventoryMovementsPage />);
+  expect(await screen.findByText("Breakage · Other hotel coffee")).toBeInTheDocument();
+  await act(async () => waiting.resolve({}));
+  expect(screen.queryByText(/Movement evidence recorded/)).not.toBeInTheDocument();
+  expect(screen.queryByText("Breakage · Orange juice")).not.toBeInTheDocument();
+});
+it("does not submit an old actor's form during an auth change before React rerenders", async () => {
+  render(<InventoryMovementsPage />); await prepareTransfer();
+  mocks.auth.currentUser = { uid: "another-operator" };
+  fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+  expect(mocks.record).not.toHaveBeenCalled();
+});
+it("blocks unavailable source projections and permits explicit load-more across empty scanned pages", async () => {
+  mocks.choices.mockImplementation(async (hotelUid, kind, afterId) => ({ hotelUid, kind, hotelCurrency: null, choices: [], nextCursor: kind === "catalogproducts" && !afterId ? "scanned-50" : null }));
+  render(<InventoryMovementsPage />);
+  fireEvent.click(screen.getByRole("button", { name: "Load movement sources" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Load more catalog articles" }));
+  await waitFor(() => expect(mocks.choices).toHaveBeenCalledWith("hotel-a", "catalogproducts", "scanned-50", ""));
+  expect(screen.getByRole("spinbutton", { name: "Estimated net unit cost" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Record movement" })).toBeDisabled();
+});
+it("does not send a reversal replay after the special permission is revoked", async () => {
+  mocks.pending.mockReturnValue({ operation: "reverse", input: { adjustmentId: "movement-1" }, requestId: "original-id" });
+  mocks.permissions = { read: true, create: true, reverse: false };
+  render(<InventoryMovementsPage />);
+  expect(await screen.findByRole("button", { name: "Retry saved movement request" })).toBeDisabled();
+  expect(mocks.retry).not.toHaveBeenCalled();
+});
+it("sends the typed name prefix to the protected search and preserves it on the next scanned page", async () => {
+  mocks.choices.mockImplementation(async (hotelUid, kind, afterId, query) => ({ hotelUid, kind, hotelCurrency: "EUR", choices: [], nextCursor: kind === "catalogproducts" && query === "orange" && !afterId ? "scanned-50" : null }));
+  render(<InventoryMovementsPage />); fireEvent.click(screen.getByRole("button", { name: "Load movement sources" }));
+  const input = await screen.findByRole("combobox", { name: "Catalog article" });
+  fireEvent.change(input, { target: { value: "Orange" } });
+  await waitFor(() => expect(mocks.choices).toHaveBeenCalledWith("hotel-a", "catalogproducts", null, "orange"));
+  const more = await screen.findByRole("button", { name: "Load more catalog articles" });
+  await waitFor(() => expect(more).not.toBeDisabled()); fireEvent.click(more);
+  await waitFor(() => expect(mocks.choices).toHaveBeenCalledWith("hotel-a", "catalogproducts", "scanned-50", "orange"));
+});

@@ -1,4 +1,5 @@
 import { functions, httpsCallable } from "../firebaseConfig";
+import { poolProcurementRead } from "./procurementReadPool";
 
 function requireScope(hotelUid, locationId) {
   if (!hotelUid || !locationId) throw new Error("Hotel and physical location are required.");
@@ -33,14 +34,24 @@ export async function getInventoryCheckpoints(hotelUid, locationId) {
     seen.add(data.nextCursor); afterCheckpointId = data.nextCursor;
   }
 }
-export async function getInventoryPeriod(hotelUid, locationId, openingStockCountId, closingStockCountId) {
+export async function getInventoryPeriod(hotelUid, locationId, openingStockCountId, closingStockCountId, reportPolicyVersion = 1) {
   requireScope(hotelUid, locationId);
   if (!openingStockCountId || !closingStockCountId || openingStockCountId === closingStockCountId) throw new Error("Select two different completed counts.");
-  const result = await httpsCallable(functions, "getHotelInventoryPeriod")({ hotelUid, locationId, openingStockCountId, closingStockCountId });
-  const data = result.data;
-  if (data?.hotelUid !== hotelUid || data?.locationId !== locationId || data.inventoryPolicyVersion !== 1
+  if (![1, 2].includes(reportPolicyVersion)) throw new Error("Select an explicitly supported inventory report policy.");
+  return poolProcurementRead(hotelUid, `period:${locationId}:${openingStockCountId}:${closingStockCountId}:v${reportPolicyVersion}`, async () => {
+    const input = { hotelUid, locationId, openingStockCountId, closingStockCountId, reportPolicyVersion };
+    const { data } = await httpsCallable(functions, "getHotelInventoryPeriod")(input);
+    if (data?.hotelUid !== hotelUid || data?.locationId !== locationId || data.inventoryPolicyVersion !== 1
+      || (data.reportPolicyVersion ?? 1) !== reportPolicyVersion
       || data.opening?.stockCountId !== openingStockCountId || data.closing?.stockCountId !== closingStockCountId
       || !Array.isArray(data.postClosureIssues) || typeof data.currentlyComplete !== "boolean"
       || !Array.isArray(data.items) || !data.coverage || !Array.isArray(data.coverage.issues)) throw new Error("Inventory period response scope or policy is invalid.");
-  return data;
+    if (reportPolicyVersion === 2 && data.items.some((item) => ["openingQuantity", "netReceiptQuantity", "transferInQuantity", "transferOutQuantity", "wasteQuantity", "breakageQuantity", "physicalReturnQuantity", "closingQuantity", "residualQuantity"]
+      .some((key) => item[key] !== null && (typeof item[key] !== "number" || !Number.isFinite(item[key])))
+      || ["openingValue", "receiptValue", "transferInValue", "transferOutValue", "wasteValue", "breakageValue", "physicalReturnValue", "closingValue", "residualValue"]
+        .some((key) => item[key] !== null && (typeof item[key] !== "number" || !Number.isFinite(item[key]))))) {
+      throw new Error("The classified inventory period is incomplete. Missing values must remain explicitly unavailable.");
+    }
+    return data;
+  });
 }
