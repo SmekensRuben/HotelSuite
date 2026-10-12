@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { prepareCatalogInventoryIndexes, validateReviewedInventoryIndexes, indexSignature,
+import { createIndexRequest, prepareCatalogInventoryIndexes, validateReviewedInventoryIndexes, indexSignature,
   INDEX_PROJECT, INDEX_PROJECT_NUMBER, INDEX_DATABASE, INDEX_OPERATOR } from "../../scripts/firebase/catalog-inventory-indexes.mjs";
 
 const releaseSha = "a".repeat(40);
@@ -27,6 +27,11 @@ function fakeApi({ initial = reviewed().map((definition, number) => index(defini
     if (!match) throw new Error("Unexpected API resource; no live requests are available in this fixture.");
     const group = match[1];
     if (call.method === "GET") {
+      // Reproduce the live Standard/Native API contract independently of the helper.
+      if ((call.params?.pageSize ?? 0) !== 0) {
+        const error = new Error("Invalid page size. Only 0 is supported.");
+        error.status = 400; throw error;
+      }
       if (pages) return pages(call, stored);
       return { indexes: stored.filter((value) => value.collectionGroup === group).map((value) => ({ ...value,
         state: value.state === "CREATING" && waits >= readyAfter ? "READY" : value.state })) };
@@ -66,7 +71,67 @@ describe("reviewed periodic inventory index manifest", () => {
   ])("rejects unreviewed index/override definitions", (value) => expect(() => validateReviewedInventoryIndexes(value)).toThrow());
 });
 
+describe("private index API diagnostics", () => {
+  it("passes the fixed API request contract through without adding a page size or retries", async () => {
+    const calls = [], data = { indexes: [] };
+    const request = createIndexRequest({ request: async (call) => { calls.push(call); return { data }; } });
+    const path = `${resource}/collectionGroups/inventoryCheckpoints/indexes`;
+    expect(await request({ method: "GET", path, params: { pageToken: "next" } })).toBe(data);
+    expect(calls).toEqual([{ method: "GET", url: `https://firestore.googleapis.com/v1/${path}`, params: { pageToken: "next" },
+      data: undefined, timeout: 30000, retry: false }]);
+  });
+  it.each([400, 409])("reports only the operation and allowlisted status, retaining HTTP %s for control flow", async (http) => {
+    const provider = new Error("private transport detail");
+    provider.response = { status: http, data: { error: { status: "INVALID_ARGUMENT", message: "private API payload" } } };
+    provider.config = { headers: { Authorization: "Bearer private OAuth credential" } };
+    const request = createIndexRequest({ request: async () => { throw provider; } });
+    let failure;
+    try { await request({ method: "GET", path: `${resource}/collectionGroups/inventoryMovements/indexes` }); }
+    catch (error) { failure = error; }
+    expect(failure.status).toBe(http);
+    expect(failure.message).toContain(`list indexes, HTTP ${http}, INVALID_ARGUMENT`);
+    expect(failure.cause).toBeUndefined(); expect(failure.response).toBeUndefined(); expect(failure.config).toBeUndefined();
+    expect(failure.stack).not.toMatch(/private transport detail|private API payload|private OAuth credential/);
+  });
+  it("does not print unrecognized provider statuses or raw transport errors", async () => {
+    const provider = new Error("private transport detail");
+    provider.response = { data: { error: { status: "private provider status" } } };
+    const request = createIndexRequest({ request: async () => { throw provider; } });
+    await expect(request({ method: "GET", path: resource })).rejects.toThrow("read database, transport error");
+    try { await request({ method: "GET", path: resource }); }
+    catch (error) { expect(error.stack).not.toContain("private"); }
+  });
+});
+
 describe("additive operator index preparation", () => {
+  it.each(["preflight", "apply", "verify"])("uses the supported default list size in %s, including apply polling", async (mode) => {
+    const api = fakeApi(mode === "apply" ? { initial: [], readyAfter: 1 } : {});
+    const result = await prepare(api, { mode });
+    expect(result.ready).toBe(true);
+    const lists = api.calls.filter((call) => call.path.endsWith("/indexes") && call.method === "GET");
+    expect(lists.length).toBeGreaterThanOrEqual(mode === "apply" ? 6 : 2);
+    expect(lists.every((call) => (call.params?.pageSize ?? 0) === 0)).toBe(true);
+    expect(api.writeCalls()).toHaveLength(mode === "apply" ? 4 : 0);
+  });
+  it("accepts default-size pages exceeding 100 entries without recreating READY indexes or changing extras", async () => {
+    const extras = Array.from({ length: 125 }, (_, number) => index({ collectionGroup: "inventoryCheckpoints", queryScope: "COLLECTION",
+      fields: [{ fieldPath: `extra${number}`, order: "ASCENDING" }, { fieldPath: "sequence", order: "ASCENDING" }] }, `extra-${number}`));
+    const initial = [...extras, ...reviewed().map((definition, number) => index(definition, `required-${number}`))];
+    const api = fakeApi({ initial });
+    const result = await prepare(api, { mode: "apply" });
+    expect(result.ready).toBe(true); expect(result.created).toBe(0);
+    expect(api.writeCalls()).toEqual([]); expect(api.stored).toEqual(initial);
+  });
+  it.each([false, true])("refuses more than 2000 indexes per group before creation (paginated: %s)", async (paginated) => {
+    const entries = Array.from({ length: 2001 }, (_, number) => index(reviewed()[0], `bounded-${number}`));
+    const api = fakeApi({ pages: (call) => {
+      if (call.path.includes("inventoryMovements")) return { indexes: [] };
+      if (!paginated) return { indexes: entries };
+      return call.params.pageToken ? { indexes: entries.slice(1500) } : { indexes: entries.slice(0, 1500), nextPageToken: "remaining" };
+    } });
+    await expect(prepare(api, { mode: "apply" })).rejects.toThrow("2000-index limit");
+    expect(api.writeCalls()).toEqual([]);
+  });
   it("read-only preflight reports missing indexes and preserves unrelated definitions", async () => {
     const extra = index({ collectionGroup: "inventoryMovements", queryScope: "COLLECTION", fields: [{ fieldPath: "actorUid", order: "ASCENDING" }, { fieldPath: "sequence", order: "ASCENDING" }] }, "unrelated");
     const api = fakeApi({ initial: [extra, index(reviewed()[0], "first")] });

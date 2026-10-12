@@ -159,6 +159,40 @@ Failures retain an exact reviewed resume point and never enable an unverified
 release. This is a single global Rules/index rollout, not a script per hotel.
 No bulk product conversion or historical revaluation runs automatically.
 
+### Recovery from the index-list HTTP 400
+
+The operator helper in release `b7f2ca88fb892b1196e95a0a3291f7440bc867f1`
+requested `pageSize=100`. The Standard/Native index service rejected that request
+with `INVALID_ARGUMENT: Invalid page size. Only 0 is supported.` The corrected
+helper omits `pageSize` and follows any returned page tokens. It bounds the entire
+read to 20 pages and 2,000 indexes per collection group rather than assuming each
+default-size response contains at most 100 entries. An incomplete or oversized
+read fails before any index creation; it is never interpreted as missing indexes.
+
+This failure during the initial index preflight occurs before SaaS pause, Rules
+publication, migration or activation. After merging the repair and verifying its
+main CI, App Hosting and Functions deployment, use the **new reviewed merged-main
+SHA** and download the wrapper again. Retrying the older pinned SHA downloads the
+older helper and reproduces the problem. Replace the placeholder below before
+running:
+
+```bash
+HOTELSUITE_RELEASE_SHA="REPLACE_WITH_REVIEWED_MERGED_MAIN_SHA"
+
+curl --fail --silent --show-error \
+  "https://raw.githubusercontent.com/SmekensRuben/HotelSuite/${HOTELSUITE_RELEASE_SHA}/scripts/firebase/rollout-saas-pilot.sh" \
+  --output /tmp/hotelsuite-platform-rollout.sh &&
+bash /tmp/hotelsuite-platform-rollout.sh \
+  --release-sha "$HOTELSUITE_RELEASE_SHA" \
+  --apply
+```
+
+The wrapper rechecks release evidence and preserves the READY-before-activation
+gate. It can wait for index builds and Rules propagation. Do not work around a
+failure by manually setting the activation marker. A successful global rollout
+allows the platform administrator to preview/load the demo dataset for
+`test-hotel-2`; it does not require a separate rollout for each hotel.
+
 Production acceptance remains required: inspect real legacy product links/units,
 price contracts, database/index readiness and historical snapshots; execute buyer,
 receiver and stock-counter browser workflows; verify two-hotel isolation and
