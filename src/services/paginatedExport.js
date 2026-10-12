@@ -3,12 +3,16 @@ export async function collectPaginatedProducts(loadPage, filters = {}, pageSize 
   const products = [];
   const seenCursors = new Set();
   let cursor = null;
-  while (true) {
+  for (let page = 0; page < 200; page += 1) {
     const result = await loadPage({ ...filters, pageSize, cursor });
-    products.push(...(Array.isArray(result?.products) ? result.products : []));
+    if (!Array.isArray(result?.products) || typeof result.hasMore !== "boolean") throw new Error("Export page response is invalid. Please retry.");
+    products.push(...result.products);
     if (!result?.hasMore) return products;
-    if (!result.cursor || seenCursors.has(result.cursor)) throw new Error("Export pagination did not advance. Please retry.");
-    seenCursors.add(result.cursor);
+    const cursorKey = result.cursor?.ref?.path || (Number.isSafeInteger(result.cursor?.offset)
+      ? `offset:${result.cursor.offset}` : result.cursor?.id || result.cursor);
+    if (!cursorKey || seenCursors.has(cursorKey)) throw new Error("Export pagination did not advance. Please retry.");
+    seenCursors.add(cursorKey);
     cursor = result.cursor;
   }
+  throw new Error("Export exceeded 200 pages. Narrow the selection before exporting.");
 }

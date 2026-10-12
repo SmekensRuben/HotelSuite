@@ -24,36 +24,14 @@ import {
   httpsCallable
 } from "../firebaseConfig";
 import { getSuppliers } from "./firebaseSuppliers";
-
-// Simple in-memory cache for indexed products per hotel
-const productsIndexedCache = {};
-const entityProductsCache = {};
-
-
+import { invalidateProcurementReads, poolProcurementRead, requireServerSnapshot } from "./procurementReadPool";
 
 export function clearProductsIndexedCache(hotelUid) {
-  if (hotelUid) {
-    delete productsIndexedCache[hotelUid];
-  }
+  invalidateProcurementReads(hotelUid);
 }
 
-function getEntityCacheKey(hotelUid, entityCollection) {
-  return `${hotelUid}:${entityCollection}`;
-}
-
-function clearEntityProductsCache(hotelUid, entityCollection) {
-  if (!hotelUid) return;
-
-  if (entityCollection) {
-    delete entityProductsCache[getEntityCacheKey(hotelUid, entityCollection)];
-    return;
-  }
-
-  Object.keys(entityProductsCache).forEach((key) => {
-    if (key.startsWith(`${hotelUid}:`)) {
-      delete entityProductsCache[key];
-    }
-  });
+function clearEntityProductsCache(hotelUid) {
+  invalidateProcurementReads(hotelUid);
 }
 
 async function refreshSalesSnapshotsForProduct(hotelUid, lightspeedId) {
@@ -153,23 +131,21 @@ export async function rebuildProductMasterIndex(hotelUid) {
 // Haal alle producten via de per-categorie index
 export async function getProductsIndexed(hotelUid) {
   if (!hotelUid) return [];
-  if (productsIndexedCache[hotelUid]) {
-    return productsIndexedCache[hotelUid];
-  }
-  const indexCol = collection(
-    db,
-    `hotels/${hotelUid}/indexes/productMasterIndex/productsPerCategory`
-  );
-  const snapshot = await getDocs(indexCol);
-  const result = [];
-  snapshot.docs.forEach(docSnap => {
-    const map = docSnap.data().productMap || {};
-    Object.entries(map).forEach(([id, data]) => {
-      result.push({ ...data, id });
+  return poolProcurementRead(hotelUid, "productMasterIndex", async () => {
+    const indexCol = collection(
+      db,
+      `hotels/${hotelUid}/indexes/productMasterIndex/productsPerCategory`
+    );
+    const snapshot = requireServerSnapshot(await getDocs(indexCol));
+    const result = [];
+    snapshot.docs.forEach(docSnap => {
+      const map = docSnap.data().productMap || {};
+      Object.entries(map).forEach(([id, data]) => {
+        result.push({ ...data, id });
+      });
     });
+    return result;
   });
-  productsIndexedCache[hotelUid] = result;
-  return result;
 }
 
 export async function rebuildProductCategoryIndex(hotelUid, categoryId) {
@@ -258,8 +234,23 @@ export async function getSupplierProducts(hotelUid, options = {}) {
 async function getEntityProducts(hotelUid, entityCollection, options = {}) {
   if (!hotelUid) return options.pageSize ? { products: [], cursor: null, hasMore: false } : [];
 
+  const cursorKey = options.cursor?.ref?.path || (Number.isSafeInteger(options.cursor?.offset) ? options.cursor.offset : options.cursor?.id || null);
+  const resource = JSON.stringify([entityCollection, options.pageSize || 0, cursorKey,
+    options.searchTerm || "", options.category || "", options.subcategory || "", options.supplierId || "", options.active ?? null]);
+  return poolProcurementRead(hotelUid, resource, () => loadEntityProducts(hotelUid, entityCollection, options), options.scopeKey);
+}
+
+export function normalizeProductPageSize(value) {
+  if (value === undefined || value === null || value === 0) return 0;
+  const pageSize = Number(value);
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1) throw new Error("Product page size must be a positive whole number.");
+  return Math.min(pageSize, 100);
+}
+
+async function loadEntityProducts(hotelUid, entityCollection, options) {
+
   const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
-  const pageSize = Number(options.pageSize) || 0;
+  const pageSize = normalizeProductPageSize(options.pageSize);
 
   if (pageSize > 0) {
     const normalizedSearchTerm = String(options.searchTerm || "").trim().toLowerCase();
@@ -282,7 +273,7 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
       );
     }
 
-    if (entityCollection === "supplierproducts") {
+    if (entityCollection === "supplierproducts" && (normalizedSearchTerm || normalizedSupplierId || normalizedActive !== null || options.cursor?.offset !== undefined)) {
       return searchSupplierProducts(
         hotelUid,
         {
@@ -323,7 +314,7 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
     }
 
     const pagedQuery = query(productsCol, ...constraints);
-    const snap = await getDocs(pagedQuery);
+    const snap = requireServerSnapshot(await getDocs(pagedQuery));
     const products = snap.docs.map((docSnap) => ({ ...docSnap.data(), id: docSnap.id }));
     const cursor = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
     return {
@@ -333,14 +324,8 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
     };
   }
 
-  const cacheKey = getEntityCacheKey(hotelUid, entityCollection);
-  if (entityProductsCache[cacheKey]) {
-    return entityProductsCache[cacheKey];
-  }
-
-  const snap = await getDocs(productsCol);
+  const snap = requireServerSnapshot(await getDocs(productsCol));
   const products = snap.docs.map((docSnap) => ({ ...docSnap.data(), id: docSnap.id }));
-  entityProductsCache[cacheKey] = products;
   return products;
 }
 
@@ -350,6 +335,10 @@ async function searchThroughBackend(hotelUid, entityCollection, criteria, pageSi
     const result = await httpsCallable(functions, "searchHotelProducts")({
       hotelUid, collection: entityCollection, criteria, pageSize, offset: cursor?.offset || 0,
     });
+    if (!Array.isArray(result.data?.products) || typeof result.data.hasMore !== "boolean"
+      || (result.data.hasMore && (!Number.isSafeInteger(result.data.cursor?.offset) || result.data.cursor.offset <= (cursor?.offset || 0)))) {
+      throw new Error("Product search response or pagination is invalid.");
+    }
     if (!cursor && !result.data.products.length) return fallback(hotelUid, criteria, pageSize, null);
     return result.data;
   } catch (error) {
@@ -387,7 +376,7 @@ async function searchSupplierProductsWithFirestore(hotelUid, criteria, pageSize,
   }
 
   const pagedQuery = query(productsCol, ...constraints);
-  const snap = await getDocs(pagedQuery);
+  const snap = requireServerSnapshot(await getDocs(pagedQuery));
   let products = snap.docs.map((docSnap) => ({ ...docSnap.data(), id: docSnap.id }));
 
   if (searchTerm) {
@@ -449,7 +438,7 @@ async function searchCatalogProductsWithFirestore(hotelUid, criteria, pageSize, 
   }
 
   const pagedQuery = query(productsCol, ...constraints);
-  const snap = await getDocs(pagedQuery);
+  const snap = requireServerSnapshot(await getDocs(pagedQuery));
   const products = snap.docs.map((docSnap) => ({ ...docSnap.data(), id: docSnap.id }));
   const nextCursor = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
 
@@ -509,6 +498,7 @@ async function productCommand(hotelUid, endpoint, input, resource) {
     return data;
   } catch (error) {
     if (error?.details?.productRequestUncommitted === true) sessionStorage.removeItem(key);
+    clearEntityProductsCache(hotelUid);
     notifyProductCommand();
     throw error;
   }
@@ -622,10 +612,12 @@ export async function getSupplierProduct(hotelUid, productId) {
 
 async function getEntityProduct(hotelUid, productId, entityCollection) {
   if (!hotelUid || !productId) return null;
-  const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
-  const snap = await getDoc(productDoc);
-  if (!snap.exists()) return null;
-  return { ...snap.data(), id: snap.id };
+  return poolProcurementRead(hotelUid, `${entityCollection}:detail:${productId}`, async () => {
+    const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
+    const snap = requireServerSnapshot(await getDoc(productDoc));
+    if (!snap.exists()) return null;
+    return { ...snap.data(), id: snap.id };
+  });
 }
 
 export async function createCatalogProduct(hotelUid, productData) {

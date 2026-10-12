@@ -39,8 +39,9 @@ describe("server-owned stock mutation adapter", () => {
     expect(mocks.call.mock.calls[2][1].requestId).not.toEqual(mocks.call.mock.calls[0][1].requestId);
   });
   it("looks up staff names through a hotel-scoped callable without global profile reads", async () => {
+    mocks.call.mockResolvedValue({ hotelUid: "hotel-a", users: [{ userId: "person", displayName: "Ada Lovelace" }] });
     await expect(getHotelUserDisplayName("hotel-a", "person")).resolves.toBe("Ada Lovelace");
-    expect(mocks.call).toHaveBeenCalledWith("getHotelUserDisplayName", { hotelUid: "hotel-a", userId: "person" });
+    expect(mocks.call).toHaveBeenCalledWith("getHotelUserDisplayNames", { hotelUid: "hotel-a", userIds: ["person"] });
     expect(mocks.getDoc).not.toHaveBeenCalled(); expect(mocks.getDocs).not.toHaveBeenCalled();
     await expect(getHotelUserDisplayName("", "person")).rejects.toThrow("hotelUid is required");
   });

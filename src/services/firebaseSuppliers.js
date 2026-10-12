@@ -1,4 +1,5 @@
 import { functions, httpsCallable } from "../firebaseConfig";
+import { invalidateProcurementReads, poolProcurementRead, requireServerSnapshot } from "./procurementReadPool";
 import {
   db,
   collection,
@@ -7,22 +8,26 @@ import {
 
 export async function getSuppliers(hotelUid) {
   if (!hotelUid) return [];
-  const result = [];
-  let afterId = null;
-  const seen = new Set();
-  do {
-    const { data } = await httpsCallable(functions, "listSuppliers")({ hotelUid, afterId });
-    result.push(...data.suppliers);
-    afterId = data.nextCursor;
-    if (afterId && seen.has(afterId)) throw new Error("Invalid supplier page cursor.");
-    seen.add(afterId);
-  } while (afterId);
-  return result;
+  return poolProcurementRead(hotelUid, "supplier-directory", async () => {
+    const result = [];
+    let afterId = null;
+    const seen = new Set();
+    do {
+      const { data } = await httpsCallable(functions, "listSuppliers")({ hotelUid, afterId });
+      if (!Array.isArray(data?.suppliers) || (data.nextCursor !== null && typeof data.nextCursor !== "string")) throw new Error("Supplier response is invalid.");
+      result.push(...data.suppliers);
+      if (result.length > 10000) throw new Error("More than 10,000 suppliers require a narrower directory.");
+      afterId = data.nextCursor;
+      if (afterId && seen.has(afterId)) throw new Error("Invalid supplier page cursor.");
+      seen.add(afterId);
+    } while (afterId);
+    return result;
+  });
 }
 
 export async function getSupplier(hotelUid, supplierId) {
   if (!hotelUid || !supplierId) return null;
-  return (await httpsCallable(functions, "listSuppliers")({ hotelUid, supplierId })).data.supplier;
+  return poolProcurementRead(hotelUid, `supplier-detail:${supplierId}`, async () => (await httpsCallable(functions, "listSuppliers")({ hotelUid, supplierId })).data.supplier);
 }
 
 export async function getSupplierConnection(hotelUid, supplierId) {
@@ -45,17 +50,23 @@ export async function createSupplier(hotelUid, supplierData) {
   const operationKey = `supplier-create:${hotelUid}:${JSON.stringify(supplierData)}`;
   const requestId = supplierData.requestId || pendingSupplierCreates.get(operationKey) || crypto.randomUUID();
   pendingSupplierCreates.set(operationKey, requestId);
-  const { data } = await httpsCallable(functions, "saveSupplier")({ hotelUid, requestId, expectedRevision: 0, ...splitSupplierInput(supplierData) });
-  pendingSupplierCreates.delete(operationKey);
-  return data.supplierId;
+  try {
+    const { data } = await httpsCallable(functions, "saveSupplier")({ hotelUid, requestId, expectedRevision: 0, ...splitSupplierInput(supplierData) });
+    pendingSupplierCreates.delete(operationKey);
+    return data.supplierId;
+  } finally { invalidateProcurementReads(hotelUid); }
 }
 
 export async function updateSupplier(hotelUid, supplierId, supplierData) {
-  return (await httpsCallable(functions, "saveSupplier")({ hotelUid, supplierId, expectedRevision: supplierData.revision || 0, ...splitSupplierInput(supplierData) })).data;
+  try {
+    return (await httpsCallable(functions, "saveSupplier")({ hotelUid, supplierId, expectedRevision: supplierData.revision || 0, ...splitSupplierInput(supplierData) })).data;
+  } finally { invalidateProcurementReads(hotelUid); }
 }
 
 export async function deleteSupplier(hotelUid, supplierId) {
-  return (await httpsCallable(functions, "deleteSupplier")({ hotelUid, supplierId })).data;
+  try {
+    return (await httpsCallable(functions, "deleteSupplier")({ hotelUid, supplierId })).data;
+  } finally { invalidateProcurementReads(hotelUid); }
 }
 
 export async function getSupplierOutletAccounts(hotelUid, options = {}) {
@@ -63,7 +74,7 @@ export async function getSupplierOutletAccounts(hotelUid, options = {}) {
 
   const supplierIdFilter = String(options.supplierId || "").trim();
   const accountsCol = collection(db, `hotels/${hotelUid}/supplierOutletAccounts`);
-  const snap = await getDocs(accountsCol);
+  const snap = requireServerSnapshot(await getDocs(accountsCol));
 
   return snap.docs
     .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))

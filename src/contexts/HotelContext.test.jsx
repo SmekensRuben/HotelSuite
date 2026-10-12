@@ -2,6 +2,7 @@ import React from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { HotelProvider, useHotelContext } from "./HotelContext";
+import { invalidateProcurementReads, poolProcurementRead } from "../services/procurementReadPool";
 
 const mocks = vi.hoisted(() => ({
   selectedHotel: "first",
@@ -34,6 +35,7 @@ function CurrentHotel() {
 }
 const snapshot = (data) => ({ exists: () => data !== null, data: () => data });
 beforeEach(() => {
+  invalidateProcurementReads();
   vi.clearAllMocks();
   mocks.currentUser.getIdTokenResult.mockResolvedValue({ claims: {} });
   mocks.listeners.clear();
@@ -128,4 +130,54 @@ it("does not replace the current hotel with an earlier selection's deferred sett
   });
   expect(screen.getByText("Current first|membership|catalogsettings.read")).toBeInTheDocument();
   expect(context.hotelUid).toBe("first");
+});
+
+it("rejects a pending operational read when canonical membership authority changes", async () => {
+  await login();
+  let resolve;
+  const pending = poolProcurementRead("first", "products", () => new Promise((done) => { resolve = done; }));
+  const rejected = expect(pending).rejects.toThrow("Hotel access changed");
+  await act(async () => { mocks.listeners.get("hotels/first/members/operator")(snapshot({ permissions: [] })); });
+  resolve([{ id: "previously-authorized" }]); await rejected;
+  expect(context.permissions).toEqual([]);
+});
+
+it("rejects pending reads on subscription revocation and token refresh", async () => {
+  await login();
+  let resolve;
+  const pending = poolProcurementRead("first", "suppliers", () => new Promise((done) => { resolve = done; }));
+  const rejected = expect(pending).rejects.toThrow("Hotel access changed");
+  await act(async () => { mocks.listeners.get("hotelSubscriptions/first")(snapshot({ status: "canceled" })); });
+  resolve([{ id: "private-supplier" }]); await rejected;
+  const next = poolProcurementRead("first", "actors", () => new Promise((done) => { resolve = done; }));
+  const tokenRejected = expect(next).rejects.toThrow("Hotel access changed");
+  await act(async () => { await mocks.authListener(mocks.currentUser); });
+  resolve([{ name: "Previous actor" }]); await tokenRejected;
+});
+
+it("invalidates in-flight reads at hotel selection and ignores a queued old-hotel observer", async () => {
+  await login();
+  const oldMembership = mocks.listeners.get("hotels/first/members/operator"), oldSubscription = mocks.listeners.get("hotelSubscriptions/first");
+  let resolve;
+  const pending = poolProcurementRead("first", "orders", () => new Promise((done) => { resolve = done; }));
+  const rejected = expect(pending).rejects.toThrow("Hotel access changed");
+  await act(async () => { await context.selectHotel("second"); });
+  resolve([{ id: "old-hotel-order" }]); await rejected;
+  await act(async () => { oldMembership(snapshot({ permissions: ["suppliers.delete"] })); oldSubscription(snapshot({ status: "canceled" })); });
+  expect(context.hotelUid).toBe("second"); expect(context.permissions).toEqual(["contracts.read"]); expect(context.subscription.status).toBe("active");
+});
+
+it("rejects a pending read when the subscription expires without a document update", async () => {
+  vi.useFakeTimers();
+  try {
+    await login();
+    const expiry = Date.now() + 1000;
+    await act(async () => { mocks.listeners.get("hotelSubscriptions/first")(snapshot({ status: "active", validUntil: { toMillis: () => expiry } })); });
+    let resolve;
+    const pending = poolProcurementRead("first", "inventory", () => new Promise((done) => { resolve = done; }));
+    const rejected = expect(pending).rejects.toThrow("Hotel access changed");
+    await act(async () => { vi.advanceTimersByTime(30000); });
+    expect(context.subscriptionActive).toBe(false);
+    resolve([{ id: "obsolete-period" }]); await rejected;
+  } finally { vi.useRealTimers(); }
 });
