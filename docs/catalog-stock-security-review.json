@@ -1,0 +1,53 @@
+{
+  "score": 5,
+  "summary": "Scoped independent source review of changed catalog, purchasing, periodic stock-count, immutable inventory-evidence and v4 Rules boundaries. Current server Auth, canonical same-hotel membership, action permissions and subscriptions control access. Protected browser writes and generic import bypasses are denied; typed bounded inputs, transactional evidence and exact retries preserve integrity. Local emulator checks passed. This assessment is not a whole-application or production certification.",
+  "findings": [],
+  "resolvedDuringReview": [
+    "Purchase option identity preserved through cart/order/receipt/reversal",
+    "Confirmation rejects same-price changed package and inventory contracts",
+    "Unknown price/currency/tracking never becomes zero/EUR/not-tracked",
+    "Unlinked receipts produce explicit inventory coverage gaps",
+    "Recursive location write grant narrowed; evidence uses private top-level hotel paths",
+    "New and unfinished historical counts require complete explicit quantities",
+    "Late postings and count-time postings remain visible without revaluing saved reports",
+    "Positive receipt cost independent of rounded per-unit cost",
+    "Import prefixes and saved command retries remain exact after uncertain responses",
+    "Current Auth rechecked after real SDK transaction retries and revocation",
+    "Legacy ambiguous package variants blocked equally in client and backend",
+    "Mixed net/gross/unknown purchase totals blocked; explicit basis shown without historical tax inference"
+  ],
+  "verified": {
+    "securityEmulatorTests": {
+      "passed": 166,
+      "failed": 0,
+      "scope": "Complete pre-followup suite"
+    },
+    "independentOrderRegressions": {
+      "passed": 10,
+      "failed": 0
+    },
+    "realTransactionRaces": [
+      "same supplier SKU",
+      "same order receiving revision",
+      "count finish and receipt checkpoint"
+    ],
+    "revokedAuthRetryWorkflows": [
+      "products",
+      "templates",
+      "counts",
+      "carts",
+      "order creation"
+    ],
+    "priceBasisEmulatorFollowup": {
+      "passed": 42,
+      "failed": 0,
+      "scope": "41 focused catalog/pilot tests plus one historical-basis case; no production calls"
+    }
+  },
+  "remaining": [
+    "Exact final-head CI",
+    "Live database/index/Rules readiness",
+    "Real-hotel browser acceptance",
+    "Production deployment verification"
+  ]
+}
