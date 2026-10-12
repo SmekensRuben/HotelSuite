@@ -94,3 +94,34 @@ export async function createOrderFromShoppingCart(hotelUid, shoppingCartId, deli
 export async function reviewOrderDelivery(input) {
   return (await httpsCallable(functions, "reviewHotelOrderDelivery")(input)).data;
 }
+
+export async function getHotelOrderReceiving({ hotelUid, orderId, afterEventId = null }) {
+  const { data } = await httpsCallable(functions, "getHotelOrderReceiving")({ hotelUid, orderId, afterEventId });
+  const validQuantity = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
+  if (!data || data.hotelUid !== hotelUid || data.orderId !== orderId || data.policyVersion !== 1
+    || !Number.isSafeInteger(data.orderRevision) || data.orderRevision < 0 || typeof data.releaseReady !== "boolean"
+    || !["available", "not-started", "review-required"].includes(data.availability)
+    || !Array.isArray(data.events) || !(data.nextCursor === null || typeof data.nextCursor === "string")
+    || data.events.some((event) => !event || typeof event.id !== "string" || !["receipt", "reversal", "finalization"].includes(event.kind)
+      || typeof event.actorUid !== "string" || !Array.isArray(event.lines)
+      || event.createdAtMillis !== null && !Number.isFinite(event.createdAtMillis))
+    || data.availability === "available" && !["awaiting", "partial", "complete", "closed"].includes(data.receivingState)
+    || data.availability === "available" && (!Array.isArray(data.lines) || !data.lines.length || data.lines.length > 100
+      || data.lines.some((line) => !line || typeof line.supplierProductId !== "string"
+        || ["orderedQuantity", "acceptedQuantity", "rejectedQuantity", "outstandingQuantity", "excessQuantity"].some((key) => !validQuantity(line[key]))
+        || line.orderedQuantity <= 0))) {
+    throw new Error("The receiving response is incomplete or belongs to another hotel/order.");
+  }
+  return data;
+}
+async function receivingCommand(name, input) {
+  const { data } = await httpsCallable(functions, name)(input);
+  if (!data || data.hotelUid !== input.hotelUid || data.orderId !== input.orderId || typeof data.eventId !== "string"
+    || !Number.isSafeInteger(data.revision) || data.revision < 1 || !["Ordered", "Received", "Finalized"].includes(data.status)) {
+    throw new Error("The receiving result could not be verified. Retry the same saved request.");
+  }
+  return data;
+}
+export const recordHotelOrderReceipt = (input) => receivingCommand("recordHotelOrderReceipt", input);
+export const reverseHotelOrderReceipt = (input) => receivingCommand("reverseHotelOrderReceipt", input);
+export const finalizeHotelOrderReceiving = (input) => receivingCommand("finalizeHotelOrderReceiving", input);

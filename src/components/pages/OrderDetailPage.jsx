@@ -16,6 +16,7 @@ import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 import { getSupplier } from "../../services/firebaseSuppliers";
 import { StickyNote } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
+import OrderReceivingPanel from "../orders/OrderReceivingPanel";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -350,6 +351,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
             </div>
           </div>
         )}
+        {["Ordered", "Received", "Finalized"].includes(order.status) && <OrderReceivingPanel hotelUid={hotelUid} orderId={orderId} onChanged={refreshOrder} disabled={loading || Boolean(query.error)} />}
       </PageContainer>
 
       <Modal

@@ -13,7 +13,9 @@ vi.mock("react-router-dom", () => ({ useParams: () => ({ orderId: mocks.id, prod
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key) => key }) }));
 vi.mock("../layout/HeaderBar", () => ({ default: () => null }));
 vi.mock("../../firebaseConfig", () => ({ auth: { currentUser: { uid: "employee" } }, signOut: vi.fn() }));
-vi.mock("../../services/firebaseOrders", () => ({ getOrderById: mocks.order, updateOrder: mocks.update, deleteOrder: vi.fn(), confirmOrder: vi.fn(), reviewOrderDelivery: vi.fn() }));
+vi.mock("../../services/firebaseOrders", () => ({ getOrderById: mocks.order, updateOrder: mocks.update, deleteOrder: vi.fn(), confirmOrder: vi.fn(), reviewOrderDelivery: vi.fn(),
+  getHotelOrderReceiving: vi.fn().mockResolvedValue({ availability: "not-started", releaseReady: true, reason: "Receiving starts after supplier dispatch is confirmed.", events: [], nextCursor: null }),
+  recordHotelOrderReceipt: vi.fn(), reverseHotelOrderReceipt: vi.fn(), finalizeHotelOrderReceiving: vi.fn() }));
 vi.mock("../../services/firebaseProducts", () => ({ getCatalogProduct: mocks.catalog, getSupplierProduct: mocks.supplierProduct, deleteCatalogProduct: mocks.deleteCatalog, deleteSupplierProduct: mocks.deleteSupplierProduct }));
 vi.mock("../../services/firebaseSuppliers", () => ({ getSupplier: mocks.supplier, deleteSupplier: mocks.deleteSupplier }));
 vi.mock("../../services/firebaseUserManagement", () => ({ getHotelUserDisplayName: mocks.display }));

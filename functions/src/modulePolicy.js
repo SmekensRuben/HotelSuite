@@ -61,7 +61,7 @@ function compileMemberAccess({ moduleRoles = {}, additionalPermissions = [], hot
   const previous = previousPermissions.map((key) => String(key).trim().toLowerCase());
   const normalizedRoles = {};
   for (const [id, roles] of Object.entries(moduleRoles)) {
-    if (!MODULE_IDS.includes(id) || !Array.isArray(roles) || roles.length > 5 || new Set(roles).size !== roles.length) {
+    if (!MODULE_IDS.includes(id) || !Array.isArray(roles) || roles.length > Math.max(5, Object.keys(catalog.modules[id].roles).length) || new Set(roles).size !== roles.length) {
       throw new HttpsError("invalid-argument", "Choose supported module roles.");
     }
     const licensed = moduleAllows(subscription, id);

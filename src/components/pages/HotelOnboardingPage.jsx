@@ -9,6 +9,8 @@ import { getHotelSubscriptions } from "../../services/firebaseSubscriptions";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { MODULE_CATALOG } from "../../constants/moduleCatalog";
 import ModuleRolePicker from "../shared/ModuleRolePicker";
+import HotelSetupChecklist from "../platform/HotelSetupChecklist";
+import { usePlatformScope } from "../../hooks/usePlatformQuery";
 
 const fieldClass = "mt-2 w-full rounded-xl border border-slate-200 bg-white p-3";
 const buttonClass = "inline-flex items-center justify-center gap-2 rounded-xl bg-brand-800 px-5 py-3 text-sm font-semibold text-white hover:bg-brand-950 disabled:opacity-50";
@@ -25,6 +27,7 @@ export default function HotelOnboardingPage({ platform = false }) {
   const [rolloutReady, setRolloutReady] = useState(null);
   const [name, setName] = useState("");
   const [hotelUid, setHotelUid] = useState("");
+  const [timeZone, setTimeZone] = useState("");
   const [status, setStatus] = useState("trialing");
   const [trialDays, setTrialDays] = useState(14);
   const [selectedHotel, setSelectedHotel] = useState("");
@@ -37,6 +40,10 @@ export default function HotelOnboardingPage({ platform = false }) {
   const [hotelAdmin, setHotelAdmin] = useState(true);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState(null);
+  const [readinessRevision, setReadinessRevision] = useState(0);
+  const capture = usePlatformScope(selectedHotel);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const createAttempt = useRef(null);
   const inviteAttempt = useRef(null);
   const attempt = (ref, details) => {
@@ -56,28 +63,33 @@ export default function HotelOnboardingPage({ platform = false }) {
     event.preventDefault();
     if (busy || rolloutReady !== true) return;
     setBusy("create"); setMessage(null);
-    const details = { name, hotelUid, status, trialDays: Number(trialDays), modules };
+    const details = { name, hotelUid, timeZone, status, trialDays: Number(trialDays), modules };
     try {
       const result = await createHotel({ ...details, requestId: attempt(createAttempt, details) });
       await refreshHotelAssignments();
+      if (!mounted.current) return;
       setHotels((items) => [...items.filter((h) => h.hotelUid !== result.hotelUid), { hotelUid: result.hotelUid, hotelName: result.name, subscription: { modules } }]);
       setSelectedHotel(result.hotelUid);
-      setMessage({ text: `${result.name} is ready. Invite a primary and backup hotel administrator below.` });
-      setName(""); setHotelUid(""); createAttempt.current = null;
-    } catch (error) { setMessage({ error: true, text: messageFor(error) }); }
-    finally { setBusy(""); }
+      setMessage({ text: `${result.name} was created. Invite its administrators and complete the setup checklist.` });
+      setReadinessRevision((value) => value + 1);
+      setName(""); setHotelUid(""); setTimeZone(""); createAttempt.current = null;
+    } catch (error) { if (mounted.current) setMessage({ error: true, text: messageFor(error) }); }
+    finally { if (mounted.current) setBusy(""); }
   };
   const invite = async (event) => {
     event.preventDefault();
     if (busy || rolloutReady !== true) return;
     setBusy("invite"); setMessage(null);
+    const current = capture();
     const details = { hotelUid: selectedHotel, email: recipient, firstName, lastName, moduleRoles, hotelAdmin, resend };
     try {
       await inviteHotelUser({ ...details, requestId: attempt(inviteAttempt, details) });
+      if (!current()) return;
       setMessage({ text: `Access has been assigned to ${recipient}. Their invitation is queued for email delivery.` });
       setRecipient(""); setFirstName(""); setLastName(""); setResend(false); inviteAttempt.current = null;
-    } catch (error) { setMessage({ error: true, text: messageFor(error) }); }
-    finally { setBusy(""); }
+      setReadinessRevision((value) => value + 1);
+    } catch (error) { if (current()) setMessage({ error: true, text: messageFor(error) }); }
+    finally { if (mounted.current) setBusy(""); }
   };
 
   return <div className="min-h-screen bg-canvas text-slate-900">
@@ -102,6 +114,7 @@ export default function HotelOnboardingPage({ platform = false }) {
           <Building2 size={24} className="text-brand-800" /><div><p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Step 1</p><h2 className="mt-2 text-xl font-semibold">Create a property</h2></div>
           <label className="block text-sm font-medium">Hotel name<input required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} className={fieldClass} disabled={Boolean(busy)} /></label>
           <label className="block text-sm font-medium">Hotel ID<input required pattern="[a-z0-9][a-z0-9-]{2,59}" value={hotelUid} onChange={(e) => setHotelUid(e.target.value.toLowerCase())} className={fieldClass} disabled={Boolean(busy)} /><span className="mt-2 block text-xs font-normal text-slate-500">A unique, permanent ID, such as riverside-hotel.</span></label>
+          <label className="block text-sm font-medium">Hotel time zone<input required maxLength={80} placeholder="Europe/Brussels" value={timeZone} onChange={(event) => setTimeZone(event.target.value)} className={fieldClass} disabled={Boolean(busy)} /><span className="mt-2 block text-xs font-normal text-slate-500">Use the hotel's IANA time zone for delivery schedules.</span></label>
           <label className="block text-sm font-medium">Initial access<select value={status} onChange={(e) => setStatus(e.target.value)} className={fieldClass} disabled={Boolean(busy)}><option value="trialing">Trial</option><option value="active">Active · manual invoicing</option></select></label>
           <fieldset disabled={Boolean(busy)} className="space-y-3"><legend className="mb-3 text-sm font-semibold">Initial modules</legend>{Object.entries(MODULE_CATALOG).map(([id, module]) => <label key={id} className="flex flex-wrap items-center gap-3 text-sm"><input type="checkbox" checked={modules.includes(id)} onChange={() => setModules((previous) => previous.includes(id) ? previous.filter((key) => key !== id) : [...previous, id])} />{module.label}</label>)}</fieldset>
           {status === "trialing" && <label className="block text-sm font-medium">Trial length in days<input required type="number" min={1} max={90} value={trialDays} onChange={(e) => setTrialDays(e.target.value)} className={fieldClass} disabled={Boolean(busy)} /></label>}
@@ -119,6 +132,7 @@ export default function HotelOnboardingPage({ platform = false }) {
           <button disabled={Boolean(busy) || !selectedHotel || rolloutReady !== true} className={buttonClass}>{busy === "invite" && <Loader2 size={16} className="animate-spin" />}{resend ? "Resend invitation" : "Assign access and send invitation"}</button>
         </form>
       </div>
+      {selectedHotel && <HotelSetupChecklist hotelUid={selectedHotel} refreshKey={readinessRevision} />}
       <Link to={platform ? "/platform/subscriptions" : "/settings/subscriptions"} className="inline-block text-sm font-semibold text-brand-800 hover:underline">Manage hotel subscriptions →</Link>
     </PageContainer>
   </div>;

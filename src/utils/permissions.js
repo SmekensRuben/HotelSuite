@@ -1,3 +1,6 @@
+import explicitPermissions from "../../functions/src/explicitPermissions.json";
+const explicit = new Set(explicitPermissions);
+
 function normalizePermissionAction(action) {
   const normalized = String(action || "").trim().toLowerCase();
 
@@ -30,6 +33,6 @@ export function hasPermission(user, feature, action) {
       permissionAction
     )}`;
 
-    return normalizedPermissionKey === permissionKey || normalizedPermissionKey === wildcardKey;
+    return normalizedPermissionKey === permissionKey || !explicit.has(permissionKey) && normalizedPermissionKey === wildcardKey;
   });
 }

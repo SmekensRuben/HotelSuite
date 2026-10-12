@@ -26,7 +26,9 @@
     "read",
     "update",
     "delete",
-    "approve"
+    "approve",
+    "receive",
+    "finalize"
   ],
   "contracts": [
     "create",

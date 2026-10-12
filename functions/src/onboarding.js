@@ -7,6 +7,7 @@ const { catalog, validateModules, validateSeatLimit, compileMemberAccess } = req
 const { requireHotelAdministrator, readTeamGuard, writeTeamGuard } = require("./hotelTeam");
 const { gated, enforceRequestRollout, SAAS_RULES_VERSION } = require("./saasRollout");
 const { writePlatformAudit } = require("./platformAudit");
+const { validTimeZone } = require("./hotelSetupPolicy");
 
 const ROLES = {
   manager: ["dashboard.read", ...catalog.modules.procurement.roles["module-manager"].permissions],
@@ -21,6 +22,8 @@ async function createHotelHandler(request, services = {}) {
   const input = request.data || {};
   const requestId = requireDocumentId(input.requestId, "requestId");
   const name = text(input.name, "Hotel name", 200, true);
+  const timeZone = input.timeZone === undefined ? "" : text(input.timeZone, "Hotel time zone", 80, true);
+  if (timeZone && !validTimeZone(timeZone)) throw new HttpsError("invalid-argument", "Choose a valid IANA time zone.");
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid");
   if (!/^[a-z0-9][a-z0-9-]{2,59}$/.test(hotelUid)) throw new HttpsError("invalid-argument", "Use a hotel ID of 3–60 lowercase letters, numbers or hyphens.");
   if (!["active", "trialing"].includes(input.status)) throw new HttpsError("invalid-argument", "Choose active access or a trial.");
@@ -32,7 +35,8 @@ async function createHotelHandler(request, services = {}) {
   const stamp = () => admin.firestore.FieldValue.serverTimestamp();
   const ref = db.doc(`hotels/${hotelUid}`);
   const key = digest(request.auth.uid, requestId);
-  const fingerprint = digest(hotelUid, name, input.status, trialDays, modules, seatLimit);
+  const fingerprint = timeZone ? digest(hotelUid, name, input.status, trialDays, modules, seatLimit, timeZone)
+    : digest(hotelUid, name, input.status, trialDays, modules, seatLimit);
   const operation = db.doc(`platformOperations/${key}`);
   return db.runTransaction(async (tx) => {
     await enforceRequestRollout(db, request, tx);
@@ -45,7 +49,7 @@ async function createHotelHandler(request, services = {}) {
     const validUntil = input.status === "trialing"
       ? admin.firestore.Timestamp.fromMillis((services.now?.() ?? Date.now()) + trialDays * 86400000) : null;
     const result = { hotelUid, name, status: input.status, validUntilMillis: validUntil?.toMillis() ?? null };
-    tx.create(ref, { name, hotelName: name, createdAt: stamp(), createdBy: request.auth.uid, onboardingVersion: 1 });
+    tx.create(ref, { name, hotelName: name, ...(timeZone ? { timeZone } : {}), createdAt: stamp(), createdBy: request.auth.uid, onboardingVersion: 1 });
     tx.create(db.doc(`hotels/${hotelUid}/settings/bootstrap`), { hotelName: name, currency: "EUR", language: "en" });
     // Capacity is unknown until configured; do not invent a zero-room property.
     tx.create(db.doc(`hotels/${hotelUid}/settings/propertySettings`), {});
