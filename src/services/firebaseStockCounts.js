@@ -1,4 +1,4 @@
-import { collection, db, doc, getDoc, getDocs, functions, httpsCallable } from "../firebaseConfig";
+import { collection, db, doc, getDoc, getDocs, functions, httpsCallable, auth } from "../firebaseConfig";
 
 export const STOCK_COUNT_TYPES = ["Ad Hoc", "Daily", "Weekly", "Month-End"];
 export const STOCK_COUNT_STATUSES = ["Started", "In Progress", "Finished"];
@@ -15,6 +15,7 @@ function normalizeDate(value) {
 function normalizeStockTemplateItem(item = {}) {
   return {
     ...item,
+    catalogProductId: String(item?.catalogProductId || "").trim(),
     supplierProductId: String(item?.supplierProductId || "").trim(),
     outletId: String(item?.outletId || "").trim(),
   };
@@ -27,7 +28,7 @@ function normalizeStockTemplate(template = {}) {
     id,
     name: String(template?.name || template?.stockTemplateName || "").trim(),
     items: Array.isArray(template?.items)
-      ? template.items.map(normalizeStockTemplateItem).filter((item) => item.supplierProductId)
+      ? template.items.map(normalizeStockTemplateItem)
       : [],
   };
 }
@@ -42,6 +43,9 @@ function normalizeStockCountLocation(location = {}) {
   });
 
   return {
+    ...location,
+    currency: location.currency || null,
+    inventoryPolicyVersion: location.inventoryPolicyVersion || null,
     locationId: String(location?.locationId || location?.id || "").trim(),
     locationName: String(location?.locationName || "").trim(),
     stockTemplateId,
@@ -57,14 +61,16 @@ function normalizeStockCountLocation(location = {}) {
 }
 
 function getStockCountLocationValue(location = {}) {
-  if (!Array.isArray(location?.countedItems) && Number.isFinite(Number(location?.countedValue))) {
-    return Number(location.countedValue || 0);
+  if (location.inventoryPolicyVersion === 1 || location.stockTemplate?.items?.some((item) => item.catalogProductId)) {
+    const items = normalizeCountedItems(location.countedItems);
+    if (items.some((item) => !item.isCounted) || location.costComplete === false) return null;
+    const counted = items.filter((item) => item.isCounted);
+    if (!counted.length || counted.some((item) => item.totalValue == null)) return null;
+    const currencies = new Set(counted.map((item) => item.currency || location.currency).filter(Boolean));
+    return currencies.size === 1 ? counted.reduce((sum, item) => sum + item.totalValue, 0) : null;
   }
-
-  return normalizeCountedItems(location?.countedItems).reduce(
-    (sum, item) => sum + Number(item?.totalValue || 0),
-    0
-  );
+  if (!Array.isArray(location?.countedItems) && typeof location.countedValue === "number" && Number.isFinite(location.countedValue)) return location.countedValue;
+  return normalizeCountedItems(location?.countedItems).reduce((sum, item) => sum + (item.totalValue ?? 0), 0);
 }
 
 function deriveStockCountStatus(data = {}, locations = []) {
@@ -88,9 +94,15 @@ function normalizeStockCount(data = {}, fallbackId = "") {
     (sum, location) => sum + getStockCountLocationValue(location),
     0
   );
-  const countedValue = locationCountedValue || Number(data?.countedValue || 0);
+  const countedValue = data.inventoryPolicyVersion === 1
+    ? (normalizedLocations.length && normalizedLocations.every((location) => location.countedValue != null) ? locationCountedValue : null)
+    : locationCountedValue || Number(data?.countedValue || 0);
 
   return {
+    ...data,
+    currency: data.currency || null,
+    businessDate: data.businessDate || null,
+    inventoryPolicyVersion: data.inventoryPolicyVersion || null,
     id: String(data.id || fallbackId || "").trim() || fallbackId,
     name: String(data.name || "").trim(),
     type: STOCK_COUNT_TYPES.includes(data.type) ? data.type : "Ad Hoc",
@@ -106,15 +118,21 @@ function normalizeStockCount(data = {}, fallbackId = "") {
 }
 
 
+function finiteOrNull(value) { return typeof value === "number" && Number.isFinite(value) ? value : null; }
+
 function normalizeCountedItems(items) {
   return Array.isArray(items)
     ? items
         .map((item) => ({
+          ...item,
+          catalogProductId: String(item?.catalogProductId || "").trim(),
           supplierProductId: String(item?.supplierProductId || "").trim(),
           outletId: String(item?.outletId || "").trim(),
-          quantity: Number(item?.quantity || 0),
+          quantity: item.catalogProductId ? finiteOrNull(item.quantity) : Number(item?.quantity || 0),
+          unitCost: finiteOrNull(item.unitCost),
+          currency: item.currency || null,
           pricePerPurchaseUnit: Number(item?.pricePerPurchaseUnit || 0),
-          totalValue: Number(item?.totalValue || 0),
+          totalValue: item.catalogProductId ? finiteOrNull(item.totalValue) : Number(item?.totalValue || 0),
           countedAt: item?.countedAt || null,
           countedBy: item?.countedBy || null,
           isCounted: item?.isCounted !== false,
@@ -127,7 +145,7 @@ function normalizeCountedItems(items) {
           content: String(item?.content || "").trim(),
           outletName: String(item?.outletName || "").trim(),
         }))
-        .filter((item) => item.supplierProductId)
+        .filter((item) => item.catalogProductId || item.supplierProductId)
     : [];
 }
 
@@ -192,8 +210,9 @@ export async function getStockCountById(hotelUid, stockCountId) {
 // price snapshots, totals, status transitions, timestamps and actors.
 function commandItems(items) {
   if (!Array.isArray(items)) throw new Error("countedItems must be an array");
-  return items.map((item) => ({ supplierProductId: item.supplierProductId, outletId: item.outletId,
-    quantity: item.quantity, isCounted: item.isCounted !== false }));
+  return items.map((item) => item.catalogProductId
+    ? { catalogProductId: item.catalogProductId, quantity: item.quantity, isCounted: item.isCounted !== false, unitCost: item.unitCost ?? null }
+    : { supplierProductId: item.supplierProductId, outletId: item.outletId, quantity: item.quantity, isCounted: item.isCounted !== false });
 }
 async function mutateStockCount(hotelUid, stockCountId, payload, expectedRevision) {
   if (!hotelUid || !stockCountId) throw new Error("hotelUid and stockCountId are required");
@@ -201,6 +220,7 @@ async function mutateStockCount(hotelUid, stockCountId, payload, expectedRevisio
   if (expectedRevision == null && !current) throw new Error("Stock count not found");
   const result = await httpsCallable(functions, "mutateHotelStockCount")({ hotelUid, stockCountId,
     ...payload, expectedRevision: expectedRevision ?? current.revision });
+  if (result.data?.hotelUid !== hotelUid || result.data.stockCountId !== stockCountId || !Number.isSafeInteger(result.data.revision)) throw new Error("Stock count mutation response scope is invalid. Reload the count before retrying.");
   return result.data;
 }
 export async function getStockCountSources(hotelUid) {
@@ -217,22 +237,54 @@ export async function getStockCountSources(hotelUid) {
     seen.add(cursor); afterLocationId = cursor;
   }
 }
+function countCreationStorageKey(hotelUid) {
+  if (!hotelUid || !auth.currentUser?.uid) throw new Error("Sign in before creating a stock count.");
+  return `hotelsuite.stockCount.create:${auth.currentUser.uid}:${hotelUid}`;
+}
+function pendingCountCreation(hotelUid) {
+  const raw = sessionStorage.getItem(countCreationStorageKey(hotelUid));
+  if (!raw) return null;
+  try {
+    const saved = JSON.parse(raw), payload = JSON.parse(saved.fingerprint);
+    if (typeof saved.requestId !== "string" || !saved.requestId || payload.hotelUid !== hotelUid) throw new Error("Invalid saved command");
+    return { ...saved, payload };
+  } catch { throw new Error("The saved stock count request cannot be read. Its outcome needs review; no replacement request was created."); }
+}
+function notifyCountCreation() { window.dispatchEvent(new Event("stock-count-command-changed")); }
+export function getPendingCountCreation(hotelUid) {
+  if (!hotelUid || !auth.currentUser?.uid) return null;
+  return pendingCountCreation(hotelUid)?.payload || null;
+}
+export async function retryPendingCountCreation(hotelUid) {
+  const pending = getPendingCountCreation(hotelUid);
+  if (!pending) throw new Error("No saved stock count creation is available.");
+  return createStockCount(hotelUid, pending);
+}
 export async function createStockCount(hotelUid, input) {
   if (!hotelUid) throw new Error("hotelUid is required");
   const payload = { hotelUid, name: input?.name, type: input?.type,
+    ...(input?.businessDate ? { businessDate: input.businessDate } : {}),
     locations: (input?.locations || []).map((location) => ({ locationId: location.locationId,
       stockTemplateId: location.stockTemplateId || location.stockTemplate?.id })) };
-  const storageKey = `hotelsuite.stockCount.create:${hotelUid}`;
+  if (!auth.currentUser?.uid) throw new Error("Sign in before creating a stock count.");
+  const storageKey = countCreationStorageKey(hotelUid);
   const fingerprint = JSON.stringify(payload);
-  let operation;
-  try { operation = JSON.parse(sessionStorage.getItem(storageKey) || "null"); } catch { operation = null; }
-  if (!operation || operation.fingerprint !== fingerprint) {
+  let operation = pendingCountCreation(hotelUid);
+  if (operation && operation.fingerprint !== fingerprint) throw new Error("A previous count creation is awaiting confirmation. Retry the same request before changing it.");
+  if (!operation) {
     operation = { fingerprint, requestId: crypto.randomUUID() };
-    sessionStorage.setItem(storageKey, JSON.stringify(operation));
+    sessionStorage.setItem(storageKey, JSON.stringify(operation)); notifyCountCreation();
   }
-  const result = await httpsCallable(functions, "createHotelStockCount")({ ...payload, requestId: operation.requestId });
-  sessionStorage.removeItem(storageKey);
-  return { id: result.data.stockCountId, ...result.data };
+  try {
+    const result = await httpsCallable(functions, "createHotelStockCount")({ ...payload, requestId: operation.requestId });
+    if (result.data?.hotelUid !== hotelUid || result.data.inventoryPolicyVersion !== 1 || typeof result.data.stockCountId !== "string" || !result.data.stockCountId) throw new Error("Stock count creation response scope or policy is invalid. Retry the same request.");
+    sessionStorage.removeItem(storageKey); notifyCountCreation();
+    return { id: result.data.stockCountId, ...result.data };
+  } catch (error) {
+    if (error?.details?.countRequestUncommitted === true) sessionStorage.removeItem(storageKey);
+    notifyCountCreation();
+    throw error;
+  }
 }
 export async function updateStockCountLocationCounts(hotelUid, stockCountId, locationId, countedItems, _updatedBy, expectedRevision) {
   return mutateStockCount(hotelUid, stockCountId, { action: "save-location", locationId,
@@ -242,7 +294,7 @@ export async function finishStockCountLocation(hotelUid, stockCountId, locationI
   templateItemsToAdd = [], _updatedBy, expectedRevision) {
   return mutateStockCount(hotelUid, stockCountId, { action: "finish-location", locationId,
     countedItems: commandItems(countedItems), templateItemsToAdd: templateItemsToAdd.map((item) =>
-      ({ supplierProductId: item.supplierProductId, outletId: item.outletId })) }, expectedRevision);
+      (item.catalogProductId ? { catalogProductId: item.catalogProductId } : { supplierProductId: item.supplierProductId, outletId: item.outletId })) }, expectedRevision);
 }
 export async function finishStockCount(hotelUid, stockCountId, _updatedBy, expectedRevision) {
   return mutateStockCount(hotelUid, stockCountId, { action: "finish-count" }, expectedRevision);

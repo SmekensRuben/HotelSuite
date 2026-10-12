@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, ShoppingCart } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import DataListTable from "../shared/DataListTable";
+import PendingCartCommand from "../catalog/PendingCartCommand";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSupplierProducts } from "../../services/firebaseProducts";
@@ -12,7 +13,10 @@ import { getSuppliers } from "../../services/firebaseSuppliers";
 import {
   addSupplierProductToShoppingCart,
   getOrCreateShoppingCart,
+  getShoppingCart,
 } from "../../services/firebaseShoppingCarts";
+
+import { productPurchaseOptions, formatPurchasePrice, knownPrice } from "../../utils/productPurchaseOptions";
 
 const PAGE_SIZE = 20;
 
@@ -23,7 +27,7 @@ function formatContent(product) {
   return `${amount} ${unit}`;
 }
 
-export default function OrderCreatePage() {
+function ScopedOrderCreatePage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
   const [shoppingCart, setShoppingCart] = useState(null);
@@ -35,6 +39,11 @@ export default function OrderCreatePage() {
   const [selectedStatus, setSelectedStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
+  const [error, setError] = useState("");
+  const [selectedOptions, setSelectedOptions] = useState({});
+  const mounted = useRef(true);
+  const generation = useRef(0);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; generation.current += 1; }; }, []);
   const [pageIndex, setPageIndex] = useState(0);
   const [hasMorePages, setHasMorePages] = useState(false);
   const [pageStartCursors, setPageStartCursors] = useState({ 0: null });
@@ -67,6 +76,8 @@ export default function OrderCreatePage() {
     if (!hotelUid) return;
 
     setLoading(true);
+    const currentGeneration = ++generation.current;
+    try {
     const normalizedStatus = selectedStatus.trim().toLowerCase();
     const activeFilter =
       normalizedStatus === "active" ? true : normalizedStatus === "inactive" ? false : null;
@@ -79,6 +90,7 @@ export default function OrderCreatePage() {
       active: activeFilter,
     });
 
+    if (!mounted.current || currentGeneration !== generation.current) return;
     setProducts(result.products || []);
     setHasMorePages(result.hasMore);
     setPageIndex(nextPageIndex);
@@ -95,7 +107,8 @@ export default function OrderCreatePage() {
       return next;
     });
 
-    setLoading(false);
+    } catch (failure) { if (mounted.current && currentGeneration === generation.current) setError(failure?.message || "Could not load supplier products."); }
+    finally { if (mounted.current && currentGeneration === generation.current) setLoading(false); }
   };
 
   useEffect(() => {
@@ -106,11 +119,12 @@ export default function OrderCreatePage() {
         getOrCreateShoppingCart(hotelUid, actor),
         getSuppliers(hotelUid),
       ]);
+      if (!mounted.current) return;
       setShoppingCart(cart);
       setSuppliers(Array.isArray(loadedSuppliers) ? loadedSuppliers : []);
     };
 
-    init();
+    init().catch((failure) => { if (mounted.current) setError(failure?.message || "Could not load the cart."); });
   }, [hotelUid]);
 
   useEffect(() => {
@@ -132,27 +146,28 @@ export default function OrderCreatePage() {
     [suppliers]
   );
 
-  const rows = useMemo(
-    () =>
-      products.map((product) => ({
-        ...product,
-        imageUrl: product.imageUrl || "",
-        contentLabel: formatContent(product),
-        priceLabel: `${Number(product.pricePerPurchaseUnit || 0).toFixed(2)} ${
-          product.currency || "EUR"
-        }`,
-      })),
-    [products]
-  );
+  const rows = useMemo(() => products.map((product) => {
+    const options = productPurchaseOptions(product);
+    const option = options.find((candidate) => candidate.id === (selectedOptions[product.id] || "default")) || options[0];
+    return {
+      ...product, options, purchaseOptionId: option?.id || "", selectedOption: option,
+      purchaseUnit: option?.purchaseUnit || "", imageUrl: product.imageUrl || "",
+      contentLabel: option ? formatContent({ ...product, ...option }) : "Legacy packages need review",
+      priceLabel: formatPurchasePrice(option, product.currency, product.priceBasis),
+      orderable: product.active !== false && product.archived !== true && Boolean(option?.purchaseUnit) && knownPrice(option?.pricePerPurchaseUnit) !== null,
+    };
+  }), [products, selectedOptions]);
 
   const handleAddProduct = async (product) => {
-    if (!shoppingCart?.id || !hotelUid) return;
+    if (!shoppingCart?.id || !hotelUid || !product.orderable) return;
     const qty = Math.max(1, Number(qtyByProductId[product.id] || 1));
-    setSavingId(product.id);
-    await addSupplierProductToShoppingCart(hotelUid, shoppingCart.id, product, qty);
-    const refreshed = await getOrCreateShoppingCart(hotelUid, auth.currentUser?.uid || "unknown");
-    setShoppingCart(refreshed);
-    setSavingId("");
+    setSavingId(product.id); setError("");
+    try {
+      await addSupplierProductToShoppingCart(hotelUid, shoppingCart.id, product, qty, product.purchaseOptionId, shoppingCart.revision ?? 0);
+      const refreshed = await getOrCreateShoppingCart(hotelUid);
+      if (mounted.current) setShoppingCart(refreshed);
+    } catch (failure) { if (mounted.current) setError(failure?.message || "Could not add this package to the cart."); }
+    finally { if (mounted.current) setSavingId(""); }
   };
 
   const columns = [
@@ -180,7 +195,7 @@ export default function OrderCreatePage() {
     },
     { key: "supplierProductName", label: "Product" },
     { key: "supplierSku", label: "SKU" },
-    { key: "purchaseUnit", label: "Purchase Unit" },
+    { key: "purchaseUnit", label: "Purchase option", sortable: false, render: (row) => <select aria-label={`Purchase option for ${row.supplierProductName}`} value={row.purchaseOptionId} disabled={!row.options.length || savingId === row.id} onChange={(event) => setSelectedOptions((current) => ({ ...current, [row.id]: event.target.value }))} className="rounded border px-2 py-1">{!row.options.length && <option value="">Review legacy packages</option>}{row.options.map((option) => <option key={option.id} value={option.id}>{option.purchaseUnit}</option>)}</select> },
     { key: "contentLabel", label: "Content" },
     {
       key: "qty",
@@ -202,10 +217,10 @@ export default function OrderCreatePage() {
         />
       ),
     },
-    { key: "priceLabel", label: "Prijs" },
+    { key: "priceLabel", label: "Price" },
     {
       key: "action",
-      label: "Actie",
+      label: "Action",
       sortable: false,
       render: (row) => (
         <button
@@ -214,10 +229,10 @@ export default function OrderCreatePage() {
             event.stopPropagation();
             handleAddProduct(row);
           }}
-          disabled={savingId === row.id}
+          disabled={Boolean(savingId) || !row.orderable}
           className="bg-brand-800 text-white rounded px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
         >
-          {savingId === row.id ? "Toevoegen..." : "Toevoegen"}
+          {savingId === row.id ? "Adding..." : "Add"}
         </button>
       ),
     },
@@ -227,9 +242,11 @@ export default function OrderCreatePage() {
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
+        <PendingCartCommand hotelUid={hotelUid} cartId={shoppingCart?.id || "active"} onComplete={async (result) => { const cart = await getShoppingCart(hotelUid, result.cartId); if (mounted.current) { setShoppingCart(cart); setError(""); } }} />
+        {error && <p role="alert" className="text-red-700">{error}</p>}
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h1 className="text-2xl font-semibold">Nieuwe Order</h1>
+            <h1 className="text-2xl font-semibold">New order</h1>
             <div className="flex flex-wrap items-center gap-2 ml-auto">
               <button
                 type="button"
@@ -237,7 +254,7 @@ export default function OrderCreatePage() {
                 className="inline-flex items-center gap-2 border border-gray-300 rounded px-3 py-2 text-sm font-semibold hover:bg-gray-100"
               >
                 <ArrowLeft className="w-4 h-4" />
-                Terug
+                Back
               </button>
               <button
                 type="button"
@@ -258,7 +275,7 @@ export default function OrderCreatePage() {
               type="search"
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Zoek supplierproduct..."
+              placeholder="Search supplier products..."
               className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
             />
             <select
@@ -266,7 +283,7 @@ export default function OrderCreatePage() {
               onChange={(event) => setSelectedSupplierId(event.target.value)}
               className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
             >
-              <option value="">Alle suppliers</option>
+              <option value="">All suppliers</option>
               {supplierOptions.map((supplier) => (
                 <option key={supplier.id} value={supplier.id}>
                   {supplier.name}
@@ -278,7 +295,7 @@ export default function OrderCreatePage() {
               onChange={(event) => setSelectedStatus(event.target.value)}
               className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
             >
-              <option value="">Alle statussen</option>
+              <option value="">All statuses</option>
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
             </select>
@@ -286,9 +303,9 @@ export default function OrderCreatePage() {
         </Card>
 
         {loading ? (
-          <p className="text-sm text-gray-600">Supplier products laden...</p>
+          <p className="text-sm text-gray-600">Loading supplier products...</p>
         ) : (
-          <DataListTable columns={columns} rows={rows} emptyMessage="Geen supplier products gevonden." />
+          <DataListTable columns={columns} rows={rows} emptyMessage="No supplier products found." />
         )}
 
         <div className="flex items-center justify-end gap-2">
@@ -303,9 +320,9 @@ export default function OrderCreatePage() {
             disabled={pageIndex === 0 || loading}
             className="border border-gray-300 rounded px-3 py-1 text-sm disabled:opacity-50"
           >
-            Vorige
+            Previous
           </button>
-          <span className="text-sm text-gray-600">Pagina {pageIndex + 1}</span>
+          <span className="text-sm text-gray-600">Page {pageIndex + 1}</span>
           <button
             type="button"
             onClick={() =>
@@ -315,10 +332,15 @@ export default function OrderCreatePage() {
             disabled={!hasMorePages || loading}
             className="border border-gray-300 rounded px-3 py-1 text-sm disabled:opacity-50"
           >
-            Volgende
+            Next
           </button>
         </div>
       </PageContainer>
     </div>
   );
+}
+
+export default function OrderCreatePage() {
+  const { hotelUid } = useHotelContext();
+  return <ScopedOrderCreatePage key={hotelUid} />;
 }

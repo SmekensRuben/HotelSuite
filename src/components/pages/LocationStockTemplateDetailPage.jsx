@@ -1,410 +1,64 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
+import PendingStockCommand from "../inventory/PendingStockCommand";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
-import Modal from "../shared/Modal";
-import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getSupplierProducts } from "../../services/firebaseProducts";
-import {
-  addLocationStockTemplateItem,
-  getOutlets,
-  getLocationById,
-  getLocationStockTemplateById,
-  removeLocationStockTemplateItem,
-  updateLocationStockTemplateItems,
-} from "../../services/firebaseSettings";
-
-function getTemplateItemKey(item, fallbackIndex) {
-  const supplierProductId = String(item?.supplierProductId || "").trim();
-  const outletId = String(item?.outletId || "").trim();
-  return `${supplierProductId}-${outletId}-${fallbackIndex}`;
-}
+import { usePermission } from "../../hooks/usePermission";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { getCatalogProducts, getSupplierProducts } from "../../services/firebaseProducts";
+import { collectPaginatedProducts } from "../../services/paginatedExport";
+import { addLocationStockTemplateItem, getLocationById, getLocationStockTemplateById, removeLocationStockTemplateItem, updateLocationStockTemplateItems } from "../../services/firebaseSettings";
 
 export default function LocationStockTemplateDetailPage() {
   const { locationId, templateId } = useParams();
   const { hotelUid } = useHotelContext();
   const navigate = useNavigate();
-  const [template, setTemplate] = useState(null);
-  const [location, setLocation] = useState(null);
-  const [supplierProducts, setSupplierProducts] = useState([]);
-  const [outlets, setOutlets] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
-  const [search, setSearch] = useState("");
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [selectedOutletId, setSelectedOutletId] = useState("");
-  const [activeOutletFilter, setActiveOutletFilter] = useState("");
-  const [isEditMode, setIsEditMode] = useState(false);
-  const [confirmDeleteItem, setConfirmDeleteItem] = useState(null);
-  const [draggedItemKey, setDraggedItemKey] = useState("");
-  const [dragOverItemKey, setDragOverItemKey] = useState("");
-  const [isSavingOrder, setIsSavingOrder] = useState(false);
-
-  const today = useMemo(
-    () => new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }),
-    []
-  );
-
-  const handleLogout = async () => {
-    await signOut(auth);
-    sessionStorage.clear();
-    window.location.href = "/login";
-  };
-
-  const load = async () => {
-    if (!hotelUid || !locationId || !templateId) return;
-    setLoading(true);
-    const [templateData, locationData, products, outletList] = await Promise.all([
-      getLocationStockTemplateById(hotelUid, locationId, templateId),
-      getLocationById(hotelUid, locationId),
-      getSupplierProducts(hotelUid),
-      getOutlets(hotelUid),
-    ]);
-    setTemplate(templateData);
-    setLocation(locationData);
-    setSupplierProducts(Array.isArray(products) ? products : products.products || []);
-    setOutlets(outletList);
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    load();
+  const canUpdate = usePermission("locations", "update"), canReadCatalog = usePermission("catalogproducts", "read"), canReadSupplier = usePermission("supplierproducts", "read");
+  const scopeKey = `${hotelUid}:${locationId}:${templateId}`;
+  const active = useRef({ key: scopeKey }); if (active.current.key !== scopeKey) active.current = { key: scopeKey };
+  const [selectedId, setSelectedId] = useState(""), [search, setSearch] = useState(""), [saving, setSaving] = useState(false), [error, setError] = useState("");
+  const load = useCallback(async () => {
+    const [template, location] = await Promise.all([getLocationStockTemplateById(hotelUid, locationId, templateId), getLocationById(hotelUid, locationId)]);
+    return { template, location };
   }, [hotelUid, locationId, templateId]);
-
-  const filteredProducts = supplierProducts.filter((product) => {
-    const text = `${product.supplierProductName || ""} ${product.supplierName || ""}`.toLowerCase();
-    return text.includes(search.toLowerCase());
-  });
-
-  const supplierProductsById = useMemo(
-    () => Object.fromEntries(supplierProducts.map((product) => [String(product.id || "").trim(), product])),
-    [supplierProducts]
-  );
-  const outletsById = useMemo(
-    () => Object.fromEntries(outlets.map((outlet) => [String(outlet.id || "").trim(), outlet])),
-    [outlets]
-  );
-
-  const visibleItems = useMemo(
-    () =>
-      (template?.items || [])
-        .map((item, originalIndex) => ({ ...item, originalIndex }))
-        .filter((item) => !activeOutletFilter || item.outletId === activeOutletFilter),
-    [activeOutletFilter, template?.items]
-  );
-
-  const handleDropItem = async (targetItem) => {
-    if (!draggedItemKey || draggedItemKey === targetItem.id || isSavingOrder) return;
-
-    const currentItems = template?.items || [];
-    const draggedVisibleIndex = visibleItems.findIndex((item) => getTemplateItemKey(item, item.originalIndex) === draggedItemKey);
-    const targetVisibleIndex = visibleItems.findIndex((item) => item.originalIndex === targetItem.originalIndex);
-
-    if (draggedVisibleIndex === -1 || targetVisibleIndex === -1) return;
-
-    const visibleOriginalIndexes = visibleItems.map((item) => item.originalIndex);
-    const reorderedVisibleItems = visibleOriginalIndexes.map((originalIndex) => currentItems[originalIndex]);
-    const [draggedItem] = reorderedVisibleItems.splice(draggedVisibleIndex, 1);
-    reorderedVisibleItems.splice(targetVisibleIndex, 0, draggedItem);
-
-    const nextItems = [...currentItems];
-    visibleOriginalIndexes.forEach((originalIndex, index) => {
-      nextItems[originalIndex] = reorderedVisibleItems[index];
-    });
-
-    setIsSavingOrder(true);
-    setTemplate((current) => (current ? { ...current, items: nextItems } : current));
-
-    try {
-      await updateLocationStockTemplateItems(hotelUid, locationId, templateId, nextItems);
-    } catch (error) {
-      await load();
-      throw error;
-    } finally {
-      setIsSavingOrder(false);
-      setDraggedItemKey("");
-      setDragOverItemKey("");
-    }
+  const query = useScopedAsync({ scopeKey, enabled: Boolean(hotelUid && locationId && templateId), load });
+  const loadProducts = useCallback(async () => {
+    const [catalog, supplier] = await Promise.all([
+      canReadCatalog ? collectPaginatedProducts((options) => getCatalogProducts(hotelUid, options)) : [],
+      canReadSupplier ? collectPaginatedProducts((options) => getSupplierProducts(hotelUid, options)) : [],
+    ]); return { catalog, supplier };
+  }, [hotelUid, canReadCatalog, canReadSupplier]);
+  const products = useScopedAsync({ scopeKey, enabled: Boolean(hotelUid && (canReadCatalog || canReadSupplier)), load: loadProducts });
+  useEffect(() => { active.current = { key: scopeKey }; setSelectedId(""); setSearch(""); setSaving(false); setError(""); return () => { active.current = { key: null }; }; }, [scopeKey]);
+  const template = query.data?.template, items = template?.items || [];
+  const catalog = products.data?.catalog || [], suppliers = products.data?.supplier || [];
+  const catalogById = useMemo(() => Object.fromEntries(catalog.map((item) => [item.id, item])), [catalog]);
+  const supplierById = useMemo(() => Object.fromEntries(suppliers.map((item) => [item.id, item])), [suppliers]);
+  const eligible = catalog.filter((product) => product.inventoryTracked === true && product.active !== false && product.archived !== true && !product.archivedAt && !items.some((item) => item.catalogProductId === product.id) && `${product.catalogProductName || product.name || ""} ${product.id}`.toLowerCase().includes(search.toLowerCase()));
+  const mutate = async (operation) => {
+    if (!canUpdate || saving || template?.archived === true) return;
+    const requested = active.current; setSaving(true); setError("");
+    try { await operation(); if (active.current === requested) { setSelectedId(""); await query.retry(); } }
+    catch (failure) { if (active.current === requested) setError(failure.message || "Unable to update template."); }
+    finally { if (active.current === requested) setSaving(false); }
   };
-
-  const rows = visibleItems.map((item) => {
-    const supplierProduct = supplierProductsById[String(item?.supplierProductId || "").trim()] || {};
-    const outlet = outletsById[String(item?.outletId || "").trim()] || {};
-    const baseUnitsPerPurchaseUnit = supplierProduct.baseUnitsPerPurchaseUnit || "-";
-    const baseUnit = supplierProduct.baseUnit || "-";
-    const purchaseUnit = supplierProduct.purchaseUnit || "-";
-    const content = `${baseUnitsPerPurchaseUnit} ${baseUnit} / ${purchaseUnit}`;
-    const itemKey = getTemplateItemKey(item, item.originalIndex);
-    return {
-      ...item,
-      id: itemKey,
-      supplierProductName: supplierProduct.supplierProductName || supplierProduct.name || item.supplierProductName || "-",
-      supplierName: supplierProduct.supplierName || item.supplierName || "-",
-      content,
-      pricePerPurchaseUnit: Number(supplierProduct.pricePerPurchaseUnit || item.pricePerPurchaseUnit || 0).toFixed(2),
-      outletName: outlet.name || item.outletName || item.outletId || "-",
-      dragHandle: isEditMode ? (
-        <span
-          className="inline-flex items-center gap-2 text-gray-500"
-          title="Drag stock template item to change the order"
-        >
-          <GripVertical className="h-4 w-4" />
-          <span className="text-xs">Drag</span>
-        </span>
-      ) : null,
-      actions: isEditMode ? (
-        <button
-          type="button"
-          className="inline-flex items-center justify-center rounded p-1 text-red-600 hover:bg-red-50"
-          title="Remove stock template item"
-          onClick={(event) => {
-            event.stopPropagation();
-            setConfirmDeleteItem(item);
-          }}
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-      ) : null,
-    };
-  });
-
-  const handleSaveItem = async () => {
-    if (!selectedProduct || !selectedOutletId) return;
-    await addLocationStockTemplateItem(hotelUid, locationId, templateId, {
-      supplierProductId: selectedProduct.id,
-      outletId: selectedOutletId,
-    });
-    setShowModal(false);
-    setSearch("");
-    setSelectedProduct(null);
-    setSelectedOutletId("");
-    await load();
-  };
-
-  const handleDeleteItem = async () => {
-    if (!confirmDeleteItem) return;
-    await removeLocationStockTemplateItem(
-      hotelUid,
-      locationId,
-      templateId,
-      confirmDeleteItem.supplierProductId,
-      confirmDeleteItem.outletId
-    );
-    setConfirmDeleteItem(null);
-    await load();
-  };
-
-  const itemColumns = [
-    ...(isEditMode ? [{ key: "dragHandle", label: "Order", sortable: false }] : []),
-    { key: "supplierProductName", label: "Supplier Product", sortable: false },
-    { key: "supplierName", label: "Supplier", sortable: false },
-    { key: "content", label: "Content", sortable: false },
-    { key: "pricePerPurchaseUnit", label: "Price per Purchase Unit", sortable: false },
-    { key: "outletName", label: "Outlet", sortable: false },
-    ...(isEditMode ? [{ key: "actions", label: "", sortable: false }] : []),
-  ];
-
-  return (
-    <div className="min-h-screen bg-canvas text-gray-900">
-      <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-3xl font-semibold">Stock Template Detail</h1>
-          <button
-            type="button"
-            onClick={() => navigate(`/settings/locations/${locationId}`)}
-            className="inline-flex items-center justify-center rounded border border-gray-300 p-2 text-gray-700 hover:bg-gray-100"
-            title="Back"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-        </div>
-
-        {loading ? (
-          <p className="text-gray-600">Loading stock template...</p>
-        ) : !template ? (
-          <Card>
-            <p className="text-gray-600">Stock template not found.</p>
-          </Card>
-        ) : (
-          <>
-            <Card className="flex flex-wrap items-center justify-between gap-4">
-              <h2 className="text-2xl font-semibold">
-                {location?.name || locationId || "-"} - {template.name || "-"}
-              </h2>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsEditMode((current) => !current)}
-                  className={`inline-flex items-center gap-2 rounded border px-3 py-2 text-sm ${
-                    isEditMode
-                      ? "border-blue-600 bg-blue-50 text-brand-800"
-                      : "border-gray-300 text-gray-700 hover:bg-gray-100"
-                  }`}
-                  title="Toggle edit mode"
-                >
-                  <Pencil className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowModal(true)}
-                  className="inline-flex items-center gap-2 rounded border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                >
-                  <Plus className="h-4 w-4" /> New Location Stock Item
-                </button>
-              </div>
-            </Card>
-
-            <Card>
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-lg font-semibold">Stock Template Items</h3>
-                <select
-                  value={activeOutletFilter}
-                  onChange={(event) => setActiveOutletFilter(event.target.value)}
-                  className="rounded border border-gray-300 px-3 py-2 text-sm"
-                >
-                  <option value="">All Outlets</option>
-                  {outlets.map((outlet) => (
-                    <option key={outlet.id} value={outlet.id}>
-                      {outlet.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <DataListTable
-                columns={itemColumns}
-                rows={rows}
-                emptyMessage="No stock template items yet."
-                getRowProps={(row) => ({
-                  draggable: isEditMode && !isSavingOrder,
-                  onDragStart: (event) => {
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData("text/plain", row.id);
-                    setDraggedItemKey(row.id);
-                  },
-                  onDragOver: (event) => {
-                    if (!isEditMode || isSavingOrder || draggedItemKey === row.id) return;
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "move";
-                    setDragOverItemKey(row.id);
-                  },
-                  onDragLeave: () => {
-                    setDragOverItemKey((current) => (current === row.id ? "" : current));
-                  },
-                  onDrop: async (event) => {
-                    event.preventDefault();
-                    await handleDropItem(row);
-                  },
-                  onDragEnd: () => {
-                    setDraggedItemKey("");
-                    setDragOverItemKey("");
-                  },
-                  className: isEditMode
-                    ? [
-                        "cursor-grab transition-colors active:cursor-grabbing",
-                        draggedItemKey === row.id ? "opacity-50" : "",
-                        dragOverItemKey === row.id ? "bg-blue-50" : "hover:bg-gray-50",
-                      ]
-                        .filter(Boolean)
-                        .join(" ")
-                    : "",
-                })}
-              />
-            </Card>
-          </>
-        )}
-      </PageContainer>
-
-      <Modal open={showModal} onClose={() => setShowModal(false)} title="New Location Stock Item">
-        <div className="space-y-3">
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search supplier product"
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-          />
-          <div className="max-h-56 overflow-y-auto rounded border border-gray-200">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50 text-left">
-                  <th className="px-2 py-2">Supplier Product</th>
-                  <th className="px-2 py-2">Supplier</th>
-                  <th className="px-2 py-2">Content</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredProducts.slice(0, 20).map((product) => {
-                  const content = `${product.baseUnitsPerPurchaseUnit || "-"} ${product.baseUnit || "-"} / ${
-                    product.purchaseUnit || "-"
-                  }`;
-                  const isSelected = selectedProduct?.id === product.id;
-                  return (
-                    <tr
-                      key={product.id}
-                      className={`cursor-pointer ${isSelected ? "bg-blue-50" : "hover:bg-gray-50"}`}
-                      onClick={() => setSelectedProduct(product)}
-                    >
-                      <td className="px-2 py-2">{product.supplierProductName || product.name || "-"}</td>
-                      <td className="px-2 py-2">{product.supplierName || "-"}</td>
-                      <td className="px-2 py-2">{content}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <select
-            value={selectedOutletId}
-            onChange={(e) => setSelectedOutletId(e.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-          >
-            <option value="">Select outlet</option>
-            {outlets.map((outlet) => (
-              <option key={outlet.id} value={outlet.id}>
-                {outlet.name}
-              </option>
-            ))}
-          </select>
-          <div className="flex justify-end gap-2">
-            <button type="button" className="rounded border border-gray-300 px-3 py-2 text-sm" onClick={() => setShowModal(false)}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="rounded bg-brand-800 px-3 py-2 text-sm text-white disabled:opacity-60"
-              disabled={!selectedProduct || !selectedOutletId}
-              onClick={handleSaveItem}
-            >
-              Save
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal open={Boolean(confirmDeleteItem)} onClose={() => setConfirmDeleteItem(null)} title="Remove Stock Template Item">
-        <div className="space-y-3">
-          <p className="text-sm text-gray-700">
-            Are you sure you want to remove <span className="font-medium">{confirmDeleteItem?.supplierProductName || "this item"}</span> from this stock template?
-          </p>
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              className="rounded border border-gray-300 px-3 py-2 text-sm"
-              onClick={() => setConfirmDeleteItem(null)}
-            >
-              Cancel
-            </button>
-            <button type="button" className="rounded bg-red-600 px-3 py-2 text-sm text-white" onClick={handleDeleteItem}>
-              Remove
-            </button>
-          </div>
-        </div>
-      </Modal>
-    </div>
-  );
+  const move = (index, direction) => { const next = [...items], target = index + direction; if (target < 0 || target >= next.length) return; [next[index], next[target]] = [next[target], next[index]]; return mutate(() => updateLocationStockTemplateItems(hotelUid, locationId, templateId, next, template.revision ?? 0)); };
+  return <div className="min-h-screen bg-canvas text-gray-900"><HeaderBar today={new Date().toLocaleDateString()} onLogout={async () => { await signOut(auth); sessionStorage.clear(); window.location.href = "/login"; }} /><PageContainer className="space-y-6">
+    <div className="flex justify-between"><h1 className="text-3xl font-semibold">Stock Template Detail</h1><button onClick={() => navigate(`/settings/locations/${locationId}`)}>Back to location</button></div>
+    <PendingStockCommand kind="template" hotelUid={hotelUid} locationId={locationId} templateId={templateId} disabled={!canUpdate || saving} onComplete={query.retry} />
+    {query.loading && <p>Loading stock template...</p>}{query.error && <div role="alert"><p>{query.error.message}</p><button onClick={query.retry}>Retry template</button></div>}
+    {!query.loading && !query.error && !template && <Card>Stock template not found.</Card>}
+    {template && <><Card><h2 className="text-xl font-semibold">{query.data.location?.name || locationId} · {template.name}</h2><p className="mt-2 text-sm text-gray-600">Catalog products are counted once per physical location, irrespective of supplier or outlet. Legacy supplier entries remain visible and must have valid catalog links before a new count can start. Creating a count validates all sources and deduplicates linked catalog products.</p></Card>
+    <Card className="space-y-3">{items.length === 0 && <p>No stock template items yet.</p>}{items.map((item, index) => {
+      const supplier = supplierById[item.supplierProductId], product = catalogById[item.catalogProductId || supplier?.catalogProductId];
+      const label = product?.catalogProductName || product?.name || item.catalogProductId || supplier?.supplierProductName || item.supplierProductId || "Invalid item";
+      const unresolved = (!item.catalogProductId && !item.supplierProductId) || (!item.catalogProductId && products.data && (!supplier?.catalogProductId || !product));
+      return <div key={`${item.catalogProductId || item.supplierProductId}:${item.outletId || ""}:${index}`} className="flex flex-wrap items-center justify-between gap-3 rounded border p-3"><div><p className="font-semibold">{label}</p><p className="text-sm text-gray-500">{item.catalogProductId ? `Catalog · ${product?.baseUnit || "unit validated on count creation"}` : `Legacy supplier item · ${item.supplierProductId} · outlet ${item.outletId || "missing"}`}</p>{unresolved && <p role="alert" className="text-sm text-amber-700">Unresolved source. Repair the supplier catalog link or replace this item; it will not be silently omitted.</p>}</div><div className="flex gap-2"><button aria-label={`Move ${label} up`} disabled={!canUpdate || template.archived === true || saving || index === 0} onClick={() => move(index, -1)}>↑</button><button aria-label={`Move ${label} down`} disabled={!canUpdate || template.archived === true || saving || index === items.length - 1} onClick={() => move(index, 1)}>↓</button><button className="text-red-700" disabled={!canUpdate || template.archived === true || saving} onClick={() => mutate(() => removeLocationStockTemplateItem(hotelUid, locationId, templateId, item, undefined, template.revision ?? 0))}>Remove</button></div></div>;
+    })}</Card>
+    <Card className="space-y-3"><h3 className="font-semibold">Add catalog product</h3>{!canReadCatalog && <p>Catalog read permission is required to choose additional products.</p>}{products.error && <div role="alert"><p>{products.error.message}</p><button onClick={products.retry}>Retry product sources</button></div>}<label className="block text-sm">Search catalog<input aria-label="Search catalog" value={search} onChange={(event) => setSearch(event.target.value)} className="ml-2 rounded border px-3 py-2" /></label><select aria-label="Catalog product" value={selectedId} disabled={!canReadCatalog || products.loading || Boolean(products.error)} onChange={(event) => setSelectedId(event.target.value)} className="rounded border px-3 py-2"><option value="">Select tracked catalog product</option>{eligible.map((product) => <option key={product.id} value={product.id}>{product.catalogProductName || product.name || product.id} ({product.baseUnit})</option>)}</select><button className="ml-2 rounded bg-brand-800 px-4 py-2 text-white disabled:opacity-50" disabled={!canUpdate || template.archived === true || !selectedId || saving || items.length >= 250} onClick={() => mutate(() => addLocationStockTemplateItem(hotelUid, locationId, templateId, { catalogProductId: selectedId }, template.revision ?? 0))}>Add product</button></Card></>}
+    {error && <p role="alert" className="text-red-700">{error}</p>}
+  </PageContainer></div>;
 }

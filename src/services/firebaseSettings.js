@@ -1,4 +1,4 @@
-import { functions, httpsCallable } from "../firebaseConfig";
+import { functions, httpsCallable, auth } from "../firebaseConfig";
 // src/services/firebaseSettings.js
 import {
   collection,
@@ -387,18 +387,15 @@ export async function getLocationStockTemplates(hotelUid, locationId) {
         items: Array.isArray(data.items) ? data.items : [],
       };
     })
+    .filter((template) => template.archived !== true)
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }));
 }
 
 export async function createLocationStockTemplate(hotelUid, locationId, templateName) {
-  if (!hotelUid || !locationId) throw new Error("hotelUid en locationId zijn verplicht");
-  const cleanedName = String(templateName || "").trim();
-  if (!cleanedName) throw new Error("Template name is verplicht");
-  const templatesCol = collection(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`);
-  const templateRef = doc(templatesCol);
-  const payload = { id: templateRef.id, name: cleanedName, items: [], createdAt: new Date() };
-  await setDoc(templateRef, payload);
-  return payload;
+  const name = String(templateName || "").trim();
+  if (!name) throw new Error("Template name is required.");
+  const result = await mutateStockTemplate(hotelUid, locationId, null, { action: "create", name }, 0);
+  return { id: result.templateId, name, items: [], inventoryPolicyVersion: 1, revision: result.revision };
 }
 
 export async function getLocationStockTemplateById(hotelUid, locationId, templateId) {
@@ -415,66 +412,87 @@ export async function getLocationStockTemplateById(hotelUid, locationId, templat
   };
 }
 
-export async function addLocationStockTemplateItem(hotelUid, locationId, templateId, itemInput) {
-  if (!hotelUid || !locationId || !templateId) throw new Error("hotelUid, locationId en templateId zijn verplicht");
-  const template = await getLocationStockTemplateById(hotelUid, locationId, templateId);
-  if (!template) throw new Error("Stock template niet gevonden");
-
-  const nextItem = {
-    supplierProductId: String(itemInput?.supplierProductId || "").trim(),
-    outletId: String(itemInput?.outletId || "").trim(),
-  };
-
-  if (!nextItem.supplierProductId || !nextItem.outletId) {
-    throw new Error("Supplier product en outlet zijn verplicht");
+function stockTemplateIdentity(item) {
+  if (typeof item?.catalogProductId === "string" && item.catalogProductId.trim()) {
+    return { catalogProductId: requireId(item.catalogProductId, "Catalog product ID") };
   }
-
-  const hasDuplicate = (template.items || []).some((item) => {
-    const supplierProductId = String(item?.supplierProductId || "").trim();
-    const outletId = String(item?.outletId || "").trim();
-    return supplierProductId === nextItem.supplierProductId && outletId === nextItem.outletId;
-  });
-  if (hasDuplicate) return;
-
-  const templateRef = doc(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`, templateId);
-  await updateDoc(templateRef, { items: [...template.items, nextItem], updatedAt: new Date() });
+  if (typeof item?.supplierProductId === "string" && typeof item?.outletId === "string") {
+    return { supplierProductId: requireId(item.supplierProductId, "Supplier product ID"), outletId: requireId(item.outletId, "Outlet ID") };
+  }
+  throw new Error("Each template item needs a catalog product or an explicit legacy supplier product and outlet. Invalid items were not discarded.");
 }
-
-
-export async function updateLocationStockTemplateItems(hotelUid, locationId, templateId, items) {
-  if (!hotelUid || !locationId || !templateId) {
-    throw new Error("hotelUid, locationId en templateId zijn verplicht");
-  }
-
-  const normalizedItems = Array.isArray(items)
-    ? items
-        .map((item) => ({
-          supplierProductId: String(item?.supplierProductId || "").trim(),
-          outletId: String(item?.outletId || "").trim(),
-        }))
-        .filter((item) => item.supplierProductId && item.outletId)
-    : [];
-
-  const templateRef = doc(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`, templateId);
-  await updateDoc(templateRef, { items: normalizedItems, updatedAt: new Date() });
+function stockTemplateKey(item) {
+  const identity = stockTemplateIdentity(item);
+  return identity.catalogProductId ? `catalog:${identity.catalogProductId}` : `supplier:${identity.supplierProductId}:${identity.outletId}`;
 }
-
-export async function removeLocationStockTemplateItem(hotelUid, locationId, templateId, supplierProductId, outletId) {
-  if (!hotelUid || !locationId || !templateId || !supplierProductId || !outletId) {
-    throw new Error("hotelUid, locationId, templateId, supplierProductId en outletId zijn verplicht");
+function templateCommandKey(hotelUid, locationId, templateId) {
+  if (!hotelUid || !locationId || !auth.currentUser?.uid) throw new Error("Sign in and select a hotel and location.");
+  return `hotelsuite.stockTemplate:${auth.currentUser.uid}:${hotelUid}:${locationId}:${templateId || "create"}`;
+}
+function savedTemplateCommand(hotelUid, locationId, templateId) {
+  const raw = sessionStorage.getItem(templateCommandKey(hotelUid, locationId, templateId));
+  if (!raw) return null;
+  try {
+    const saved = JSON.parse(raw);
+    if (typeof saved.fingerprint !== "string" || !saved.payload || saved.payload.hotelUid !== hotelUid || saved.payload.locationId !== locationId || (templateId && saved.payload.templateId !== templateId) || typeof saved.payload.requestId !== "string") throw new Error("Invalid command");
+    JSON.parse(saved.fingerprint);
+    return saved;
+  } catch { throw new Error("The saved template command cannot be read. Its outcome needs review; no replacement request was created."); }
+}
+function notifyTemplateCommand() { window.dispatchEvent(new Event("stock-template-command-changed")); }
+export function getPendingStockTemplateCommand(hotelUid, locationId, templateId = null) {
+  if (!hotelUid || !locationId || !auth.currentUser?.uid) return null;
+  return savedTemplateCommand(hotelUid, locationId, templateId)?.payload || null;
+}
+export async function retryPendingStockTemplateCommand(hotelUid, locationId, templateId = null) {
+  const saved = savedTemplateCommand(hotelUid, locationId, templateId);
+  if (!saved) throw new Error("No saved template command is available.");
+  return mutateStockTemplate(hotelUid, locationId, templateId, JSON.parse(saved.fingerprint), saved.payload.expectedRevision);
+}
+async function mutateStockTemplate(hotelUid, locationId, templateId, intent, expectedRevision) {
+  if (!hotelUid || !locationId || !auth.currentUser?.uid) throw new Error("Sign in and select a hotel and location.");
+  const storageKey = templateCommandKey(hotelUid, locationId, templateId);
+  const fingerprint = JSON.stringify(intent);
+  let pending = savedTemplateCommand(hotelUid, locationId, templateId);
+  if (pending && pending.fingerprint !== fingerprint) throw new Error("A previous template command is awaiting confirmation. Retry the same action before changing it.");
+  if (!pending) {
+    let revision = expectedRevision;
+    if (intent.action !== "create" && revision == null) {
+      const current = await getLocationStockTemplateById(hotelUid, locationId, templateId);
+      if (!current) throw new Error("Stock template not found.");
+      revision = current.revision ?? 0;
+    }
+    pending = { fingerprint, payload: { hotelUid, locationId, templateId: templateId || crypto.randomUUID(), ...intent,
+      expectedRevision: revision ?? 0, requestId: crypto.randomUUID() } };
+    sessionStorage.setItem(storageKey, JSON.stringify(pending)); notifyTemplateCommand();
   }
-  const template = await getLocationStockTemplateById(hotelUid, locationId, templateId);
-  if (!template) throw new Error("Stock template niet gevonden");
-
-  const normalizedSupplierProductId = String(supplierProductId || "").trim();
-  const normalizedOutletId = String(outletId || "").trim();
-  const nextItems = (template.items || []).filter((item) => {
-    const itemSupplierProductId = String(item?.supplierProductId || "").trim();
-    const itemOutletId = String(item?.outletId || "").trim();
-    return itemSupplierProductId !== normalizedSupplierProductId || itemOutletId !== normalizedOutletId;
-  });
-  const templateRef = doc(db, `hotels/${hotelUid}/locations/${locationId}/stockTemplates`, templateId);
-  await updateDoc(templateRef, { items: nextItems, updatedAt: new Date() });
+  try {
+    const result = await httpsCallable(functions, "mutateHotelStockTemplate")(pending.payload);
+    const data = result.data;
+    if (data?.hotelUid !== hotelUid || data.locationId !== locationId || data.templateId !== pending.payload.templateId || !Number.isSafeInteger(data.revision)) throw new Error("Stock template command response scope is invalid. Retry the same action.");
+    sessionStorage.removeItem(storageKey); notifyTemplateCommand();
+    return data;
+  } catch (error) {
+    if (error?.details?.stockTemplateRequestUncommitted === true) sessionStorage.removeItem(storageKey);
+    notifyTemplateCommand();
+    throw error;
+  }
+}
+export async function addLocationStockTemplateItem(hotelUid, locationId, templateId, itemInput, expectedRevision) {
+  const item = stockTemplateIdentity(itemInput);
+  if (!item.catalogProductId) throw new Error("New template items must reference catalog products.");
+  return mutateStockTemplate(hotelUid, locationId, templateId, { action: "add-item", item }, expectedRevision);
+}
+export async function updateLocationStockTemplateItems(hotelUid, locationId, templateId, items, expectedRevision) {
+  if (!Array.isArray(items) || items.length > 250) throw new Error("A template must contain at most 250 items.");
+  const normalizedItems = items.map(stockTemplateIdentity);
+  const keys = normalizedItems.map(stockTemplateKey);
+  if (new Set(keys).size !== keys.length) throw new Error("A stock template cannot contain duplicate product identities.");
+  return mutateStockTemplate(hotelUid, locationId, templateId, { action: "replace-items", items: normalizedItems }, expectedRevision);
+}
+export async function removeLocationStockTemplateItem(hotelUid, locationId, templateId, productIdentity, outletId, expectedRevision) {
+  const item = stockTemplateIdentity(typeof productIdentity === "object" ? productIdentity : { supplierProductId: productIdentity, outletId });
+  return mutateStockTemplate(hotelUid, locationId, templateId, { action: "remove-item", item }, expectedRevision);
 }
 
 // *** FILE IMPORT SETTINGS ***

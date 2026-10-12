@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ call: vi.fn(), getDoc: vi.fn(), getDocs: vi.fn() }));
-vi.mock("../firebaseConfig", () => ({ db: {}, functions: {}, collection: (_db, path) => ({ path }),
+vi.mock("../firebaseConfig", () => ({ db: {}, functions: {}, auth: { currentUser: { uid: "operator-a" } }, collection: (_db, path) => ({ path }),
   doc: (_db, path, id) => ({ path: id ? `${path}/${id}` : path }), getDoc: mocks.getDoc, getDocs: mocks.getDocs,
   httpsCallable: (_functions, name) => async (data) => ({ data: await mocks.call(name, data) }) }));
-import { createStockCount, finishStockCount, finishStockCountLocation, getStockCountSources, updateStockCountLocationCounts } from "./firebaseStockCounts";
+import { createStockCount, finishStockCount, finishStockCountLocation, getStockCountSources, getPendingCountCreation, retryPendingCountCreation, updateStockCountLocationCounts } from "./firebaseStockCounts";
 import { getHotelUserDisplayName } from "./firebaseUserManagement";
 beforeEach(() => {
   mocks.call.mockReset(); mocks.getDoc.mockReset(); mocks.getDocs.mockReset();
   sessionStorage.clear();
-  mocks.call.mockResolvedValue({ stockCountId: "stock-a", revision: 1, displayName: "Ada Lovelace" });
+  mocks.call.mockResolvedValue({ hotelUid: "hotel-a", inventoryPolicyVersion: 1, stockCountId: "stock-a", revision: 1, displayName: "Ada Lovelace" });
 });
 describe("server-owned stock mutation adapter", () => {
   it("sends identities and quantities without client actor, price or calculated total", async () => {
@@ -53,4 +53,45 @@ describe("server-owned stock mutation adapter", () => {
     mocks.call.mockResolvedValue({ locations: [], nextCursor: "repeat" });
     await expect(getStockCountSources("hotel-a")).rejects.toThrow("pagination did not advance");
   });
+});
+
+describe("catalog count boundaries", () => {
+  it("submits exact catalog quantities and optional estimate without supplier snapshots", async () => {
+    await updateStockCountLocationCounts("hotel-a", "stock-a", "store", [{ catalogProductId: "milk", quantity: 1.000001, isCounted: true, unitCost: null, currency: "EUR", totalValue: 999 }], "spoof", 4);
+    expect(mocks.call.mock.calls[0][1].countedItems).toEqual([{ catalogProductId: "milk", quantity: 1.000001, isCounted: true, unitCost: null }]);
+    await finishStockCountLocation("hotel-a", "stock-a", "store", [{ catalogProductId: "milk", quantity: 0, unitCost: 0 }], [{ catalogProductId: "milk", supplierProductId: "fake" }], "spoof", 5);
+    expect(mocks.call.mock.calls[1][1].templateItemsToAdd).toEqual([{ catalogProductId: "milk" }]);
+  });
+  it("preserves catalog snapshots and unknown value in count reads", async () => {
+    mocks.getDoc.mockResolvedValue({ exists: () => true, id: "stock-a", data: () => ({ name: "Opening", inventoryPolicyVersion: 1, currency: "USD", businessDate: "2026-10-12" }) });
+    mocks.getDocs.mockResolvedValue({ docs: [{ id: "store", data: () => ({ inventoryPolicyVersion: 1, currency: "USD", stockTemplate: { id: "t", items: [{ catalogProductId: "milk", baseUnit: "l" }] }, countedItems: [{ catalogProductId: "milk", catalogProductName: "Milk", quantity: 0, unitCost: null, totalValue: null, currency: "USD" }] }) }] });
+    const { getStockCountById } = await import("./firebaseStockCounts");
+    const result = await getStockCountById("hotel-a", "stock-a");
+    expect(result).toMatchObject({ inventoryPolicyVersion: 1, currency: "USD", countedValue: null });
+    expect(result.locations[0].countedItems[0]).toMatchObject({ catalogProductId: "milk", quantity: 0, unitCost: null, totalValue: null });
+    expect(result.locations[0].stockTemplate.items).toHaveLength(1);
+  });
+  it("does not replace an uncertain creation with changed input", async () => {
+    const input = { name: "Opening", type: "Ad Hoc", businessDate: "2026-10-12", locations: [{ locationId: "store", stockTemplateId: "t" }] };
+    mocks.call.mockRejectedValueOnce(new Error("Connection lost"));
+    await expect(createStockCount("hotel-a", input)).rejects.toThrow("Connection lost");
+    await expect(createStockCount("hotel-a", { ...input, name: "Different" })).rejects.toThrow("awaiting confirmation");
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    await createStockCount("hotel-a", input);
+    expect(mocks.call.mock.calls[0][1]).toEqual(mocks.call.mock.calls[1][1]);
+  });
+});
+
+it("replays original count creation after remount and keeps corrupted storage unreconciled", async () => {
+  const input = { name: "Original", type: "Weekly", locations: [{ locationId: "store", stockTemplateId: "template" }] };
+  mocks.call.mockRejectedValueOnce(new Error("Response lost after commit"));
+  await expect(createStockCount("hotel-a", input)).rejects.toThrow("Response lost");
+  expect(getPendingCountCreation("hotel-a")).toMatchObject(input);
+  await retryPendingCountCreation("hotel-a");
+  expect(mocks.call.mock.calls[0][1]).toEqual(mocks.call.mock.calls[1][1]);
+  expect(getPendingCountCreation("hotel-a")).toBeNull();
+  const key = "hotelsuite.stockCount.create:operator-a:hotel-a";
+  sessionStorage.setItem(key, "broken");
+  await expect(createStockCount("hotel-a", input)).rejects.toThrow("no replacement");
+  expect(sessionStorage.getItem(key)).toBe("broken");
 });

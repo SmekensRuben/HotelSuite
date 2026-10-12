@@ -1,24 +1,26 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
-import Modal from "../shared/Modal";
 import SupplierProductFormFields from "./SupplierProductFormFields";
+import PendingProductCommand from "../catalog/PendingProductCommand";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSupplierProduct, updateSupplierProduct } from "../../services/firebaseProducts";
 
-export default function SupplierProductEditPage() {
+function ScopedSupplierProductEditPage() {
   const navigate = useNavigate();
   const { t } = useTranslation("common");
   const { productId } = useParams();
   const { hotelUid } = useHotelContext();
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [showOverwriteModal, setShowOverwriteModal] = useState(false);
-  const [pendingPayload, setPendingPayload] = useState(null);
+  const [loadError, setLoadError] = useState("");
+
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const today = useMemo(
     () =>
@@ -37,50 +39,26 @@ export default function SupplierProductEditPage() {
   };
 
   useEffect(() => {
-    const loadProduct = async () => {
-      if (!hotelUid || !productId) return;
-      setLoading(true);
-      const data = await getSupplierProduct(hotelUid, productId);
-      setProduct(data);
-      setLoading(false);
-    };
-    loadProduct();
+    let active = true;
+    setLoading(true); setLoadError("");
+    if (!hotelUid || !productId) { setLoading(false); return; }
+    getSupplierProduct(hotelUid, productId)
+      .then((data) => { if (active) setProduct(data); })
+      .catch((error) => { if (active) setLoadError(error?.message || "Could not load this product."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [hotelUid, productId]);
 
   const handleUpdate = async (payload) => {
-    const actor = auth.currentUser?.uid || "unknown";
-    try {
-      const updatedProductId = await updateSupplierProduct(hotelUid, productId, payload, actor);
-      navigate(`/catalog/supplier-products/${updatedProductId}`);
-    } catch (error) {
-      if (error?.code === "invalid-supplier-id") {
-        window.alert("Selecteer een bestaande supplier.");
-        return;
-      }
-      if (error?.code === "supplier-product-exists") {
-        setPendingPayload(payload);
-        setShowOverwriteModal(true);
-        return;
-      }
-      throw error;
-    }
-  };
-
-  const handleConfirmOverwrite = async () => {
-    if (!pendingPayload) return;
-    const actor = auth.currentUser?.uid || "unknown";
-    const updatedProductId = await updateSupplierProduct(hotelUid, productId, pendingPayload, actor, {
-      overwriteExisting: true,
-    });
-    setShowOverwriteModal(false);
-    setPendingPayload(null);
-    navigate(`/catalog/supplier-products/${updatedProductId}`);
+    const updatedProductId = await updateSupplierProduct(hotelUid, productId, payload, undefined, { expectedRevision: product?.revision ?? 0 });
+    if (mounted.current) navigate(`/catalog/supplier-products/${updatedProductId}`);
   };
 
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
+        <PendingProductCommand hotelUid={hotelUid} collection="supplierproducts" productId={productId} onComplete={(result) => { if (mounted.current) navigate(`/catalog/supplier-products/${result.productId}`); }} />
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
@@ -104,7 +82,7 @@ export default function SupplierProductEditPage() {
           </div>
         </div>
 
-        {loading ? (
+        {loadError ? <p role="alert" className="text-red-700">{loadError}</p> : loading ? (
           <p className="text-gray-600">{t("products.loading")}</p>
         ) : !product ? (
           <Card>
@@ -114,6 +92,7 @@ export default function SupplierProductEditPage() {
           <>
             <Card>
               <SupplierProductFormFields
+            key={hotelUid}
                 initialData={product}
                 onSubmit={handleUpdate}
                 savingLabel={t("products.actions.saving")}
@@ -124,38 +103,12 @@ export default function SupplierProductEditPage() {
         )}
       </PageContainer>
 
-      <Modal
-        open={showOverwriteModal}
-        onClose={() => {
-          setShowOverwriteModal(false);
-          setPendingPayload(null);
-        }}
-        title="Supplier product bestaat al"
-      >
-        <p className="text-sm text-gray-700">
-          Er bestaat al een supplier product met dezelfde combinatie van Supplier ID en Supplier SKU.
-          Wil je dit bestaande product overschrijven?
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setShowOverwriteModal(false);
-              setPendingPayload(null);
-            }}
-            className="px-4 py-2 rounded border border-gray-300 text-gray-700"
-          >
-            Annuleren
-          </button>
-          <button
-            type="button"
-            onClick={handleConfirmOverwrite}
-            className="px-4 py-2 rounded bg-brand-800 text-white hover:bg-brand-950"
-          >
-            Overschrijven
-          </button>
-        </div>
-      </Modal>
     </div>
   );
+}
+
+export default function SupplierProductEditPage() {
+  const { hotelUid } = useHotelContext();
+  const { productId } = useParams();
+  return <ScopedSupplierProductEditPage key={`${hotelUid}:${productId}`} />;
 }

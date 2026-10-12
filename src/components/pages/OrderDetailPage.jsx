@@ -17,6 +17,7 @@ import { getSupplier } from "../../services/firebaseSuppliers";
 import { StickyNote } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
 import OrderReceivingPanel from "../orders/OrderReceivingPanel";
+import { formatOrderMoney, formatOrderSubtotal, formatOrderPriceBasis } from "../../utils/orderPricing";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -169,7 +170,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
   const items = Array.isArray(order.products) ? order.products : [];
 
   const rows = items.map((item, index) => {
-    const unitPrice = Number(item.pricePerPurchaseUnit || 0);
+    const unitPrice = item.pricePerPurchaseUnit;
     const qty = Number(item.qtyPurchaseUnits || 0);
     return {
       id: `${item.supplierProductId || "row"}-${index}`,
@@ -178,8 +179,9 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
       purchaseUnit: item.purchaseUnit || "-",
       content: formatContent(item),
       qty,
-      price: `${unitPrice.toFixed(2)} ${item.currency || order.currency || "EUR"}`,
-      subtotal: `${(unitPrice * qty).toFixed(2)} ${item.currency || order.currency || "EUR"}`,
+      price: formatOrderMoney(unitPrice, item.currency || order.currency),
+      priceBasisLabel: formatOrderPriceBasis(item.priceBasis),
+      subtotal: formatOrderSubtotal(unitPrice, item.qtyPurchaseUnits, item.currency || order.currency),
       note: String(item.note || "").trim(),
     };
   });
@@ -195,15 +197,16 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
     doc.setFontSize(11);
     doc.text(`Hotel: ${pdfHotelName || "-"}`, 14, 26);
     doc.text(`Outlet: ${outletName}`, 14, 32);
-    doc.text(`Status: ${order.status || "-"}`, 14, 62);
+    doc.text(`Status: ${order.status || "-"}`, 14, 68);
     doc.text(`Supplier: ${supplierName || order.supplierId || "-"}`, 14, 38);
     doc.text(`Delivery Date: ${order.deliveryDate || "-"}`, 14, 44);
     doc.text(`Created By: ${createdByName || "-"}`, 14, 50);
-    doc.text(`Total: ${Number(order.totalAmount || 0).toFixed(2)} ${order.currency || "EUR"}`, 14, 56);
+    doc.text(`Price basis: ${formatOrderPriceBasis(order.priceBasis)}`, 14, 62);
+    doc.text(`Quoted total: ${formatOrderMoney(order.totalAmount, order.currency)}`, 14, 56);
 
     autoTable(doc, {
-      startY: 64,
-      head: [["Product", "SKU", "Purchase Unit", "Content", "Qty", "Received", "Price", "Subtotal"]],
+      startY: 72,
+      head: [["Product", "SKU", "Purchase Unit", "Content", "Qty", "Received", "Package price", "Price basis", "Quoted subtotal"]],
       body: rows.map((row) => [
         row.supplierProductName,
         row.supplierSku,
@@ -212,13 +215,14 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
         String(row.qty),
         "__________",
         row.price,
+        row.priceBasisLabel,
         row.subtotal,
       ]),
       styles: { fontSize: 9 },
       headStyles: { fillColor: [31, 41, 55] },
     });
 
-    const tableFinalY = doc.lastAutoTable?.finalY || 64;
+    const tableFinalY = doc.lastAutoTable?.finalY || 72;
     const signatureStartY = tableFinalY + 22;
 
     doc.setFontSize(10);
@@ -266,8 +270,9 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
     { key: "purchaseUnit", label: "Purchase Unit" },
     { key: "content", label: "Content" },
     { key: "qty", label: "Qty" },
-    { key: "price", label: "Prijs" },
-    { key: "subtotal", label: "Subtotaal" },
+    { key: "price", label: "Package price" },
+    { key: "priceBasisLabel", label: "Price basis" },
+    { key: "subtotal", label: "Quoted subtotal" },
   ];
 
   return (
@@ -318,16 +323,18 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
         <Card>
           <div className="grid gap-3 md:grid-cols-3 text-sm">
             <p><span className="font-semibold">Status:</span> {order.status}</p>
+            <p><span className="font-semibold">Price basis:</span> {formatOrderPriceBasis(order.priceBasis)}</p>
             <p><span className="font-semibold">Dispatch:</span> {dispatchStatus || "-"}</p>
             <p><span className="font-semibold">Supplier:</span> {supplierName || order.supplierId || "-"}</p>
             <p><span className="font-semibold">Delivery Date:</span> {order.deliveryDate || "-"}</p>
             <p><span className="font-semibold">Created By:</span> {createdByName}</p>
             <p><span className="font-semibold">Created At:</span> {order.createdAtDate ? new Date(order.createdAtDate).toLocaleString() : "-"}</p>
-            <p><span className="font-semibold">Total:</span> {Number(order.totalAmount || 0).toFixed(2)} {order.currency || "EUR"}</p>
+            <p><span className="font-semibold">Quoted total:</span> {formatOrderMoney(order.totalAmount, order.currency)}</p>
           </div>
         </Card>
 
         {actionError && <p className="text-sm text-red-600">{actionError}</p>}
+        <p className="text-xs text-gray-600">Quoted amounts are shown as recorded. No VAT conversion is applied; missing historical price bases remain unknown.</p>
         <DataListTable columns={columns} rows={rows} emptyMessage="No order lines found." />
 
         {isCreated && (

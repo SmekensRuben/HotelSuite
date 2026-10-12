@@ -1,3 +1,4 @@
+import { normalizeOrderPriceBasis } from "../utils/orderPricing";
 import { functions, httpsCallable } from "../firebaseConfig";
 import {
   db,
@@ -28,12 +29,13 @@ function normalizeOrder(docSnap) {
     deliveryDate: data.deliveryDate || "",
     status: ORDER_STATUSES.includes(data.status) ? data.status : "Unknown",
     products: Array.isArray(data.products) ? data.products : [],
-    totalAmount: Number(data.totalAmount || 0),
+    totalAmount: typeof data.totalAmount === "number" && Number.isFinite(data.totalAmount) && data.totalAmount >= 0 ? data.totalAmount : null,
     supplierId: data.supplierId || "",
     outletId: data.outletId || "",
     outletName: data.outletName || "",
     accountNumber: data.accountNumber || "",
-    currency: data.currency || "EUR",
+    priceBasis: normalizeOrderPriceBasis(data.priceBasis),
+    currency: typeof data.currency === "string" && /^[A-Z]{3}$/.test(data.currency) ? data.currency : null,
   };
 }
 

@@ -8,6 +8,7 @@ vi.mock("../../hooks/usePermission", () => ({ usePermission: (_, action) => mock
 vi.mock("../../services/firebaseOrders", () => ({ getHotelOrderReceiving: mocks.read, recordHotelOrderReceipt: mocks.receive, reverseHotelOrderReceipt: mocks.reverse, finalizeHotelOrderReceiving: mocks.close }));
 const data = (extra = {}) => ({ hotelUid: "hotel-a", orderId: "order", policyVersion: 1, orderRevision: 7,
   availability: "available", releaseReady: true, status: "Ordered", receivingState: "partial", today: "2026-10-12",
+  inventoryLocations: [{ id: "store", name: "Store" }], inventoryLocationsTruncated: false,
   lines: [{ supplierProductId: "coffee", productName: "Coffee", purchaseUnit: "box", orderedQuantity: 2.5, acceptedQuantity: 1.25, rejectedQuantity: 0.25, outstandingQuantity: 1.25, excessQuantity: 0 }],
   events: [], nextCursor: null, ...extra });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -15,6 +16,7 @@ const fill = async () => {
   await screen.findByRole("button", { name: "Record goods receipt" });
   fireEvent.change(screen.getByLabelText("Delivery note / receipt reference"), { target: { value: "DN-2" } });
   fireEvent.change(screen.getByLabelText("Accepted Coffee"), { target: { value: "1.25" } });
+  fireEvent.change(screen.getByLabelText("Physical receiving location"), { target: { value: "store" } });
 };
 beforeEach(() => {
   vi.clearAllMocks(); sessionStorage.clear(); mocks.rights = ["receive"];

@@ -9,16 +9,15 @@ import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { finishStockCount, getStockCountById } from "../../services/firebaseStockCounts";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { formatInventoryValue } from "../inventory/inventoryFormatting";
 import { usePermission } from "../../hooks/usePermission";
 
 function formatCurrency(value) {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: "EUR",
-  }).format(Number(value || 0));
+  return `${new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0))} · legacy currency unknown`;
 }
 
 function buildItemKey(item) {
+  if (item?.catalogProductId) return `catalog:${item.catalogProductId}`;
   return `${String(item?.supplierProductId || "").trim()}::${String(item?.outletId || "").trim()}`;
 }
 
@@ -98,10 +97,9 @@ export default function StockCountDetailPage() {
             .map(buildItemKey)
             .filter((key) => key !== "::")
         ).size;
-        const countedValue = countedItems.reduce(
-          (sum, item) => sum + Number(item?.totalValue || 0),
-          0
-        );
+        const countedValue = stockCount.inventoryPolicyVersion === 1
+          ? location.countedValue ?? null
+          : countedItems.reduce((sum, item) => sum + Number(item?.totalValue || 0), 0);
         const templateItems = Array.isArray(location.stockTemplate?.items) ? location.stockTemplate.items : [];
         const totalCountableItems = getUniqueItemCount(templateItems, countedItems);
 
@@ -112,7 +110,7 @@ export default function StockCountDetailPage() {
           countedCount,
           countedCountLabel: `${countedCount} / ${totalCountableItems}`,
           countedValue,
-          countedValueLabel: formatCurrency(countedValue),
+          countedValueLabel: stockCount.inventoryPolicyVersion === 1 ? formatInventoryValue(countedValue, stockCount.currency) : formatCurrency(countedValue),
           status: getLocationStatus(location, countedCount),
         };
       }),
@@ -127,15 +125,20 @@ export default function StockCountDetailPage() {
           .map((item) => ({
             Location: location.locationName || location.locationId || "-",
             "Location ID": location.locationId || "",
+            "Catalog Product": item.catalogProductName || item.catalogProductId || "",
+            "Catalog Product ID": item.catalogProductId || "",
+            "Base Unit": item.baseUnit || "",
+            Currency: item.currency || stockCount.currency || "",
+            "Estimated Net Unit Cost": item.unitCost ?? "",
             Outlet: item.outletName || item.outletId || "-",
             "Supplier Product": item.supplierProductName || item.supplierProductId || "-",
             Supplier: item.supplierName || "-",
             Content: item.content || "-",
             "Supplier Product ID": item.supplierProductId || "",
             "Outlet ID": item.outletId || "",
-            Quantity: Number(item.quantity || 0),
-            "Price per Purchase Unit": Number(item.pricePerPurchaseUnit || 0),
-            "Total Value": Number(item.totalValue || 0),
+            Quantity: item.catalogProductId ? item.quantity ?? "" : Number(item.quantity || 0),
+            "Price per Purchase Unit": item.catalogProductId ? "" : Number(item.pricePerPurchaseUnit || 0),
+            "Total Value": item.catalogProductId ? item.totalValue ?? "" : Number(item.totalValue || 0),
             "Counted At": formatExportDate(item.countedAt),
             "Counted By": item.countedBy || "",
             Source: item.isTemplateItem === false ? "Added" : "Template",
@@ -152,7 +155,7 @@ export default function StockCountDetailPage() {
     XLSX.writeFile(workbook, `${sanitizeFileName(stockCount?.name || stockCountId)}-counted-products.xlsx`);
   };
 
-  const totalCountedValue = rows.reduce((sum, row) => sum + Number(row.countedValue || 0), 0);
+  const totalCountedValue = stockCount?.inventoryPolicyVersion === 1 && rows.some((row) => row.countedValue == null) ? null : rows.reduce((sum, row) => sum + Number(row.countedValue || 0), 0);
   const allLocationsFinished = rows.length > 0 && rows.every((row) => row.status === "Finished");
   const isStockCountFinished = stockCount?.status === "Finished";
   const canFinishStockCount = Boolean(stockCount) && allLocationsFinished && !isStockCountFinished;
@@ -194,7 +197,7 @@ export default function StockCountDetailPage() {
               onClick={handleExportCountedSupplierProducts}
               disabled={!countedSupplierProductRows.length}
               className="inline-flex items-center gap-2 rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
-              title={countedSupplierProductRows.length ? "Export counted supplier products" : "No counted supplier products to export"}
+              title={countedSupplierProductRows.length ? "Export counted products" : "No counted products to export"}
             >
               <Download className="h-4 w-4" /> Export Excel
             </button>
@@ -233,15 +236,16 @@ export default function StockCountDetailPage() {
               </div>
               <div>
                 <p className="text-sm text-gray-500">Counted Value</p>
-                <p className="font-semibold">{formatCurrency(totalCountedValue)}</p>
+                <p className="font-semibold">{stockCount.inventoryPolicyVersion === 1 ? formatInventoryValue(totalCountedValue, stockCount.currency) : formatCurrency(totalCountedValue)}</p>
               </div>
             </Card>
 
             <Card className="space-y-4">
+              <p className="text-sm text-gray-600">{stockCount.inventoryPolicyVersion === 1 ? `Catalog quantities by physical location · ${stockCount.businessDate || "business date unavailable"}. Values are operator cost estimates; missing costs stay unavailable. This is not live stock.` : "Historical supplier-based count. Original packaging and price snapshots are retained; currency was not captured by the legacy policy."}</p>
               <DataListTable
                 columns={[
                   { key: "locationName", label: "Location" },
-                  { key: "countedCountLabel", label: "Counted Supplier Products", sortValue: (row) => row.countedCount },
+                  { key: "countedCountLabel", label: stockCount.inventoryPolicyVersion === 1 ? "Counted Catalog Products" : "Counted Supplier Products", sortValue: (row) => row.countedCount },
                   { key: "countedValueLabel", label: "Counted Value", sortValue: (row) => row.countedValue },
                   { key: "status", label: "Status" },
                 ]}

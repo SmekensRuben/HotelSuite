@@ -10,6 +10,7 @@ import { getOrderById, updateOrder } from "../../services/firebaseOrders";
 import AsyncError from "../shared/AsyncError";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
+import { formatOrderMoney, formatOrderSubtotal, formatOrderPriceBasis } from "../../utils/orderPricing";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -99,7 +100,7 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
   }
 
   const rows = editableItems.map((item, index) => {
-    const unitPrice = Number(item.pricePerPurchaseUnit || 0);
+    const unitPrice = item.pricePerPurchaseUnit;
     const qty = Number(item.qtyPurchaseUnits || 0);
     return {
       id: `${item.supplierProductId || "row"}-${index}`,
@@ -108,8 +109,9 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
       purchaseUnit: item.purchaseUnit || "-",
       content: formatContent(item),
       qty,
-      price: `${unitPrice.toFixed(2)} ${item.currency || order.currency || "EUR"}`,
-      subtotal: `${(unitPrice * qty).toFixed(2)} ${item.currency || order.currency || "EUR"}`,
+      price: formatOrderMoney(unitPrice, item.currency || order.currency),
+      priceBasisLabel: formatOrderPriceBasis(item.priceBasis),
+      subtotal: formatOrderSubtotal(unitPrice, item.qtyPurchaseUnits, item.currency || order.currency),
       rowIndex: index,
     };
   });
@@ -136,8 +138,9 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
         />
       ),
     },
-    { key: "price", label: "Prijs" },
-    { key: "subtotal", label: "Subtotaal" },
+    { key: "price", label: "Package price" },
+    { key: "priceBasisLabel", label: "Price basis" },
+    { key: "subtotal", label: "Quoted subtotal" },
     {
       key: "actions",
       label: "Actions",
@@ -187,6 +190,7 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
         <Card>
           <div className="grid gap-3 md:grid-cols-3 text-sm">
             <p><span className="font-semibold">Status:</span> {order.status}</p>
+            <p><span className="font-semibold">Price basis:</span> {formatOrderPriceBasis(order.priceBasis)}</p>
             <p><span className="font-semibold">Supplier:</span> {order.supplierId || "-"}</p>
             <p><span className="font-semibold">Created By:</span> {createdByName}</p>
             <label className="md:col-span-2 text-sm font-semibold text-gray-700">
@@ -196,6 +200,7 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
           </div>
         </Card>
 
+        <p className="text-xs text-gray-600">Quoted amounts are shown as recorded. No VAT conversion is applied; missing historical price bases remain unknown.</p>
         <DataListTable columns={columns} rows={rows} emptyMessage="Geen orderregels meer." />
       </PageContainer>
     </div>

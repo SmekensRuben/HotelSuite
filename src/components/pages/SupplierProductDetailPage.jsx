@@ -6,6 +6,7 @@ import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
+import PendingProductCommand from "../catalog/PendingProductCommand";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { deleteSupplierProduct, getSupplierProduct } from "../../services/firebaseProducts";
@@ -74,7 +75,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
     if (!mounted.current || !hotelUid || !productId || !canDeleteProducts || deleting) return;
     setDeleting(true); setDeleteError(null);
     try {
-      await deleteSupplierProduct(hotelUid, productId);
+      await deleteSupplierProduct(hotelUid, productId, product?.revision ?? 0);
       if (mounted.current) { setShowDeleteModal(false); navigate("/catalog/supplier-products"); }
     } catch (error) { if (mounted.current) setDeleteError(error); }
     finally { if (mounted.current) setDeleting(false); }
@@ -84,6 +85,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
+        <PendingProductCommand hotelUid={hotelUid} collection="supplierproducts" productId={productId} onComplete={() => { if (mounted.current) navigate("/catalog/supplier-products"); }} />
         <AsyncError error={query.error} onRetry={query.retry} label="Could not load product." />
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -113,7 +115,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
                   ? "border-red-200 text-red-700 hover:bg-red-50"
                   : "border-gray-200 text-gray-500 cursor-not-allowed"
               }`}
-              title={t("products.actions.delete")}
+              title="Archive"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -146,10 +148,10 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
                       <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">Supplier: {product.supplierName || product.supplierId || "-"}</span>
                       <span
                         className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
-                          product.active !== false ? "bg-emerald-400/20 text-emerald-200" : "bg-white/10 text-slate-200"
+                          product.active !== false && product.archived !== true ? "bg-emerald-400/20 text-emerald-200" : "bg-white/10 text-slate-200"
                         }`}
                       >
-                        {product.active !== false ? t("products.status.active") : t("products.status.inactive")}
+                        {product.active !== false && product.archived !== true ? t("products.status.active") : t("products.status.inactive")}
                       </span>
                     </div>
                   </div>
@@ -162,7 +164,9 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
                     <DetailField label="Supplier SKU" value={product.supplierSku} />
                     <DetailField label="Supplier" value={product.supplierName || product.supplierId} />
                     <DetailField label="Pricing Model" value={product.pricingModel || "Per Purchase Unit"} />
-                    <DetailField label="Currency" value={product.currency || "EUR"} />
+                    <DetailField label="Currency" value={product.currency || "Unknown"} />
+                  <DetailField label="Price basis" value={product.priceBasis || "Unknown"} />
+                  <DetailField label="VAT rate" value={product.vatRate == null ? "Unknown / not applicable" : `${product.vatRate * 100}%`} />
                   </div>
 
                   <div>
@@ -187,20 +191,22 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
               <Card className="border-0 shadow-md shadow-slate-200/70">
                 <h2 className="text-lg font-semibold mb-3">Pricing</h2>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <DetailField label="Currency" value={product.currency || "EUR"} />
+                  <DetailField label="Currency" value={product.currency || "Unknown"} />
+                  <DetailField label="Price basis" value={product.priceBasis || "Unknown"} />
+                  <DetailField label="VAT rate" value={product.vatRate == null ? "Unknown / not applicable" : `${product.vatRate * 100}%`} />
                   <DetailField label="Pricing Model" value={product.pricingModel || "Per Purchase Unit"} />
                   <DetailField label="Base Unit" value={product.baseUnit} />
                   {product.pricingModel === "Per Base Unit" ? (
                     <>
                       <DetailField label="Purchase Unit" value={product.purchaseUnit} />
-                      <DetailField label="Price per Base Unit" value={product.pricePerBaseUnit} />
+                      <DetailField label="Price per Base Unit" value={product.pricePerBaseUnit == null ? "Unknown" : product.pricePerBaseUnit} />
                       <DetailField label="Base Units per Purchase Unit" value={product.baseUnitsPerPurchaseUnit} />
-                      <DetailField label="Price per Purchase Unit" value={product.pricePerPurchaseUnit} />
+                      <DetailField label="Price per Purchase Unit" value={product.pricePerPurchaseUnit == null ? "Unknown" : product.pricePerPurchaseUnit} />
                     </>
                   ) : (
                     <>
                       <DetailField label="Purchase Unit" value={product.purchaseUnit} />
-                      <DetailField label="Price per Purchase Unit" value={product.pricePerPurchaseUnit} />
+                      <DetailField label="Price per Purchase Unit" value={product.pricePerPurchaseUnit == null ? "Unknown" : product.pricePerPurchaseUnit} />
                       <DetailField label="Base Units per Purchase Unit" value={product.baseUnitsPerPurchaseUnit} />
                     </>
                   )}
@@ -215,24 +221,8 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
                 </div>
               </Card>
 
-              {product.hasVariants && Array.isArray(product.variants) && product.variants.length > 0 && (
-                <Card className="lg:col-span-2">
-                  <h2 className="text-lg font-semibold mb-3">Variants</h2>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {product.variants.map((variant, index) => (
-                      <div key={index} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-                        <p className="text-sm font-semibold text-gray-900 mb-2">Variant {index + 1}</p>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <DetailField label="Weight per Base Unit" value={variant.perBaseUnit} />
-                          <DetailField label="Packages" value={variant.packages} />
-                          <DetailField label="Base Units per Purchase Unit" value={variant.baseUnitsPerPurchaseUnit} />
-                          <DetailField label="Price per Purchase Unit" value={variant.pricePerPurchaseUnit} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              )}
+              {product.hasVariants && !product.purchaseOptions?.length && <Card className="lg:col-span-2"><p className="text-amber-800">Legacy variants require review in Edit before this offer can be ordered.</p></Card>}
+              {product.purchaseOptions?.length > 0 && <Card className="lg:col-span-2"><h2 className="font-semibold mb-3">Additional purchase options</h2><div className="grid gap-3 md:grid-cols-2">{product.purchaseOptions.map((option) => <div key={option.id} className="rounded border p-3"><DetailField label="Package" value={option.purchaseUnit} /><DetailField label={`Content (${product.baseUnit})`} value={option.baseUnitsPerPurchaseUnit} /><DetailField label={`Price (${product.currency || "unknown currency"})`} value={option.pricePerPurchaseUnit == null ? "Unknown" : option.pricePerPurchaseUnit} /></div>)}</div></Card>}
 
               <Card className="lg:col-span-2 border-0 shadow-md shadow-slate-200/70">
                 <h2 className="text-lg font-semibold mb-3">Audit</h2>
@@ -252,10 +242,10 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
       <Modal
         open={showDeleteModal}
         onClose={() => setShowDeleteModal(false)}
-        title={t("products.deleteModal.title")}
+        title={"Archive product"}
       >
-        <p className="text-sm text-gray-700">{t("products.deleteModal.message")}</p>
-        <AsyncError error={deleteError} onRetry={handleDeleteProduct} label="Could not delete this product." />
+        <p className="text-sm text-gray-700">Archive this product? Its stable identity and historical order/count references are preserved.</p>
+        <AsyncError error={deleteError} onRetry={handleDeleteProduct} label="Could not archive this product." />
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
@@ -274,7 +264,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
                 : "bg-gray-300 text-gray-500 cursor-not-allowed"
             }`}
           >
-            {t("products.actions.delete")}
+            Archive
           </button>
         </div>
       </Modal>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
@@ -7,21 +7,21 @@ import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { usePermission } from "../../hooks/usePermission";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { formatInventoryValue } from "../inventory/inventoryFormatting";
 import { getStockCounts } from "../../services/firebaseStockCounts";
 
 function formatCurrency(value) {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: "EUR",
-  }).format(Number(value || 0));
+  return `${new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0))} · legacy currency unknown`;
 }
 
 export default function StockCountsPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
   const canCreateStockCounts = usePermission("stockcounts", "create");
-  const [stockCounts, setStockCounts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const loadCounts = useCallback(() => getStockCounts(hotelUid), [hotelUid]);
+  const { data, loading, error, retry } = useScopedAsync({ scopeKey: hotelUid, enabled: Boolean(hotelUid), load: loadCounts });
+  const stockCounts = data || [];
 
   const today = useMemo(
     () =>
@@ -39,23 +39,11 @@ export default function StockCountsPage() {
     window.location.href = "/login";
   };
 
-  useEffect(() => {
-    const loadStockCounts = async () => {
-      if (!hotelUid) return;
-      setLoading(true);
-      const result = await getStockCounts(hotelUid);
-      setStockCounts(result);
-      setLoading(false);
-    };
-
-    loadStockCounts();
-  }, [hotelUid]);
-
   const rows = useMemo(
     () =>
       stockCounts.map((stockCount) => ({
         ...stockCount,
-        countedValueLabel: formatCurrency(stockCount.countedValue),
+        countedValueLabel: stockCount.inventoryPolicyVersion === 1 ? formatInventoryValue(stockCount.countedValue, stockCount.currency) : formatCurrency(stockCount.countedValue),
       })),
     [stockCounts]
   );
@@ -77,7 +65,7 @@ export default function StockCountsPage() {
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
             <h1 className="text-3xl font-semibold">Stock Counts</h1>
-            <p className="text-gray-600 mt-1">Manage stock count runs for selected locations.</p>
+            <p className="text-gray-600 mt-1">Count catalog quantities per physical location. Historical supplier-based counts remain available.</p>
           </div>
           <button
             onClick={() => navigate("/catalog/stock-counts/new")}
@@ -93,6 +81,7 @@ export default function StockCountsPage() {
           </button>
         </div>
 
+        {error && <div role="alert"><p>{error.message || "Unable to load stock counts."}</p><button onClick={retry}>Retry</button></div>}
         {loading ? (
           <p className="text-gray-600">Loading stock counts...</p>
         ) : (

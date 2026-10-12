@@ -1,21 +1,26 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import ProductFormFields from "./ProductFormFields";
+import PendingProductCommand from "../catalog/PendingProductCommand";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getCatalogProduct, updateCatalogProduct } from "../../services/firebaseProducts";
 
-export default function ProductEditPage() {
+function ScopedProductEditPage() {
   const navigate = useNavigate();
   const { t } = useTranslation("common");
   const { productId } = useParams();
   const { hotelUid } = useHotelContext();
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const today = useMemo(
     () =>
@@ -34,26 +39,27 @@ export default function ProductEditPage() {
   };
 
   useEffect(() => {
-    const loadProduct = async () => {
-      if (!hotelUid || !productId) return;
-      setLoading(true);
-      const data = await getCatalogProduct(hotelUid, productId);
-      setProduct(data);
-      setLoading(false);
-    };
-    loadProduct();
+    let active = true;
+    setLoading(true); setLoadError("");
+    if (!hotelUid || !productId) { setLoading(false); return; }
+    getCatalogProduct(hotelUid, productId)
+      .then((data) => { if (active) setProduct(data); })
+      .catch((error) => { if (active) setLoadError(error?.message || "Could not load this product."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [hotelUid, productId]);
 
   const handleUpdate = async (payload) => {
     const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-    await updateCatalogProduct(hotelUid, productId, payload, actor);
-    navigate(`/catalog/products/${productId}`);
+    await updateCatalogProduct(hotelUid, productId, payload, actor, { expectedRevision: product?.revision ?? 0 });
+    if (mounted.current) navigate(`/catalog/products/${productId}`);
   };
 
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
+        <PendingProductCommand hotelUid={hotelUid} collection="catalogproducts" productId={productId} onComplete={(result) => { if (mounted.current) navigate(`/catalog/products/${result.productId}`); }} />
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
@@ -77,7 +83,7 @@ export default function ProductEditPage() {
           </div>
         </div>
 
-        {loading ? (
+        {loadError ? <p role="alert" className="text-red-700">{loadError}</p> : loading ? (
           <p className="text-gray-600">{t("products.loading")}</p>
         ) : !product ? (
           <Card>
@@ -123,4 +129,10 @@ export default function ProductEditPage() {
       </PageContainer>
     </div>
   );
+}
+
+export default function ProductEditPage() {
+  const { hotelUid } = useHotelContext();
+  const { productId } = useParams();
+  return <ScopedProductEditPage key={`${hotelUid}:${productId}`} />;
 }

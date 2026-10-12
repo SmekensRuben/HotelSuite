@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import PendingStockCommand from "../inventory/PendingStockCommand";
 import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
@@ -18,6 +19,7 @@ export default function StockCountCreatePage() {
   const { hotelUid } = useHotelContext();
   const activeScope = useRef({ key: hotelUid });
   if (activeScope.current.key !== hotelUid) activeScope.current = { key: hotelUid };
+  const [businessDate, setBusinessDate] = useState("");
   const [formValues, setFormValues] = useState(initialValues);
   const [locationRows, setLocationRows] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -59,7 +61,7 @@ export default function StockCountCreatePage() {
 
   useEffect(() => {
     activeScope.current = { key: hotelUid };
-    setSaving(false); setError("");
+    setSaving(false); setError(""); setBusinessDate("");
     return () => { activeScope.current = { key: null }; };
   }, [hotelUid]);
 
@@ -108,6 +110,7 @@ export default function StockCountCreatePage() {
 
       await createStockCount(hotelUid, {
         ...formValues,
+        ...(businessDate ? { businessDate } : {}),
         locations,
       });
       if (activeScope.current === requestedScope) navigate("/catalog/stock-counts");
@@ -126,14 +129,16 @@ export default function StockCountCreatePage() {
           <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
           <h1 className="text-3xl font-semibold">Create Stock Count</h1>
           <p className="text-gray-600 mt-1">
-            Select the locations that need to be counted and choose a stock count template per location.
+            Select physical locations and templates. New counts use catalog base units; legacy supplier template links are validated and deduplicated.
           </p>
         </div>
 
+        <PendingStockCommand kind="count" hotelUid={hotelUid} disabled={saving} onComplete={() => navigate("/catalog/stock-counts")} />
         {sourceError && <div role="alert"><p>{sourceError.message || "Unable to load stock sources."}</p><button type="button" onClick={retry}>Retry</button></div>}
         <Card>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="grid gap-4 md:grid-cols-2">
+              <label className="text-sm font-medium">Business date (optional)<input aria-label="Business date" type="date" value={businessDate} onChange={(event) => setBusinessDate(event.target.value)} className="mt-1 block w-full rounded border px-3 py-2" /><span className="block text-xs text-gray-500">Blank uses today in the hotel time zone. Posting checkpoints determine receipt comparisons.</span></label>
               <div>
                 <label htmlFor="stock-count-name" className="block text-sm font-medium text-gray-700 mb-1">
                   Name

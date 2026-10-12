@@ -7,7 +7,7 @@ import ProductDetailPage from "./ProductDetailPage";
 import SupplierProductDetailPage from "./SupplierProductDetailPage";
 import SupplierDetailPage from "./SupplierDetailPage";
 
-const mocks = vi.hoisted(() => ({ hotel: "hotel-a", id: "record-a", permissions: [], order: vi.fn(), catalog: vi.fn(), supplierProduct: vi.fn(), supplier: vi.fn(), deleteCatalog: vi.fn(), deleteSupplierProduct: vi.fn(), deleteSupplier: vi.fn(), display: vi.fn(), approvers: vi.fn(), update: vi.fn(), navigate: vi.fn() }));
+const mocks = vi.hoisted(() => ({ hotel: "hotel-a", id: "record-a", permissions: [], order: vi.fn(), catalog: vi.fn(), supplierProduct: vi.fn(), supplier: vi.fn(), deleteCatalog: vi.fn(), deleteSupplierProduct: vi.fn(), deleteSupplier: vi.fn(), display: vi.fn(), approvers: vi.fn(), update: vi.fn(), navigate: vi.fn(), pdfText: vi.fn(), pdfTable: vi.fn(), pdfSave: vi.fn() }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, hotelName: mocks.hotel, permissions: mocks.permissions, subscriptionActive: true, subscription: { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null }, isPlatformAdmin: false }) }));
 vi.mock("react-router-dom", () => ({ useParams: () => ({ orderId: mocks.id, productId: mocks.id, supplierId: mocks.id }), useNavigate: () => mocks.navigate }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key) => key }) }));
@@ -16,10 +16,18 @@ vi.mock("../../firebaseConfig", () => ({ auth: { currentUser: { uid: "employee" 
 vi.mock("../../services/firebaseOrders", () => ({ getOrderById: mocks.order, updateOrder: mocks.update, deleteOrder: vi.fn(), confirmOrder: vi.fn(), reviewOrderDelivery: vi.fn(),
   getHotelOrderReceiving: vi.fn().mockResolvedValue({ availability: "not-started", releaseReady: true, reason: "Receiving starts after supplier dispatch is confirmed.", events: [], nextCursor: null }),
   recordHotelOrderReceipt: vi.fn(), reverseHotelOrderReceipt: vi.fn(), finalizeHotelOrderReceiving: vi.fn() }));
-vi.mock("../../services/firebaseProducts", () => ({ getCatalogProduct: mocks.catalog, getSupplierProduct: mocks.supplierProduct, deleteCatalogProduct: mocks.deleteCatalog, deleteSupplierProduct: mocks.deleteSupplierProduct }));
+vi.mock("../../services/firebaseProducts", () => ({ getCatalogProduct: mocks.catalog, getSupplierProduct: mocks.supplierProduct, deleteCatalogProduct: mocks.deleteCatalog, deleteSupplierProduct: mocks.deleteSupplierProduct, getPendingProductCommand: vi.fn().mockReturnValue(null), retryPendingProductCommand: vi.fn() }));
 vi.mock("../../services/firebaseSuppliers", () => ({ getSupplier: mocks.supplier, deleteSupplier: mocks.deleteSupplier }));
 vi.mock("../../services/firebaseUserManagement", () => ({ getHotelUserDisplayName: mocks.display }));
 vi.mock("../../services/firebaseSettings", () => ({ getOutletApprovers: mocks.approvers }));
+vi.mock("jspdf", () => ({ jsPDF: class {
+  setFontSize() {}
+  text(...args) { mocks.pdfText(...args); }
+  line() {}
+  save(...args) { mocks.pdfSave(...args); }
+} }));
+vi.mock("jspdf-autotable", () => ({ default: mocks.pdfTable }));
+
 
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const record = (name = "Current record", overrides = {}) => ({ id: mocks.id, name, supplierProductName: name, status: "Created", deliveryDate: "2027-05-01", createdBy: "creator", updatedBy: "editor", products: [{ supplierProductId: "product", supplierProductName: name, qtyPurchaseUnits: 3, pricePerPurchaseUnit: 2 }], ...overrides });
@@ -152,9 +160,9 @@ describe("scoped procurement records and optional staff labels", () => {
   });
 
   const deletionCases = [
-    ["catalog product", ProductDetailPage, "deleteCatalog", "catalogproducts", "products.actions.delete"],
-    ["supplier product", SupplierProductDetailPage, "deleteSupplierProduct", "supplierproducts", "products.actions.delete"],
-    ["supplier", SupplierDetailPage, "deleteSupplier", "suppliers", "Delete supplier"],
+    ["catalog product archival", ProductDetailPage, "deleteCatalog", "catalogproducts", "Archive"],
+    ["supplier product archival", SupplierProductDetailPage, "deleteSupplierProduct", "supplierproducts", "Archive"],
+    ["supplier deletion", SupplierDetailPage, "deleteSupplier", "suppliers", "Delete supplier"],
   ];
   const confirmDeletion = (title) => {
     fireEvent.click(screen.getByTitle(title));
@@ -163,14 +171,14 @@ describe("scoped procurement records and optional staff labels", () => {
     fireEvent.click(buttons.at(-1));
   };
 
-  it.each(deletionCases)("ignores %s deletion completion after a hotel change", async (_, Component, deleter, feature, title) => {
+  it.each(deletionCases)("ignores %s completion after a hotel change", async (_, Component, deleter, feature, title) => {
     mocks.permissions = [`${feature}.read`, `${feature}.delete`];
     const pending = deferred();
     mocks[deleter].mockReturnValueOnce(pending.promise);
     const view = render(<Component />);
     await screen.findAllByText("Current record");
     confirmDeletion(title);
-    await waitFor(() => expect(mocks[deleter]).toHaveBeenCalledWith("hotel-a", "record-a"));
+    await waitFor(() => expect(mocks[deleter]).toHaveBeenCalledWith(...(feature === "suppliers" ? ["hotel-a", "record-a"] : ["hotel-a", "record-a", 0])));
     mocks.hotel = "hotel-b";
     view.rerender(<Component />);
     await screen.findAllByText("Current record");
@@ -179,15 +187,41 @@ describe("scoped procurement records and optional staff labels", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it.each(deletionCases)("shows %s deletion failures and allows retry in the reviewed scope", async (_, Component, deleter, feature, title) => {
+  it.each(deletionCases)("shows %s failures and allows retry in the reviewed scope", async (_, Component, deleter, feature, title) => {
     mocks.permissions = [`${feature}.read`, `${feature}.delete`];
-    mocks[deleter].mockRejectedValueOnce(new Error("Delete offline")).mockResolvedValueOnce();
+    mocks[deleter].mockRejectedValueOnce(Object.assign(new Error("Command rejected"), feature === "suppliers" ? {} : { details: { productRequestUncommitted: true } })).mockResolvedValueOnce();
     render(<Component />);
     await screen.findAllByText("Current record");
     confirmDeletion(title);
-    expect(await screen.findByRole("alert")).toHaveTextContent("Delete offline");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Command rejected");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalledTimes(1));
-    expect(mocks[deleter]).toHaveBeenNthCalledWith(2, "hotel-a", "record-a");
+    expect(mocks[deleter]).toHaveBeenNthCalledWith(2, ...(feature === "suppliers" ? ["hotel-a", "record-a"] : ["hotel-a", "record-a", 0]));
   });
+  it("labels gross order quotes and PDF output without applying VAT twice", async () => {
+    mocks.permissions = ["orders.read"];
+    mocks.order.mockResolvedValue(record("Milk", { priceBasis: "gross", currency: "EUR", totalAmount: 363, products: [{ supplierProductId: "milk", supplierProductName: "Milk", qtyPurchaseUnits: 3, pricePerPurchaseUnit: 121, priceBasis: "gross", vatRate: 0.21 }] }));
+    render(<OrderDetailPage />);
+    expect((await screen.findAllByText("Gross (including VAT)")).length).toBeGreaterThan(0);
+    expect(screen.getByText("121.00 EUR")).toBeInTheDocument();
+    expect(screen.queryByText("100.00 EUR")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Download PDF" }));
+    await waitFor(() => expect(mocks.pdfSave).toHaveBeenCalled());
+    expect(mocks.pdfText).toHaveBeenCalledWith("Price basis: Gross (including VAT)", 14, 62);
+    expect(mocks.pdfText).toHaveBeenCalledWith("Quoted total: 363.00 EUR", 14, 56);
+    expect(mocks.pdfTable.mock.calls[0][1].body[0].slice(-3)).toEqual(["121.00 EUR", "Gross (including VAT)", "363.00 EUR"]);
+  });
+
+  it("shows missing historical price bases as unknown while editing quoted quantities", async () => {
+    mocks.permissions = ["orders.read", "orders.update"];
+    mocks.order.mockResolvedValue(record("Historical line", { currency: "EUR", totalAmount: 6 }));
+    render(<OrderEditPage />);
+    expect((await screen.findAllByText("Unknown (VAT treatment unavailable)")).length).toBeGreaterThan(0);
+    expect(screen.getByText("2.00 EUR")).toBeInTheDocument();
+    expect(screen.getByText("6.00 EUR")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "4" } });
+    expect(screen.getByText("8.00 EUR")).toBeInTheDocument();
+    expect(screen.getByText("2.00 EUR")).toBeInTheDocument();
+  });
+
 });
