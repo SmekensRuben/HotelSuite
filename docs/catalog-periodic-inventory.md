@@ -165,7 +165,7 @@ The operator helper in release `b7f2ca88fb892b1196e95a0a3291f7440bc867f1`
 requested `pageSize=100`. The Standard/Native index service rejected that request
 with `INVALID_ARGUMENT: Invalid page size. Only 0 is supported.` The corrected
 helper omits `pageSize` and follows any returned page tokens. It bounds the entire
-read to 20 pages and 2,000 indexes per collection group rather than assuming each
+read to 20 pages and 2,000 indexes in the database inventory rather than assuming each
 default-size response contains at most 100 entries. An incomplete or oversized
 read fails before any index creation; it is never interpreted as missing indexes.
 
@@ -192,6 +192,31 @@ gate. It can wait for index builds and Rules propagation. Do not work around a
 failure by manually setting the activation marker. A successful global rollout
 allows the platform administrator to preview/load the demo dataset for
 `test-hotel-2`; it does not require a separate rollout for each hotel.
+
+### Recovery from an unexpected index resource
+
+Release `77971104ff6e7d387890ed5fe0afa0aefaea3831` accepted all four
+inventory-index creation requests but stopped on `An index response belongs to
+an unexpected resource.` before SaaS pause or Rules publication. A subsequent
+operator `gcloud firestore indexes composite list` showed all four indexes READY
+under the expected project/database, with valid canonical names.
+
+The previous helper assumed every entry in a list belonged to the group in its
+request parent. The recovery uses the official Firebase CLI's database-wide
+`collectionGroups/-/indexes` metadata list and derives each entry's group from its
+canonical resource name. It still rejects another project/database, malformed
+resources, duplicate matching definitions, unsupported serving states and
+incomplete/oversized inventories. Other groups' indexes cannot satisfy the four
+reviewed definitions and are never created, changed or deleted by this helper.
+This lists index metadata only, not hotel documents or customer data.
+
+The corrected helper reuses existing indexes only when scope, serving fields,
+API scope and READY status match the reviewed manifest. Names and READY status
+alone do not prove the correct serving definition; the rollout reads and checks
+the actual definitions. After merging this recovery and verifying the new main
+release, rerun the pinned wrapper using the new reviewed merged-main SHA as above.
+Do not delete the already-created indexes or reuse the older pinned helper.
+Production acceptance of the corrected wrapper is still required.
 
 Production acceptance remains required: inspect real legacy product links/units,
 price contracts, database/index readiness and historical snapshots; execute buyer,

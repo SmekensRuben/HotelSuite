@@ -11,7 +11,7 @@ export const INDEX_DATABASE = "(default)";
 export const INDEX_OPERATOR = "bestsmekens@gmail.com";
 const DATABASE_RESOURCE = `projects/${INDEX_PROJECT}/databases/${INDEX_DATABASE}`;
 const API = "https://firestore.googleapis.com/v1/";
-const MAX_INDEXES_PER_GROUP = 2000;
+const MAX_LISTED_INDEXES = 2000;
 const API_ERROR_STATUSES = new Set(["INVALID_ARGUMENT", "FAILED_PRECONDITION", "OUT_OF_RANGE", "UNAUTHENTICATED", "PERMISSION_DENIED",
   "NOT_FOUND", "ABORTED", "ALREADY_EXISTS", "RESOURCE_EXHAUSTED", "CANCELLED", "DATA_LOSS", "UNKNOWN", "INTERNAL", "UNAVAILABLE", "DEADLINE_EXCEEDED"]);
 const EXPECTED_INDEXES = [
@@ -66,24 +66,25 @@ function requireDatabase(database) {
   }
 }
 function indexParent(collectionGroup) { return `${DATABASE_RESOURCE}/collectionGroups/${collectionGroup}`; }
-function validateIndexName(name, collectionGroup) {
-  const prefix = `${indexParent(collectionGroup)}/indexes/`;
-  if (typeof name !== "string" || !name.startsWith(prefix) || !/^[A-Za-z0-9_-]+$/.test(name.slice(prefix.length))) {
+function indexCollectionGroup(name) {
+  const match = typeof name === "string" ? /^projects\/([^/]+)\/databases\/([^/]+)\/collectionGroups\/([^/]+)\/indexes\/([A-Za-z0-9_-]+)$/.exec(name) : null;
+  if (!match || match[0] !== name || match[1] !== INDEX_PROJECT || match[2] !== INDEX_DATABASE || [".", ".."].includes(match[3])) {
     throw new Error("An index response belongs to an unexpected resource.");
   }
+  return match[3];
 }
-async function listIndexes(request, collectionGroup) {
+async function listIndexes(request) {
   const result = [], tokens = new Set();
   let pageToken;
   for (let page = 0; page < 20; page++) {
     // The live Standard/Native API supports only the default page size (0).
-    // Omit pageSize, as the Firebase CLI does, and retain bounded token traversal.
-    const response = await request({ method: "GET", path: `${indexParent(collectionGroup)}/indexes`, params: { ...(pageToken ? { pageToken } : {}) } });
+    // Follow the Firebase CLI's database-wide metadata list. Ownership comes
+    // from each canonical resource name, never from the list request's parent.
+    const response = await request({ method: "GET", path: `${indexParent("-")}/indexes`, params: { ...(pageToken ? { pageToken } : {}) } });
     if (!response || !Array.isArray(response.indexes ?? [])) throw new Error("The bounded index list response is invalid.");
-    if (result.length + (response.indexes ?? []).length > MAX_INDEXES_PER_GROUP) throw new Error("Index listing exceeded the bounded 2000-index limit per collection group. Review the index inventory before proceeding.");
+    if (result.length + (response.indexes ?? []).length > MAX_LISTED_INDEXES) throw new Error("Index listing exceeded the bounded 2000-index limit for the database inventory. Review the index inventory before proceeding.");
     for (const index of response.indexes ?? []) {
-      validateIndexName(index.name, collectionGroup);
-      result.push({ ...index, collectionGroup });
+      result.push({ ...index, collectionGroup: indexCollectionGroup(index.name) });
     }
     const next = response.nextPageToken;
     if (next === undefined || next === "") return result;
@@ -114,10 +115,9 @@ export function createIndexRequest(client) {
   };
 }
 async function inspectIndexes(request, reviewed) {
-  const groups = [...new Set(reviewed.map((index) => index.collectionGroup))];
-  const existing = (await Promise.all(groups.map((group) => listIndexes(request, group)))).flat();
+  const existing = await listIndexes(request);
   return reviewed.map((index) => {
-    const candidates = existing.filter((item) => indexSignature(item) === indexSignature(index)
+    const candidates = existing.filter((item) => item.collectionGroup === index.collectionGroup && indexSignature(item) === indexSignature(index)
       && (item.apiScope === undefined || item.apiScope === "ANY_API"));
     if (candidates.length > 1) throw new Error("Duplicate matching inventory indexes need operator review.");
     const candidate = candidates[0];
