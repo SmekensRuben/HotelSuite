@@ -4,19 +4,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import StockCountLocationPage from "./StockCountLocationPage";
 import StockCountCreatePage from "./StockCountCreatePage";
 import StockCountDetailPage from "./StockCountDetailPage";
+import InventoryPeriodsPage from "./InventoryPeriodsPage";
 
 const mocks = vi.hoisted(() => ({ hotel: "hotel-a", permissions: ["stockcounts.read", "stockcounts.update", "stockcounts.create"],
-  getCount: vi.fn(), sources: vi.fn(), save: vi.fn(), finish: vi.fn(), finishParent: vi.fn(), create: vi.fn(), products: vi.fn(), outlets: vi.fn(), navigate: vi.fn() }));
+  getCount: vi.fn(), sources: vi.fn(), save: vi.fn(), finish: vi.fn(), finishParent: vi.fn(), create: vi.fn(), products: vi.fn(), catalog: vi.fn(), inventoryLocations: vi.fn(), checkpoints: vi.fn(), period: vi.fn(), outlets: vi.fn(), navigate: vi.fn() }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel }) }));
 vi.mock("../../hooks/usePermission", () => ({ usePermission: (feature, action) => mocks.permissions.includes(`${feature}.${action}`) }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => mocks.navigate, useParams: () => ({ stockCountId: "stock-a", locationId: "store" }) }));
 vi.mock("../../firebaseConfig", () => ({ auth: { currentUser: { uid: "counter" } }, signOut: vi.fn() }));
-vi.mock("../../services/firebaseStockCounts", () => ({ getStockCountById: mocks.getCount, getStockCountSources: mocks.sources,
+vi.mock("../../services/firebaseStockCounts", () => ({ getPendingCountCreation: () => null, retryPendingCountCreation: vi.fn(), getStockCountById: mocks.getCount, getStockCountSources: mocks.sources,
   updateStockCountLocationCounts: mocks.save, finishStockCountLocation: mocks.finish, createStockCount: mocks.create,
   finishStockCount: mocks.finishParent,
   STOCK_COUNT_TYPES: ["Ad Hoc", "Daily", "Weekly", "Month-End"] }));
-vi.mock("../../services/firebaseProducts", () => ({ getSupplierProducts: mocks.products }));
-vi.mock("../../services/firebaseSettings", () => ({ getOutlets: mocks.outlets }));
+vi.mock("../../services/firebaseProducts", () => ({ getSupplierProducts: mocks.products, getCatalogProducts: mocks.catalog }));
+vi.mock("../../services/firebaseInventory", () => ({ getInventoryLocations: mocks.inventoryLocations, getInventoryCheckpoints: mocks.checkpoints, getInventoryPeriod: mocks.period }));
+vi.mock("../../services/firebaseSettings", () => ({ getPendingStockTemplateCommand: () => null, retryPendingStockTemplateCommand: vi.fn(), getOutlets: mocks.outlets }));
 vi.mock("../layout/HeaderBar", () => ({ default: () => null }));
 vi.mock("../shared/DataListTable", () => ({ default: () => null }));
 vi.mock("../shared/Modal", () => ({ default: ({ open, children }) => open ? <section>{children}</section> : null }));
@@ -28,6 +30,10 @@ const deferred = () => { let resolve; const promise = new Promise((done) => { re
 beforeEach(() => {
   vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.permissions = ["stockcounts.read", "stockcounts.update", "stockcounts.create"];
   mocks.getCount.mockResolvedValue(count()); mocks.sources.mockResolvedValue([{ locationId: "store", locationName: "Store", templates: [{ id: "template", name: "Weekly" }] }]);
+  mocks.catalog.mockRejectedValue(new Error("Catalog denied"));
+  mocks.inventoryLocations.mockResolvedValue([{ locationId: "store", name: "Store" }]);
+  mocks.checkpoints.mockResolvedValue([{ id: "one", stockCountId: "opening", stockCountName: "Opening", businessDate: "2026-10-01", sequence: 1 }, { id: "two", stockCountId: "closing", stockCountName: "Closing", businessDate: "2026-10-12", sequence: 3 }]);
+  mocks.period.mockResolvedValue({ inventoryPolicyVersion: 1, postClosureIssues: [], currentlyComplete: true, currency: "USD", opening: { businessDate: "2026-10-01" }, closing: { businessDate: "2026-10-12" }, recordedReceiptCount: 1, coverage: { quantityComplete: true, costComplete: false, issues: [{ code: "opening-cost-unknown", detail: "Opening cost is unknown." }] }, items: [{ catalogProductId: "milk", catalogProductName: "Milk", baseUnit: "l", openingQuantity: 100, netReceiptQuantity: 30, closingQuantity: 80, inferredUsageQuantity: 50, periodUnitCost: null, inferredUsageValue: null }] });
   mocks.products.mockRejectedValue(new Error("Catalog denied")); mocks.outlets.mockRejectedValue(new Error("Outlets denied"));
   mocks.save.mockResolvedValue({ revision: 8 }); mocks.finish.mockResolvedValue({ revision: 8 }); mocks.finishParent.mockResolvedValue({ revision: 8 }); mocks.create.mockResolvedValue({ id: "new-stock" });
 });
@@ -175,5 +181,77 @@ describe("normal stock role workflow", () => {
     await waitFor(() => expect(mocks.finishParent).toHaveBeenCalledTimes(1));
     view.unmount(); await act(async () => command.resolve({ revision: 8 }));
     expect(mocks.getCount).toHaveBeenCalledTimes(1);
+  });
+});
+
+const catalogCount = (label = "Milk", revision = 12) => ({ id: "stock-a", inventoryPolicyVersion: 1, name: "Catalog opening", businessDate: "2026-10-12", currency: "USD", status: "In Progress", revision,
+  locations: [{ locationId: "store", locationName: "Store", status: "In Progress", stockTemplate: { id: "template", name: "Catalog", items: [
+    { catalogProductId: "milk", catalogProductName: label, baseUnit: "l", unitCost: null }, { catalogProductId: "flour", catalogProductName: "Flour", baseUnit: "kg", unitCost: null } ] }, countedItems: [] }] });
+describe("catalog physical counts and periodic inventory", () => {
+  it("counts base quantities without catalog access, keeps unknown cost, requires explicit zero", async () => {
+    mocks.getCount.mockResolvedValue(catalogCount());
+    render(<StockCountLocationPage />);
+    await screen.findByText("Milk");
+    expect(mocks.catalog).not.toHaveBeenCalled(); expect(mocks.products).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Finish Location" })).toBeDisabled();
+    expect(screen.getAllByText("Unavailable")).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText("Count Milk"), { target: { value: "1.000001" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Counts" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledWith("hotel-a", "stock-a", "store", [
+      { catalogProductId: "milk", quantity: 1.000001, unitCost: null, isCounted: true },
+      { catalogProductId: "flour", quantity: 0, unitCost: null, isCounted: false },
+    ], "counter", 12));
+  });
+  it("finishes only fully counted rows including explicit zero and explicit zero cost", async () => {
+    mocks.getCount.mockResolvedValue(catalogCount());
+    render(<StockCountLocationPage />); await screen.findByText("Milk");
+    fireEvent.change(screen.getByLabelText("Count Milk"), { target: { value: "0" } });
+    expect(screen.getByRole("button", { name: "Finish Location" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Count Flour"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("Unit cost Milk"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Finish Location" }));
+    await waitFor(() => expect(mocks.finish).toHaveBeenCalledWith("hotel-a", "stock-a", "store", [
+      { catalogProductId: "milk", quantity: 0, unitCost: 0, isCounted: true }, { catalogProductId: "flour", quantity: 0, unitCost: null, isCounted: true },
+    ], [], "counter", 12));
+  });
+  it("rejects excess quantity precision without rounding a count", async () => {
+    mocks.getCount.mockResolvedValue(catalogCount()); render(<StockCountLocationPage />); await screen.findByText("Milk");
+    fireEvent.change(screen.getByLabelText("Count Milk"), { target: { value: "0.1234567" } });
+    expect(screen.getByRole("button", { name: "Save Counts" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Finish Location" })).toBeDisabled();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+  it("shows period quantity evidence and unknown cost, without requiring private catalog permissions", async () => {
+    mocks.permissions = ["stockcounts.read"];
+    render(<InventoryPeriodsPage />);
+    await screen.findByRole("option", { name: "Store" });
+    fireEvent.change(screen.getByLabelText("Physical location"), { target: { value: "store" } });
+    await screen.findAllByRole("option", { name: /Opening ·/ });
+    fireEvent.change(screen.getByLabelText("Opening count"), { target: { value: "opening" } });
+    fireEvent.change(screen.getByLabelText("Closing count"), { target: { value: "closing" } });
+    fireEvent.click(screen.getByRole("button", { name: "Compare counts" }));
+    await screen.findByText("Opening cost is unknown.");
+    expect(screen.getByText("50")).toBeInTheDocument(); expect(screen.getAllByText("Unavailable")).toHaveLength(2);
+    expect(mocks.period).toHaveBeenCalledWith("hotel-a", "store", "opening", "closing");
+    expect(mocks.products).not.toHaveBeenCalled(); expect(mocks.catalog).not.toHaveBeenCalled();
+  });
+  it("keeps saved comparison distinct from incomplete current evidence after late receipts", async () => {
+    const saved = await mocks.period();
+    mocks.period.mockResolvedValue({ ...saved, currentlyComplete: false, postClosureIssues: [{ code: "late-posting-after-closing", detail: "Late milk receipt" }], items: saved.items.map((item) => ({ ...item, periodUnitCost: 2, inferredUsageValue: 100 })) });
+    render(<InventoryPeriodsPage />); await screen.findByRole("option", { name: "Store" });
+    fireEvent.change(screen.getByLabelText("Physical location"), { target: { value: "store" } }); await screen.findAllByRole("option", { name: /Opening ·/ });
+    fireEvent.change(screen.getByLabelText("Opening count"), { target: { value: "opening" } }); fireEvent.change(screen.getByLabelText("Closing count"), { target: { value: "closing" } });
+    fireEvent.click(screen.getByRole("button", { name: "Compare counts" })); await screen.findByText("Late milk receipt");
+    expect(screen.getByText(/Current period evidence: Incomplete/)).toBeInTheDocument();
+    expect(screen.getAllByText("Unavailable")).toHaveLength(2);
+    expect(screen.queryByText("$100.00")).not.toBeInTheDocument();
+  });
+  it("rejects reversed count selection without calling report", async () => {
+    render(<InventoryPeriodsPage />); await screen.findByRole("option", { name: "Store" });
+    fireEvent.change(screen.getByLabelText("Physical location"), { target: { value: "store" } });
+    await screen.findAllByRole("option", { name: /Opening ·/ });
+    fireEvent.change(screen.getByLabelText("Opening count"), { target: { value: "closing" } });
+    fireEvent.change(screen.getByLabelText("Closing count"), { target: { value: "opening" } });
+    expect(screen.getByRole("button", { name: "Compare counts" })).toBeDisabled(); expect(mocks.period).not.toHaveBeenCalled();
   });
 });

@@ -7,58 +7,29 @@ const { requirePlatformAdministrator } = require("./subscriptions");
 const { claimDispatch } = require("./deliveryState");
 const { updateUserAccessHandler } = require("./userAccess");
 
-function memoryDatabase(initial) {
-  const records = new Map(Object.entries(initial));
-  const snapshot = (path) => ({ exists: records.has(path), data: () => structuredClone(records.get(path)), id: path.split("/").at(-1) });
-  let serial = Promise.resolve();
-  const db = { records, doc: (path) => ({ path, get: async () => snapshot(path) }),
-    collection: (path) => {
-      const query = (filters = [], maximum = Infinity) => ({ doc: () => ({ path: `${path}/test-audit` }),
-        where: (field, _op, value) => query([...filters, [field, value]], maximum), limit: (count) => query(filters, count),
-        get: async () => { const docs = [...records.entries()].filter(([key, value]) => key.startsWith(`${path}/`) && key.slice(path.length + 1).split("/").length === 1
-          && filters.every(([field, expected]) => value[field] === expected)).slice(0, maximum).map(([key]) => snapshot(key)); return { docs, size: docs.length }; }, isQuery: true });
-      return query();
-    },
-    runTransaction(fn) {
-      const run = serial.then(async () => {
-        const writes = [];
-        const tx = { get: async (ref) => ref.isQuery ? ref.get() : snapshot(ref.path),
-          create: (ref, data) => writes.push(["create", ref.path, data]),
-          set: (ref, data, options) => writes.push([options?.merge ? "update" : "set", ref.path, data]),
-          update: (ref, data) => writes.push(["update", ref.path, data]),
-          delete: (ref) => writes.push(["delete", ref.path]) };
-        const result = await fn(tx);
-        for (const [kind, path, data] of writes) {
-          if (kind === "create") assert.equal(records.has(path), false);
-          if (kind === "delete") records.delete(path);
-          else records.set(path, kind === "update" ? { ...records.get(path), ...data } : data);
-        }
-        return result;
-      });
-      serial = run.catch(() => {});
-      return run;
-    } };
-  return db;
-}
+const { memoryDatabase } = require("./inventoryTestHelpers");
 const hotel = "hotel-a";
 const currentAuth = { getUser: async () => ({ emailVerified: true, disabled: false, customClaims: {} }) };
 const request = (data, auth = { uid: "counter", token: { email_verified: true } }) => ({ auth, data });
 function fixture(permissions = ["stockcounts.create", "stockcounts.update", "stockcounts.read", "locations.update"]) {
   return memoryDatabase({
+    [`hotels/${hotel}`]: { currency: "EUR", timeZone: "Europe/Brussels" },
     [`hotels/${hotel}/members/counter`]: { permissions },
     [`hotelSubscriptions/${hotel}`]: { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null },
     [`hotels/${hotel}/locations/store`]: { name: "Store" },
     [`hotels/${hotel}/locations/store/stockTemplates/template`]: { name: "Weekly", items: [{ supplierProductId: "coffee", outletId: "bar" }] },
-    [`hotels/${hotel}/supplierproducts/coffee`]: { name: "Coffee", pricePerPurchaseUnit: 12.5 },
-    [`hotels/${hotel}/supplierproducts/milk`]: { name: "Milk", pricePerPurchaseUnit: 2 },
+    [`hotels/${hotel}/supplierproducts/coffee`]: { name: "Coffee", pricePerPurchaseUnit: 12.5, catalogProductId: "coffee", baseUnit: "kg" },
+    [`hotels/${hotel}/supplierproducts/milk`]: { name: "Milk", pricePerPurchaseUnit: 2, catalogProductId: "milk", baseUnit: "l" },
     [`hotels/${hotel}/outlets/bar`]: { name: "Bar" },
+    [`hotels/${hotel}/catalogproducts/coffee`]: { name: "Coffee", baseUnit: "kg", inventoryTracked: true, active: true },
+    [`hotels/${hotel}/catalogproducts/milk`]: { name: "Milk", baseUnit: "l", inventoryTracked: true, active: true },
   });
 }
 async function create(db, overrides = {}) {
   return createHotelStockCountHandler(request({ hotelUid: hotel, name: "Weekly inventory", type: "Weekly",
     locations: [{ locationId: "store", stockTemplateId: "template" }], requestId: "request-a", ...overrides }), { firestore: db, auth: currentAuth });
 }
-const counted = (patch = {}) => ({ supplierProductId: "coffee", outletId: "bar", quantity: 3, isCounted: true, ...patch });
+const counted = (patch = {}) => ({ catalogProductId: "coffee", quantity: 3, isCounted: true, unitCost: 12.5, ...patch });
 const mutate = (db, id, patch = {}, auth = currentAuth) => {
   const input = { hotelUid: hotel, stockCountId: id, expectedRevision: 0, action: "save-location", locationId: "store", countedItems: [counted()], ...patch };
   if (input.action === "finish-count") { delete input.locationId; delete input.countedItems; }
@@ -72,7 +43,8 @@ test("ordinary hotel user creates canonical snapshots and completes a stock coun
   const ref = `hotels/${hotel}/stockCounts/${stockCountId}`;
   const created = db.records.get(ref);
   assert.equal(created.createdBy, "counter");
-  assert.equal(db.records.get(`${ref}/locations/store`).stockTemplate.items[0].pricePerPurchaseUnit, 12.5);
+  assert.equal(db.records.get(`${ref}/locations/store`).stockTemplate.items[0].catalogProductId, "coffee");
+  assert.equal(db.records.get(`${ref}/locations/store`).stockTemplate.items[0].unitCost, null);
   // Existing snapshot valuation is stable even when the catalog changes later.
   db.records.set(`hotels/${hotel}/supplierproducts/coffee`, { name: "Coffee", pricePerPurchaseUnit: 99 });
   await mutate(db, stockCountId, { action: "finish-location" });
@@ -90,9 +62,9 @@ test("client prices, totals and actors are rejected instead of trusted", async (
   for (const patch of [{ totalValue: 1 }, { pricePerPurchaseUnit: 0 }, { countedBy: "operator" }, { status: "Finished" }]) {
     await assert.rejects(mutate(db, stockCountId, { countedItems: [counted(patch)] }), (error) => error.code === "invalid-argument");
   }
-  for (const quantity of [-1, "3", NaN, Infinity, 1000001, 0.0001]) assert.throws(() => countsInput([counted({ quantity })]));
-  assert.throws(() => countsInput([counted(), counted()]));
-  assert.throws(() => countsInput(Array.from({ length: 251 }, () => counted())));
+  for (const quantity of [-1, "3", NaN, Infinity, 1000001, 0.0000001]) assert.throws(() => require("./inventoryPolicy").countItems([counted({ quantity })]));
+  assert.throws(() => require("./inventoryPolicy").countItems([counted(), counted()]));
+  assert.throws(() => require("./inventoryPolicy").countItems(Array.from({ length: 251 }, () => counted())));
   await assert.rejects(mutate(db, stockCountId, { action: "set-location-status", status: "Finished" }), (error) => error.code === "invalid-argument");
 });
 test("finished location cannot reopen, parent cannot finish prematurely, concurrent finishes have one winner", async () => {
@@ -115,7 +87,7 @@ test("stock commands protect tenant access, disabled/unverified identities, subs
   db.records.set(`hotelSubscriptions/${hotel}`, { status: "suspended", validUntil: null });
   await assert.rejects(mutate(db, stockCountId), (error) => error.code === "permission-denied");
 });
-test("creation retries are idempotent and bound to exact input; unknown catalog prices remain unavailable", async () => {
+test("creation retries are idempotent and bound to exact input; unresolved catalog links remain unavailable", async () => {
   const db = fixture(); const first = await create(db); const second = await create(db);
   assert.deepEqual(first, second);
   await assert.rejects(create(db, { name: "Different" }), (error) => error.code === "already-exists");
@@ -127,13 +99,13 @@ test("template additions require independent location authority and preserve liv
   const db = fixture(); const { stockCountId } = await create(db);
   db.records.set(`hotels/${hotel}/locations/store/stockTemplates/template`, { name: "Weekly", items: [
     { supplierProductId: "coffee", outletId: "bar" }, { supplierProductId: "existing", outletId: "bar" }] });
-  await mutate(db, stockCountId, { action: "finish-location", countedItems: [counted(), counted({ supplierProductId: "milk", quantity: 2 })],
-    templateItemsToAdd: [{ supplierProductId: "milk", outletId: "bar" }] });
+  await mutate(db, stockCountId, { action: "finish-location", countedItems: [counted(), counted({ catalogProductId: "milk", quantity: 2 })],
+    templateItemsToAdd: [{ catalogProductId: "milk" }] });
   const template = db.records.get(`hotels/${hotel}/locations/store/stockTemplates/template`);
-  assert.deepEqual(template.items.map((item) => item.supplierProductId), ["coffee", "existing", "milk"]);
+  assert.deepEqual(template.items.map((item) => item.catalogProductId || item.supplierProductId), ["coffee", "existing", "milk"]);
   const limited = fixture(["stockcounts.create", "stockcounts.update"]); const count = await create(limited);
-  await assert.rejects(mutate(limited, count.stockCountId, { action: "finish-location", countedItems: [counted({ supplierProductId: "milk" })],
-    templateItemsToAdd: [{ supplierProductId: "milk", outletId: "bar" }] }), (error) => error.code === "permission-denied");
+  await assert.rejects(mutate(limited, count.stockCountId, { action: "finish-location", countedItems: [counted({ catalogProductId: "milk" })],
+    templateItemsToAdd: [{ catalogProductId: "milk" }] }), (error) => error.code === "permission-denied");
   await assert.doesNotReject(mutate(limited, count.stockCountId, { action: "finish-location" }));
 });
 test("staff lookup returns only same-hotel display name and never falls back to a global email query", async () => {

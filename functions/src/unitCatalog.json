@@ -1,0 +1,7 @@
+{
+  "g": { "dimension": "mass", "factor": 1 },
+  "kg": { "dimension": "mass", "factor": 1000 },
+  "ml": { "dimension": "volume", "factor": 1 },
+  "l": { "dimension": "volume", "factor": 1000 },
+  "each": { "dimension": "count", "factor": 1 }
+}

@@ -7,6 +7,7 @@ import AsyncError from "../shared/AsyncError";
 
 const field = "ht-field mt-1";
 const kinds = { receipt: recordHotelOrderReceipt, reversal: reverseHotelOrderReceipt, finalization: finalizeHotelOrderReceiving };
+const lineKey = (line) => line.orderLineId || line.supplierProductId;
 function readPending(key, hotelUid, orderId) {
   try {
     const saved = sessionStorage.getItem(key);
@@ -27,7 +28,7 @@ function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = fa
   const canReceive = usePermission("orders", "receive"), canFinalize = usePermission("orders", "finalize");
   const key = `receiving-request:${actorUid}:${hotelUid}:${orderId}`;
   const [pending, setPending] = useState(() => readPending(key, hotelUid, orderId));
-  const [form, setForm] = useState({ receivedOn: "", deliveryReference: "", note: "", lines: {} });
+  const [form, setForm] = useState({ receivedOn: "", deliveryReference: "", inventoryLocationId: "", note: "", lines: {} });
   const [finalReason, setFinalReason] = useState(""), [acceptShortfall, setAcceptShortfall] = useState(false);
   const [reverseId, setReverseId] = useState(null), [reverseReason, setReverseReason] = useState("");
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(null);
@@ -59,7 +60,7 @@ function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = fa
       sessionStorage.removeItem(key);
       if (!mounted.current) return;
       setPending(null); setReverseId(null); setReverseReason(""); setFinalReason(""); setAcceptShortfall(false);
-      setForm({ receivedOn: data?.today || "", deliveryReference: "", note: "", lines: {} });
+      setForm({ receivedOn: data?.today || "", deliveryReference: "", inventoryLocationId: "", note: "", lines: {} });
       setMessage({ text: command.kind === "receipt" ? "Goods receipt recorded." : command.kind === "reversal" ? "Receipt reversed; the original remains in history." : "Receiving finalized." });
       await Promise.all([refresh(), onChanged?.()]);
     } catch (error) {
@@ -111,14 +112,15 @@ function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = fa
       {available && <>
         <p className="text-sm font-medium">Receiving status: {data.receivingState}</p>
         <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-2">Product / unit</th><th className="p-2">Ordered</th><th className="p-2">Accepted</th><th className="p-2">Rejected</th><th className="p-2">Outstanding</th><th className="p-2">Overdelivery</th></tr></thead>
-          <tbody>{data.lines.map((line) => <tr key={line.supplierProductId} className="border-b"><th scope="row" className="p-2 font-medium">{line.productName}<span className="mt-1 block text-xs text-slate-500">{line.purchaseUnit}</span></th>
+          <tbody>{data.lines.map((line) => <tr key={lineKey(line)} className="border-b"><th scope="row" className="p-2 font-medium">{line.productName}<span className="mt-1 block text-xs text-slate-500">{line.purchaseUnit}</span></th>
             {["orderedQuantity", "acceptedQuantity", "rejectedQuantity", "outstandingQuantity", "excessQuantity"].map((column) => <td key={column} className="p-2 tabular-nums">{line[column]}</td>)}</tr>)}</tbody></table></div>
         {closed && <p className="rounded-xl bg-slate-50 p-4 text-sm">Receiving is finalized. {data.finalizationReason && `Reason: ${data.finalizationReason}`}</p>}
         {canReceive && !closed && <form className="space-y-4 rounded-xl border border-slate-200 p-4" onSubmit={(event) => {
           event.preventDefault(); if (blocked) return;
           const lines = data.lines.map((line) => ({ supplierProductId: line.supplierProductId,
-            acceptedQuantity: Number(form.lines[line.supplierProductId]?.acceptedQuantity || 0),
-            rejectedQuantity: Number(form.lines[line.supplierProductId]?.rejectedQuantity || 0), reason: form.lines[line.supplierProductId]?.reason || "" }))
+            ...(line.orderLineId ? { orderLineId: line.orderLineId } : {}),
+            acceptedQuantity: Number(form.lines[lineKey(line)]?.acceptedQuantity || 0),
+            rejectedQuantity: Number(form.lines[lineKey(line)]?.rejectedQuantity || 0), reason: form.lines[lineKey(line)]?.reason || "" }))
             .filter((line) => line.acceptedQuantity !== 0 || line.rejectedQuantity !== 0);
           if (!form.deliveryReference.trim() || !lines.length) { setMessage({ error: true, text: "Enter a delivery reference and at least one accepted or rejected quantity." }); return; }
           const date = new Date(`${form.receivedOn}T00:00:00Z`);
@@ -126,23 +128,33 @@ function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = fa
             setMessage({ error: true, text: "Choose a valid receipt business date." }); return;
           }
           if (lines.some((line) => [line.acceptedQuantity, line.rejectedQuantity].some((value) => !Number.isFinite(value) || value < 0 || value > 100000 || Math.abs(value * 1000 - Math.round(value * 1000)) > 1e-7)
-            || (line.rejectedQuantity > 0 || line.acceptedQuantity > data.lines.find((source) => source.supplierProductId === line.supplierProductId).outstandingQuantity) && !line.reason.trim())) {
+            || (line.rejectedQuantity > 0 || line.acceptedQuantity > data.lines.find((source) => lineKey(source) === lineKey(line)).outstandingQuantity) && !line.reason.trim())) {
             setMessage({ error: true, text: "Review quantities and explain rejected goods or accepted overdelivery." }); return;
           }
-          submit("receipt", { receivedOn: form.receivedOn, deliveryReference: form.deliveryReference, note: form.note, lines });
+          if (lines.some((line) => line.acceptedQuantity > 0) && !form.inventoryLocationId) {
+            setMessage({ error: true, text: "Select the physical location receiving these goods." }); return;
+          }
+          submit("receipt", { receivedOn: form.receivedOn, deliveryReference: form.deliveryReference, note: form.note, lines,
+            ...(form.inventoryLocationId ? { inventoryLocationId: form.inventoryLocationId } : {}) });
         }}><h3 className="font-semibold">Record a delivery</h3>
           <fieldset disabled={blocked} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium">Receipt business date<input required type="date" className={field} value={form.receivedOn} onChange={(event) => setForm({ ...form, receivedOn: event.target.value })} /></label>
               <label className="text-sm font-medium">Delivery note / receipt reference<input required maxLength={120} className={field} value={form.deliveryReference} onChange={(event) => setForm({ ...form, deliveryReference: event.target.value })} /></label></div>
             <p className="text-xs text-slate-500">Use a unique delivery reference for this order. A reversed receipt retains its reference; use a new correction reference.</p>
-            <button type="button" className="ht-button-secondary" onClick={() => setForm((previous) => ({ ...previous, lines: Object.fromEntries(data.lines.map((line) => [line.supplierProductId, { ...previous.lines[line.supplierProductId], acceptedQuantity: String(line.outstandingQuantity) }])) }))}>Fill outstanding quantities</button>
+            <label className="block text-sm font-medium">Physical receiving location<select className={field} value={form.inventoryLocationId} onChange={(event) => setForm({ ...form, inventoryLocationId: event.target.value })}>
+              <option value="">Select a location</option>{(data.inventoryLocations || []).map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
+            </select></label>
+            {data.inventoryLocationsTruncated && <p className="text-sm text-amber-900">Showing the first 100 locations. Ask a hotel administrator to review the destination if it is not listed.</p>}
+            {data.inventoryCoverageReasons?.length > 0 && <p className="text-sm text-amber-900">Some frozen product conversions or price contracts need review. Receiving remains traceable; affected inventory quantities or values will be unavailable in period comparisons.</p>}
+            <p className="text-xs text-slate-500">Accepted goods create receipt evidence for this location. This does not represent live on-hand stock.</p>
+            <button type="button" className="ht-button-secondary" onClick={() => setForm((previous) => ({ ...previous, lines: Object.fromEntries(data.lines.map((line) => [lineKey(line), { ...previous.lines[lineKey(line)], acceptedQuantity: String(line.outstandingQuantity) }])) }))}>Fill outstanding quantities</button>
             {data.lines.map((line) => {
-              const values = form.lines[line.supplierProductId] || {};
+              const values = form.lines[lineKey(line)] || {};
               const needsReason = Number(values.rejectedQuantity || 0) > 0 || Number(values.acceptedQuantity || 0) > line.outstandingQuantity;
-              return <div key={line.supplierProductId} className="rounded-xl bg-slate-50 p-3"><p className="text-sm font-semibold">{line.productName} · {line.purchaseUnit}</p>
-                <div className="mt-2 grid gap-3 sm:grid-cols-2"><label className="text-sm">Accepted {line.productName}<input type="number" min="0" max="100000" step="0.001" placeholder="0" className={field} value={values.acceptedQuantity || ""} onChange={(event) => setLine(line.supplierProductId, "acceptedQuantity", event.target.value)} /></label>
-                  <label className="text-sm">Rejected {line.productName}<input type="number" min="0" max="100000" step="0.001" placeholder="0" className={field} value={values.rejectedQuantity || ""} onChange={(event) => setLine(line.supplierProductId, "rejectedQuantity", event.target.value)} /></label></div>
-                <label className="mt-3 block text-sm">Discrepancy reason {line.productName}<input required={needsReason} maxLength={300} className={field} value={values.reason || ""} onChange={(event) => setLine(line.supplierProductId, "reason", event.target.value)} /></label>
+              return <div key={lineKey(line)} className="rounded-xl bg-slate-50 p-3"><p className="text-sm font-semibold">{line.productName} · {line.purchaseUnit}</p>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2"><label className="text-sm">Accepted {line.productName}<input type="number" min="0" max="100000" step="0.001" placeholder="0" className={field} value={values.acceptedQuantity || ""} onChange={(event) => setLine(lineKey(line), "acceptedQuantity", event.target.value)} /></label>
+                  <label className="text-sm">Rejected {line.productName}<input type="number" min="0" max="100000" step="0.001" placeholder="0" className={field} value={values.rejectedQuantity || ""} onChange={(event) => setLine(lineKey(line), "rejectedQuantity", event.target.value)} /></label></div>
+                <label className="mt-3 block text-sm">Discrepancy reason {line.productName}<input required={needsReason} maxLength={300} className={field} value={values.reason || ""} onChange={(event) => setLine(lineKey(line), "reason", event.target.value)} /></label>
               </div>;
             })}
             <label className="block text-sm">Receipt note<textarea maxLength={1000} className={field} value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /></label>
@@ -164,7 +176,10 @@ function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = fa
           <div className="flex flex-wrap justify-between gap-2"><p className="font-semibold">{event.kind === "receipt" ? `Delivery ${event.deliveryReference}` : event.kind === "reversal" ? "Receipt reversal" : "Receiving finalized"}{event.reversed && " · reversed"}</p><time>{moment(event.createdAtMillis)}</time></div>
           <p className="mt-1 break-all text-xs text-slate-500">Recorded by {event.actorName || event.actorUid}{event.receivedOn && ` · receipt date ${event.receivedOn}`}</p>
           {event.kind === "reversal" && <p className="mt-2 break-all text-xs">Original receipt: {event.receiptId}</p>}
-          {event.lines.map((line) => <p key={line.supplierProductId} className="mt-2">{line.productName}: {line.acceptedQuantity} accepted, {line.rejectedQuantity} rejected · {line.purchaseUnit}{line.reason && ` · ${line.reason}`}</p>)}
+          {event.lines.map((line) => <p key={lineKey(line)} className="mt-2">{line.productName}: {line.acceptedQuantity} accepted, {line.rejectedQuantity} rejected · {line.purchaseUnit}{line.reason && ` · ${line.reason}`}</p>)}
+          {["receipt", "reversal"].includes(event.kind) && <p className="mt-2 text-xs text-slate-500">{event.inventoryMovement
+            ? `Inventory posting ${event.inventoryMovement.sequence} · location ${event.inventoryMovement.locationId}`
+            : "No inventory movement recorded; rejected-only or historical receiving evidence."}</p>}
           {(event.note || event.reason) && <p className="mt-2 whitespace-pre-wrap">{event.note || event.reason}</p>}
           {canFinalize && event.kind === "receipt" && !event.reversed && !closed && available && <button type="button" disabled={blocked} className="ht-button-secondary mt-3" onClick={() => { setReverseId(event.id); setReverseReason(""); }}>Reverse receipt {event.deliveryReference}</button>}
         </li>)}</ol>

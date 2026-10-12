@@ -15,7 +15,7 @@ afterEach(() => {
   for (const directory of fixtures.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-function runRollout(options = [], { existingRole = false, denyGrant = false } = {}) {
+function runRollout(options = [], { existingRole = false, denyGrant = false, indexFailure = null } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "hotelsuite-rollout-test-"));
   fixtures.push(directory);
   const bin = join(directory, "bin");
@@ -49,7 +49,10 @@ if (command === "gcloud") {
 } else if (command === "mktemp") {
   console.log(fs.mkdtempSync(path.join(process.env.ROLLOUT_TEST_ROOT, "hotelsuite-rollout-")));
 } else if (command === "node") {
-  if (args[0] !== "-e" && args[0] !== "scripts/firebase/saas-release-check.mjs" && args[0] !== "scripts/firebase/saas-rollout.mjs") unsupported();
+  if (args[0] === "scripts/firebase/catalog-inventory-indexes.mjs") {
+    if (args.length !== 2 || !["preflight", "apply", "verify"].includes(args[1])) unsupported();
+    if (args[1] === process.env.ROLLOUT_TEST_INDEX_FAILURE) { console.error("Reviewed inventory indexes are not READY"); process.exit(1); }
+  } else if (args[0] !== "-e" && args[0] !== "scripts/firebase/saas-release-check.mjs" && args[0] !== "scripts/firebase/saas-rollout.mjs") unsupported();
 } else if (command === "df") {
   console.log("Filesystem total used available capacity mount\\nfixture 4000000 0 4000000 0% /tmp");
 } else if (command !== "npm" && command !== "sleep") unsupported();
@@ -67,13 +70,15 @@ if (command === "gcloud") {
       ROLLOUT_TEST_SOURCE: process.cwd(),
       ROLLOUT_TEST_LOG: log,
       ROLLOUT_TEST_DENY_GRANT: String(denyGrant),
+      ROLLOUT_TEST_INDEX_FAILURE: indexFailure ?? "",
       ROLLOUT_TEST_POLICY: JSON.stringify({ bindings: existingRole ? [{ role: storageRole, members: [`serviceAccount:${storageAgent}`] }] : [] }),
     },
   });
   const calls = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
   const grants = calls.filter(({ command, args }) => command === "gcloud" && args[1] === "add-iam-policy-binding");
   const phases = calls.filter(({ command, args }) => command === "node" && args[0] === "scripts/firebase/saas-rollout.mjs").map(({ args }) => args[1]);
-  return { ...result, calls, grants, phases };
+  const indexPhases = calls.filter(({ command, args }) => command === "node" && args[0] === "scripts/firebase/catalog-inventory-indexes.mjs").map(({ args }) => args[1]);
+  return { ...result, calls, grants, phases, indexPhases };
 }
 
 describe("Cloud Shell rollout IAM boundary", () => {
@@ -83,6 +88,10 @@ describe("Cloud Shell rollout IAM boundary", () => {
     expect(result.stdout).toContain("Read-only preflight completed");
     expect(result.grants).toEqual([]);
     expect(result.phases).toEqual(["preflight"]);
+    expect(result.indexPhases).toEqual(["preflight"]);
+    for (const path of ["firebase/firestore.indexes.json", "scripts/firebase/catalog-inventory-indexes.mjs"]) {
+      expect(result.calls.some(({ command, args }) => command === "curl" && args.includes(`https://raw.githubusercontent.com/SmekensRuben/HotelSuite/${releaseSha}/${path}`))).toBe(true);
+    }
   });
 
   it("requires explicit approval when the project role is missing", () => {
@@ -91,6 +100,7 @@ describe("Cloud Shell rollout IAM boundary", () => {
     expect(result.stderr).toContain("--grant-storage-rules-access");
     expect(result.grants).toEqual([]);
     expect(result.phases).toEqual(["preflight"]);
+    expect(result.indexPhases).toEqual(["preflight"]);
   });
 
   it("can grant the exact project role and complete rollout without account-inspection permission", () => {
@@ -99,6 +109,10 @@ describe("Cloud Shell rollout IAM boundary", () => {
     expect(result.calls.some(({ command, args }) => command === "gcloud" && args[0] === "iam")).toBe(false);
     expect(result.grants).toEqual([{ command: "gcloud", args: ["projects", "add-iam-policy-binding", "hotel-toolkit", `--member=serviceAccount:${storageAgent}`, `--role=${storageRole}`, "--condition=None"] }]);
     expect(result.phases).toEqual(["preflight", "pause", "preflight", "deploy-rules", "migrate", "enable"]);
+    expect(result.indexPhases).toEqual(["preflight", "apply", "verify"]);
+    const phasePosition = (path, phase) => result.calls.findIndex(({ command, args }) => command === "node" && args[0] === path && args[1] === phase);
+    expect(phasePosition("scripts/firebase/catalog-inventory-indexes.mjs", "apply")).toBeLessThan(phasePosition("scripts/firebase/saas-rollout.mjs", "pause"));
+    expect(phasePosition("scripts/firebase/catalog-inventory-indexes.mjs", "verify")).toBeLessThan(phasePosition("scripts/firebase/saas-rollout.mjs", "enable"));
     expect(result.stdout).toContain("SaaS procurement pilot enabled");
   });
 
@@ -115,6 +129,22 @@ describe("Cloud Shell rollout IAM boundary", () => {
     expect(result.stderr).toContain("Project policy update denied");
     expect(result.grants).toHaveLength(1);
     expect(result.phases).toEqual(["preflight"]);
+    expect(result.indexPhases).toEqual(["preflight"]);
+    expect(result.stdout).not.toContain("SaaS procurement pilot enabled");
+  });
+
+  it("does not pause or publish Rules when required index preparation fails", () => {
+    const result = runRollout(["--apply"], { existingRole: true, indexFailure: "apply" });
+    expect(result.status).not.toBe(0); expect(result.stderr).toContain("indexes are not READY");
+    expect(result.phases).toEqual(["preflight"]); expect(result.indexPhases).toEqual(["preflight", "apply"]);
+    expect(result.grants).toEqual([]); expect(result.stdout).not.toContain("SaaS procurement pilot enabled");
+  });
+
+  it("keeps SaaS paused if final read-only index verification fails", () => {
+    const result = runRollout(["--apply"], { existingRole: true, indexFailure: "verify" });
+    expect(result.status).not.toBe(0); expect(result.stderr).toContain("indexes are not READY");
+    expect(result.phases).toEqual(["preflight", "pause", "preflight", "deploy-rules", "migrate"]);
+    expect(result.indexPhases).toEqual(["preflight", "apply", "verify"]);
     expect(result.stdout).not.toContain("SaaS procurement pilot enabled");
   });
 });

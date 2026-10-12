@@ -21,8 +21,8 @@ const request = (actor, data) => ({ auth: actor, data });
 let environment;
 const path = (id) => `hotels/hotel-a/stockCounts/${id}`;
 const create = () => createHotelStockCountHandler(request(counter, { hotelUid: "hotel-a", name: "Weekly", type: "Weekly",
-  requestId: "stock-request", locations: [{ locationId: "store", stockTemplateId: "template" }] }), services);
-const counts = [{ supplierProductId: "coffee", outletId: "bar", quantity: 3, isCounted: true }];
+  requestId: "stock-request", businessDate: "2026-10-10", locations: [{ locationId: "store", stockTemplateId: "template" }] }), services);
+const counts = [{ catalogProductId: "coffee", quantity: 3, unitCost: 12.5, isCounted: true }];
 const mutate = (id, action, revision, extra = {}) => mutateHotelStockCountHandler(request(counter, { hotelUid: "hotel-a",
   stockCountId: id, action, expectedRevision: revision,
   ...(action === "finish-count" ? {} : { locationId: "store", countedItems: counts }), ...extra }), services);
@@ -37,7 +37,7 @@ beforeEach(async () => {
   await auth.createUser({ uid: operator.uid, email: "operator@example.test", emailVerified: true });
   await auth.setCustomUserClaims(operator.uid, { platformAdmin: true });
   await Promise.all([
-    db.doc("hotels/hotel-a").set({ hotelName: "Stock fixture" }), db.doc("hotels/hotel-b").set({ hotelName: "Other hotel" }),
+    db.doc("hotels/hotel-a").set({ hotelName: "Stock fixture", currency: "EUR", timeZone: "Europe/Brussels" }), db.doc("hotels/hotel-b").set({ hotelName: "Other hotel" }),
     db.doc("hotelSubscriptions/hotel-a").set({ modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null }),
     db.doc("hotelSubscriptions/hotel-b").set({ modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null }),
     db.doc(`hotels/hotel-a/members/${counter.uid}`).set({ permissions: ["stockcounts.create", "stockcounts.update", "stockcounts.read"] }),
@@ -45,7 +45,9 @@ beforeEach(async () => {
     db.doc("hotels/hotel-a/members/stock-person").set({ permissions: [] }),
     db.doc("hotels/hotel-a/locations/store").set({ name: "Store" }),
     db.doc("hotels/hotel-a/locations/store/stockTemplates/template").set({ name: "Weekly", items: [{ supplierProductId: "coffee", outletId: "bar" }] }),
-    db.doc("hotels/hotel-a/supplierproducts/coffee").set({ name: "Coffee", pricePerPurchaseUnit: 12.5 }),
+    db.doc("hotels/hotel-a/settings/bootstrap").set({ currency: "EUR" }),
+    db.doc("hotels/hotel-a/catalogproducts/coffee").set({ name: "Coffee", baseUnit: "kg", inventoryTracked: true, active: true }),
+    db.doc("hotels/hotel-a/supplierproducts/coffee").set({ name: "Coffee", pricePerPurchaseUnit: 12.5, catalogProductId: "coffee", baseUnit: "kg" }),
     db.doc("hotels/hotel-a/outlets/bar").set({ name: "Bar" }),
   ]);
 });

@@ -107,4 +107,23 @@ describe("scoped order loading", () => {
     expect(screen.getByText("2027-05-02")).toBeInTheDocument();
     expect(screen.queryByText("2027-05-01")).not.toBeInTheDocument();
   });
+  it("shows order price bases beside unchanged totals and leaves historical bases unknown", async () => {
+    mocks.permissions = ["orders.read"];
+    mocks.orders.mockResolvedValue([
+      { id: "gross", deliveryDate: "2027-05-01", status: "Created", priceBasis: "gross", currency: "EUR", totalAmount: 121 },
+      { id: "net", deliveryDate: "2027-05-02", status: "Created", priceBasis: "net", currency: "EUR", totalAmount: 100 },
+      { id: "legacy", deliveryDate: "2027-05-03", status: "Created", currency: "EUR", totalAmount: 121 },
+    ]);
+    render(<OrdersPage />);
+    const gross = (await screen.findByText("2027-05-01")).closest("tr");
+    expect(within(gross).getByText("121.00 EUR")).toBeInTheDocument();
+    expect(within(gross).getByText("Gross (including VAT)")).toBeInTheDocument();
+    const net = screen.getByText("2027-05-02").closest("tr");
+    expect(within(net).getByText("100.00 EUR")).toBeInTheDocument();
+    expect(within(net).getByText("Net (excluding VAT)")).toBeInTheDocument();
+    const legacy = screen.getByText("2027-05-03").closest("tr");
+    expect(within(legacy).getByText("Unknown (VAT treatment unavailable)")).toBeInTheDocument();
+    expect(within(legacy).getByText("121.00 EUR")).toBeInTheDocument();
+  });
+
 });

@@ -8,7 +8,6 @@ import {
   deleteDoc,
   getDocs,
   getDoc,
-  Timestamp,
   writeBatch,
   query,
   where,
@@ -16,16 +15,15 @@ import {
   limit,
   startAfter,
   documentId,
-  serverTimestamp,
   storage,
   ref,
   uploadBytes,
   getDownloadURL,
+  auth,
   functions,
   httpsCallable
 } from "../firebaseConfig";
-import { normalizeDocumentId } from "./productIdUtils";
-import { getSupplier, getSuppliers } from "./firebaseSuppliers";
+import { getSuppliers } from "./firebaseSuppliers";
 
 // Simple in-memory cache for indexed products per hotel
 const productsIndexedCache = {};
@@ -326,7 +324,7 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
 
     const pagedQuery = query(productsCol, ...constraints);
     const snap = await getDocs(pagedQuery);
-    const products = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+    const products = snap.docs.map((docSnap) => ({ ...docSnap.data(), id: docSnap.id }));
     const cursor = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
     return {
       products,
@@ -341,7 +339,7 @@ async function getEntityProducts(hotelUid, entityCollection, options = {}) {
   }
 
   const snap = await getDocs(productsCol);
-  const products = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  const products = snap.docs.map((docSnap) => ({ ...docSnap.data(), id: docSnap.id }));
   entityProductsCache[cacheKey] = products;
   return products;
 }
@@ -390,7 +388,7 @@ async function searchSupplierProductsWithFirestore(hotelUid, criteria, pageSize,
 
   const pagedQuery = query(productsCol, ...constraints);
   const snap = await getDocs(pagedQuery);
-  let products = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  let products = snap.docs.map((docSnap) => ({ ...docSnap.data(), id: docSnap.id }));
 
   if (searchTerm) {
     const lowerTerm = searchTerm.toLowerCase();
@@ -452,7 +450,7 @@ async function searchCatalogProductsWithFirestore(hotelUid, criteria, pageSize, 
 
   const pagedQuery = query(productsCol, ...constraints);
   const snap = await getDocs(pagedQuery);
-  const products = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  const products = snap.docs.map((docSnap) => ({ ...docSnap.data(), id: docSnap.id }));
   const nextCursor = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
 
   return {
@@ -462,215 +460,156 @@ async function searchCatalogProductsWithFirestore(hotelUid, criteria, pageSize, 
   };
 }
 
-function sanitizeCatalogProductPayload(product = {}) {
-  const {
-    documentId,
-    id,
-    createdAt,
-    updatedAt,
-    createdBy,
-    updatedBy,
-    ...payload
-  } = product;
-
-  const cleanedPayload = Object.fromEntries(
-    Object.entries(payload).filter(([, value]) => value !== undefined)
-  );
-
-  return cleanedPayload;
+const PRODUCT_METADATA = new Set(["documentId", "id", "revision", "productPolicyVersion", "createdAt", "updatedAt", "createdBy", "updatedBy", "priceUpdatedOn", "supplierName", "archivedAt", "archivedBy"]);
+function productPayload(product = {}) {
+  return Object.fromEntries(Object.entries(product).filter(([key, value]) => !PRODUCT_METADATA.has(key) && value !== undefined));
 }
 
-function sanitizeSupplierProductPayload(product = {}) {
-  const {
-    documentId,
-    id,
-    createdAt,
-    updatedAt,
-    createdBy,
-    updatedBy,
-    priceUpdatedOn,
-    ...payload
-  } = product;
-
-  const cleanedPayload = Object.fromEntries(
-    Object.entries(payload).filter(([, value]) => value !== undefined)
-  );
-
-  return cleanedPayload;
+function commandStorageKey(hotelUid, resource) {
+  const actor = auth.currentUser?.uid;
+  if (!hotelUid || !actor) throw new Error("A signed-in hotel user is required.");
+  return `product-command:${actor}:${hotelUid}:${resource}`;
 }
 
-function normalizeSupplierProductPricingPayload(product = {}) {
-  const pricingModel = String(product.pricingModel || "Per Purchase Unit").trim();
-  const normalized = {
-    ...product,
-    pricingModel,
-  };
+function notifyProductCommand() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("product-command-changed"));
+}
 
-  const baseUnitsPerPurchaseUnit = Number(normalized.baseUnitsPerPurchaseUnit || 0);
-  const pricePerBaseUnit = Number(normalized.pricePerBaseUnit || 0);
+export function getPendingProductCommand(hotelUid, entityCollection, productId = "create") {
+  if (!hotelUid || !auth.currentUser?.uid) return null;
+  const saved = sessionStorage.getItem(commandStorageKey(hotelUid, `${entityCollection}:${productId}`));
+  return saved ? JSON.parse(JSON.parse(saved).input) : null;
+}
 
-  if (pricingModel === "Per Base Unit") {
-    const purchaseUnit = String(normalized.purchaseUnit || "").trim();
-    if (!purchaseUnit || !(baseUnitsPerPurchaseUnit > 0)) {
-      throw new Error(
-        "Voor pricingModel 'Per Base Unit' zijn purchaseUnit en baseUnitsPerPurchaseUnit verplicht"
-      );
-    }
+export async function retryPendingProductCommand(hotelUid, entityCollection, productId = "create") {
+  const input = getPendingProductCommand(hotelUid, entityCollection, productId);
+  if (!input) throw new Error("No pending product request is available.");
+  const endpoint = entityCollection === "catalogproducts" ? "mutateHotelCatalogProduct" : "mutateHotelSupplierProduct";
+  return productCommand(hotelUid, endpoint, input, `${entityCollection}:${productId}`);
+}
 
-    normalized.purchaseUnit = purchaseUnit;
-    normalized.baseUnitsPerPurchaseUnit = baseUnitsPerPurchaseUnit;
-    normalized.pricePerBaseUnit = pricePerBaseUnit;
-    normalized.pricePerPurchaseUnit = Number(
-      (pricePerBaseUnit * baseUnitsPerPurchaseUnit).toFixed(4)
-    );
+async function productCommand(hotelUid, endpoint, input, resource) {
+  const key = commandStorageKey(hotelUid, resource);
+  const serializedInput = JSON.stringify(input);
+  const existing = sessionStorage.getItem(key);
+  let pending = existing ? JSON.parse(existing) : null;
+  if (pending && pending.input !== serializedInput) {
+    throw new Error("The previous request has an uncertain result. Retry the original values before making another change.");
   }
-
-  return normalized;
+  if (!pending) {
+    pending = { input: serializedInput, requestId: crypto.randomUUID() };
+    sessionStorage.setItem(key, JSON.stringify(pending));
+  }
+  try {
+    const { data } = await httpsCallable(functions, endpoint)({ hotelUid, ...input, requestId: pending.requestId });
+    if (data?.hotelUid !== hotelUid || typeof data.productId !== "string" || !data.productId || !Number.isSafeInteger(data.revision) || data.revision < 0) throw new Error("Product response could not be validated. Retry the saved request.");
+    sessionStorage.removeItem(key);
+    notifyProductCommand();
+    clearEntityProductsCache(hotelUid);
+    return data;
+  } catch (error) {
+    if (error?.details?.productRequestUncommitted === true) sessionStorage.removeItem(key);
+    notifyProductCommand();
+    throw error;
+  }
 }
 
+async function importEntityProducts(hotelUid, products, options, entityCollection) {
+  if (!Array.isArray(products) || products.length === 0 || products.length > 500) throw new Error("Import between 1 and 500 products per file.");
+  const key = commandStorageKey(hotelUid, `import:${entityCollection}`);
+  const onExisting = options.onExisting === "overwrite" ? "overwrite" : "skip";
+  const source = JSON.stringify({ products, onExisting });
+  const saved = sessionStorage.getItem(key);
+  let plan = saved ? JSON.parse(saved) : null;
+  if (plan && plan.source !== source) {
+    const previous = JSON.parse(plan.source);
+    const completedRows = plan.offset * 25;
+    if (!plan.failedUncommitted || previous.onExisting !== onExisting || previous.products.length !== products.length || JSON.stringify(previous.products.slice(0, completedRows)) !== JSON.stringify(products.slice(0, completedRows))) {
+      throw new Error("Retry the previous import file and strategy to reconcile its result first. Already imported rows cannot be changed during a retry.");
+    }
+    const suppliers = entityCollection === "supplierproducts" ? await getSuppliers(hotelUid) : [];
+    for (let batchIndex = plan.offset; batchIndex < plan.batches.length; batchIndex += 1) {
+      for (let row = 0; row < plan.batches[batchIndex].products.length; row += 1) {
+        const sourceProduct = products[batchIndex * 25 + row];
+        const entry = plan.batches[batchIndex].products[row];
+        const product = productPayload(sourceProduct);
+        if (product.hasVariants || product.variants?.length) throw new Error("Legacy variants require explicit review and purchaseOptions before import.");
+        delete product.hasVariants; delete product.variants;
+        if (entityCollection === "supplierproducts") {
+          const matches = suppliers.filter((supplier) => supplier.id === product.supplierId || String(supplier.name || "").toLowerCase() === String(product.supplierId || "").toLowerCase());
+          if (matches.length !== 1) throw new Error("Select one existing hotel supplier for each import row.");
+          product.supplierId = matches[0].id;
+        }
+        if ((sourceProduct.documentId || sourceProduct.id || entry.productId) !== entry.productId) throw new Error("Keep the saved product IDs when correcting an import.");
+        const current = await getEntityProduct(hotelUid, entry.productId, entityCollection);
+        entry.product = product;
+        entry.expectedRevision = sourceProduct.revision ?? current?.revision ?? 0;
+      }
+      plan.batches[batchIndex].requestId = crypto.randomUUID();
+    }
+    plan.source = source;
+    plan.failedUncommitted = false;
+    sessionStorage.setItem(key, JSON.stringify(plan));
+  }
+  if (!plan) {
+    let suppliers = [];
+    if (entityCollection === "supplierproducts") suppliers = await getSuppliers(hotelUid);
+    const existingSupplierProducts = entityCollection === "supplierproducts" ? await getSupplierProducts(hotelUid) : [];
+    const entries = [];
+    for (const sourceProduct of products) {
+      const product = productPayload(sourceProduct);
+      if (product.hasVariants || product.variants?.length) throw new Error("Legacy variants require explicit review and purchaseOptions before import.");
+      delete product.hasVariants; delete product.variants;
+      if (entityCollection === "supplierproducts") {
+        const candidate = String(product.supplierId || "").trim();
+        const matches = suppliers.filter((supplier) => supplier.id === candidate || String(supplier.name || "").toLowerCase() === candidate.toLowerCase());
+        if (matches.length !== 1) throw new Error(`Supplier '${candidate}' must identify one existing hotel supplier.`);
+        product.supplierId = matches[0].id;
+      }
+      const matchingOffers = entityCollection === "supplierproducts" && !sourceProduct.documentId && !sourceProduct.id
+        ? existingSupplierProducts.filter((offer) => offer.supplierId === product.supplierId && String(offer.supplierSku || "").trim() === String(product.supplierSku || "").trim()) : [];
+      if (matchingOffers.length > 1) throw new Error("More than one existing offer has this supplier and SKU; resolve the ambiguity before importing.");
+      const productId = sourceProduct.documentId || sourceProduct.id || matchingOffers[0]?.id || crypto.randomUUID();
+      const current = (sourceProduct.documentId || sourceProduct.id) ? await getEntityProduct(hotelUid, productId, entityCollection) : matchingOffers[0] || null;
+      const expectedRevision = sourceProduct.revision ?? current?.revision ?? 0;
+      entries.push({ productId, expectedRevision, product });
+    }
+    plan = { source, offset: 0, imported: 0, skipped: 0, batches: [] };
+    for (let offset = 0; offset < entries.length; offset += 25) {
+      plan.batches.push({ products: entries.slice(offset, offset + 25), requestId: crypto.randomUUID() });
+    }
+    sessionStorage.setItem(key, JSON.stringify(plan));
+  }
+  try {
+    while (plan.offset < plan.batches.length) {
+      plan.failedUncommitted = false;
+      sessionStorage.setItem(key, JSON.stringify(plan));
+      const { data } = await httpsCallable(functions, "importHotelProducts")({ hotelUid, collection: entityCollection, onExisting, ...plan.batches[plan.offset] });
+      if (data?.hotelUid !== hotelUid || !Number.isSafeInteger(data.imported) || data.imported < 0 || !Number.isSafeInteger(data.skipped) || data.skipped < 0 || data.imported + data.skipped !== plan.batches[plan.offset].products.length) throw new Error("Import response could not be validated. Retry the saved file.");
+      plan.imported += data.imported;
+      plan.skipped += data.skipped;
+      plan.offset += 1;
+      sessionStorage.setItem(key, JSON.stringify(plan));
+    }
+  } catch (error) {
+    clearEntityProductsCache(hotelUid, entityCollection);
+    if (error?.details?.productRequestUncommitted === true) {
+      plan.failedUncommitted = true;
+      sessionStorage.setItem(key, JSON.stringify(plan));
+      error.message = `${error.message} Confirmed earlier batches: ${plan.imported} imported, ${plan.skipped} skipped. Retry this file, correcting only the remaining rows if needed.`;
+    }
+    throw error;
+  }
+  sessionStorage.removeItem(key);
+  clearEntityProductsCache(hotelUid, entityCollection);
+  return { imported: plan.imported, skipped: plan.skipped };
+}
 
 export async function importCatalogProducts(hotelUid, products, options = {}) {
-  if (!hotelUid) throw new Error("hotelUid is verplicht!");
-  const strategy = options.onExisting === "overwrite" ? "overwrite" : "skip";
-  const actor = options.actor || "unknown";
-
-  const productsCol = collection(db, `hotels/${hotelUid}/catalogproducts`);
-  const snapshot = await getDocs(productsCol);
-  const existingIds = new Set(snapshot.docs.map((docSnap) => docSnap.id));
-
-  let imported = 0;
-  let skipped = 0;
-
-  for (const product of products) {
-    const providedDocumentId = String(product.documentId || product.id || "").trim();
-    const documentId = normalizeDocumentId(providedDocumentId) || doc(productsCol).id;
-
-    const payload = sanitizeCatalogProductPayload(product);
-    const exists = existingIds.has(documentId);
-
-    if (exists && strategy === "skip") {
-      skipped += 1;
-      continue;
-    }
-
-    const now = Timestamp.now();
-    const docRef = doc(db, `hotels/${hotelUid}/catalogproducts`, documentId);
-    if (exists) {
-      await setDoc(
-        docRef,
-        {
-          ...payload,
-          updatedAt: now,
-          updatedBy: actor,
-        },
-        { merge: true }
-      );
-    } else {
-      await setDoc(docRef, {
-        ...payload,
-        active: payload.active ?? true,
-        createdAt: now,
-        createdBy: actor,
-        updatedAt: now,
-        updatedBy: actor,
-      });
-      existingIds.add(documentId);
-    }
-
-    imported += 1;
-  }
-
-  return { imported, skipped };
+  return importEntityProducts(hotelUid, products, options, "catalogproducts");
 }
-
 export async function importSupplierProducts(hotelUid, products, options = {}) {
-  if (!hotelUid) throw new Error("hotelUid is verplicht!");
-  const strategy = options.onExisting === "overwrite" ? "overwrite" : "skip";
-  const actor = options.actor || "unknown";
-
-  const suppliers = await getSuppliers(hotelUid);
-  const suppliersByNormalizedName = suppliers.reduce((acc, supplier) => {
-    const supplierName = String(supplier?.name || "").trim();
-    const normalizedName = supplierName.toLowerCase();
-    if (!normalizedName) return acc;
-    if (!acc[normalizedName]) {
-      acc[normalizedName] = supplier;
-    } else {
-      acc[normalizedName] = null;
-    }
-    return acc;
-  }, {});
-
-  const productsCol = collection(db, `hotels/${hotelUid}/supplierproducts`);
-  const snapshot = await getDocs(productsCol);
-  const existingIds = new Set(snapshot.docs.map((docSnap) => docSnap.id));
-
-  let imported = 0;
-  let skipped = 0;
-
-  for (const product of products) {
-    const supplierNameInput = String(product.supplierId || "").trim();
-    const normalizedSupplierNameInput = supplierNameInput.toLowerCase();
-    const supplier = suppliersByNormalizedName[normalizedSupplierNameInput];
-    if (!supplierNameInput || !supplier) {
-      throw new Error(`Import geannuleerd: supplier '${supplierNameInput || "(leeg)"}' bestaat niet of is niet uniek.`);
-    }
-
-    const supplierId = String(supplier.id || "").trim();
-    const supplierName = String(supplier.name || "").trim();
-    const supplierSku = String(product.supplierSku || "").trim();
-    const providedDocumentId = String(product.documentId || product.id || "").trim();
-    const generatedSupplierDocumentId = normalizeDocumentId(`${supplierId}_${supplierSku}`);
-    const documentId = normalizeDocumentId(providedDocumentId) || generatedSupplierDocumentId;
-    if (!supplierId || !supplierSku) {
-      skipped += 1;
-      continue;
-    }
-
-    const payload = normalizeSupplierProductPricingPayload(sanitizeSupplierProductPayload({
-      ...product,
-      supplierId,
-      supplierName,
-      supplierSku,
-    }));
-    const exists = existingIds.has(documentId);
-
-    if (exists && strategy === "skip") {
-      skipped += 1;
-      continue;
-    }
-
-    const now = Timestamp.now();
-    const docRef = doc(db, `hotels/${hotelUid}/supplierproducts`, documentId);
-    if (exists) {
-      await setDoc(
-        docRef,
-        {
-          ...payload,
-          updatedAt: now,
-          updatedBy: actor,
-          priceUpdatedOn: now,
-        },
-        { merge: true }
-      );
-    } else {
-      await setDoc(docRef, {
-        ...payload,
-        active: payload.active ?? true,
-        createdAt: now,
-        createdBy: actor,
-        updatedAt: now,
-        updatedBy: actor,
-        priceUpdatedOn: now,
-      });
-      existingIds.add(documentId);
-    }
-
-    imported += 1;
-  }
-
-  clearEntityProductsCache(hotelUid, "supplierproducts");
-  return { imported, skipped };
+  return importEntityProducts(hotelUid, products, options, "supplierproducts");
 }
 
 export async function getCatalogProduct(hotelUid, productId) {
@@ -686,73 +625,17 @@ async function getEntityProduct(hotelUid, productId, entityCollection) {
   const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
   const snap = await getDoc(productDoc);
   if (!snap.exists()) return null;
-  return { id: snap.id, ...snap.data() };
+  return { ...snap.data(), id: snap.id };
 }
 
-export async function createCatalogProduct(hotelUid, productData, actor) {
-  return createEntityProduct(hotelUid, productData, actor, "catalogproducts");
+export async function createCatalogProduct(hotelUid, productData) {
+  const result = await productCommand(hotelUid, "mutateHotelCatalogProduct", { action: "create", expectedRevision: 0, product: productPayload(productData) }, "catalogproducts:create");
+  return result.productId;
 }
-
-export async function createSupplierProduct(hotelUid, productData, actor, options = {}) {
-  return createEntityProduct(hotelUid, productData, actor, "supplierproducts", options);
+export async function createSupplierProduct(hotelUid, productData) {
+  const result = await productCommand(hotelUid, "mutateHotelSupplierProduct", { action: "create", expectedRevision: 0, product: productPayload(productData) }, "supplierproducts:create");
+  return result.productId;
 }
-
-async function createEntityProduct(hotelUid, productData, actor, entityCollection, options = {}) {
-  if (!hotelUid) throw new Error("hotelUid is verplicht!");
-  const productsCol = collection(db, `hotels/${hotelUid}/${entityCollection}`);
-  const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
-  const normalizedProductData = includeSupplierPriceTimestamp
-    ? normalizeSupplierProductPricingPayload(productData)
-    : productData;
-
-  const payload = {
-    ...normalizedProductData,
-    active: productData.active ?? true,
-    createdAt: serverTimestamp(),
-    createdBy: actor || "unknown",
-    updatedAt: serverTimestamp(),
-    updatedBy: actor || "unknown",
-    ...(includeSupplierPriceTimestamp ? { priceUpdatedOn: serverTimestamp() } : {}),
-  };
-
-  if (includeSupplierPriceTimestamp) {
-    const supplierId = String(normalizedProductData.supplierId || "").trim();
-    const supplierSku = String(normalizedProductData.supplierSku || "").trim();
-    if (!supplierId || !supplierSku) {
-      throw new Error("supplierId en supplierSku zijn verplicht voor supplier products");
-    }
-    const supplier = await getSupplier(hotelUid, supplierId);
-    if (!supplier) {
-      const error = new Error("De geselecteerde supplier bestaat niet.");
-      error.code = "invalid-supplier-id";
-      throw error;
-    }
-    payload.supplierName = String(supplier.name || "").trim() || supplierId;
-
-    const supplierProductId = normalizeDocumentId(`${supplierId}_${supplierSku}`);
-    if (!supplierProductId) {
-      throw new Error("supplierId en supplierSku bevatten geen geldige tekens voor een product ID");
-    }
-    const productRef = doc(productsCol, supplierProductId);
-    if (!options.overwriteExisting) {
-      const existingSnap = await getDoc(productRef);
-      if (existingSnap.exists()) {
-        const error = new Error("Supplier product bestaat al");
-        error.code = "supplier-product-exists";
-        error.productId = supplierProductId;
-        throw error;
-      }
-    }
-    await setDoc(productRef, payload);
-    clearEntityProductsCache(hotelUid, entityCollection);
-    return supplierProductId;
-  }
-
-  const docRef = await addDoc(productsCol, payload);
-  clearEntityProductsCache(hotelUid, entityCollection);
-  return docRef.id;
-}
-
 
 export async function uploadCatalogProductImage(hotelUid, file) {
   return uploadEntityProductImage(hotelUid, file, "catalogproducts");
@@ -772,93 +655,17 @@ async function uploadEntityProductImage(hotelUid, file, entityCollection) {
   return getDownloadURL(fileRef);
 }
 
-export async function updateCatalogProduct(hotelUid, productId, productData, actor) {
-  return updateEntityProduct(hotelUid, productId, productData, actor, "catalogproducts");
+export async function updateCatalogProduct(hotelUid, productId, productData, actor, options = {}) {
+  const result = await productCommand(hotelUid, "mutateHotelCatalogProduct", { action: "update", productId, expectedRevision: options.expectedRevision ?? productData.revision ?? 0, product: productPayload(productData) }, `catalogproducts:${productId}`);
+  return result.productId;
 }
-
 export async function updateSupplierProduct(hotelUid, productId, productData, actor, options = {}) {
-  return updateEntityProduct(hotelUid, productId, productData, actor, "supplierproducts", options);
+  const result = await productCommand(hotelUid, "mutateHotelSupplierProduct", { action: "update", productId, expectedRevision: options.expectedRevision ?? productData.revision ?? 0, product: productPayload(productData) }, `supplierproducts:${productId}`);
+  return result.productId;
 }
-
-async function updateEntityProduct(hotelUid, productId, productData, actor, entityCollection, options = {}) {
-  if (!hotelUid || !productId) throw new Error("hotelUid en productId zijn verplicht!");
-  const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
-  const includeSupplierPriceTimestamp = entityCollection === "supplierproducts";
-
-  const normalizedProductData = includeSupplierPriceTimestamp
-    ? normalizeSupplierProductPricingPayload(productData)
-    : productData;
-
-  if (includeSupplierPriceTimestamp) {
-    const supplierId = String(normalizedProductData.supplierId || "").trim();
-    const supplierSku = String(normalizedProductData.supplierSku || "").trim();
-    if (!supplierId || !supplierSku) {
-      throw new Error("supplierId en supplierSku zijn verplicht voor supplier products");
-    }
-    const supplier = await getSupplier(hotelUid, supplierId);
-    if (!supplier) {
-      const error = new Error("De geselecteerde supplier bestaat niet.");
-      error.code = "invalid-supplier-id";
-      throw error;
-    }
-    normalizedProductData.supplierName = String(supplier.name || "").trim() || supplierId;
-
-    const nextProductId = normalizeDocumentId(`${supplierId}_${supplierSku}`);
-    if (!nextProductId) {
-      throw new Error("supplierId en supplierSku bevatten geen geldige tekens voor een product ID");
-    }
-    if (nextProductId !== productId) {
-      const [currentSnap, nextSnap] = await Promise.all([
-        getDoc(productDoc),
-        getDoc(doc(db, `hotels/${hotelUid}/${entityCollection}`, nextProductId)),
-      ]);
-
-      if (nextSnap.exists() && !options.overwriteExisting) {
-        const error = new Error("Supplier product bestaat al");
-        error.code = "supplier-product-exists";
-        error.productId = nextProductId;
-        throw error;
-      }
-
-      const currentData = currentSnap.exists() ? currentSnap.data() : {};
-      const payload = {
-        ...currentData,
-        ...normalizedProductData,
-        updatedAt: serverTimestamp(),
-        updatedBy: actor || "unknown",
-        priceUpdatedOn: serverTimestamp(),
-      };
-
-      const nextDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, nextProductId);
-      await setDoc(nextDoc, payload, { merge: true });
-      await deleteDoc(productDoc);
-      clearEntityProductsCache(hotelUid, entityCollection);
-      return nextProductId;
-    }
-  }
-
-  const payload = {
-    ...normalizedProductData,
-    updatedAt: serverTimestamp(),
-    updatedBy: actor || "unknown",
-    ...(includeSupplierPriceTimestamp ? { priceUpdatedOn: serverTimestamp() } : {}),
-  };
-  await updateDoc(productDoc, payload);
-  clearEntityProductsCache(hotelUid, entityCollection);
-  return productId;
+export async function deleteCatalogProduct(hotelUid, productId, expectedRevision = 0) {
+  return productCommand(hotelUid, "mutateHotelCatalogProduct", { action: "archive", productId, expectedRevision }, `catalogproducts:${productId}`);
 }
-
-export async function deleteCatalogProduct(hotelUid, productId) {
-  return deleteEntityProduct(hotelUid, productId, "catalogproducts");
-}
-
-export async function deleteSupplierProduct(hotelUid, productId) {
-  return deleteEntityProduct(hotelUid, productId, "supplierproducts");
-}
-
-async function deleteEntityProduct(hotelUid, productId, entityCollection) {
-  if (!hotelUid || !productId) return;
-  const productDoc = doc(db, `hotels/${hotelUid}/${entityCollection}`, productId);
-  await deleteDoc(productDoc);
-  clearEntityProductsCache(hotelUid, entityCollection);
+export async function deleteSupplierProduct(hotelUid, productId, expectedRevision = 0) {
+  return productCommand(hotelUid, "mutateHotelSupplierProduct", { action: "archive", productId, expectedRevision }, `supplierproducts:${productId}`);
 }

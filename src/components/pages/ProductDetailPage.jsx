@@ -6,6 +6,7 @@ import HeaderBar from "../layout/HeaderBar";
 import PageContainer from "../layout/PageContainer";
 import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
+import PendingProductCommand from "../catalog/PendingProductCommand";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { deleteCatalogProduct, getCatalogProduct } from "../../services/firebaseProducts";
@@ -74,7 +75,7 @@ function ScopedProductDetailPage({ hotelUid, productId }) {
     if (!mounted.current || !hotelUid || !productId || !canDeleteProducts || deleting) return;
     setDeleting(true); setDeleteError(null);
     try {
-      await deleteCatalogProduct(hotelUid, productId);
+      await deleteCatalogProduct(hotelUid, productId, product?.revision ?? 0);
       if (mounted.current) { setShowDeleteModal(false); navigate("/catalog/products"); }
     } catch (error) { if (mounted.current) setDeleteError(error); }
     finally { if (mounted.current) setDeleting(false); }
@@ -84,6 +85,7 @@ function ScopedProductDetailPage({ hotelUid, productId }) {
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <PageContainer className="space-y-6">
+        <PendingProductCommand hotelUid={hotelUid} collection="catalogproducts" productId={productId} onComplete={() => { if (mounted.current) navigate("/catalog/products"); }} />
         <AsyncError error={query.error} onRetry={query.retry} label="Could not load product." />
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -113,7 +115,7 @@ function ScopedProductDetailPage({ hotelUid, productId }) {
                   ? "border-red-200 text-red-700 hover:bg-red-50"
                   : "border-gray-200 text-gray-500 cursor-not-allowed"
               }`}
-              title={t("products.actions.delete")}
+              title="Archive"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -157,12 +159,12 @@ function ScopedProductDetailPage({ hotelUid, productId }) {
                   <div className="mt-4">
                     <span
                       className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-                        product.active !== false
+                        product.active !== false && product.archived !== true
                           ? "bg-green-100 text-green-700"
                           : "bg-gray-200 text-gray-700"
                       }`}
                     >
-                      {product.active !== false ? t("products.status.active") : t("products.status.inactive")}
+                      {product.active !== false && product.archived !== true ? t("products.status.active") : t("products.status.inactive")}
                     </span>
                   </div>
                 </div>
@@ -182,6 +184,7 @@ function ScopedProductDetailPage({ hotelUid, productId }) {
                 <h2 className="text-lg font-semibold mb-3">{t("products.sections.units")}</h2>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <DetailField label={t("products.fields.baseUnit")} value={product.baseUnit} />
+                  <DetailField label="Physical inventory counts" value={product.inventoryTracked === true ? "Tracked" : product.inventoryTracked === false ? "Not tracked" : "Needs review"} />
                   <DetailField
                     label={t("products.fields.baseQtyPerUnit")}
                     value={product.baseQtyPerUnit}
@@ -226,10 +229,10 @@ function ScopedProductDetailPage({ hotelUid, productId }) {
       <Modal
         open={showDeleteModal}
         onClose={() => setShowDeleteModal(false)}
-        title={t("products.deleteModal.title")}
+        title={"Archive product"}
       >
-        <p className="text-sm text-gray-700">{t("products.deleteModal.message")}</p>
-        <AsyncError error={deleteError} onRetry={handleDeleteProduct} label="Could not delete this product." />
+        <p className="text-sm text-gray-700">Archive this product? Its stable identity and historical order/count references are preserved.</p>
+        <AsyncError error={deleteError} onRetry={handleDeleteProduct} label="Could not archive this product." />
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
@@ -248,7 +251,7 @@ function ScopedProductDetailPage({ hotelUid, productId }) {
                 : "bg-gray-300 text-gray-500 cursor-not-allowed"
             }`}
           >
-            {t("products.actions.delete")}
+            Archive
           </button>
         </div>
       </Modal>

@@ -10,6 +10,7 @@ const defaultState = {
   brand: "",
   description: "",
   active: true,
+  inventoryTracked: false,
   category: "",
   subcategory: "",
   baseUnit: "",
@@ -58,6 +59,7 @@ export default function ProductFormFields({
   const { t } = useTranslation("common");
   const [formState, setFormState] = useState(() => toFormState(initialData));
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   const [imageFile, setImageFile] = useState(null);
   const loadTaxonomy = useCallback(() => getCatalogTaxonomy(hotelUid), [hotelUid]);
   const taxonomy = useScopedAsync({ scopeKey: hotelUid, enabled: Boolean(hotelUid), load: loadTaxonomy });
@@ -89,11 +91,15 @@ export default function ProductFormFields({
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (!hotelUid || !formState.name.trim()) return;
+    if (!["g", "kg", "ml", "l", "each"].includes(formState.baseUnit)) { setError("Select a supported base unit before saving."); return; }
     setSaving(true);
-
+    setError("");
+    try {
     let imageUrl = formState.imageUrl || "";
     if (imageFile) {
       imageUrl = await uploadImage(hotelUid, imageFile);
+      setFormState((current) => ({ ...current, imageUrl }));
+      setImageFile(null);
     }
 
     const normalizedName = formState.name.trim();
@@ -104,10 +110,11 @@ export default function ProductFormFields({
       brand: formState.brand.trim(),
       description: formState.description.trim(),
       active: formState.active,
+      inventoryTracked: formState.inventoryTracked === true,
       category: formState.category.trim(),
       subcategory: formState.subcategory.trim(),
       baseUnit: formState.baseUnit.trim(),
-      baseQtyPerUnit: Number(formState.baseQtyPerUnit) || 0,
+      baseQtyPerUnit: formState.baseQtyPerUnit === "" ? null : Number(formState.baseQtyPerUnit),
       gtin: formState.gtin.trim(),
       internalSku: formState.internalSku.trim(),
       storageType: formState.storageType.trim(),
@@ -120,11 +127,13 @@ export default function ProductFormFields({
     };
 
     await onSubmit(payload);
-    setSaving(false);
+    } catch (failure) { setError(failure?.message || "Could not save the catalog product."); }
+    finally { setSaving(false); }
   };
 
   return (
     <form onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2">
+      {error && <p role="alert" className="sm:col-span-2 text-red-700">{error}</p>}
       <AsyncError error={taxonomy.error} onRetry={taxonomy.retry} label="Could not load catalog categories." />
       <datalist id="catalog-form-categories">{(taxonomy.data?.categories || []).map((category) => <option key={category.id} value={category.name} />)}</datalist>
       <datalist id="catalog-form-subcategories">{subcategories.map((subcategory) => <option key={subcategory.id} value={subcategory.name} />)}</datalist>
@@ -202,20 +211,25 @@ export default function ProductFormFields({
       </SectionCard>
 
       <SectionCard title={t("products.sections.units")}>
-        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          {t("products.fields.baseUnit")}
-          <input
-            value={formState.baseUnit}
-            onChange={(event) => updateField("baseUnit", event.target.value)}
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
-          />
+        <p className="sm:col-span-2 text-sm text-gray-600">Physical counts use this catalog unit. Supplier packaging is configured separately.</p>
+        <label className="sm:col-span-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
+          <input type="checkbox" checked={formState.inventoryTracked === true} onChange={(event) => updateField("inventoryTracked", event.target.checked)} /> Track this item in physical inventory counts
         </label>
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          {t("products.fields.baseQtyPerUnit")}
+          {t("products.fields.baseUnit")}
+          <select required value={formState.baseUnit} onChange={(event) => updateField("baseUnit", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm">
+            <option value="">Choose a base unit</option>
+            {formState.baseUnit && !["g", "kg", "ml", "l", "each"].includes(formState.baseUnit) && <option value={formState.baseUnit} disabled>Legacy unit: {formState.baseUnit} — select its meaning</option>}
+            {["g", "kg", "ml", "l", "each"].map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
+          Legacy quantity metadata (optional)
           <input
             type="number"
-            step="0.01"
-            min="0"
+            step="0.000001"
+            min="0.000001"
+            max="1000000"
             value={formState.baseQtyPerUnit}
             onChange={(event) => updateField("baseQtyPerUnit", event.target.value)}
             className="rounded border border-gray-300 px-3 py-2 text-sm"

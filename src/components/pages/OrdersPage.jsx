@@ -11,6 +11,7 @@ import { usePermission } from "../../hooks/usePermission";
 import { getOrders, listOrderStatuses } from "../../services/firebaseOrders";
 import { getSuppliers } from "../../services/firebaseSuppliers";
 import { getHotelUserDisplayName } from "../../services/firebaseUserManagement";
+import { formatOrderMoney, formatOrderPriceBasis } from "../../utils/orderPricing";
 
 const EMPTY_ORDERS = Object.freeze([]);
 
@@ -149,7 +150,8 @@ function ScopedOrdersPage({ hotelUid }) {
         createdByLabel: createdByMap[order.createdBy] || order.createdByName || order.createdBy || "-",
         createdAtLabel: order.createdAtDate ? new Date(order.createdAtDate).toLocaleString() : "-",
         itemCount: Array.isArray(order.products) ? order.products.length : 0,
-        totalLabel: `${Number(order.totalAmount || 0).toFixed(2)} ${order.currency || "EUR"}`,
+        totalLabel: formatOrderMoney(order.totalAmount, order.currency),
+        priceBasisLabel: formatOrderPriceBasis(order.priceBasis),
       }));
   }, [
     orders,
@@ -172,7 +174,8 @@ function ScopedOrdersPage({ hotelUid }) {
     { key: "createdByLabel", label: "Created By" },
     { key: "createdAtLabel", label: "Created At" },
     { key: "itemCount", label: "Items" },
-    { key: "totalLabel", label: "Totaal" },
+    { key: "totalLabel", label: "Quoted total" },
+    { key: "priceBasisLabel", label: "Price basis" },
   ];
 
   return (

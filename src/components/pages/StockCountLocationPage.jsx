@@ -18,6 +18,7 @@ import { getOutlets } from "../../services/firebaseSettings";
 import { matchesSearchTokensAcross } from "../../utils/search";
 import { usePermission } from "../../hooks/usePermission";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
+import CatalogStockCountLocationPanel from "../inventory/CatalogStockCountLocationPanel";
 import { collectPaginatedProducts } from "../../services/paginatedExport";
 
 function buildItemKey(item) {
@@ -25,10 +26,7 @@ function buildItemKey(item) {
 }
 
 function formatCurrency(value) {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: "EUR",
-  }).format(Number(value || 0));
+  return `${new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0))} · legacy currency unknown`;
 }
 
 function buildContent(item) {
@@ -110,7 +108,7 @@ export default function StockCountLocationPage() {
     return { products, outlets };
   }, [hotelUid]);
   const productSources = useScopedAsync({
-    scopeKey: `${scopeKey}:add-products`, enabled: Boolean(hotelUid && stockCountId && locationId && canAddProducts),
+    scopeKey: `${scopeKey}:add-products`, enabled: Boolean(hotelUid && stockCountId && locationId && canAddProducts && loaded?.nextStockCount && loaded.nextStockCount.inventoryPolicyVersion !== 1),
     load: loadProductSources,
   });
   const supplierProducts = productSources.data?.products || [];
@@ -359,6 +357,8 @@ export default function StockCountLocationPage() {
           <Card>
             <p className="text-gray-600">Stock count location not found.</p>
           </Card>
+        ) : stockCount.inventoryPolicyVersion === 1 ? (
+          <CatalogStockCountLocationPanel key={scopeKey} hotelUid={hotelUid} stockCount={stockCount} location={stockCountLocation} />
         ) : !template ? (
           <Card>
             <p className="text-gray-600">Stock count template not found.</p>
@@ -529,11 +529,12 @@ export default function StockCountLocationPage() {
                 <button
                   type="button"
                   onClick={handleFinishClick}
-                  disabled={!canUpdateStockCounts || saving || isFinished}
+                  disabled={!canUpdateStockCounts || saving || isFinished || rows.length === 0 || countedCount !== rows.length}
                   className="px-4 py-2 rounded-lg bg-brand-800 text-white text-sm font-semibold hover:bg-brand-950 disabled:opacity-60"
                 >
                   {saving ? "Finishing..." : "Set Finished"}
                 </button>
+                {countedCount !== rows.length && <p className="text-sm text-gray-500">Enter a quantity for every included item, including explicit zero, before finishing.</p>}
               </div>
             </Card>
           </>

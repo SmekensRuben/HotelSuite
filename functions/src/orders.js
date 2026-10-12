@@ -4,6 +4,7 @@ const { requireHotelPermission, permissionAllows, normalizedPermissions } = requ
 const { requireDocumentId } = require("./subscriptions");
 const { text, revision, digest } = require("./validation");
 const { gated } = require("./saasRollout");
+const { resolvePurchaseOption, inventoryTerms } = require("./productPolicy");
 
 const stamp = () => admin.firestore.FieldValue.serverTimestamp();
 function dateOnly(value) {
@@ -32,12 +33,14 @@ function cartInput(items) {
   return items.map((item) => {
     const supplierProductId = requireDocumentId(item.supplierProductId, "supplierProductId");
     const outletId = requireDocumentId(item.outletId, "outletId");
-    const quantity = Number(item.qtyPurchaseUnits);
-    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 100000 || Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 1e-8) throw new HttpsError("invalid-argument", "Quantities must be positive, at most 100000, with up to three decimals.");
-    const key = `${supplierProductId}/${outletId}`;
+    const quantity = item.qtyPurchaseUnits;
+    const purchaseOptionId = requireDocumentId(item.purchaseOptionId ?? "default", "purchaseOptionId");
+    if (typeof quantity !== "number" || !Number.isFinite(quantity) || quantity <= 0 || quantity > 100000 || Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 1e-8) throw new HttpsError("invalid-argument", "Quantities must be positive, at most 100000, with up to three decimals.");
+    const key = JSON.stringify([supplierProductId, purchaseOptionId, outletId]);
     if (seen.has(key)) throw new HttpsError("invalid-argument", "Merge duplicate product lines before submitting.");
     seen.add(key);
-    return { supplierProductId, outletId, qtyPurchaseUnits: quantity, note: text(item.note || "", "Product note", 1000) };
+    return { supplierProductId, purchaseOptionId, orderLineId: `l-${digest(supplierProductId, purchaseOptionId).slice(0, 40)}`,
+      outletId, qtyPurchaseUnits: quantity, note: text(item.note || "", "Product note", 1000) };
   });
 }
 
@@ -46,6 +49,13 @@ async function canonicalLines(db, tx, hotelUid, items) {
   const productIds = [...new Set(input.map((i) => i.supplierProductId))];
   const productSnaps = await tx.getAll(...productIds.map((id) => db.doc(`hotels/${hotelUid}/supplierproducts/${id}`)));
   const products = new Map(productSnaps.map((s) => [s.id, s]));
+  const catalogIds = [...new Set(productSnaps.filter((s) => s.exists && s.data().catalogProductId)
+    .map((s) => requireDocumentId(s.data().catalogProductId, "Catalog product ID")))];
+  const catalogSnaps = catalogIds.length ? await tx.getAll(...catalogIds.map((id) => db.doc(`hotels/${hotelUid}/catalogproducts/${id}`))) : [];
+  const catalog = new Map(catalogSnaps.filter((s) => s.exists).map((s) => [s.id, { ...s.data(), id: s.id }]));
+  if ([...catalog.values()].some((product) => product.active === false || product.archived === true)) {
+    throw new HttpsError("failed-precondition", "A linked catalog product is inactive or archived. Review the supplier offer before ordering.");
+  }
   const supplierIds = [...new Set(productSnaps.map((s) => {
     if (!s.exists || s.data().active === false) throw new HttpsError("failed-precondition", "A product is missing or inactive.");
     return requireDocumentId(s.data().supplierId, "Product supplier ID");
@@ -58,15 +68,15 @@ async function canonicalLines(db, tx, hotelUid, items) {
   const outlets = new Map(snapshots.slice(supplierIds.length).map((s) => [s.id, s.data()]));
   const lines = input.map((item) => {
     const p = products.get(item.supplierProductId).data();
-    const price = Number(p.pricePerPurchaseUnit);
-    if (!Number.isFinite(price) || price < 0 || price > 1000000) throw new HttpsError("failed-precondition", "A product needs a valid catalog price.");
-    const currency = p.currency || "EUR";
-    if (!/^[A-Z]{3}$/.test(currency)) throw new HttpsError("failed-precondition", "A product needs a valid currency.");
+    const option = resolvePurchaseOption(p, item.purchaseOptionId);
+    const price = option.pricePerPurchaseUnit, currency = option.currency;
     const line = { ...item, supplierId: p.supplierId, supplierName: suppliers.get(p.supplierId).name || p.supplierId,
       outletName: outlets.get(item.outletId).name || item.outletId, pricePerPurchaseUnit: price, currency };
-    for (const field of ["supplierSku", "supplierProductName", "purchaseUnit", "pricingModel", "baseUnit"]) line[field] = String(p[field] || "").slice(0, 200);
-    line.baseUnitsPerPurchaseUnit = Number(p.baseUnitsPerPurchaseUnit || 0);
-    if (!Number.isFinite(line.baseUnitsPerPurchaseUnit)) line.baseUnitsPerPurchaseUnit = 0;
+    for (const field of ["supplierSku", "supplierProductName", "pricingModel"]) line[field] = String(p[field] || "").slice(0, 200);
+    Object.assign(line, { purchaseUnit: option.purchaseUnit, baseUnit: option.baseUnit,
+      baseUnitsPerPurchaseUnit: option.baseUnitsPerPurchaseUnit, priceBasis: option.priceBasis,
+      vatRate: option.vatRate, netPricePerPurchaseUnit: option.netPricePerPurchaseUnit,
+      inventoryTerms: inventoryTerms(p, catalog.get(p.catalogProductId) ?? null, option) });
     return line;
   });
   return { lines, suppliers, outlets };
@@ -89,7 +99,7 @@ async function createOrdersFromCartHandler(request, services = {}) {
   const operation = db.doc(`hotels/${hotelUid}/orderOperations/${digest(request.auth?.uid, requestId)}`);
   const fingerprint = digest(cartId, requestedDate, cartRevision);
   return db.runTransaction(async (tx) => {
-    await requireHotelPermission(db, request, hotelUid, "orders", "create", tx);
+    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "create", tx);
     const [op, cart] = await Promise.all([tx.get(operation), tx.get(db.doc(`hotels/${hotelUid}/shoppingCarts/${cartId}`))]);
     if (op.exists) {
       if (op.data().fingerprint !== fingerprint) throw new HttpsError("already-exists", "This order request was used with different details.");
@@ -109,7 +119,7 @@ async function createOrdersFromCartHandler(request, services = {}) {
     for (const [key, products] of groups) {
       const [supplierId, outletId] = key.split("/");
       accounts.set(key, await canonicalAccount(db, tx, hotelUid, supplierId, outletId, suppliers.get(supplierId)));
-      if (new Set(products.map((p) => p.currency)).size !== 1) throw new HttpsError("failed-precondition", "An order cannot mix currencies.");
+      orderPriceContract(products);
     }
     const result = { orderIds: [], deliveryDateAdjustments: [] };
     for (const [key, products] of groups) {
@@ -122,7 +132,7 @@ async function createOrdersFromCartHandler(request, services = {}) {
       tx.create(db.doc(`hotels/${hotelUid}/orders/${orderId}`), { supplierId, supplierName: supplier.name || supplierId,
         outletId, outletName: products[0].outletName, accountNumber: accounts.get(key), products,
         totalAmount: Math.round(products.reduce((sum, p) => sum + p.pricePerPurchaseUnit * p.qtyPurchaseUnits, 0) * 100) / 100,
-        currency: products[0].currency, deliveryDate: resolvedDate, shoppingCartId: cartId, status: "Created", revision: 1,
+        currency: products[0].currency, priceBasis: orderPriceContract(products).priceBasis, deliveryDate: resolvedDate, shoppingCartId: cartId, status: "Created", revision: 1,
         createdBy: request.auth.uid, createdAt: stamp(), updatedAt: stamp(), dispatchStatus: "" });
     }
     tx.update(cart.ref, { items: [], revision: cartRevision + 1, updatedAt: stamp() });
@@ -143,7 +153,7 @@ async function updateOrderHandler(request, services = {}) {
   const payload = input.payload || {};
   if (Object.keys(payload).some((k) => !["products", "deliveryDate"].includes(k))) throw new HttpsError("invalid-argument", "Only product quantities, notes and the delivery date can be edited.");
   return db.runTransaction(async (tx) => {
-    await requireHotelPermission(db, request, hotelUid, "orders", "update", tx);
+    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "update", tx);
     const snap = await tx.get(db.doc(`hotels/${hotelUid}/orders/${orderId}`));
     if (!snap.exists) throw new HttpsError("not-found", "Order not found.");
     const order = snap.data(); editable(order);
@@ -151,16 +161,16 @@ async function updateOrderHandler(request, services = {}) {
     const products = payload.products ?? order.products;
     if (!Array.isArray(products)) throw new HttpsError("invalid-argument", "Product lines are required.");
     // Editing cannot add unrelated products, change the supplier or move the order to another outlet.
-    const originalIds = new Set(order.products.map((p) => p.supplierProductId));
+    const originalIds = new Set(order.products.map((p) => JSON.stringify([p.supplierProductId, p.purchaseOptionId ?? "default"])));
     const normalized = products.map((p) => ({ ...p, outletId: order.outletId }));
-    if (normalized.some((p) => !originalIds.has(p.supplierProductId))) throw new HttpsError("invalid-argument", "Use the shopping cart to add new products.");
+    if (normalized.some((p) => !originalIds.has(JSON.stringify([p.supplierProductId, p.purchaseOptionId ?? "default"])))) throw new HttpsError("invalid-argument", "Use the shopping cart to add new products or purchase options.");
     const { lines, suppliers } = await canonicalLines(db, tx, hotelUid, normalized);
     if (lines.some((p) => p.supplierId !== order.supplierId)) throw new HttpsError("failed-precondition", "A product's supplier has changed. Recreate the order.");
-    if (new Set(lines.map((p) => p.currency)).size !== 1) throw new HttpsError("failed-precondition", "An order cannot mix currencies.");
+    const priceContract = orderPriceContract(lines);
     const resolved = deliveryDate(payload.deliveryDate ?? order.deliveryDate, suppliers.get(order.supplierId).deliveryDays);
     const accountNumber = await canonicalAccount(db, tx, hotelUid, order.supplierId, order.outletId, suppliers.get(order.supplierId));
     tx.update(snap.ref, { products: lines, deliveryDate: resolved, totalAmount: Math.round(lines.reduce((sum, p) => sum + p.pricePerPurchaseUnit * p.qtyPurchaseUnits, 0) * 100) / 100,
-      currency: lines[0].currency, accountNumber, revision: expected + 1, updatedAt: stamp(), updatedBy: request.auth.uid });
+      currency: priceContract.currency, priceBasis: priceContract.priceBasis, accountNumber, revision: expected + 1, updatedAt: stamp(), updatedBy: request.auth.uid });
     return { revision: expected + 1 };
   });
 }
@@ -170,7 +180,7 @@ async function deleteOrderHandler(request, services = {}) {
   const hotelUid = requireDocumentId(request.data?.hotelUid, "hotelUid");
   const orderId = requireDocumentId(request.data?.orderId, "orderId");
   return db.runTransaction(async (tx) => {
-    await requireHotelPermission(db, request, hotelUid, "orders", "delete", tx);
+    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "delete", tx);
     const order = await tx.get(db.doc(`hotels/${hotelUid}/orders/${orderId}`));
     if (!order.exists) return { deleted: false };
     editable(order.data()); tx.delete(order.ref);
@@ -188,7 +198,7 @@ async function confirmOrderHandler(request, services = {}) {
   const expected = revision(input.expectedRevision);
   const dispatchId = digest(hotelUid, orderId, request.auth?.uid, requestId);
   return db.runTransaction(async (tx) => {
-    await requireHotelPermission(db, request, hotelUid, "orders", "approve", tx);
+    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "approve", tx);
     const ref = db.doc(`hotels/${hotelUid}/orders/${orderId}`);
     const snap = await tx.get(ref);
     if (!snap.exists) throw new HttpsError("not-found", "Order not found.");
@@ -209,16 +219,20 @@ async function confirmOrderHandler(request, services = {}) {
       catch { throw new HttpsError("failed-precondition", "Configure the supplier's order email first."); }
     }
     const { lines } = await canonicalLines(db, tx, hotelUid, (order.products || []).map((p) => ({ ...p, outletId: order.outletId })));
+    const priceContract = orderPriceContract(lines);
+    if (order.priceBasis !== undefined && order.priceBasis !== priceContract.priceBasis) {
+      throw new HttpsError("failed-precondition", "The order price basis changed. Edit and review this order before confirming.");
+    }
     const accountNumber = await canonicalAccount(db, tx, hotelUid, order.supplierId, order.outletId, supplier.data());
     if (accountNumber !== (order.accountNumber || "") || deliveryDate(order.deliveryDate, publicSupplier.deliveryDays) !== order.deliveryDate) {
       throw new HttpsError("failed-precondition", "Supplier account or delivery days changed. Edit and review this order before confirming.");
     }
-    if (lines.some((p, i) => p.supplierId !== order.supplierId || p.pricePerPurchaseUnit !== order.products[i].pricePerPurchaseUnit || p.currency !== order.currency)) {
-      throw new HttpsError("failed-precondition", "Catalog pricing or supplier details changed. Edit and review this order before confirming.");
+    if (lines.some((p, i) => !sameOrderContract(p, order.products[i], order))) {
+      throw new HttpsError("failed-precondition", "Pricing, packaging or inventory terms changed. Edit and review this order before confirming.");
     }
     const snapshot = { id: orderId, products: lines, deliveryDate: dateOnly(order.deliveryDate),
       supplierId: order.supplierId, supplierName: publicSupplier.name, outletId: order.outletId, outletName: order.outletName,
-      accountNumber, currency: order.currency,
+      accountNumber, currency: order.currency, priceBasis: order.priceBasis ?? "unknown",
       hotelName: hotel.data().hotelName || hotel.data().name || hotelUid,
       dispatchRequestedByEmail: request.auth.token?.email || "", supplierOrderReference: orderId };
     tx.create(db.doc(`hotels/${hotelUid}/dispatches/${dispatchId}`), { orderId, status: "pending", actorUid: request.auth.uid,
@@ -236,13 +250,13 @@ async function setOutletApproversHandler(request, services = {}) {
   const outletId = requireDocumentId(request.data?.outletId, "outletId");
   if (!Array.isArray(request.data?.userIds) || request.data.userIds.length > 20) throw new HttpsError("invalid-argument", "Choose at most twenty approvers.");
   const ids = [...new Set(request.data.userIds.map((id) => requireDocumentId(id, "Approver UID")))];
-  await requireHotelPermission(db, request, hotelUid, "outlets", "approvers");
+  await requireHotelPermission(db, { ...request }, hotelUid, "outlets", "approvers");
   // Auth supplies canonical addresses; browser-supplied recipient details are never trusted.
   const auth = services.auth || admin.auth();
   const users = await Promise.all(ids.map((uid) => auth.getUser(uid)));
   if (users.some((u) => u.disabled || !u.emailVerified || !u.email)) throw new HttpsError("failed-precondition", "Approvers must have an enabled account and verified email.");
   return db.runTransaction(async (tx) => {
-    await requireHotelPermission(db, request, hotelUid, "outlets", "approvers", tx);
+    await requireHotelPermission(db, { ...request }, hotelUid, "outlets", "approvers", tx);
     const outlet = await tx.get(db.doc(`hotels/${hotelUid}/outlets/${outletId}`));
     if (!outlet.exists) throw new HttpsError("not-found", "Outlet not found.");
     const members = ids.length ? await tx.getAll(...ids.map((id) => db.doc(`hotels/${hotelUid}/members/${id}`))) : [];
@@ -264,7 +278,7 @@ async function saveSupplierOutletAccountHandler(request, services = {}) {
   const accountNumber = text(input.accountNumber, "Account number", 100, true);
   const ref = db.doc(`hotels/${hotelUid}/supplierOutletAccounts/${digest(supplierId, outletId)}`);
   return db.runTransaction(async (tx) => {
-    await requireHotelPermission(db, request, hotelUid, "suppliers", "update", tx);
+    await requireHotelPermission(db, { ...request }, hotelUid, "suppliers", "update", tx);
     const [supplier, outlet, existing] = await Promise.all([tx.get(db.doc(`hotels/${hotelUid}/suppliers/${supplierId}`)),
       tx.get(db.doc(`hotels/${hotelUid}/outlets/${outletId}`)), tx.get(db.collection(`hotels/${hotelUid}/supplierOutletAccounts`).where("supplierId", "==", supplierId).where("outletId", "==", outletId).limit(2))]);
     if (!supplier.exists || !outlet.exists) throw new HttpsError("not-found", "Choose a supplier and outlet belonging to this hotel.");
@@ -276,8 +290,31 @@ async function saveSupplierOutletAccountHandler(request, services = {}) {
   });
 }
 
+// Purchase totals stay in one explicit price contract; receipt valuation separately
+// removes VAT from each frozen package only when its net cost is established.
+function orderPriceContract(lines) {
+  if (!Array.isArray(lines) || !lines.length) throw new HttpsError("failed-precondition", "An order requires product lines.");
+  const currencies = new Set(lines.map((line) => line.currency));
+  if (currencies.size !== 1) throw new HttpsError("failed-precondition", "An order cannot mix currencies.");
+  const bases = new Set(lines.map((line) => line.priceBasis ?? "unknown"));
+  if (bases.size !== 1) throw new HttpsError("failed-precondition", "An order cannot mix net, gross or unknown price bases. Review the supplier prices before ordering.");
+  const priceBasis = bases.values().next().value;
+  if (!["net", "gross", "unknown"].includes(priceBasis)) throw new HttpsError("failed-precondition", "Review the order price basis.");
+  return { currency: currencies.values().next().value, priceBasis };
+}
+
 const options = { region: "us-central1", cors: true };
-module.exports = { dateOnly, deliveryDate, cartInput, canonicalLines, createOrdersFromCartHandler, updateOrderHandler, deleteOrderHandler, confirmOrderHandler, setOutletApproversHandler, saveSupplierOutletAccountHandler,
+function sameOrderContract(current, frozen, order) {
+  const fields = ["supplierId", "supplierSku", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "pricePerPurchaseUnit", "currency"];
+  if (!frozen || current.supplierId !== order.supplierId || current.currency !== order.currency
+    || fields.some((field) => current[field] !== frozen[field])
+    || current.purchaseOptionId !== (frozen.purchaseOptionId ?? "default")) return false;
+  // Existing orders keep their historic contract. New orders additionally freeze
+  // cost basis and the exact catalog identity/conversion used by receiving.
+  return frozen.inventoryTerms === undefined || digest(current.inventoryTerms, current.priceBasis, current.vatRate)
+    === digest(frozen.inventoryTerms, frozen.priceBasis, frozen.vatRate);
+}
+module.exports = { dateOnly, deliveryDate, cartInput, canonicalLines, sameOrderContract, orderPriceContract, createOrdersFromCartHandler, updateOrderHandler, deleteOrderHandler, confirmOrderHandler, setOutletApproversHandler, saveSupplierOutletAccountHandler,
   createOrdersFromCart: onCall(options, gated(createOrdersFromCartHandler)), updateHotelOrder: onCall(options, gated(updateOrderHandler)),
   deleteHotelOrder: onCall(options, gated(deleteOrderHandler)), confirmHotelOrder: onCall(options, gated(confirmOrderHandler)), setHotelOutletApprovers: onCall(options, gated(setOutletApproversHandler)),
   saveSupplierOutletAccount: onCall(options, gated(saveSupplierOutletAccountHandler)) };

@@ -16,6 +16,8 @@ import { usePermission } from "../../hooks/usePermission";
 
 const EXCEL_HEADERS = [
   "documentId",
+  "revision",
+  "inventoryTracked",
   "name",
   "brand",
   "description",
@@ -39,6 +41,7 @@ const EXPORT_TEMPLATE_ROW = {
   brand: "",
   description: "",
   active: "true",
+  inventoryTracked: "false",
   category: "",
   subcategory: "",
   baseUnit: "",
@@ -130,6 +133,7 @@ function ScopedProductsPage({ hotelUid }) {
     { key: "category", label: t("products.columns.category") },
     { key: "subcategory", label: t("products.columns.subcategory") },
     { key: "baseUnit", label: t("products.columns.baseUnit") },
+    { key: "inventoryTracked", label: "Inventory", render: (product) => product.inventoryTracked === true ? "Tracked" : product.inventoryTracked === false ? "Not tracked" : "Needs review" },
     {
       key: "active",
       label: t("products.columns.status"),
@@ -160,6 +164,8 @@ function ScopedProductsPage({ hotelUid }) {
 
   const normalizeExportRow = (row) => ({
     documentId: row.documentId || row.id || "",
+    revision: row.revision ?? 0,
+    inventoryTracked: typeof row.inventoryTracked === "boolean" ? String(row.inventoryTracked) : "",
     name: row.name || "",
     brand: row.brand || "",
     description: row.description || "",
@@ -220,10 +226,11 @@ function ScopedProductsPage({ hotelUid }) {
 
       const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "", raw: false });
       const parseNumberOrUndefined = (value) => {
-        const normalized = String(value || "").trim().replace(",", ".");
+        const normalized = String(value ?? "").trim().replace(",", ".");
         if (!normalized) return undefined;
         const parsed = Number(normalized);
-        return Number.isNaN(parsed) ? undefined : parsed;
+        if (!Number.isFinite(parsed)) throw new Error("Every numeric field must contain a valid finite number or be blank.");
+        return parsed;
       };
 
       const importedProducts = rows
@@ -233,6 +240,8 @@ function ScopedProductsPage({ hotelUid }) {
 
           return {
             documentId: String(row.documentId || "").trim() || undefined,
+            revision: parseNumberOrUndefined(row.revision),
+            inventoryTracked: ["true", "false"].includes(String(row.inventoryTracked).trim().toLowerCase()) ? String(row.inventoryTracked).trim().toLowerCase() === "true" : undefined,
             name: String(row.name || "").trim(),
             brand: String(row.brand || "").trim(),
             description: String(row.description || "").trim(),
@@ -298,7 +307,7 @@ function ScopedProductsPage({ hotelUid }) {
     } catch (error) {
       if (!mounted.current) return;
       console.error("Failed to import products", error);
-      window.alert(t("products.import.failed"));
+      window.alert(error?.message || t("products.import.failed"));
     } finally {
       if (mounted.current) setBusy(false);
     }

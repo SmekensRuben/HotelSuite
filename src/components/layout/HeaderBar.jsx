@@ -137,6 +137,12 @@ export default function HeaderBar({ today, onLogout }) {
           icon: ClipboardList,
           visible: canViewStockCounts,
         },
+        {
+          to: "/catalog/inventory",
+          label: "Inventory periods",
+          icon: ClipboardList,
+          visible: canViewStockCounts,
+        },
       ]),
     },
     {

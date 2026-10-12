@@ -17,6 +17,10 @@ import { usePermission } from "../../hooks/usePermission";
 const PAGE_SIZE = 50;
 const EXCEL_HEADERS = [
   "documentId",
+  "revision",
+  "priceBasis",
+  "vatRate",
+  "purchaseOptions",
   "supplierId",
   "supplierSku",
   "supplierProductName",
@@ -40,8 +44,7 @@ const TEMPLATE_HEADERS = EXCEL_HEADERS.filter((header) => header !== "documentId
 function resolveDisplayPrice(product) {
   const pricingModel = String(product?.pricingModel || "").trim();
   const rawPrice = pricingModel === "Per Base Unit" ? product?.pricePerBaseUnit : product?.pricePerPurchaseUnit;
-  const amount = Number(rawPrice);
-  return Number.isFinite(amount) ? amount : 0;
+  return typeof rawPrice === "number" && Number.isFinite(rawPrice) && rawPrice >= 0 ? rawPrice : null;
 }
 
 function formatDisplayPrice(product) {
@@ -49,7 +52,8 @@ function formatDisplayPrice(product) {
   const isPerBaseUnit = pricingModel === "Per Base Unit";
   const unit = String(isPerBaseUnit ? product?.baseUnit || "" : product?.purchaseUnit || "").trim();
   const price = resolveDisplayPrice(product);
-  const formattedPrice = `€${price}`;
+  if (price === null) return "Price unavailable";
+  const formattedPrice = `${price} ${product.currency || "unknown currency"}`;
   return unit ? `${formattedPrice}/${unit}` : formattedPrice;
 }
 
@@ -59,6 +63,9 @@ const EXPORT_TEMPLATE_ROW = {
   supplierProductName: "",
   currency: "EUR",
   pricingModel: "Per Purchase Unit",
+  priceBasis: "unknown",
+  vatRate: "",
+  purchaseOptions: "[]",
   pricePerBaseUnit: "",
   pricePerPurchaseUnit: "",
   purchaseUnit: "",
@@ -166,6 +173,10 @@ function ScopedSupplierProductsPage({ hotelUid }) {
 
   const normalizeExportRow = (row) => ({
     documentId: row.documentId || row.id || "",
+    revision: row.revision ?? 0,
+    priceBasis: row.priceBasis || "unknown",
+    vatRate: row.vatRate ?? "",
+    purchaseOptions: JSON.stringify(row.purchaseOptions || []),
     supplierId: row.supplierId || "",
     supplierSku: row.supplierSku || "",
     supplierProductName: row.supplierProductName || "",
@@ -227,10 +238,11 @@ function ScopedSupplierProductsPage({ hotelUid }) {
 
       const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "", raw: false });
       const parseNumberOrUndefined = (value) => {
-        const normalized = String(value || "").trim().replace(",", ".");
+        const normalized = String(value ?? "").trim().replace(",", ".");
         if (!normalized) return undefined;
         const parsed = Number(normalized);
-        return Number.isNaN(parsed) ? undefined : parsed;
+        if (!Number.isFinite(parsed)) throw new Error("Every numeric field must contain a valid finite number or be blank.");
+        return parsed;
       };
 
       const importedProducts = rows
@@ -244,20 +256,22 @@ function ScopedSupplierProductsPage({ hotelUid }) {
             try {
               const variantsJson = JSON.parse(variantsRaw);
               parsedVariants = Array.isArray(variantsJson) ? variantsJson : [];
-            } catch {
-              parsedVariants = [];
-            }
+            } catch { throw new Error("Invalid legacy variants JSON. Review and replace variants with explicit purchaseOptions."); }
           }
 
           return {
             documentId: String(row.documentId || "").trim() || undefined,
+            revision: parseNumberOrUndefined(row.revision),
+            priceBasis: String(row.priceBasis || "unknown").trim(),
+            vatRate: parseNumberOrUndefined(row.vatRate) ?? null,
+            purchaseOptions: String(row.purchaseOptions || "").trim() ? JSON.parse(String(row.purchaseOptions)) : [],
             supplierId: String(row.supplierId || "").trim(),
             supplierSku: String(row.supplierSku || "").trim(),
             supplierProductName: String(row.supplierProductName || "").trim(),
-            currency: String(row.currency || "").trim() || "EUR",
+            currency: String(row.currency || "").trim(),
             pricingModel: String(row.pricingModel || "").trim(),
-            pricePerBaseUnit: parseNumberOrUndefined(row.pricePerBaseUnit),
-            pricePerPurchaseUnit: parseNumberOrUndefined(row.pricePerPurchaseUnit),
+            pricePerBaseUnit: parseNumberOrUndefined(row.pricePerBaseUnit) ?? null,
+            pricePerPurchaseUnit: parseNumberOrUndefined(row.pricePerPurchaseUnit) ?? null,
             purchaseUnit: String(row.purchaseUnit || "").trim(),
             baseUnit: String(row.baseUnit || "").trim(),
             baseUnitsPerPurchaseUnit: parseNumberOrUndefined(row.baseUnitsPerPurchaseUnit),
@@ -280,7 +294,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
     } catch (error) {
       if (!mounted.current) return;
       console.error("Failed to parse import file", error);
-      window.alert(t("products.import.invalidFile"));
+      window.alert(error?.message || t("products.import.invalidFile"));
     }
   };
 

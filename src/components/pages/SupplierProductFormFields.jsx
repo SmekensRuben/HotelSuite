@@ -1,388 +1,131 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSuppliers } from "../../services/firebaseSuppliers";
+import { getCatalogProducts } from "../../services/firebaseProducts";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import AsyncError from "../shared/AsyncError";
+import { PRODUCT_BASE_UNITS } from "../../utils/productPurchaseOptions";
 
-const defaultVariant = {
-  perBaseUnit: "",
-  packages: "",
-};
+const stringNumber = (value) => value == null ? "" : String(value);
+const nullableNumber = (value) => value === "" ? null : Number(value);
+const inputClass = "rounded border border-gray-300 px-3 py-2 text-sm";
 
-const defaultState = {
-  supplierId: "",
-  supplierSku: "",
-  supplierProductName: "",
-  currency: "EUR",
-  pricingModel: "Per Purchase Unit",
-  pricePerBaseUnit: "",
-  pricePerPurchaseUnit: "",
-  purchaseUnit: "",
-  baseUnit: "",
-  baseUnitsPerPurchaseUnit: "",
-  catalogProductId: "",
-  imageUrl: "",
-  active: true,
-  hasVariants: false,
-  variants: [defaultVariant],
-};
-
-function toFormState(initialData) {
-  if (!initialData) return defaultState;
+function initialForm(product = {}) {
   return {
-    ...defaultState,
-    ...initialData,
-    supplierId: initialData.supplierName || initialData.supplierId || "",
-    pricePerBaseUnit: initialData.pricePerBaseUnit != null ? String(initialData.pricePerBaseUnit) : "",
-    pricePerPurchaseUnit: initialData.pricePerPurchaseUnit != null ? String(initialData.pricePerPurchaseUnit) : "",
-    baseUnitsPerPurchaseUnit:
-      initialData.baseUnitsPerPurchaseUnit != null ? String(initialData.baseUnitsPerPurchaseUnit) : "",
-    purchaseUnit: initialData.purchaseUnit || "",
-    baseUnit: initialData.baseUnit || "",
-    imageUrl: initialData.imageUrl || "",
-    variants:
-      Array.isArray(initialData.variants) && initialData.variants.length > 0
-        ? initialData.variants.map((variant) => ({
-            perBaseUnit: variant?.perBaseUnit != null ? String(variant.perBaseUnit) : "",
-            packages: variant?.packages != null ? String(variant.packages) : "",
-          }))
-        : [defaultVariant],
+    supplierId: product.supplierId || "", supplierSku: product.supplierSku || "",
+    supplierProductName: product.supplierProductName || "", currency: product.currency || "EUR",
+    pricingModel: product.pricingModel || "Per Purchase Unit", priceBasis: product.priceBasis || "unknown",
+    vatPercent: product.vatRate == null ? "" : String(product.vatRate * 100),
+    pricePerBaseUnit: stringNumber(product.pricePerBaseUnit), pricePerPurchaseUnit: stringNumber(product.pricePerPurchaseUnit),
+    purchaseUnit: product.purchaseUnit || "", baseUnit: product.baseUnit || "",
+    baseUnitsPerPurchaseUnit: stringNumber(product.baseUnitsPerPurchaseUnit),
+    catalogProductId: product.catalogProductId || "", imageUrl: product.imageUrl || "", active: product.active !== false,
+    purchaseOptions: (product.purchaseOptions || []).filter((option) => option.id !== "default").map((option) => ({ ...option, baseUnitsPerPurchaseUnit: stringNumber(option.baseUnitsPerPurchaseUnit), pricePerPurchaseUnit: stringNumber(option.pricePerPurchaseUnit) })),
   };
 }
 
-function roundToTwo(value) {
-  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
-}
-
-function formatTwoDecimals(value) {
-  if (value === null || value === undefined || value === "") return "";
-  return roundToTwo(value).toFixed(2);
-}
-
-function SectionCard({ title, children }) {
-  return (
-    <div className="sm:col-span-2 rounded-xl border border-gray-200 bg-gray-50/70 p-4">
-      <h2 className="text-base font-semibold text-gray-900 mb-3">{title}</h2>
-      <div className="grid gap-4 sm:grid-cols-2">{children}</div>
-    </div>
-  );
+function Field({ title, children, wide = false }) {
+  return <label className={`${wide ? "sm:col-span-2 " : ""}flex flex-col gap-1 text-sm font-semibold text-gray-700`}>{title}{children}</label>;
 }
 
 export default function SupplierProductFormFields({ initialData, onSubmit, savingLabel, submitLabel }) {
   const { hotelUid } = useHotelContext();
-  const [formState, setFormState] = useState(() => toFormState(initialData));
+  const [form, setForm] = useState(() => initialForm(initialData));
   const [saving, setSaving] = useState(false);
-  const [suppliers, setSuppliers] = useState([]);
-
-  const supplierLookup = useMemo(() => {
-    const byName = {};
-    const byId = {};
-
-    suppliers.forEach((supplier) => {
-      const id = String(supplier?.id || "").trim();
-      const name = String(supplier?.name || "").trim();
-      if (id) byId[id.toLowerCase()] = id;
-      if (!name) return;
-
-      const key = name.toLowerCase();
-      if (!byName[key]) {
-        byName[key] = id;
-      } else {
-        byName[key] = null;
-      }
-    });
-
-    return { byName, byId };
-  }, [suppliers]);
-
-  useEffect(() => {
-    setFormState(toFormState(initialData));
-  }, [initialData]);
-
-  useEffect(() => {
-    let active = true;
-
-    const loadSuppliers = async () => {
-      if (!hotelUid) {
-        setSuppliers([]);
-        return;
-      }
-
-      const suppliers = await getSuppliers(hotelUid);
-      if (!active) return;
-
-      const normalizedSuppliers = suppliers
-        .map((supplier) => ({
-          id: String(supplier?.id || "").trim(),
-          name: String(supplier?.name || "").trim(),
-        }))
-        .filter((supplier) => supplier.id)
-        .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
-
-      setSuppliers(normalizedSuppliers);
-    };
-
-    loadSuppliers();
-    return () => {
-      active = false;
-    };
+  const [error, setError] = useState("");
+  const [legacyReviewed, setLegacyReviewed] = useState(false);
+  const legacyVariants = initialData?.hasVariants && !initialData?.purchaseOptions?.length;
+  const loadSources = useCallback(async () => {
+    const [suppliers, catalog] = await Promise.all([getSuppliers(hotelUid), getCatalogProducts(hotelUid)]);
+    return { suppliers, catalog };
   }, [hotelUid]);
+  const sources = useScopedAsync({ scopeKey: hotelUid, enabled: Boolean(hotelUid), load: loadSources });
+  useEffect(() => { setForm(initialForm(initialData)); setLegacyReviewed(false); setError(""); }, [initialData, hotelUid]);
+  const change = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const changeOption = (id, key, value) => setForm((current) => ({ ...current, purchaseOptions: current.purchaseOptions.map((option) => option.id === id ? { ...option, [key]: value } : option) }));
+  const computedDefaultPrice = form.pricingModel === "Per Base Unit"
+    ? (form.pricePerBaseUnit === "" || form.baseUnitsPerPurchaseUnit === "" ? null : Number((Number(form.pricePerBaseUnit) * Number(form.baseUnitsPerPurchaseUnit)).toFixed(6)))
+    : nullableNumber(form.pricePerPurchaseUnit);
 
-
-  const updateField = (key, value) => {
-    setFormState((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const updateVariant = (index, key, value) => {
-    setFormState((prev) => ({
-      ...prev,
-      variants: prev.variants.map((variant, i) => (i === index ? { ...variant, [key]: value } : variant)),
-    }));
-  };
-
-  const addVariant = () => setFormState((prev) => ({ ...prev, variants: [...prev.variants, defaultVariant] }));
-
-  const removeVariant = (index) => {
-    setFormState((prev) => ({
-      ...prev,
-      variants: prev.variants.length === 1 ? [defaultVariant] : prev.variants.filter((_, i) => i !== index),
-    }));
-  };
-
-  const computedPricePerPurchaseUnit = useMemo(() => {
-    if (formState.pricingModel !== "Per Base Unit") return Number(formState.pricePerPurchaseUnit) || 0;
-    const pricePerBase = Number(formState.pricePerBaseUnit) || 0;
-    const baseUnits = Number(formState.baseUnitsPerPurchaseUnit) || 0;
-    return roundToTwo(pricePerBase * baseUnits);
-  }, [formState.pricingModel, formState.pricePerBaseUnit, formState.baseUnitsPerPurchaseUnit]);
-
-  const computedVariants = useMemo(
-    () =>
-      formState.variants.map((variant) => {
-        const perBaseUnit = Number(variant.perBaseUnit) || 0;
-        const packages = Number(variant.packages) || 0;
-        const baseUnitsPerPurchaseUnit = roundToTwo(perBaseUnit * packages);
-        const pricePerPurchaseUnit = roundToTwo((Number(formState.pricePerBaseUnit) || 0) * baseUnitsPerPurchaseUnit);
-
-        return {
-          perBaseUnit,
-          packages,
-          baseUnitsPerPurchaseUnit,
-          pricePerPurchaseUnit,
-          isComplete: perBaseUnit > 0 && packages > 0,
-        };
-      }),
-    [formState.variants, formState.pricePerBaseUnit]
-  );
-
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    setSaving(true);
-
-    const isPerPurchaseUnit = formState.pricingModel === "Per Purchase Unit";
-    const isPerBaseUnit = formState.pricingModel === "Per Base Unit";
-    const completedVariants = computedVariants.filter((variant) => variant.isComplete);
-
-    const enteredSupplier = formState.supplierId.trim();
-    const resolvedSupplierId =
-      supplierLookup.byName[enteredSupplier.toLowerCase()] ||
-      supplierLookup.byId[enteredSupplier.toLowerCase()] ||
-      enteredSupplier;
-
+  const submit = async (event) => {
+    event.preventDefault(); setError("");
+    if (!PRODUCT_BASE_UNITS.includes(form.baseUnit)) { setError("Select a supported base unit."); return; }
+    if (legacyVariants && !legacyReviewed) { setError("Review the old variants and replace them with explicit purchase options before saving."); return; }
+    if (!sources.data?.suppliers.some((supplier) => supplier.id === form.supplierId)) { setError("Select an existing supplier from this hotel."); return; }
+    if (form.priceBasis === "gross" && form.vatPercent === "") { setError("Enter the VAT rate for a gross price contract."); return; }
+    const linked = sources.data?.catalog.find((product) => product.id === form.catalogProductId);
+    if (form.catalogProductId && !linked) { setError("The catalog link is unavailable. Load or select an existing hotel catalog product."); return; }
+    const dimensions = { g: "weight", kg: "weight", ml: "volume", l: "volume", each: "count" };
+    if (linked && dimensions[linked.baseUnit] !== dimensions[form.baseUnit]) { setError("Supplier and catalog base units must have the same dimension."); return; }
     const payload = {
-      supplierId: resolvedSupplierId,
-      supplierSku: formState.supplierSku.trim(),
-      supplierProductName: formState.supplierProductName.trim(),
-      currency: formState.currency.trim() || "EUR",
-      pricingModel: formState.pricingModel,
-      purchaseUnit: formState.purchaseUnit.trim(),
-      baseUnit: formState.baseUnit.trim(),
-      catalogProductId: formState.catalogProductId.trim(),
-      imageUrl: formState.imageUrl.trim(),
-      active: formState.active,
-      hasVariants: formState.hasVariants,
-      pricePerBaseUnit: isPerBaseUnit ? Number(formState.pricePerBaseUnit) || 0 : null,
-      pricePerPurchaseUnit: formState.hasVariants
-        ? null
-        : isPerBaseUnit
-          ? computedPricePerPurchaseUnit
-          : Number(formState.pricePerPurchaseUnit) || 0,
-      baseUnitsPerPurchaseUnit: formState.hasVariants
-        ? Number(formState.baseUnitsPerPurchaseUnit) || 0
-        : isPerPurchaseUnit || isPerBaseUnit
-          ? Number(formState.baseUnitsPerPurchaseUnit) || 0
-          : null,
-      variants: formState.hasVariants
-        ? completedVariants.map((variant) => ({
-            perBaseUnit: variant.perBaseUnit,
-            packages: variant.packages,
-            baseUnitsPerPurchaseUnit: variant.baseUnitsPerPurchaseUnit,
-            pricePerPurchaseUnit: variant.pricePerPurchaseUnit,
-          }))
-        : [],
+      supplierId: form.supplierId, supplierSku: form.supplierSku.trim(), supplierProductName: form.supplierProductName.trim(),
+      currency: form.currency.trim().toUpperCase(), pricingModel: form.pricingModel,
+      priceBasis: form.priceBasis, vatRate: form.priceBasis === "gross" && form.vatPercent !== "" ? Number(form.vatPercent) / 100 : null,
+      pricePerBaseUnit: form.pricingModel === "Per Base Unit" ? nullableNumber(form.pricePerBaseUnit) : null,
+      pricePerPurchaseUnit: computedDefaultPrice, purchaseUnit: form.purchaseUnit.trim(), baseUnit: form.baseUnit,
+      baseUnitsPerPurchaseUnit: Number(form.baseUnitsPerPurchaseUnit), catalogProductId: form.catalogProductId || null,
+      imageUrl: form.imageUrl.trim(), active: form.active,
+      purchaseOptions: form.purchaseOptions.map((option) => ({ id: option.id, purchaseUnit: option.purchaseUnit.trim(), baseUnitsPerPurchaseUnit: Number(option.baseUnitsPerPurchaseUnit), pricePerPurchaseUnit: nullableNumber(option.pricePerPurchaseUnit) })),
     };
-
-    await onSubmit(payload);
-    setSaving(false);
+    setSaving(true);
+    try { await onSubmit(payload); }
+    catch (failure) { setError(failure?.message || "Could not save the supplier product."); }
+    finally { setSaving(false); }
   };
 
-  return (
-    <form onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2">
-      <SectionCard title="Basic Information">
-        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          Supplier *
-          <input
-            required
-            list="supplier-options"
-            value={formState.supplierId}
-            onChange={(event) => updateField("supplierId", event.target.value)}
-            placeholder="Kies een bestaande supplier"
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
-          />
-          <datalist id="supplier-options">
-            {suppliers.map((supplier) => (
-              <option key={supplier.id} value={supplier.name || supplier.id} />
-            ))}
-          </datalist>
-          <span className="text-xs font-normal text-gray-500">Selecteer een bestaande supplierName (ID enkel fallback).</span>
-        </label>
-        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          Supplier SKU *
-          <input required value={formState.supplierSku} onChange={(event) => updateField("supplierSku", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
-        </label>
-        <label className="sm:col-span-2 flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          Supplier Product Name *
-          <input required value={formState.supplierProductName} onChange={(event) => updateField("supplierProductName", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
-        </label>
-      </SectionCard>
-
-      <SectionCard title="Pricing">
-        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          Currency *
-          <input required value={formState.currency} onChange={(event) => updateField("currency", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
-        </label>
-        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          Pricing Model *
-          <select
-            value={formState.pricingModel}
-            onChange={(event) => {
-              const nextPricingModel = event.target.value;
-              setFormState((prev) => ({
-                ...prev,
-                pricingModel: nextPricingModel,
-                hasVariants: nextPricingModel === "Per Base Unit" ? prev.hasVariants : false,
-              }));
-            }}
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
-          >
-            <option value="Per Purchase Unit">Per Purchase Unit</option>
-            <option value="Per Base Unit">Per Base Unit</option>
-          </select>
-        </label>
-
-        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          Purchase Unit *
-          <input required value={formState.purchaseUnit} onChange={(event) => updateField("purchaseUnit", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
-        </label>
-        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          Base Unit *
-          <input required value={formState.baseUnit} onChange={(event) => updateField("baseUnit", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
-        </label>
-
-        {formState.pricingModel === "Per Base Unit" && (
-          <label className="sm:col-span-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-700">
-            <input type="checkbox" checked={formState.hasVariants} onChange={(event) => updateField("hasVariants", event.target.checked)} />
-            Has variants
-          </label>
-        )}
-
-        {formState.pricingModel === "Per Base Unit" && (
-          <>
-            <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-              Price Per Base Unit *
-              <input required type="number" step="0.0001" min="0" value={formState.pricePerBaseUnit} onChange={(event) => updateField("pricePerBaseUnit", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
-            </label>
-
-            <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-              Base Units Per Purchase Unit *
-              <input required type="number" step="0.0001" min="0" value={formState.baseUnitsPerPurchaseUnit} onChange={(event) => updateField("baseUnitsPerPurchaseUnit", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
-            </label>
-
-            <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-              Price Per Purchase Unit (calculated)
-              <input readOnly value={formatTwoDecimals(computedPricePerPurchaseUnit)} className="rounded border border-gray-200 bg-gray-100 px-3 py-2 text-sm" />
-            </label>
-          </>
-        )}
-
-        {formState.pricingModel === "Per Purchase Unit" && (
-          <>
-            <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-              Price Per Purchase Unit *
-              <input required type="number" step="0.0001" min="0" value={formState.pricePerPurchaseUnit} onChange={(event) => updateField("pricePerPurchaseUnit", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
-            </label>
-            <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-              Base Units Per Purchase Unit *
-              <input required type="number" step="0.0001" min="0" value={formState.baseUnitsPerPurchaseUnit} onChange={(event) => updateField("baseUnitsPerPurchaseUnit", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
-            </label>
-          </>
-        )}
-
-        {formState.pricingModel === "Per Base Unit" && formState.hasVariants && (
-          <div className="sm:col-span-2 space-y-3 rounded-lg border border-gray-200 bg-white p-3">
-            {formState.variants.map((variant, index) => {
-              const computed = computedVariants[index];
-              return (
-                <div key={index} className="grid gap-3 sm:grid-cols-2 rounded border border-gray-200 p-3">
-                  <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-                    Weight per Base Unit *
-                    <input required type="number" step="0.0001" min="0" value={variant.perBaseUnit} onChange={(event) => updateVariant(index, "perBaseUnit", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
-                  </label>
-                  <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-                    Packages (pieces per weight) *
-                    <input required type="number" step="1" min="0" value={variant.packages} onChange={(event) => updateVariant(index, "packages", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
-                  </label>
-                  <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-                    Base Units Per Purchase Unit (calculated)
-                    <input readOnly value={formatTwoDecimals(computed.baseUnitsPerPurchaseUnit)} className="rounded border border-gray-200 bg-gray-100 px-3 py-2 text-sm" />
-                  </label>
-                  <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-                    Price Per Purchase Unit (calculated)
-                    <input readOnly value={formatTwoDecimals(computed.pricePerPurchaseUnit)} className="rounded border border-gray-200 bg-gray-100 px-3 py-2 text-sm" />
-                  </label>
-                  <div className="sm:col-span-2 flex justify-end">
-                    <button type="button" onClick={() => removeVariant(index)} className="text-sm font-semibold text-red-700 hover:text-red-900">
-                      Remove variant
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-            <button type="button" onClick={addVariant} className="px-3 py-2 rounded border border-gray-300 text-sm font-semibold text-gray-700 hover:bg-gray-100">
-              Add variant
-            </button>
-          </div>
-        )}
-      </SectionCard>
-
-      <SectionCard title="Linking & Metadata">
-        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          Catalog Product ID
-          <input value={formState.catalogProductId} onChange={(event) => updateField("catalogProductId", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
-        </label>
-        <label className="sm:col-span-2 flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          Image URL
-          <input value={formState.imageUrl} onChange={(event) => updateField("imageUrl", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm" />
-        </label>
-        <label className="flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-700">
-          <input type="checkbox" checked={formState.active} onChange={(event) => updateField("active", event.target.checked)} />
-          Active
-        </label>
-      </SectionCard>
-
-      <div className="sm:col-span-2 flex flex-wrap items-center gap-3 pt-2">
-        <button type="submit" disabled={saving} className="bg-brand-800 text-white px-4 py-2 rounded font-semibold shadow hover:bg-brand-950 transition-colors disabled:opacity-60">
-          {saving ? savingLabel : submitLabel}
-        </button>
+  return <form onSubmit={submit} className="space-y-5">
+    <AsyncError error={sources.error} onRetry={sources.retry} label="Could not load hotel suppliers and catalog products." />
+    {error && <p role="alert" className="text-red-700">{error}</p>}
+    {legacyVariants && <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm">
+      <p>Legacy variants have no selectable package identity. Review their quantities and prices, then enter explicit purchase options below.</p>
+      <pre className="overflow-x-auto text-xs">{JSON.stringify(initialData.variants || [], null, 2)}</pre>
+      <label className="flex gap-2"><input type="checkbox" checked={legacyReviewed} onChange={(event) => setLegacyReviewed(event.target.checked)} /> I reviewed and replaced the legacy variants.</label>
+    </div>}
+    <fieldset disabled={saving} className="grid gap-4 sm:grid-cols-2">
+      <Field title="Supplier *"><select required disabled={Boolean(initialData?.id && initialData?.supplierId)} value={form.supplierId} onChange={(event) => change("supplierId", event.target.value)} className={inputClass}>
+        <option value="">Choose a hotel supplier</option>
+        {form.supplierId && !sources.data?.suppliers.some((supplier) => supplier.id === form.supplierId) && <option value={form.supplierId} disabled>Unavailable supplier: {form.supplierId}</option>}
+        {(sources.data?.suppliers || []).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name || supplier.id}</option>)}
+      </select></Field>
+      <Field title="Supplier SKU *"><input required value={form.supplierSku} onChange={(event) => change("supplierSku", event.target.value)} className={inputClass} /><span className="text-xs font-normal text-gray-500">Changing the SKU preserves the product's stable ID.</span></Field>
+      <Field title="Supplier product name *" wide><input required value={form.supplierProductName} onChange={(event) => change("supplierProductName", event.target.value)} className={inputClass} /></Field>
+      <Field title="Catalog product"><select disabled={Boolean(initialData?.id && initialData?.catalogProductId)} value={form.catalogProductId} onChange={(event) => change("catalogProductId", event.target.value)} className={inputClass}>
+        <option value="">Unlinked — procurement only</option>
+        {form.catalogProductId && !sources.data?.catalog.some((product) => product.id === form.catalogProductId) && <option value={form.catalogProductId} disabled>Unavailable link: {form.catalogProductId}</option>}
+        {(sources.data?.catalog || []).filter((product) => (product.active !== false && product.archived !== true) || product.id === form.catalogProductId).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.baseUnit || "unit needs review"})</option>)}
+      </select></Field>
+      <Field title="Supplier base unit *"><select required value={form.baseUnit} onChange={(event) => change("baseUnit", event.target.value)} className={inputClass}>
+        <option value="">Choose a base unit</option>
+        {form.baseUnit && !PRODUCT_BASE_UNITS.includes(form.baseUnit) && <option value={form.baseUnit} disabled>Legacy: {form.baseUnit} — select its meaning</option>}
+        {PRODUCT_BASE_UNITS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+      </select></Field>
+      <p className="sm:col-span-2 text-sm text-gray-600">An established supplier/catalog identity is preserved. Create a new offer for a different item. Package contents are expressed in the supplier base unit and converted to the linked catalog unit. Weight and volume cannot be mixed.</p>
+      <Field title="Currency *"><input required pattern="[A-Za-z]{3}" maxLength={3} value={form.currency} onChange={(event) => change("currency", event.target.value)} className={inputClass} /></Field>
+      <Field title="Price basis"><select value={form.priceBasis} onChange={(event) => change("priceBasis", event.target.value)} className={inputClass}>
+        <option value="unknown">Unknown — inventory cost unavailable</option><option value="net">Net (excluding VAT)</option><option value="gross">Gross (including VAT)</option>
+      </select></Field>
+      {form.priceBasis === "gross" && <Field title="VAT rate (%) *"><input required type="number" min="0" max="100" step="0.01" value={form.vatPercent} onChange={(event) => change("vatPercent", event.target.value)} className={inputClass} /></Field>}
+      <Field title="Default pricing model"><select value={form.pricingModel} onChange={(event) => change("pricingModel", event.target.value)} className={inputClass}><option>Per Purchase Unit</option><option>Per Base Unit</option></select></Field>
+      <Field title="Default purchase unit *"><input required value={form.purchaseUnit} onChange={(event) => change("purchaseUnit", event.target.value)} placeholder="e.g. case of 24 bottles" className={inputClass} /></Field>
+      <Field title={`Default package content (${form.baseUnit || "base units"}) *`}><input required type="number" min="0.000001" max="1000000" step="0.000001" value={form.baseUnitsPerPurchaseUnit} onChange={(event) => change("baseUnitsPerPurchaseUnit", event.target.value)} className={inputClass} /></Field>
+      <Field title={form.pricingModel === "Per Base Unit" ? "Price per base unit (blank = unknown)" : "Default package price (blank = unknown)"}>
+        <input type="number" min="0" step="0.0001" value={form.pricingModel === "Per Base Unit" ? form.pricePerBaseUnit : form.pricePerPurchaseUnit} onChange={(event) => change(form.pricingModel === "Per Base Unit" ? "pricePerBaseUnit" : "pricePerPurchaseUnit", event.target.value)} className={inputClass} />
+      </Field>
+      {form.pricingModel === "Per Base Unit" && <p className="self-center text-sm">Default package price: {computedDefaultPrice == null ? "Unavailable" : `${computedDefaultPrice} ${form.currency}`}</p>}
+      <div className="sm:col-span-2 space-y-3 rounded border border-gray-200 p-3">
+        <h2 className="font-semibold">Additional purchase options</h2>
+        <p className="text-sm text-gray-600">Each package keeps its own identity, quantity and price. Blank prices remain unknown.</p>
+        {form.purchaseOptions.map((option) => <div key={option.id} className="grid gap-3 sm:grid-cols-3 border-t pt-3">
+          <Field title="Package name *"><input required value={option.purchaseUnit} onChange={(event) => changeOption(option.id, "purchaseUnit", event.target.value)} className={inputClass} /></Field>
+          <Field title={`Content (${form.baseUnit || "base units"}) *`}><input required type="number" min="0.000001" max="1000000" step="0.000001" value={option.baseUnitsPerPurchaseUnit} onChange={(event) => changeOption(option.id, "baseUnitsPerPurchaseUnit", event.target.value)} className={inputClass} /></Field>
+          <Field title="Package price (blank = unknown)"><input type="number" min="0" step="0.0001" value={option.pricePerPurchaseUnit} onChange={(event) => changeOption(option.id, "pricePerPurchaseUnit", event.target.value)} className={inputClass} /></Field>
+          <button type="button" onClick={() => change("purchaseOptions", form.purchaseOptions.filter((candidate) => candidate.id !== option.id))} className="text-sm text-red-700 text-left">Remove purchase option</button>
+        </div>)}
+        <button type="button" disabled={form.purchaseOptions.length >= 20} onClick={() => change("purchaseOptions", [...form.purchaseOptions, { id: crypto.randomUUID(), purchaseUnit: "", baseUnitsPerPurchaseUnit: "", pricePerPurchaseUnit: "" }])} className="rounded border px-3 py-2 text-sm">Add purchase option</button>
       </div>
-    </form>
-  );
+      <Field title="Image URL" wide><input value={form.imageUrl} onChange={(event) => change("imageUrl", event.target.value)} className={inputClass} /></Field>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.active} onChange={(event) => change("active", event.target.checked)} /> Active</label>
+    </fieldset>
+    <button type="submit" disabled={saving || sources.loading || Boolean(sources.error)} className="rounded bg-brand-800 px-4 py-2 font-semibold text-white disabled:opacity-60">{saving ? savingLabel : submitLabel}</button>
+  </form>;
 }

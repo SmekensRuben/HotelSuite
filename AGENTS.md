@@ -31,6 +31,8 @@
 
 - Login requires a verified email address. A Firebase second factor is additionally required only when the environment's `VITE_AUTH_REQUIRE_MFA` policy is `true`; keep that value aligned with the selected Firebase project's Authentication policy.
 - Orders use `Created`, `Ordered`, `Received`, `Finalized` and `Canceled`; only `Created` orders may be edited or deleted, and moving to `Ordered` must use the confirm/send workflow.
+- Catalog and periodic inventory policy v1 uses stable catalog identities and supported base units; supplier packages are separate purchase options. Product/template mutations use protected callables. See `docs/catalog-periodic-inventory.md` before changing these boundaries or historic snapshots.
+- New stock counts measure catalog quantities per physical location. All included rows need explicit counts (zero is valid) before finishing. Receipt movements and checkpoints are immutable evidence for comparisons between counts; they are not live on-hand balances. Unknown costs/currencies/conversions stay unavailable.
 - Contract cancellation dates are the end date minus the non-negative whole termination period in days; reminder days are unique non-negative whole days.
 - Hotel stays use checkout-exclusive nights (`arrival <= stay date < departure`). Rooming-list reservations must fit the snapshotted room-type capacity for every occupied night.
 - Group quotes use the statuses and reason codes exported by `src/services/firebaseQuotes.js`; changing analysis-affecting inputs makes a saved analysis stale. Keep calculation/model changes aligned with the as-built and hardening documents under `docs/`.

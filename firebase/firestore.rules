@@ -331,15 +331,12 @@ service cloud.firestore {
 
       match /catalogproducts/{productId} {
         allow read: if mayRead(hotelUid, 'catalogproducts');
-        allow create: if mayWrite(hotelUid, 'catalogproducts', 'create') && productSchema(request.resource.data, false);
-        allow update: if mayWrite(hotelUid, 'catalogproducts', 'update') && productSchema(request.resource.data, false) && immutableCreator();
-        allow delete: if mayWrite(hotelUid, 'catalogproducts', 'delete');
+        // Stable identities, links and units require the protected product commands.
+        allow write: if false;
       }
       match /supplierproducts/{productId} {
         allow read: if mayRead(hotelUid, 'supplierproducts');
-        allow create: if mayWrite(hotelUid, 'supplierproducts', 'create') && productSchema(request.resource.data, true);
-        allow update: if mayWrite(hotelUid, 'supplierproducts', 'update') && productSchema(request.resource.data, true) && immutableCreator();
-        allow delete: if mayWrite(hotelUid, 'supplierproducts', 'delete');
+        allow write: if false;
       }
       match /suppliers/{supplierId} {
         // Safe supplier views are returned by the authorized backend, including
@@ -376,12 +373,27 @@ service cloud.firestore {
         // Canonical actors, totals and finalization use authorized transactions.
         allow write: if false;
       }
-      match /locations/{document=**} {
+      match /locations/{locationId} {
         allow read: if mayRead(hotelUid, 'locations');
         allow create: if mayWrite(hotelUid, 'locations', 'create');
         allow update: if mayWrite(hotelUid, 'locations', 'update');
         allow delete: if mayWrite(hotelUid, 'locations', 'delete');
+        match /stockTemplates/{templateId} {
+          allow read: if mayRead(hotelUid, 'locations');
+          allow write: if false;
+        }
       }
+      // Inventory evidence and command receipts are available only through
+      // scoped backend projections. Browser administrators cannot rewrite them.
+      match /inventoryMovements/{movementId} { allow read, write: if false; }
+      match /inventoryReversals/{movementId} { allow read, write: if false; }
+      match /inventoryLocationStates/{locationId} { allow read, write: if false; }
+      match /inventoryCheckpoints/{checkpointId} { allow read, write: if false; }
+      match /inventoryPeriodReports/{reportId} { allow read, write: if false; }
+      match /productOperations/{operationId} { allow read, write: if false; }
+      match /productSkuKeys/{keyId} { allow read, write: if false; }
+      match /productAudit/{auditId} { allow read, write: if false; }
+      match /stockTemplateOperations/{operationId} { allow read, write: if false; }
       match /outlets/{outletId} {
         allow read: if mayRead(hotelUid, 'outlets') || mayRead(hotelUid, 'orders');
         allow create: if mayWrite(hotelUid, 'outlets', 'create');
