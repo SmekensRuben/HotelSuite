@@ -11,6 +11,9 @@ export const INDEX_DATABASE = "(default)";
 export const INDEX_OPERATOR = "bestsmekens@gmail.com";
 const DATABASE_RESOURCE = `projects/${INDEX_PROJECT}/databases/${INDEX_DATABASE}`;
 const API = "https://firestore.googleapis.com/v1/";
+const MAX_INDEXES_PER_GROUP = 2000;
+const API_ERROR_STATUSES = new Set(["INVALID_ARGUMENT", "FAILED_PRECONDITION", "OUT_OF_RANGE", "UNAUTHENTICATED", "PERMISSION_DENIED",
+  "NOT_FOUND", "ABORTED", "ALREADY_EXISTS", "RESOURCE_EXHAUSTED", "CANCELLED", "DATA_LOSS", "UNKNOWN", "INTERNAL", "UNAVAILABLE", "DEADLINE_EXCEEDED"]);
 const EXPECTED_INDEXES = [
   { collectionGroup: "inventoryCheckpoints", queryScope: "COLLECTION", fields: [{ fieldPath: "locationId", order: "ASCENDING" }, { fieldPath: "sequence", order: "DESCENDING" }] },
   { collectionGroup: "inventoryCheckpoints", queryScope: "COLLECTION", fields: [{ fieldPath: "locationId", order: "ASCENDING" }, { fieldPath: "sequence", order: "ASCENDING" }] },
@@ -73,8 +76,11 @@ async function listIndexes(request, collectionGroup) {
   const result = [], tokens = new Set();
   let pageToken;
   for (let page = 0; page < 20; page++) {
-    const response = await request({ method: "GET", path: `${indexParent(collectionGroup)}/indexes`, params: { pageSize: 100, ...(pageToken ? { pageToken } : {}) } });
-    if (!response || !Array.isArray(response.indexes ?? []) || (response.indexes ?? []).length > 100) throw new Error("The bounded index list response is invalid.");
+    // The live Standard/Native API supports only the default page size (0).
+    // Omit pageSize, as the Firebase CLI does, and retain bounded token traversal.
+    const response = await request({ method: "GET", path: `${indexParent(collectionGroup)}/indexes`, params: { ...(pageToken ? { pageToken } : {}) } });
+    if (!response || !Array.isArray(response.indexes ?? [])) throw new Error("The bounded index list response is invalid.");
+    if (result.length + (response.indexes ?? []).length > MAX_INDEXES_PER_GROUP) throw new Error("Index listing exceeded the bounded 2000-index limit per collection group. Review the index inventory before proceeding.");
     for (const index of response.indexes ?? []) {
       validateIndexName(index.name, collectionGroup);
       result.push({ ...index, collectionGroup });
@@ -85,6 +91,27 @@ async function listIndexes(request, collectionGroup) {
     tokens.add(next); pageToken = next;
   }
   throw new Error("Index listing exceeded the bounded 20-page limit. Review the index inventory before proceeding.");
+}
+
+export function createIndexRequest(client) {
+  return async ({ method, path, params, body }) => {
+    try {
+      const response = await client.request({ method, url: `${API}${path}`, params, data: body, timeout: 30000, retry: false });
+      return response.data;
+    } catch (error) {
+      const http = error.response?.status;
+      const status = Number.isInteger(http) && http >= 100 && http <= 599 ? http : undefined;
+      const providerStatus = error.response?.data?.error?.status;
+      // Only fixed operation labels, numeric HTTP codes and known status enums
+      // reach operator output; provider messages/config/credentials stay private.
+      const operation = path === DATABASE_RESOURCE ? "read database" : path.startsWith(`${DATABASE_RESOURCE}/operations/`) ? "read index operation"
+        : method === "POST" ? "create index" : "list indexes";
+      const code = API_ERROR_STATUSES.has(providerStatus) ? `, ${providerStatus}` : "";
+      const failure = new Error(`Firestore index administration request failed (${operation}, ${status ? `HTTP ${status}` : "transport error"}${code}). No OAuth or API payload was printed.`);
+      failure.status = status;
+      throw failure;
+    }
+  };
 }
 async function inspectIndexes(request, reviewed) {
   const groups = [...new Set(reviewed.map((index) => index.collectionGroup))];
@@ -180,16 +207,7 @@ async function main() {
   const { OAuth2Client } = await import("google-auth-library");
   const client = new OAuth2Client();
   client.setCredentials({ access_token: token, expiry_date: Date.now() + 3000000 });
-  const request = async ({ method, path, params, body }) => {
-    try {
-      const response = await client.request({ method, url: `${API}${path}`, params, data: body, timeout: 30000, retry: false });
-      return response.data;
-    } catch (error) {
-      const failure = new Error(`Firestore index administration request failed (${error.response?.status ?? "transport error"}). No OAuth or API payload was printed.`);
-      failure.status = error.response?.status;
-      throw failure;
-    }
-  };
+  const request = createIndexRequest(client);
   const result = await prepareCatalogInventoryIndexes({ request, configuration, mode, projectNumber, operator, releaseSha, log: console.log });
   console.log(JSON.stringify(result, null, 2));
 }
