@@ -117,3 +117,12 @@ test("ambiguous legacy variants cannot bypass package review through the backend
   assert.equal(policy.resolvePurchaseOption(reviewed).pricePerPurchaseUnit, 12);
   assert.equal(policy.resolvePurchaseOption(reviewed, "single").pricePerPurchaseUnit, 2);
 });
+test("optional supplier contract price dates remain unknown when missing and validate real ordered business dates", () => {
+  const unknown = policy.normalizeSupplierProduct(supplier());
+  assert.equal(unknown.priceValidFrom, null); assert.equal(unknown.priceValidUntil, null);
+  const dated = policy.normalizeSupplierProduct(supplier({ priceValidFrom: "2026-10-01", priceValidUntil: "2026-10-31" }));
+  assert.equal(dated.priceValidFrom, "2026-10-01"); assert.equal(dated.priceValidUntil, "2026-10-31");
+  assert.equal(policy.normalizeSupplierProduct(supplier({ priceValidFrom: "2028-02-29" })).priceValidFrom, "2028-02-29");
+  for (const patch of [{ priceValidFrom: "2026-02-29" }, { priceValidUntil: "31/10/2026" }, { priceValidFrom: 20261001 },
+    { priceValidFrom: "2026-11-01", priceValidUntil: "2026-10-31" }]) assert.throws(() => policy.normalizeSupplierProduct(supplier(patch)));
+});

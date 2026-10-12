@@ -15,6 +15,7 @@ import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 import { usePermission } from "../../hooks/usePermission";
 import { packageConversionLabel, productUnitLabel } from "../../utils/productUnitDisplay";
+import { SupplierPriceHistory } from "../catalog/SupplierPriceInsights";
 
 function formatDate(value) {
   if (!value) return "-";
@@ -173,6 +174,8 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
                     <DetailField label="Currency" value={product.currency || "Unknown"} />
                   <DetailField label="Price basis" value={product.priceBasis || "Unknown"} />
                   <DetailField label="VAT rate" value={product.vatRate == null ? "Unknown / not applicable" : `${product.vatRate * 100}%`} />
+                  <DetailField label="Contract price valid from" value={product.priceValidFrom || "Unknown"} />
+                  <DetailField label="Contract price valid until" value={product.priceValidUntil || "Unknown"} />
                   </div>
 
                   <div>
@@ -247,6 +250,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
                 </div>
               </Card>
             </div>
+            <SupplierPriceHistory hotelUid={hotelUid} supplierProductId={productId} />
           </>
         )}
       </ProcurementPage>

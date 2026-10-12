@@ -5,6 +5,7 @@ const { requireDocumentId } = require("./subscriptions");
 const { revision, digest, text } = require("./validation");
 const { gated, requireSaasRollout } = require("./saasRollout");
 const policy = require("./productPolicy");
+const pricePolicy = require("./supplierPricePolicy");
 
 const MAX_IMPORT_PRODUCTS = 25;
 const COLLECTIONS = ["catalogproducts", "supplierproducts"];
@@ -36,7 +37,12 @@ async function prepareProduct(tx, db, hotelUid, collection, productId, action, e
   if (currentRevision(previous) !== expected) throw new HttpsError("aborted", "The product changed. Refresh before saving.");
   if (!current.exists && expected !== 0) throw new HttpsError("aborted", "New products require expectedRevision zero.");
   if (action === "archive") return { ref, previous, next: { ...previous, active: false, archived: true }, expected, action, productId };
-  const next = collection === "catalogproducts" ? policy.normalizeCatalogProduct(input) : policy.normalizeSupplierProduct(input);
+  // Older clients/imports predate optional contract bounds. An omitted update
+  // field preserves its stored value; only an explicit null/blank clears it.
+  const productInput = collection === "supplierproducts" && previous && input && typeof input === "object" && !Array.isArray(input)
+    ? { ...input, ...Object.fromEntries(["priceValidFrom", "priceValidUntil"].filter((key) => !Object.hasOwn(input, key)).map((key) => [key, previous[key] ?? null])) }
+    : input;
+  const next = collection === "catalogproducts" ? policy.normalizeCatalogProduct(productInput) : policy.normalizeSupplierProduct(productInput);
   if (previous?.archived === true && next.active) throw new HttpsError("failed-precondition", "Archived product identities cannot be reactivated. Create a distinct product instead.");
   // Canonical inventory units become immutable after the first reviewed save.
   // A new product is required for a changed inventory identity; existing order,
@@ -53,6 +59,7 @@ async function prepareProduct(tx, db, hotelUid, collection, productId, action, e
     if (next.catalogProductId) {
       const catalog = await tx.get(db.doc(`hotels/${hotelUid}/catalogproducts/${next.catalogProductId}`));
       if (!catalog.exists) throw new HttpsError("failed-precondition", "The linked catalog product does not exist in this hotel.");
+      plan.catalog = catalog.data();
       if (!policy.compatibleUnits(next.baseUnit, catalog.data().baseUnit)) throw new HttpsError("failed-precondition", "The supplier and catalog base units must use the same physical dimension.");
       if (next.active && (catalog.data().active === false || catalog.data().archived === true)) throw new HttpsError("failed-precondition", "An active supplier product requires an active linked catalog product.");
       // Validate all package conversions now, rather than creating an offer
@@ -61,6 +68,12 @@ async function prepareProduct(tx, db, hotelUid, collection, productId, action, e
         policy.convertQuantity(option.baseUnitsPerPurchaseUnit, next.baseUnit, catalog.data().baseUnit);
       }
     }
+    if (previous?.catalogProductId) {
+      plan.previousCatalog = previous.catalogProductId === next.catalogProductId ? plan.catalog
+        : (await tx.get(db.doc(`hotels/${hotelUid}/catalogproducts/${requireDocumentId(previous.catalogProductId, "Previous catalog product ID")}`))).data() || null;
+    }
+    plan.priceChanged = pricePolicy.priceTermsChanged(previous, next, plan.previousCatalog, plan.catalog);
+    plan.priceHistoryRef = db.doc(`hotels/${hotelUid}/supplierPriceHistory/${productId}/entries/${String(expected + 1).padStart(16, "0")}`);
     if (previous?.productPolicyVersion === policy.PRODUCT_POLICY_VERSION && (previous.supplierId !== next.supplierId || (previous.catalogProductId && previous.catalogProductId !== next.catalogProductId) || previous.baseUnit !== next.baseUnit)) {
       throw new HttpsError("failed-precondition", "A reviewed supplier product's supplier, catalog link and base unit are immutable. Create a distinct offer for a changed identity.");
     }
@@ -90,7 +103,10 @@ function writeProduct(tx, plan, collection, actorUid) {
   const next = { ...plan.next, createdAt: plan.previous?.createdAt ?? now, createdBy: plan.previous?.createdBy ?? actorUid,
     revision: plan.expected + 1, updatedAt: now, updatedBy: actorUid };
   if (plan.previous?.archived === true || plan.action === "archive") next.archived = true;
-  if (collection === "supplierproducts" && plan.action !== "archive") next.priceUpdatedOn = now;
+  if (collection === "supplierproducts" && plan.action !== "archive") {
+    next.priceUpdatedOn = plan.priceChanged ? now : plan.previous?.priceUpdatedOn ?? null;
+    if (plan.priceChanged) tx.create(plan.priceHistoryRef, pricePolicy.historyEntry(plan, actorUid, now));
+  }
   tx.set(plan.ref, next);
   if (plan.skuRef) tx.set(plan.skuRef, { productId: plan.productId, supplierId: next.supplierId, supplierSku: next.supplierSku, updatedAt: now });
   if (plan.releaseOldSku) tx.delete(plan.oldSkuRef);
