@@ -23,7 +23,7 @@ function fakeApi({ initial = reviewed().map((definition, number) => index(defini
     if (call.method === "GET" && call.path === resource) return structuredClone(db);
     if (operations.has(call.path)) return { name: call.path, done: waits >= readyAfter,
       ...(operationFailure ? { error: { code: 9, message: "private operation detail" }, metadata: { state: "FAILED" } } : {}) };
-    const match = /^projects\/hotel-toolkit\/databases\/\(default\)\/collectionGroups\/(inventoryCheckpoints|inventoryMovements)\/indexes$/.exec(call.path);
+    const match = /^projects\/hotel-toolkit\/databases\/\(default\)\/collectionGroups\/(-|inventoryCheckpoints|inventoryMovements)\/indexes$/.exec(call.path);
     if (!match) throw new Error("Unexpected API resource; no live requests are available in this fixture.");
     const group = match[1];
     if (call.method === "GET") {
@@ -33,10 +33,13 @@ function fakeApi({ initial = reviewed().map((definition, number) => index(defini
         error.status = 400; throw error;
       }
       if (pages) return pages(call, stored);
-      return { indexes: stored.filter((value) => value.collectionGroup === group).map((value) => ({ ...value,
+      // A list response may contain several groups. The official CLI requests
+      // the database-wide inventory explicitly; group ownership is in each name.
+      return { indexes: stored.map((value) => ({ ...value,
         state: value.state === "CREATING" && waits >= readyAfter ? "READY" : value.state })) };
     }
     if (call.method === "POST") {
+      if (group === "-") throw new Error("Wildcard index creation is not permitted.");
       sequence++;
       const definition = { collectionGroup: group, ...call.body }, name = `${resource}/operations/create-${sequence}`;
       stored.push(index(definition, `created-${sequence}`, "CREATING")); operations.set(name, true);
@@ -104,12 +107,57 @@ describe("private index API diagnostics", () => {
 });
 
 describe("additive operator index preparation", () => {
+  it("reuses READY indexes with the operator-observed names in a mixed-group inventory", async () => {
+    const names = ["CICAgOjXh4EK", "CICAgJiUpoMK", "CICAgJim14AK", "CICAgJjF9oIK"];
+    const initial = reviewed().map((definition, number) => {
+      const value = index(definition, names[number]); delete value.collectionGroup; return value;
+    });
+    const api = fakeApi({ initial: [initial[2], initial[0], initial[3], initial[1]] });
+    const result = await prepare(api, { mode: "apply" });
+    expect(result.ready).toBe(true); expect(result.created).toBe(0);
+    expect(result.indexes.map((value) => value.name)).toEqual(initial.map((value) => value.name));
+    expect(api.calls.filter((call) => call.path.endsWith("/indexes")).every((call) => call.path === `${resource}/collectionGroups/-/indexes`)).toBe(true);
+    expect(api.writeCalls()).toEqual([]);
+  });
+  it("derives ownership from the resource name and cannot satisfy a reviewed definition with another group's index", async () => {
+    const other = index({ ...reviewed()[0], collectionGroup: "otherCollection" }, "other-index");
+    // collectionGroup is not a Firestore Index response field. A misleading
+    // extra field cannot override the canonical resource's actual ownership.
+    other.collectionGroup = "inventoryCheckpoints";
+    const api = fakeApi({ initial: [other] });
+    const result = await prepare(api, { mode: "apply" });
+    expect(result.ready).toBe(true); expect(result.created).toBe(4);
+    expect(api.stored).toContainEqual(other);
+    expect(api.writeCalls().every((call) => /\/collectionGroups\/(inventoryCheckpoints|inventoryMovements)\/indexes$/.test(call.path))).toBe(true);
+  });
+  it.each([
+    "projects/another/databases/(default)/collectionGroups/inventoryCheckpoints/indexes/i",
+    "projects/hotel-toolkit/databases/another/collectionGroups/inventoryCheckpoints/indexes/i",
+    `${resource}/collectionGroups/inventoryCheckpoints/indexes/`,
+    `${resource}/collectionGroups/inventoryCheckpoints/indexes/i/extra`,
+    `${resource}/collectionGroups/../indexes/i`,
+    `${resource}/collectionGroups/inventoryCheckpoints/indexes/i?secret=private`,
+    `https://firestore.googleapis.com/v1/${resource}/collectionGroups/inventoryCheckpoints/indexes/i`,
+  ])("rejects foreign or malformed canonical resources before any create", async (name) => {
+    const api = fakeApi({ initial: [{ ...index(reviewed()[0], "i"), name }] });
+    await expect(prepare(api, { mode: "apply" })).rejects.toThrow("unexpected resource");
+    expect(api.writeCalls()).toEqual([]);
+  });
+  it("cannot treat READY with a different query scope as the required serving definition", async () => {
+    const wrongScope = index({ ...reviewed()[0], queryScope: "COLLECTION_GROUP" }, "different-scope");
+    const api = fakeApi({ initial: [wrongScope, ...reviewed().slice(1).map((definition, number) => index(definition, `existing-${number}`))] });
+    await expect(prepare(api, { mode: "verify" })).rejects.toThrow("must be READY");
+    const result = await prepare(api, { mode: "apply" });
+    expect(result.ready).toBe(true); expect(result.created).toBe(1);
+    expect(api.stored).toContainEqual(wrongScope);
+  });
   it.each(["preflight", "apply", "verify"])("uses the supported default list size in %s, including apply polling", async (mode) => {
     const api = fakeApi(mode === "apply" ? { initial: [], readyAfter: 1 } : {});
     const result = await prepare(api, { mode });
     expect(result.ready).toBe(true);
     const lists = api.calls.filter((call) => call.path.endsWith("/indexes") && call.method === "GET");
-    expect(lists.length).toBeGreaterThanOrEqual(mode === "apply" ? 6 : 2);
+    expect(lists.length).toBeGreaterThanOrEqual(mode === "apply" ? 3 : 1);
+    expect(lists.every((call) => call.path === `${resource}/collectionGroups/-/indexes`)).toBe(true);
     expect(lists.every((call) => (call.params?.pageSize ?? 0) === 0)).toBe(true);
     expect(api.writeCalls()).toHaveLength(mode === "apply" ? 4 : 0);
   });
@@ -122,10 +170,9 @@ describe("additive operator index preparation", () => {
     expect(result.ready).toBe(true); expect(result.created).toBe(0);
     expect(api.writeCalls()).toEqual([]); expect(api.stored).toEqual(initial);
   });
-  it.each([false, true])("refuses more than 2000 indexes per group before creation (paginated: %s)", async (paginated) => {
+  it.each([false, true])("refuses more than 2000 indexes in the database inventory before creation (paginated: %s)", async (paginated) => {
     const entries = Array.from({ length: 2001 }, (_, number) => index(reviewed()[0], `bounded-${number}`));
     const api = fakeApi({ pages: (call) => {
-      if (call.path.includes("inventoryMovements")) return { indexes: [] };
       if (!paginated) return { indexes: entries };
       return call.params.pageToken ? { indexes: entries.slice(1500) } : { indexes: entries.slice(0, 1500), nextPageToken: "remaining" };
     } });
@@ -192,11 +239,10 @@ describe("additive operator index preparation", () => {
   });
   it("reads all bounded list pages before deciding an index is missing", async () => {
     const api = fakeApi({ pages: (call, stored) => {
-      const group = call.path.split("/").at(-2), selected = stored.filter((value) => value.collectionGroup === group);
-      return call.params.pageToken ? { indexes: selected.slice(1) } : { indexes: selected.slice(0, 1), nextPageToken: "next" };
+      return call.params.pageToken ? { indexes: stored.slice(1) } : { indexes: stored.slice(0, 1), nextPageToken: "next" };
     } });
     const result = await prepare(api, { mode: "verify" });
-    expect(result.ready).toBe(true); expect(api.calls.filter((call) => call.params?.pageToken === "next")).toHaveLength(2);
+    expect(result.ready).toBe(true); expect(api.calls.filter((call) => call.params?.pageToken === "next")).toHaveLength(1);
     expect(api.writeCalls()).toEqual([]);
   });
   it("rejects repeated pagination tokens and a mismatched index resource", async () => {
