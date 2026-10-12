@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
+import { readFile, writeFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // Handler injection must use the same SDK installation as Functions; FieldPath
 // and Timestamp constructors from a second installation are not interchangeable.
@@ -39,8 +42,10 @@ const receivingDetails = { receivedOn: "2023-11-14", deliveryReference: "RESTORE
 const receiptId = `r-${digest("receiving-a", "restore-a", "restore-receipt").slice(0, 48)}`;
 const receivingResult = { hotelUid: "restore-hotel-a", orderId: "receiving-a", eventId: receiptId, status: "Received", revision: 2, receivingState: "complete" };
 const require = createRequire(import.meta.url);
-const { checkpointId } = require("../../functions/src/inventoryMovements");
+const { checkpointId, prepareCheckpoint, readLocationSequence } = require("../../functions/src/inventoryMovements");
 const { getHotelInventoryPeriodHandler } = require("../../functions/src/inventoryReports");
+const { mutateHotelSupplierProductHandler } = require("../../functions/src/products");
+const { recordHotelInventoryAdjustmentHandler, reverseHotelInventoryAdjustmentHandler } = require("../../functions/src/inventoryAdjustments");
 const inventoryFixtures = [
   { hotelUid: "restore-hotel-a", currency: "EUR", actorUid: "restore-a", platform: false },
   { hotelUid: "restore-hotel-b", currency: "GBP", actorUid: "restore-b-counter", platform: false },
@@ -50,6 +55,27 @@ const inventoryRequest = (fixture) => ({ auth: { uid: fixture.actorUid, token: {
   ...(fixture.platform ? { platformAdmin: true } : {}) } },
 data: { hotelUid: fixture.hotelUid, locationId: "store", openingStockCountId: "opening", closingStockCountId: "closing" } });
 const inventoryServices = { firestore: database, auth, now: () => revisionTime.toMillis() };
+const procurementServices = { firestore: database, auth, now: () => Date.parse("2026-10-12T10:00:00Z") };
+// A temporary test proof survives the two emulator processes; it is not hotel
+// data, and contains only fictional fixture payloads and timestamp evidence.
+const procurementProofPath = join(tmpdir(), `hotelsuite-restore-proof-${digest(import.meta.url, projectId).slice(0, 16)}.json`);
+const procurementRequest = (fixture, data) => ({ auth: { uid: fixture.actorUid, token: { email_verified: true } }, data: { hotelUid: fixture.hotelUid, ...data } });
+const offerInput = (fixture, price) => ({ supplierId: "restore-dairy", supplierSku: "RESTORE-MILK6", supplierProductName: "Fictional milk six-pack",
+  currency: fixture.currency, pricingModel: "Per Purchase Unit", pricePerBaseUnit: null, pricePerPurchaseUnit: price,
+  baseUnit: "ml", purchaseUnit: "Case", baseUnitsPerPurchaseUnit: 6000, catalogProductId: "milk", imageUrl: "", active: true,
+  priceBasis: "net", vatRate: null, purchaseOptions: [], priceValidFrom: "2026-10-01", priceValidUntil: "2026-10-31" });
+const offerCommand = (fixture, action) => ({ action, productId: "restore-priced-milk", expectedRevision: action === "create" ? 0 : 1,
+  requestId: `restore-price-${action}`, product: offerInput(fixture, action === "create" ? 12 : 15) });
+const adjustmentCommand = (fixture, kind, reasonType = null) => ({ requestId: `restore-${reasonType || kind}`, expectedActorUid: fixture.actorUid,
+  kind, reasonType, catalogProductId: "milk", quantity: kind === "transfer" ? 6 : reasonType === "waste" ? 3 : reasonType === "breakage" ? 1 : 2,
+  sourceLocationId: "movements-store", destinationLocationId: kind === "transfer" ? "movements-bar" : null,
+  businessDate: "2026-10-05", note: `Fictional ${reasonType || kind} evidence`, reference: `RESTORE-${reasonType || kind}`,
+  netUnitCost: reasonType === "waste" ? null : 2.5, currency: reasonType === "waste" ? null : fixture.currency });
+const transferId = (fixture) => `a-${digest(fixture.actorUid, fixture.hotelUid, "restore-transfer").slice(0, 48)}`;
+const reverseCommand = (fixture) => ({ adjustmentId: transferId(fixture), requestId: "restore-reverse-transfer", expectedActorUid: fixture.actorUid,
+  businessDate: "2026-10-06", note: "Fictional compensating correction", reference: "RESTORE-CORRECTION" });
+const periodV2Request = (fixture, locationId) => procurementRequest(fixture, { locationId,
+  openingStockCountId: "adjustment-opening", closingStockCountId: "adjustment-closing", reportPolicyVersion: 2 });
 const documents = {
   "platformConfiguration/saasProcurement": { enabled: true, rulesVersion: createRequire(import.meta.url)("../../functions/src/platformReleasePolicy.json").saasRulesVersion },
   "hotels/restore-hotel-a": { name: "Fictional hotel A", timeZone: "Europe/Brussels" },
@@ -126,6 +152,73 @@ for (const fixture of inventoryFixtures) {
     kind: "receipt", hotelUid, locationId: "store", orderId: "fixture-inventory-order", receiptId: "fixture-inventory-receipt",
     receivedOn: "2026-10-05", sequence: 2, actorUid, coverageGaps: [], backdatedAgainstCheckpoint: false, postedAt: revisionTime,
     lines: [{ catalogProductId: "milk", catalogProductName: "Fictional milk", baseUnit: "l", quantity: 30, netUnitCost: 3, netValue: 90, currency }] };
+  documents[`${root}/members/${actorUid}`].permissions.push("supplierproducts.create", "supplierproducts.update", "inventorymovements.read", "inventorymovements.create", "inventorymovements.reverse");
+  documents[`${root}/suppliers/restore-dairy`] = { name: "Fictional dairy supplier", active: true };
+  for (const location of ["movements-store", "movements-bar"]) documents[`${root}/locations/${location}`] = { name: `Fictional ${location}`, active: true };
+}
+
+async function finishAdjustmentCheckpoints(fixture, phase) {
+  const stockCountId = `adjustment-${phase}`, businessDate = phase === "opening" ? "2026-10-01" : "2026-10-10";
+  const quantities = phase === "opening" ? [100, 0] : [90, 0];
+  await database.doc(`hotels/${fixture.hotelUid}/stockCounts/${stockCountId}`).set({ name: `Fictional ${stockCountId}`, status: "Finished",
+    inventoryPolicyVersion: 1, currency: fixture.currency, businessDate, revision: 2,
+    locations: [{ locationId: "movements-store", status: "Finished" }, { locationId: "movements-bar", status: "Finished" }] });
+  await database.runTransaction(async (tx) => {
+    const prepared = await Promise.all(["movements-store", "movements-bar"].map(async (locationId, index) => {
+      const countingStartedSequence = await readLocationSequence(database, tx, fixture.hotelUid, locationId);
+      return prepareCheckpoint(database, tx, { hotelUid: fixture.hotelUid, locationId, stockCountId, stockCountName: `Fictional ${stockCountId}`,
+        businessDate, currency: fixture.currency, actorUid: fixture.actorUid, countingStartedSequence,
+        items: [{ catalogProductId: "milk", catalogProductName: "Fictional milk", baseUnit: "l", quantity: quantities[index], unitCost: index === 0 ? 2.5 : null }] });
+    }));
+    for (const entry of prepared) entry.write();
+  });
+}
+function verifyV2(result, fixture, locationId) {
+  assert.equal(result.hotelUid, fixture.hotelUid); assert.equal(result.currency, fixture.currency); assert.equal(result.reportPolicyVersion, 2);
+  const row = result.items[0]; assert.equal(row.netReceiptQuantity, 0); assert.equal(row.transferInQuantity, 0); assert.equal(row.transferOutQuantity, 0);
+  assert.equal(row.wasteQuantity, locationId === "movements-store" ? 3 : 0); assert.equal(row.breakageQuantity, locationId === "movements-store" ? 1 : 0);
+  assert.equal(row.physicalReturnQuantity, locationId === "movements-store" ? 2 : 0); assert.equal(row.residualQuantity, locationId === "movements-store" ? 4 : 0);
+  assert.equal(row.residualValue, locationId === "movements-store" ? null : 0); assert.equal(result.coverage.costComplete, locationId === "movements-bar");
+  assert.equal(result.coverage.quantityComplete, true); assert.equal(result.currentlyComplete, true);
+}
+function canonical(value) {
+  if (value == null || typeof value !== "object") return value;
+  if (typeof value.toJSON === "function") return canonical(value.toJSON());
+  if (Array.isArray(value)) return value.map(canonical);
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+}
+async function procurementEvidence(fixture) {
+  const root = `hotels/${fixture.hotelUid}`, collections = ["productOperations", "productAudit", "productSkuKeys", "inventoryAdjustments", "inventoryAdjustmentOperations",
+    "inventoryAdjustmentReversals", "inventoryMovements", "inventoryLocationStates", "inventoryCheckpoints", "inventoryPeriodReports", "supplierPriceHistory/restore-priced-milk/entries"];
+  const rows = (await Promise.all(collections.map((name) => database.collection(`${root}/${name}`).get()))).flatMap((snapshot) => snapshot.docs);
+  rows.push(await database.doc(`${root}/supplierproducts/restore-priced-milk`).get());
+  return Object.fromEntries(rows.map((doc) => [doc.ref.path, { data: canonical(doc.data()), updateTime: canonical(doc.updateTime) }]).sort(([left], [right]) => left.localeCompare(right)));
+}
+async function verifyProcurementReplay(fixture, proof) {
+  const before = await procurementEvidence(fixture);
+  assert.deepEqual(Object.fromEntries(Object.entries(before).map(([path, row]) => [path, row.data])), proof,
+    "Restored supplier price history, movement legs, reversals, states and v1/v2 payload timestamps must match the actual exported evidence.");
+  for (const action of ["create", "update"]) {
+    const result = await mutateHotelSupplierProductHandler(procurementRequest(fixture, offerCommand(fixture, action)), procurementServices);
+    assert.equal(result.productId, "restore-priced-milk"); assert.equal(result.revision, action === "create" ? 1 : 2);
+  }
+  const original = await recordHotelInventoryAdjustmentHandler(procurementRequest(fixture, adjustmentCommand(fixture, "transfer")), procurementServices);
+  assert.equal(original.adjustmentId, transferId(fixture)); assert.equal(original.movementIds.length, 2);
+  const reversed = await reverseHotelInventoryAdjustmentHandler(procurementRequest(fixture, reverseCommand(fixture)), procurementServices);
+  assert.equal(reversed.originalAdjustmentId, original.adjustmentId); assert.equal(reversed.movementIds.length, 2);
+  for (const [kind, reason] of [["waste", "waste"], ["waste", "breakage"], ["physical_return", null]]) {
+    await recordHotelInventoryAdjustmentHandler(procurementRequest(fixture, adjustmentCommand(fixture, kind, reason)), procurementServices);
+  }
+  const legs = [...original.movementIds, ...reversed.movementIds].map((id) => before[`hotels/${fixture.hotelUid}/inventoryMovements/${id}`].data);
+  assert.equal(legs[0].lines[0].quantity + legs[1].lines[0].quantity, 0);
+  assert.equal(legs[0].lines[0].netValue + legs[1].lines[0].netValue, 0);
+  for (let index = 0; index < 2; index++) { assert.equal(legs[index + 2].lines[0].quantity, -legs[index].lines[0].quantity); assert.equal(legs[index + 2].lines[0].netValue, -legs[index].lines[0].netValue); }
+  for (const locationId of ["movements-store", "movements-bar"]) {
+    const result = await getHotelInventoryPeriodHandler(periodV2Request(fixture, locationId), procurementServices); verifyV2(result, fixture, locationId);
+    assert.deepEqual(await getHotelInventoryPeriodHandler(periodV2Request(fixture, locationId), { ...procurementServices, now: () => procurementServices.now() + 60000 }), result);
+  }
+  assert.deepEqual(await procurementEvidence(fixture), before,
+    "Exact restored command/report replay must not create extra history or legs, change frozen timestamps, or write any original updateTime.");
 }
 
 function verifyInventoryReport(result, fixture) {
@@ -188,7 +281,25 @@ try {
       assert.equal(snapshot.exists, true);
       assert.deepEqual(snapshot.data(), expectedStoredInventoryReport(fixture));
     }
-    console.log("Seeded fictional two-hotel Firestore relationships, canonical inventory checkpoints/movements/reports, Auth users/claims and private Storage bytes.");
+    const proof = {};
+    for (const fixture of inventoryFixtures) {
+      for (const action of ["create", "update"]) await mutateHotelSupplierProductHandler(procurementRequest(fixture, offerCommand(fixture, action)), procurementServices);
+      const history = await database.collection(`hotels/${fixture.hotelUid}/supplierPriceHistory/restore-priced-milk/entries`).orderBy("revision").get();
+      assert.deepEqual(history.docs.map((doc) => [doc.data().revision, doc.data().observation, doc.data().terms.currency, doc.data().terms.options[0].pricePerPurchaseUnit]),
+        [[1, "initial-create", fixture.currency, 12], [2, "terms-changed", fixture.currency, 15]]);
+      await finishAdjustmentCheckpoints(fixture, "opening");
+      const transfer = await recordHotelInventoryAdjustmentHandler(procurementRequest(fixture, adjustmentCommand(fixture, "transfer")), procurementServices);
+      assert.equal(transfer.adjustmentId, transferId(fixture));
+      await reverseHotelInventoryAdjustmentHandler(procurementRequest(fixture, reverseCommand(fixture)), procurementServices);
+      for (const [kind, reason] of [["waste", "waste"], ["waste", "breakage"], ["physical_return", null]]) {
+        await recordHotelInventoryAdjustmentHandler(procurementRequest(fixture, adjustmentCommand(fixture, kind, reason)), procurementServices);
+      }
+      await finishAdjustmentCheckpoints(fixture, "closing");
+      for (const locationId of ["movements-store", "movements-bar"]) verifyV2(await getHotelInventoryPeriodHandler(periodV2Request(fixture, locationId), procurementServices), fixture, locationId);
+      proof[fixture.hotelUid] = Object.fromEntries(Object.entries(await procurementEvidence(fixture)).map(([path, row]) => [path, row.data]));
+    }
+    await writeFile(procurementProofPath, JSON.stringify(proof), { mode: 0o600 });
+    console.log("Seeded fictional two-hotel data, protected supplier price changes, paired manual transfer/reversal/waste/return evidence, immutable v1/v2 reports, Auth users/claims and private Storage bytes.");
   } else if (process.argv[2] === "verify") {
     for (const [path, expected] of Object.entries(documents)) {
       const snapshot = await database.doc(path).get();
@@ -231,6 +342,11 @@ try {
       }));
       assert.deepEqual(countsAfter, countsBefore, "Report retries must not create additional inventory evidence.");
     }
+    const proof = JSON.parse(await readFile(procurementProofPath, "utf8"));
+    for (const fixture of inventoryFixtures) await verifyProcurementReplay(fixture, proof[fixture.hotelUid]);
+    await assert.rejects(recordHotelInventoryAdjustmentHandler({ auth: { uid: "restore-a", token: { email_verified: true } },
+      data: { hotelUid: "restore-hotel-b", ...adjustmentCommand(inventoryFixtures[0], "transfer") } }, procurementServices),
+    (error) => error.code === "permission-denied");
     await assert.rejects(getHotelInventoryPeriodHandler({ auth: { uid: "restore-a", token: { email_verified: true } },
       data: { hotelUid: "restore-hotel-b", locationId: "store", openingStockCountId: "opening", closingStockCountId: "closing" } }, inventoryServices),
     (error) => error.code === "permission-denied");
@@ -256,8 +372,9 @@ try {
       assert.equal(metadata.contentType, "application/pdf");
       assert.equal(metadata.metadata.fixture, "restore-only");
     }
-    console.log("Verified two-hotel data, canonical counts/receipts and immutable period-report replay (50 inferred usage; weighted cost 290/130), entitlements, roles, domain history, platform monitoring/audit, zero-hotel operator, expired support denial, Auth state and private Storage bytes/metadata.");
+    console.log("Verified two-hotel data, unchanged v1 period replay (50 inferred usage; weighted cost 290/130), supplier price-history restore, exact paired manual movement/reversal replay and immutable v2 reports with explicit unknown costs, frozen timestamps/updateTimes, entitlements, roles, platform history, Auth and private Storage bytes/metadata.");
   } else throw new Error("Expected seed or verify mode.");
 } finally {
   await deleteApp(app);
+  if (process.argv[2] === "verify") await unlink(procurementProofPath).catch((error) => { if (error.code !== "ENOENT") throw error; });
 }

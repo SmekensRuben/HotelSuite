@@ -33,6 +33,19 @@ test("role combinations use explicit action grants and module managers do not au
   assert.equal(manager.permissions.includes("users.create"), false);
   for (const role of Object.values(catalog.modules.procurement.roles)) assert.equal(role.permissions.some((key) => key.includes("contracts") || key.includes("groupquotes")), false);
 });
+test("manual movements are licensed separately and only supervisors explicitly reverse them", () => {
+  assert.equal(featureIsLicensed(subscription, "inventorymovements"), true);
+  assert.equal(featureIsLicensed({ ...subscription, modules: [] }, "inventorymovements"), false);
+  const counter = compileMemberAccess({ moduleRoles: { procurement: ["stock-controller"] } }, subscription);
+  assert.ok(counter.permissions.includes("inventorymovements.create"));
+  assert.equal(counter.permissions.includes("inventorymovements.reverse"), false);
+  const supervisor = compileMemberAccess({ moduleRoles: { procurement: ["inventory-supervisor"] } }, subscription);
+  assert.ok(supervisor.permissions.includes("inventorymovements.reverse"));
+  assert.equal(supervisor.permissions.includes("supplierproducts.read"), false);
+  const { permissionAllows } = require("./authorization");
+  assert.equal(permissionAllows(["inventorymovements.*"], "inventorymovements", "reverse"), false);
+  assert.equal(permissionAllows(["inventorymovements.reverse"], "inventorymovements", "reverse"), true);
+});
 test("advanced grants and role selections cannot bypass subscriptions or grant user/platform administration", () => {
   for (const selection of [{ additionalPermissions: ["contracts.*"] }, { additionalPermissions: ["super.admin"] },
     { additionalPermissions: ["users.*"] }, { moduleRoles: { procurement: ["unknown"] } }, { moduleRoles: { procurement: ["buyer", "buyer"] } }]) {

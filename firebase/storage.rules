@@ -28,7 +28,7 @@ service firebase.storage {
         && (moduleId == 'core' || moduleId in modules);
     }
     function featureModule(feature) {
-      return feature in ['catalogproducts', 'supplierproducts', 'suppliers', 'orders', 'stockcounts', 'catalogsettings', 'outlets', 'locations'] ? 'procurement' :
+      return feature in ['catalogproducts', 'supplierproducts', 'suppliers', 'orders', 'stockcounts', 'inventorymovements', 'catalogsettings', 'outlets', 'locations'] ? 'procurement' :
         feature in ['contracts'] ? 'contracts' :
         feature in ['reservations', 'auditupsells'] ? 'frontoffice' :
         feature in ['groups', 'roominglists'] ? 'groups' :

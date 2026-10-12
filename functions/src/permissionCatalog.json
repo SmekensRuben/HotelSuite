@@ -137,5 +137,10 @@
     "read",
     "update",
     "delete"
+  ],
+  "inventorymovements": [
+    "read",
+    "create",
+    "reverse"
   ]
 }

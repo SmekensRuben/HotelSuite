@@ -56,7 +56,7 @@ service cloud.firestore {
     function licensedKeys(hotelUid, keys) {
       let modules = get(/databases/$(database)/documents/hotelSubscriptions/$(hotelUid)).data.modules;
       return keys
-        .removeAll('procurement' in modules ? [] : ['catalogproducts.create', 'catalogproducts.read', 'catalogproducts.update', 'catalogproducts.delete', 'catalogproducts.*', 'supplierproducts.create', 'supplierproducts.read', 'supplierproducts.update', 'supplierproducts.delete', 'supplierproducts.*', 'suppliers.create', 'suppliers.read', 'suppliers.update', 'suppliers.delete', 'suppliers.password', 'suppliers.*', 'orders.create', 'orders.read', 'orders.update', 'orders.delete', 'orders.approve', 'orders.receive', 'orders.finalize', 'orders.*', 'stockcounts.create', 'stockcounts.read', 'stockcounts.update', 'stockcounts.delete', 'stockcounts.*', 'catalogsettings.create', 'catalogsettings.read', 'catalogsettings.update', 'catalogsettings.delete', 'catalogsettings.*', 'outlets.create', 'outlets.read', 'outlets.update', 'outlets.delete', 'outlets.approvers', 'outlets.*', 'locations.create', 'locations.read', 'locations.update', 'locations.delete', 'locations.*'])
+        .removeAll('procurement' in modules ? [] : ['catalogproducts.create', 'catalogproducts.read', 'catalogproducts.update', 'catalogproducts.delete', 'catalogproducts.*', 'supplierproducts.create', 'supplierproducts.read', 'supplierproducts.update', 'supplierproducts.delete', 'supplierproducts.*', 'suppliers.create', 'suppliers.read', 'suppliers.update', 'suppliers.delete', 'suppliers.password', 'suppliers.*', 'orders.create', 'orders.read', 'orders.update', 'orders.delete', 'orders.approve', 'orders.receive', 'orders.finalize', 'orders.*', 'stockcounts.create', 'stockcounts.read', 'stockcounts.update', 'stockcounts.delete', 'stockcounts.*', 'inventorymovements.read', 'inventorymovements.create', 'inventorymovements.reverse', 'inventorymovements.*', 'catalogsettings.create', 'catalogsettings.read', 'catalogsettings.update', 'catalogsettings.delete', 'catalogsettings.*', 'outlets.create', 'outlets.read', 'outlets.update', 'outlets.delete', 'outlets.approvers', 'outlets.*', 'locations.create', 'locations.read', 'locations.update', 'locations.delete', 'locations.*'])
         .removeAll('contracts' in modules ? [] : ['contracts.create', 'contracts.read', 'contracts.update', 'contracts.delete', 'contracts.notify', 'contracts.settings', 'contracts.*'])
         .removeAll('frontoffice' in modules ? [] : ['reservations.read', 'reservations.*', 'auditupsells.read', 'auditupsells.settings', 'auditupsells.*'])
         .removeAll('groups' in modules ? [] : ['groups.create', 'groups.read', 'groups.update', 'groups.delete', 'groups.*', 'roominglists.create', 'roominglists.read', 'roominglists.update', 'roominglists.approve', 'roominglists.*'])
@@ -64,7 +64,7 @@ service cloud.firestore {
         ;
     }
     function featureModule(feature) {
-      return feature in ['catalogproducts', 'supplierproducts', 'suppliers', 'orders', 'stockcounts', 'catalogsettings', 'outlets', 'locations'] ? 'procurement' :
+      return feature in ['catalogproducts', 'supplierproducts', 'suppliers', 'orders', 'stockcounts', 'inventorymovements', 'catalogsettings', 'outlets', 'locations'] ? 'procurement' :
         feature in ['contracts'] ? 'contracts' :
         feature in ['reservations', 'auditupsells'] ? 'frontoffice' :
         feature in ['groups', 'roominglists'] ? 'groups' :
@@ -401,6 +401,10 @@ service cloud.firestore {
       match /inventoryLocationStates/{locationId} { allow read, write: if false; }
       match /inventoryCheckpoints/{checkpointId} { allow read, write: if false; }
       match /inventoryPeriodReports/{reportId} { allow read, write: if false; }
+      match /supplierPriceHistory/{document=**} { allow read, write: if false; }
+      match /inventoryAdjustments/{document=**} { allow read, write: if false; }
+      match /inventoryAdjustmentOperations/{document=**} { allow read, write: if false; }
+      match /inventoryAdjustmentReversals/{document=**} { allow read, write: if false; }
       match /productOperations/{operationId} { allow read, write: if false; }
       match /productSkuKeys/{keyId} { allow read, write: if false; }
       match /productAudit/{auditId} { allow read, write: if false; }

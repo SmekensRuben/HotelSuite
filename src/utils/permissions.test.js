@@ -16,4 +16,10 @@ describe("hasPermission", () => {
       expect(hasPermission({ permissions: [`orders.${action}`] }, "orders", action)).toBe(true);
     }
   });
+  it("requires an explicit supervisor grant to reverse manual movements", () => {
+    expect(hasPermission({ permissions: ["inventorymovements.*"] }, "inventorymovements", "create")).toBe(true);
+    expect(hasPermission({ permissions: ["inventorymovements.*"] }, "inventorymovements", "reverse")).toBe(false);
+    expect(hasPermission({ permissions: ["inventorymovements.reverse"] }, "inventorymovements", "reverse")).toBe(true);
+    expect(hasPermission({ permissions: ["stockcounts.*"] }, "inventorymovements", "create")).toBe(false);
+  });
 });
