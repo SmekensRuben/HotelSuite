@@ -1,0 +1,28 @@
+{
+  "score": 5,
+  "summary": "Scoped review of the new setup-report and receiving boundaries: browser-denied private records, current platform or hotel authority, explicit receiving grants, tenant/module/subscription enforcement and transactional validated mutations. This is an implementing-agent review with adversarial tests, not a whole-application or independent-human security attestation.",
+  "findings": [],
+  "checks": [
+    { "check": "The Update Bypass", "result": "New private event/reference/reversal records and order aggregates deny every browser create/update/delete. Same-ID payload changes, post-confirmation edits and post-finalization receiving/reversal are rejected." },
+    { "check": "Authority Source", "result": "Current Firebase Auth identity/claims and canonical hotel membership are checked; request actor/authority fields are rejected. New exact receiving actions cannot be inferred from old wildcard or administrator grants." },
+    { "check": "Business Logic vs. Rules", "result": "Ordinary receivers and supervisors complete their distinct workflows through callables; buyer/admin/platform-only and other-hotel identities are denied. Import targets already prohibit the complete orders namespace." },
+    { "check": "Storage Abuse", "result": "Bounded report/history reads, 100 lines, typed capped thousandth quantities, reason/reference limits, event cap, paged history and no raw Auth/mail/credential projections. Source samples are labeled; incomplete identity/import inspection is unknown." },
+    { "check": "Type Safety", "result": "Unknown/non-numeric values, corrupted source/aggregate/revision/policy, missing units and impossible dates fail closed. Numeric types are checked before arithmetic. Historical missing baselines do not become zero." },
+    { "check": "Field-Level vs. Identity-Level Security", "result": "Immutable tenant/order paths and server-stamped actors/events; owner roles alone never grant operation authority. Actor data cannot override document IDs. All receiving mutations and their event/audit/index writes commit together." }
+  ],
+  "adversarialEvidence": [
+    "Real local Auth/Firestore/Storage allow/deny workflows, including normal users and two hotels",
+    "Concurrent revision race, repeated request and physical-reference replay, exactly-once immutable reversal",
+    "Revoked/disabled/unverified identities, missing modules, expiry and paused release",
+    "Private history/aggregate/reference/reversal browser access and arbitrary authority payload fields denied",
+    "Orphan profile/Auth/member and incomplete Auth lookup evidence, sanitized invitation metadata",
+    "Uncertain response survives remount; paused gate cannot discard an earlier outcome; stale hotel response/mutation fenced",
+    "Source quantity/unit/aggregate reconciliation, independent stock counts/prices, no supplier redispatch",
+    "Two-hotel restore preserves receiving history/reference and replays the original operation after finalization without another write"
+  ],
+  "remainingVerification": [
+    "Independent human review and actual browser/production workflows",
+    "Actual invitation provider delivery, production configuration/IAM and coordinated deployment parity",
+    "Existing one-time SaaS activation; assign the new roles explicitly and validate hotel-specific sources/schedules"
+  ]
+}

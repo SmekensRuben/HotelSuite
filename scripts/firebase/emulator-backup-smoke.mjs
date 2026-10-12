@@ -4,6 +4,7 @@ import { getAuth } from "firebase-admin/auth";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 
 const projectId = process.env.GCLOUD_PROJECT || "demo-hotel-suite-a00";
 if (projectId !== "demo-hotel-suite-a00") throw new Error("Only the fictional restore project is permitted.");
@@ -27,7 +28,16 @@ const objects = {
 };
 const roomTypeDays = ["2026-10-10", "2026-10-11"].map((date) => ({ date, roomTypes: [{ code: "DBL", name: "Double", quantity: 2 }] }));
 const reservations = [{ id: "reservation-a", firstName: "Fictional", lastName: "Guest", arrivalDate: "2026-10-10", departureDate: "2026-10-12", roomType: "DBL", numberOfAdults: 1, numberOfChildren: 0, comment: "", createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z" }];
+const receivingLines = [{ supplierProductId: "coffee", productName: "Fictional coffee", purchaseUnit: "box", orderedQuantity: 3, acceptedQuantity: 3, rejectedQuantity: 1 }];
+const digest = (...values) => createHash("sha256").update(JSON.stringify(values)).digest("hex");
+const receivingDetails = { receivedOn: "2023-11-14", deliveryReference: "RESTORE-DN", note: "",
+  lines: [{ supplierProductId: "coffee", acceptedQuantity: 3, rejectedQuantity: 1, reason: "Damaged packaging" }] };
+const receiptId = `r-${digest("receiving-a", "restore-a", "restore-receipt").slice(0, 48)}`;
+const receivingResult = { hotelUid: "restore-hotel-a", orderId: "receiving-a", eventId: receiptId, status: "Received", revision: 2, receivingState: "complete" };
 const documents = {
+  "platformConfiguration/saasProcurement": { enabled: true, rulesVersion: createRequire(import.meta.url)("../../functions/src/platformReleasePolicy.json").saasRulesVersion },
+  "hotels/restore-hotel-a": { name: "Fictional hotel A", timeZone: "Europe/Brussels" },
+  "hotels/restore-hotel-b": { name: "Fictional hotel B", timeZone: "Europe/London" },
   "users/restore-platform": { firstName: "Fictional operator", hotelUid: [], accessRevision: 0 },
   "platformSupportSessions/restore-session": { actorUid: "restore-platform", hotelUid: "restore-hotel-a", state: "active", reason: "Fictional diagnosis", expiresAt: revisionTime },
   "platformAudit/restore-audit": { hotelUid: "restore-hotel-a", actorUid: "restore-platform", action: "support-started", createdAt: revisionTime },
@@ -37,7 +47,7 @@ const documents = {
   "hotels/restore-hotel-a/importRecovery/restore-recovery": { runId: "restore-run", actorUid: "restore-platform", state: "failed", startedAtMillis: revisionTime.toMillis() },
   "users/restore-a": { firstName: "Fictional", lastName: "A", hotelUid: ["restore-hotel-a"], accessRevision: 2 },
   "users/restore-b": { firstName: "Fictional", lastName: "B", hotelUid: ["restore-hotel-b"], accessRevision: 1 },
-  "hotels/restore-hotel-a/members/restore-a": { permissions: ["orders.read", "users.read", "users.create", "users.update", "users.delete"], hotelAdmin: true, moduleRoles: {}, additionalPermissions: ["orders.read"], rolePolicyVersion: 1, revision: 2 },
+  "hotels/restore-hotel-a/members/restore-a": { permissions: ["orders.read", "orders.receive", "orders.finalize", "users.read", "users.create", "users.update", "users.delete"], hotelAdmin: true, moduleRoles: { procurement: ["receiving-supervisor"] }, additionalPermissions: [], rolePolicyVersion: 1, revision: 2 },
   "hotels/restore-hotel-a/memberAdministration/state": { revision: 4, updatedAt: revisionTime, updatedBy: "restore-a" },
   "hotels/restore-hotel-a/accessAudit/member-a": { action: "update-member", uid: "restore-a", actorUid: "restore-a", hotelAdmin: true, revision: 2, createdAt: revisionTime },
   "hotels/restore-hotel-a/settings/bootstrap": { hotelName: "Fictional hotel A", currency: "EUR" },
@@ -47,6 +57,16 @@ const documents = {
   "hotelSubscriptions/restore-hotel-b": { status: "trialing", validUntil: subscriptionExpiry, modules: ["procurement", "contracts"], modulePolicyVersion: 1, seatLimit: 10, revision: 1 },
   "hotels/restore-hotel-a/orders/order-a": { status: "Finalized", revision: 4, total: 42.5, updatedAt: revisionTime },
   "hotels/restore-hotel-a/orderAudit/audit-a": { orderId: "order-a", actorUid: "restore-a", action: "finalize", revision: 4, createdAt: revisionTime },
+  "hotels/restore-hotel-a/orders/receiving-a": { status: "Finalized", revision: 3, totalAmount: 36, currency: "EUR",
+    products: [{ supplierProductId: "coffee", supplierProductName: "Fictional coffee", purchaseUnit: "box", qtyPurchaseUnits: 3, pricePerPurchaseUnit: 12 }],
+    receiving: { policyVersion: 1, state: "closed", eventCount: 2, lines: receivingLines, finalizationReason: "Rejected box replaced", closedWithShortfall: false } },
+  [`hotels/restore-hotel-a/orders/receiving-a/receipts/${receiptId}`]: { policyVersion: 1, kind: "receipt", hotelUid: "restore-hotel-a", orderId: "receiving-a",
+    actorUid: "restore-a", deliveryReference: "RESTORE-DN", receivedOn: "2023-11-14", revision: 2, createdAt: revisionTime,
+    note: "", fingerprint: digest("receipt", 1, receivingDetails), result: receivingResult,
+    lines: [{ supplierProductId: "coffee", productName: "Fictional coffee", purchaseUnit: "box", acceptedQuantity: 3, rejectedQuantity: 1, reason: "Damaged packaging" }] },
+  "hotels/restore-hotel-a/orders/receiving-a/receipts/final-a": { policyVersion: 1, kind: "finalization", hotelUid: "restore-hotel-a", orderId: "receiving-a",
+    actorUid: "restore-a", reason: "Rejected box replaced", acceptShortfall: false, revision: 3, createdAt: revisionTime },
+  [`hotels/restore-hotel-a/orders/receiving-a/receiptReferences/${digest("restore-dn")}`]: { eventId: receiptId, createdAt: revisionTime },
   "hotels/restore-hotel-a/groups/group-a": { arrival: "2026-10-10", departure: "2026-10-12", roomTypeDays, roomingListToken: roomingToken, roomingListStatus: "Submitted" },
   [`roomingListLinks/${roomingToken}`]: { hotelUid: "restore-hotel-a", groupId: "group-a", groupName: "Fictional group", arrival: "2026-10-10", departure: "2026-10-12", roomTypeDays, roomTypes: ["DBL"], reservations, status: "Submitted", currentVersionNumber: 2, revision: 5, activeRequestId: null, changeRequestNumber: 1, publicAccessEnabled: true, publicAccessExpiresAt: subscriptionExpiry, createdBy: "restore-a", createdAt: revisionTime, updatedAt: revisionTime },
   [`roomingListLinks/${roomingToken}/versions/2`]: { number: 2, status: "Official", reservations, sourceRequestId: "change-a", createdAt: "2026-10-01T00:00:00Z" },
@@ -90,6 +110,18 @@ try {
     assert.deepEqual((await auth.getUser("restore-platform")).customClaims, { platformAdmin: true });
     assert.deepEqual((await database.doc("users/restore-platform").get()).data().hotelUid, []);
     const { requireSupportSession } = createRequire(import.meta.url)("../../functions/src/platformSupport");
+    const { getHotelOrderReceivingHandler, recordHotelOrderReceiptHandler } = createRequire(import.meta.url)("../../functions/src/orderReceiving");
+    const receiving = await getHotelOrderReceivingHandler({ auth: { uid: "restore-a", token: { email_verified: true } },
+      data: { hotelUid: "restore-hotel-a", orderId: "receiving-a" } }, { firestore: database, auth });
+    assert.equal(receiving.receivingState, "closed");
+    assert.equal(receiving.lines[0].acceptedQuantity, 3);
+    assert.equal(receiving.lines[0].rejectedQuantity, 1);
+    assert.equal(receiving.lines[0].outstandingQuantity, 0);
+    assert.equal(receiving.events.length, 2);
+    const replay = await recordHotelOrderReceiptHandler({ auth: { uid: "restore-a", token: { email_verified: true } },
+      data: { hotelUid: "restore-hotel-a", orderId: "receiving-a", requestId: "restore-receipt", expectedRevision: 1, ...receivingDetails } }, { firestore: database, auth });
+    assert.deepEqual(replay, receivingResult);
+    assert.equal((await database.doc("hotels/restore-hotel-a/orders/receiving-a").get()).data().revision, 3);
     await assert.rejects(requireSupportSession({ auth: { uid: "restore-platform", token: { email_verified: true, platformAdmin: true } },
       data: { hotelUid: "restore-hotel-a", sessionId: "restore-session" } }, { firestore: database, auth }), (error) => error.code === "permission-denied");
     for (const [path, bytes] of Object.entries(objects)) {
