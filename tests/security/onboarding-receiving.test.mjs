@@ -36,7 +36,7 @@ describe("ordinary-user goods receiving boundaries", () => {
   let receiver;
   const orderRef = () => db.doc("hotels/hotel-a/orders/receiving-order");
   const input = (extra = {}) => ({ hotelUid: "hotel-a", orderId: "receiving-order", requestId: "receipt-one", expectedRevision: 1,
-    receivedOn: "2026-10-12", deliveryReference: "DN-1", lines: [{ supplierProductId: "coffee", acceptedQuantity: 1.25, rejectedQuantity: 0 }], ...extra });
+    receivedOn: "2026-10-12", deliveryReference: "DN-1", inventoryLocationId: "store", lines: [{ supplierProductId: "coffee", acceptedQuantity: 1.25, rejectedQuantity: 0 }], ...extra });
   const receive = (extra = {}, person = receiver) => recordHotelOrderReceiptHandler(req(person, input(extra)), services());
   const inspect = (person = receiver, extra = {}) => getHotelOrderReceivingHandler(req(person, { hotelUid: "hotel-a", orderId: "receiving-order", ...extra }), services());
   beforeEach(async () => {

@@ -258,23 +258,26 @@ describe("controlled read-only support and checkpoint-preserving recovery", () =
     const { processImportedFileToFirestore } = require("../../functions/src/fileImportTypes");
     const file = admin.storage().bucket().file("imports/hotel-a/platform-recovery-fixture.csv");
     try {
-      const configuration = { fileType: "catalogcsv", parserType: "csv", hasHeaderRow: true, enabled: true,
-        basePath: "hotels/{hotelUid}", targetPath: "catalogproducts", writeMode: "append",
+      // Product policy v1 protects catalog imports. Recovery semantics use a
+      // fictional operational report collection with one pre-existing append row.
+      await db.doc("hotels/hotel-a/reports/recoveryFixture/rows/existing").set({ name: "Existing fixture" });
+      const configuration = { fileType: "recoverycsv", parserType: "csv", hasHeaderRow: true, enabled: true,
+        basePath: "hotels/{hotelUid}", targetPath: "reports/recoveryFixture/rows", writeMode: "append",
         columnMappings: [{ sourceField: "ID", databaseField: "name", targetType: "string" }] };
-      await db.doc("hotels/hotel-a/fileImportTypes/catalogcsv").set(configuration);
-      await file.save("ID\nFixture one\nFixture two\n", { metadata: { contentType: "text/csv", metadata: { hotelUid: "hotel-a", fileType: "catalogcsv", targetDateOverride: "2026-10-10" } } });
+      await db.doc("hotels/hotel-a/fileImportTypes/recoverycsv").set(configuration);
+      await file.save("ID\nFixture one\nFixture two\n", { metadata: { contentType: "text/csv", metadata: { hotelUid: "hotel-a", fileType: "recoverycsv", targetDateOverride: "2026-10-10" } } });
       const [object] = await file.getMetadata();
       await processImportedFileToFirestore.run({ data: object });
       const runId = importRunId(object), source = db.doc(`hotels/hotel-a/importRuns/${runId}`);
       const chunks = (await source.collection("chunks").get()).docs.map((row) => [row.id, row.data().inputHash]);
       assert.ok(chunks.length > 0);
-      const before = (await db.collection("hotels/hotel-a/catalogproducts").get()).docs.map((row) => row.id).sort();
+      const before = (await db.collection("hotels/hotel-a/reports/recoveryFixture/rows").get()).docs.map((row) => row.id).sort();
       assert.equal(before.length, 3);
       await source.update({ state: "failed", leaseUntil: 0, errorCode: "fixture-post-checkpoint-crash" });
       const result = await support.retryPlatformImport.run(request(operator, { hotelUid: "hotel-a", runId, requestId: "actual-recovery", reason: "Resume committed fixture source" }));
       assert.equal(result.state, "complete");
       assert.deepEqual((await source.collection("chunks").get()).docs.map((row) => [row.id, row.data().inputHash]), chunks);
-      assert.deepEqual((await db.collection("hotels/hotel-a/catalogproducts").get()).docs.map((row) => row.id).sort(), before);
+      assert.deepEqual((await db.collection("hotels/hotel-a/reports/recoveryFixture/rows").get()).docs.map((row) => row.id).sort(), before);
       assert.equal((await db.doc(`hotels/hotel-a/importTelemetry/${runId}`).get()).data().writtenCount, 2);
     } finally { await file.delete({ ignoreNotFound: true }); }
   });

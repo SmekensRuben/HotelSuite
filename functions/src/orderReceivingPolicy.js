@@ -4,6 +4,7 @@ const { text } = require("./validation");
 const { dateOnly } = require("./orders");
 
 const RECEIVING_POLICY_VERSION = 1;
+const lineKey = (line) => line.orderLineId ?? line.supplierProductId;
 const LIMIT = 100000;
 function milli(value, label, zero = true, code = "invalid-argument") {
   if (typeof value !== "number") throw new HttpsError(code, `${label} must be a number, with up to three decimals.`);
@@ -28,9 +29,12 @@ function sourceLines(order) {
       throw new HttpsError("failed-precondition", "The ordered purchase unit is unknown. Review this source snapshot.");
     }
     const supplierProductId = requireDocumentId(product.supplierProductId, "Order product ID");
-    if (seen.has(supplierProductId)) throw new HttpsError("failed-precondition", "Duplicate order product IDs need review.");
-    seen.add(supplierProductId);
-    return { supplierProductId, orderedQuantity: quantity(milli(product.qtyPurchaseUnits, "Ordered quantity", false, "failed-precondition")),
+    const identity = product.orderLineId == null ? {} : { orderLineId: requireDocumentId(product.orderLineId, "Order line ID"),
+      purchaseOptionId: requireDocumentId(product.purchaseOptionId ?? "default", "Purchase option ID") };
+    const key = lineKey({ ...identity, supplierProductId });
+    if (seen.has(key)) throw new HttpsError("failed-precondition", "Duplicate order line IDs need review.");
+    seen.add(key);
+    return { supplierProductId, ...identity, orderedQuantity: quantity(milli(product.qtyPurchaseUnits, "Ordered quantity", false, "failed-precondition")),
       productName: String(product.supplierProductName || supplierProductId).slice(0, 200), purchaseUnit: String(product.purchaseUnit || "").slice(0, 200),
       acceptedQuantity: 0, rejectedQuantity: 0 };
   });
@@ -50,11 +54,12 @@ function receivingState(order) {
     throw new HttpsError("failed-precondition", "The receiving policy or aggregate needs review.");
   }
   if (receiving.lines.some((line) => !line || typeof line !== "object" || Array.isArray(line))) throw new HttpsError("failed-precondition", "A receiving line needs review.");
-  const stored = new Map(receiving.lines.map((line) => [line.supplierProductId, line]));
+  const stored = new Map(receiving.lines.map((line) => [lineKey(line), line]));
   if (stored.size !== lines.length) throw new HttpsError("failed-precondition", "Duplicate receiving product IDs need review.");
   for (const line of lines) {
-    const previous = stored.get(line.supplierProductId);
-    if (!previous || previous.orderedQuantity !== line.orderedQuantity) throw new HttpsError("failed-precondition", "The receiving aggregate no longer matches the ordered quantities.");
+    const previous = stored.get(lineKey(line));
+    if (!previous || previous.supplierProductId !== line.supplierProductId || previous.orderedQuantity !== line.orderedQuantity
+      || previous.purchaseOptionId !== line.purchaseOptionId) throw new HttpsError("failed-precondition", "The receiving aggregate no longer matches the ordered quantities and purchase options.");
     line.acceptedQuantity = quantity(milli(previous.acceptedQuantity, "Stored accepted quantity", true, "failed-precondition"));
     line.rejectedQuantity = quantity(milli(previous.rejectedQuantity, "Stored rejected quantity", true, "failed-precondition"));
   }
@@ -76,25 +81,27 @@ function normalizeReceipt(input) {
   const seen = new Set();
   const lines = input.lines.map((line) => {
     if (!line || typeof line !== "object" || Array.isArray(line)
-      || Object.keys(line).some((key) => !["supplierProductId", "acceptedQuantity", "rejectedQuantity", "reason"].includes(key))) {
+      || Object.keys(line).some((key) => !["supplierProductId", "orderLineId", "acceptedQuantity", "rejectedQuantity", "reason"].includes(key))) {
       throw new HttpsError("invalid-argument", "Unsupported receipt line field.");
     }
     const supplierProductId = requireDocumentId(line.supplierProductId, "supplierProductId");
-    if (seen.has(supplierProductId)) throw new HttpsError("invalid-argument", "Merge duplicate receipt product lines.");
-    seen.add(supplierProductId);
+    const identity = line.orderLineId == null ? {} : { orderLineId: requireDocumentId(line.orderLineId, "orderLineId") };
+    const key = lineKey({ ...identity, supplierProductId });
+    if (seen.has(key)) throw new HttpsError("invalid-argument", "Merge duplicate receipt order lines.");
+    seen.add(key);
     const accepted = milli(line.acceptedQuantity, "Accepted quantity"), rejected = milli(line.rejectedQuantity, "Rejected quantity");
     if (accepted + rejected === 0) throw new HttpsError("invalid-argument", "Each receipt line needs an accepted or rejected quantity.");
     const reason = text(line.reason ?? "", "Line discrepancy reason", 300);
     if (rejected > 0 && !reason) throw new HttpsError("invalid-argument", "Explain rejected goods.");
-    return { supplierProductId, acceptedQuantity: quantity(accepted), rejectedQuantity: quantity(rejected), reason };
-  }).sort((a, b) => a.supplierProductId.localeCompare(b.supplierProductId));
+    return { supplierProductId, ...identity, acceptedQuantity: quantity(accepted), rejectedQuantity: quantity(rejected), reason };
+  }).sort((a, b) => lineKey(a).localeCompare(lineKey(b)));
   return { receivedOn, deliveryReference, note, lines };
 }
 function applyReceipt(previous, receipt) {
   const lines = previous.lines.map((line) => ({ ...line }));
   for (const incoming of receipt.lines) {
-    const line = lines.find((item) => item.supplierProductId === incoming.supplierProductId);
-    if (!line) throw new HttpsError("invalid-argument", "Receive only products in the frozen order.");
+    const line = lines.find((item) => lineKey(item) === lineKey(incoming));
+    if (!line || line.supplierProductId !== incoming.supplierProductId) throw new HttpsError("invalid-argument", "Receive only the selected purchase options in the frozen order.");
     const accepted = milli(line.acceptedQuantity, "Accepted total") + milli(incoming.acceptedQuantity, "Accepted quantity");
     const rejected = milli(line.rejectedQuantity, "Rejected total") + milli(incoming.rejectedQuantity, "Rejected quantity");
     if (accepted > milli(line.orderedQuantity, "Ordered quantity") && !incoming.reason) throw new HttpsError("invalid-argument", "Explain accepted overdelivery.");
@@ -106,13 +113,13 @@ function applyReceipt(previous, receipt) {
 function applyReversal(previous, original) {
   if (original.kind !== "receipt" || original.policyVersion !== RECEIVING_POLICY_VERSION || !Array.isArray(original.lines)
     || !original.lines.length || original.lines.length > 100 || original.lines.some((line) => !line || typeof line !== "object")
-    || new Set(original.lines.map((line) => line.supplierProductId)).size !== original.lines.length) {
+    || new Set(original.lines.map(lineKey)).size !== original.lines.length) {
     throw new HttpsError("failed-precondition", "Only a verified receipt can be reversed.");
   }
   const lines = previous.lines.map((line) => ({ ...line }));
   for (const incoming of original.lines) {
-    const line = lines.find((item) => item.supplierProductId === incoming.supplierProductId);
-    if (!line) throw new HttpsError("failed-precondition", "Receipt and order products disagree.");
+    const line = lines.find((item) => lineKey(item) === lineKey(incoming));
+    if (!line || line.supplierProductId !== incoming.supplierProductId) throw new HttpsError("failed-precondition", "Receipt and order purchase options disagree.");
     const accepted = milli(line.acceptedQuantity, "Accepted total") - milli(incoming.acceptedQuantity, "Original accepted quantity");
     const rejected = milli(line.rejectedQuantity, "Rejected total") - milli(incoming.rejectedQuantity, "Original rejected quantity");
     if (accepted < 0 || rejected < 0) throw new HttpsError("failed-precondition", "The receiving totals cannot reconcile with this reversal.");
@@ -140,4 +147,4 @@ function finalizeState(previous, { acceptShortfall, reason }) {
   }
   return { ...nextState(previous, previous.lines), state: "closed", finalizationReason: reason, closedWithShortfall: shortfall };
 }
-module.exports = { RECEIVING_POLICY_VERSION, milli, receivingState, normalizeReceipt, applyReceipt, applyReversal, finalizeState, summary };
+module.exports = { RECEIVING_POLICY_VERSION, lineKey, milli, receivingState, normalizeReceipt, applyReceipt, applyReversal, finalizeState, summary };

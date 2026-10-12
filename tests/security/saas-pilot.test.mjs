@@ -44,13 +44,14 @@ async function supplier(hotelUid = "hotel-a", actor = managerA) {
   const result = await saveSupplierHandler(request(actor, { hotelUid, requestId: nextId(), expectedRevision: 0,
     supplier: { name: "Pilot supplier", orderSystem: "Email", orderEmail: "supplier@example.test", orderEmailCc: [], deliveryDays: [1, 2, 3, 4, 5] },
     credentials: { username: "portal-user", password: "fictional-private-password" } }), services);
-  await db.doc(`hotels/${hotelUid}/supplierproducts/product`).set({ supplierId: result.supplierId, supplierProductName: "Coffee", supplierSku: "C-1", pricePerPurchaseUnit: 12.50, currency: "EUR", active: true });
+  await db.doc(`hotels/${hotelUid}/supplierproducts/product`).set({ supplierId: result.supplierId, supplierProductName: "Coffee", supplierSku: "C-1", pricePerPurchaseUnit: 12.50, currency: "EUR", purchaseUnit: "box", active: true });
   return result.supplierId;
 }
 async function cart(hotelUid = "hotel-a", actor = purchaserA) {
-  const { cartId } = await mutateShoppingCartHandler(request(actor, { hotelUid, action: "get-or-create", requestId: nextId() }), services);
-  await mutateShoppingCartHandler(request(actor, { hotelUid, cartId, action: "add", productId: "product", value: 2, requestId: nextId() }), services);
-  const result = await mutateShoppingCartHandler(request(actor, { hotelUid, cartId, action: "outlet", productId: "product", value: "restaurant", requestId: nextId() }), services);
+  const current = await mutateShoppingCartHandler(request(actor, { hotelUid, action: "get-or-create", requestId: nextId() }), services);
+  const cartId = current.cartId;
+  const added = await mutateShoppingCartHandler(request(actor, { hotelUid, cartId, expectedRevision: current.revision, action: "add", productId: "product", value: 2, requestId: nextId() }), services);
+  const result = await mutateShoppingCartHandler(request(actor, { hotelUid, cartId, expectedRevision: added.revision, action: "outlet", productId: "product", value: "restaurant", requestId: nextId() }), services);
   return { shoppingCartId: cartId, expectedCartRevision: result.revision };
 }
 async function order() {
@@ -338,7 +339,7 @@ describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
     await rejected(setOutletApproversHandler(request(managerA, { hotelUid: "hotel-a", outletId: "restaurant", userIds: [managerB.uid] }), services), "failed-precondition");
     await assertFails(setDoc(doc(client(managerA), `hotels/hotel-a/outlets/restaurant/approvers/${managerA.uid}`), { email: "forged@example.test" }));
     const fresh = await cart();
-    await mutateShoppingCartHandler(request(purchaserA, { hotelUid: "hotel-a", cartId: fresh.shoppingCartId, action: "quantity", productId: "product", value: 3, requestId: nextId() }), services);
+    await mutateShoppingCartHandler(request(purchaserA, { hotelUid: "hotel-a", cartId: fresh.shoppingCartId, expectedRevision: fresh.expectedCartRevision, action: "quantity", productId: "product", value: 3, requestId: nextId() }), services);
     await rejected(createOrdersFromCartHandler(request(purchaserA, { hotelUid: "hotel-a", ...fresh, deliveryDate: "2026-10-13", requestId: nextId() }), services), "aborted");
   });
 

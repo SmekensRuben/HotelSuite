@@ -62,6 +62,7 @@ jobs:
           node --check scripts/firebase/functions-retry-policy.mjs
           node --check scripts/firebase/saas-rollout.mjs
           node --check scripts/firebase/saas-release-check.mjs
+          node --check scripts/firebase/catalog-inventory-indexes.mjs
           node --check scripts/firebase/private-workflows-rollout.mjs
           node --check scripts/firebase/private-workflows-migration.mjs
           node --check scripts/firebase/module-access-migration.mjs

@@ -35,8 +35,8 @@ echo "Reviewed release: $release_sha"
 echo "Operator-local workspace and Rules backup: $rollout_dir"
 source_url="https://raw.githubusercontent.com/SmekensRuben/HotelSuite/${release_sha}"
 files=(scripts/firebase/operator-runtime/package.json scripts/firebase/operator-runtime/package-lock.json
-  scripts/firebase/install-operator-runtime.sh functions/src/platformReleasePolicy.json functions/src/permissionCatalog.json functions/src/moduleCatalog.json firebase/firestore.rules firebase/storage.rules
-  scripts/firebase/saas-rollout.mjs scripts/firebase/saas-rules-release.mjs scripts/firebase/saas-release-check.mjs)
+  scripts/firebase/install-operator-runtime.sh functions/src/platformReleasePolicy.json functions/src/permissionCatalog.json functions/src/moduleCatalog.json firebase/firestore.rules firebase/storage.rules firebase/firestore.indexes.json
+  scripts/firebase/saas-rollout.mjs scripts/firebase/saas-rules-release.mjs scripts/firebase/saas-release-check.mjs scripts/firebase/catalog-inventory-indexes.mjs)
 for file in "${files[@]}"; do
   mkdir -p "$rollout_dir/$(dirname "$file")"
   curl --fail --silent --show-error --proto '=https' --tlsv1.2 "$source_url/$file" --output "$rollout_dir/$file"
@@ -47,6 +47,7 @@ node scripts/firebase/saas-release-check.mjs
 source scripts/firebase/install-operator-runtime.sh
 install_operator_runtime
 node scripts/firebase/saas-rollout.mjs preflight
+node scripts/firebase/catalog-inventory-indexes.mjs preflight
 
 storage_agent="service-358734544002@gcp-sa-firebasestorage.iam.gserviceaccount.com"
 storage_role="roles/firebaserules.firestoreServiceAgent"
@@ -60,7 +61,7 @@ PY
 )
 if [[ "$apply" != true ]]; then
   echo "Read-only preflight completed. Storage cross-service Rules role present: $storage_access"
-  echo "Use --apply for the reviewed Rules release, credential relocation and pilot activation."
+  echo "Use --apply for additive reviewed indexes, the Rules release, credential relocation and pilot activation."
   exit 0
 fi
 if [[ "$storage_access" != true ]]; then
@@ -74,6 +75,10 @@ if [[ "$storage_access" != true ]]; then
   # A failed policy update stops the rollout before any Rules or data changes.
   gcloud projects add-iam-policy-binding hotel-toolkit --member="serviceAccount:$storage_agent" --role="$storage_role" --condition=None >/dev/null
 fi
+# Prepare required query indexes before pausing application writes. This only
+# creates missing reviewed indexes, preserves unrelated indexes and waits READY.
+# A failed/unfinished build leaves current Rules and SaaS activation untouched.
+node scripts/firebase/catalog-inventory-indexes.mjs apply
 # Recheck current main immediately before changes. No CI/runtime account receives Rules admin access.
 node scripts/firebase/saas-release-check.mjs
 node scripts/firebase/saas-rollout.mjs pause
@@ -89,5 +94,6 @@ for minute in {1..10}; do
   echo "Rules propagation: $minute/10 minutes."
 done
 node scripts/firebase/saas-release-check.mjs
+node scripts/firebase/catalog-inventory-indexes.mjs verify
 node scripts/firebase/saas-rollout.mjs enable --rules-verified
 echo "SaaS procurement pilot enabled. Keep $rollout_dir/previous-rules.json for operator review."

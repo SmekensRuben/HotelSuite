@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import { deleteApp, initializeApp } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
-import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import { getStorage } from "firebase-admin/storage";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
+
+// Handler injection must use the same SDK installation as Functions; FieldPath
+// and Timestamp constructors from a second installation are not interchangeable.
+const requireFunctions = createRequire(new URL("../../functions/package.json", import.meta.url));
+const { deleteApp, initializeApp } = requireFunctions("firebase-admin/app");
+const { getAuth } = requireFunctions("firebase-admin/auth");
+const { getFirestore, Timestamp } = requireFunctions("firebase-admin/firestore");
+const { getStorage } = requireFunctions("firebase-admin/storage");
 
 const projectId = process.env.GCLOUD_PROJECT || "demo-hotel-suite-a00";
 if (projectId !== "demo-hotel-suite-a00") throw new Error("Only the fictional restore project is permitted.");
@@ -34,6 +38,18 @@ const receivingDetails = { receivedOn: "2023-11-14", deliveryReference: "RESTORE
   lines: [{ supplierProductId: "coffee", acceptedQuantity: 3, rejectedQuantity: 1, reason: "Damaged packaging" }] };
 const receiptId = `r-${digest("receiving-a", "restore-a", "restore-receipt").slice(0, 48)}`;
 const receivingResult = { hotelUid: "restore-hotel-a", orderId: "receiving-a", eventId: receiptId, status: "Received", revision: 2, receivingState: "complete" };
+const require = createRequire(import.meta.url);
+const { checkpointId } = require("../../functions/src/inventoryMovements");
+const { getHotelInventoryPeriodHandler } = require("../../functions/src/inventoryReports");
+const inventoryFixtures = [
+  { hotelUid: "restore-hotel-a", currency: "EUR", actorUid: "restore-a", platform: false },
+  { hotelUid: "restore-hotel-b", currency: "GBP", actorUid: "restore-b-counter", platform: false },
+];
+const inventoryReportId = (hotelUid) => `hotels/${hotelUid}/inventoryPeriodReports/p-${digest("store", "opening", "closing", 1).slice(0, 48)}`;
+const inventoryRequest = (fixture) => ({ auth: { uid: fixture.actorUid, token: { email_verified: true,
+  ...(fixture.platform ? { platformAdmin: true } : {}) } },
+data: { hotelUid: fixture.hotelUid, locationId: "store", openingStockCountId: "opening", closingStockCountId: "closing" } });
+const inventoryServices = { firestore: database, auth, now: () => revisionTime.toMillis() };
 const documents = {
   "platformConfiguration/saasProcurement": { enabled: true, rulesVersion: createRequire(import.meta.url)("../../functions/src/platformReleasePolicy.json").saasRulesVersion },
   "hotels/restore-hotel-a": { name: "Fictional hotel A", timeZone: "Europe/Brussels" },
@@ -47,12 +63,14 @@ const documents = {
   "hotels/restore-hotel-a/importRecovery/restore-recovery": { runId: "restore-run", actorUid: "restore-platform", state: "failed", startedAtMillis: revisionTime.toMillis() },
   "users/restore-a": { firstName: "Fictional", lastName: "A", hotelUid: ["restore-hotel-a"], accessRevision: 2 },
   "users/restore-b": { firstName: "Fictional", lastName: "B", hotelUid: ["restore-hotel-b"], accessRevision: 1 },
-  "hotels/restore-hotel-a/members/restore-a": { permissions: ["orders.read", "orders.receive", "orders.finalize", "users.read", "users.create", "users.update", "users.delete"], hotelAdmin: true, moduleRoles: { procurement: ["receiving-supervisor"] }, additionalPermissions: [], rolePolicyVersion: 1, revision: 2 },
+  "users/restore-b-counter": { firstName: "Fictional", lastName: "Counter B", hotelUid: ["restore-hotel-b"], accessRevision: 1 },
+  "hotels/restore-hotel-a/members/restore-a": { permissions: ["orders.read", "orders.receive", "orders.finalize", "stockcounts.read", "users.read", "users.create", "users.update", "users.delete"], hotelAdmin: true, moduleRoles: { procurement: ["receiving-supervisor"] }, additionalPermissions: [], rolePolicyVersion: 1, revision: 2 },
   "hotels/restore-hotel-a/memberAdministration/state": { revision: 4, updatedAt: revisionTime, updatedBy: "restore-a" },
   "hotels/restore-hotel-a/accessAudit/member-a": { action: "update-member", uid: "restore-a", actorUid: "restore-a", hotelAdmin: true, revision: 2, createdAt: revisionTime },
   "hotels/restore-hotel-a/settings/bootstrap": { hotelName: "Fictional hotel A", currency: "EUR" },
   "hotels/restore-hotel-a/settings/propertySettings": { hotelRooms: 100 },
   "hotels/restore-hotel-b/members/restore-b": { permissions: ["orders.read"], enabled: true },
+  "hotels/restore-hotel-b/members/restore-b-counter": { permissions: ["stockcounts.read"], revision: 1 },
   "hotelSubscriptions/restore-hotel-a": { status: "active", validUntil: subscriptionExpiry, modules: ["procurement", "groups", "contracts", "revenue"], modulePolicyVersion: 1, seatLimit: null, revision: 3 },
   "hotelSubscriptions/restore-hotel-b": { status: "trialing", validUntil: subscriptionExpiry, modules: ["procurement", "contracts"], modulePolicyVersion: 1, seatLimit: 10, revision: 1 },
   "hotels/restore-hotel-a/orders/order-a": { status: "Finalized", revision: 4, total: 42.5, updatedAt: revisionTime },
@@ -79,6 +97,70 @@ const documents = {
   "hotels/restore-hotel-b/contracts/contract-b": { revision: 1, contractName: "Fictional contract B", contractFiles: [{ fileId: attachmentB, fileName: "fixture-b.pdf", filePath: `private/contracts/restore-hotel-b/contract-b/${attachmentB}`, size: objects[`private/contracts/restore-hotel-b/contract-b/${attachmentB}`].length }] },
   [`hotels/restore-hotel-b/contractAttachments/${attachmentB}`]: { contractId: "contract-b", status: "attached", requestId: "restore-operation-b" },
 };
+for (const fixture of inventoryFixtures) {
+  const { hotelUid, currency, actorUid } = fixture;
+  const root = `hotels/${hotelUid}`;
+  documents[`${root}/locations/store`] = { name: "Fictional physical store" };
+  documents[`${root}/catalogproducts/milk`] = { name: "Fictional milk", baseUnit: "l", inventoryTracked: true, active: true, productPolicyVersion: 1 };
+  documents[`${root}/inventoryLocationStates/store`] = { inventoryPolicyVersion: 1, sequence: 3,
+    latestCheckpointId: checkpointId("closing", "store"), latestCheckpointBusinessDate: "2026-10-10", updatedAt: revisionTime };
+  for (const [stockCountId, sequence, businessDate, quantity, unitCost] of [
+    ["opening", 1, "2026-10-01", 100, 2], ["closing", 3, "2026-10-10", 80, null],
+  ]) {
+    const countedItem = { catalogProductId: "milk", catalogProductName: "Fictional milk", baseUnit: "l", currency,
+      quantity, unitCost, isCounted: true, totalValue: unitCost == null ? null : quantity * unitCost,
+      costSource: unitCost == null ? "unknown" : "operator-opening-estimate" };
+    const checkpoint = checkpointId(stockCountId, "store");
+    documents[`${root}/stockCounts/${stockCountId}`] = { name: `Fictional ${stockCountId} count`, inventoryPolicyVersion: 1,
+      status: "Finished", revision: 2, currency, businessDate, locations: [{ locationId: "store", status: "Finished" }], finishedAt: revisionTime };
+    documents[`${root}/stockCounts/${stockCountId}/locations/store`] = { locationId: "store", inventoryPolicyVersion: 1,
+      status: "Finished", revision: 1, currency, businessDate, checkpointId: checkpoint, checkpointSequence: sequence,
+      stockTemplate: { id: "fixture", name: "Fictional template", items: [{ catalogProductId: "milk", catalogProductName: "Fictional milk", baseUnit: "l", currency, unitCost: null }] },
+      countedItems: [countedItem], countedValue: countedItem.totalValue, finishedAt: revisionTime };
+    documents[`${root}/inventoryCheckpoints/${checkpoint}`] = { id: checkpoint, inventoryPolicyVersion: 1, hotelUid,
+      locationId: "store", stockCountId, stockCountName: `Fictional ${stockCountId} count`, businessDate, currency, sequence,
+      items: [{ catalogProductId: "milk", catalogProductName: "Fictional milk", baseUnit: "l", quantity, unitCost }],
+      coverageIssues: [], actorUid, finishedAt: revisionTime };
+  }
+  documents[`${root}/inventoryMovements/fixture-receipt`] = { id: "fixture-receipt", inventoryPolicyVersion: 1,
+    kind: "receipt", hotelUid, locationId: "store", orderId: "fixture-inventory-order", receiptId: "fixture-inventory-receipt",
+    receivedOn: "2026-10-05", sequence: 2, actorUid, coverageGaps: [], backdatedAgainstCheckpoint: false, postedAt: revisionTime,
+    lines: [{ catalogProductId: "milk", catalogProductName: "Fictional milk", baseUnit: "l", quantity: 30, netUnitCost: 3, netValue: 90, currency }] };
+}
+
+function verifyInventoryReport(result, fixture) {
+  assert.equal(result.hotelUid, fixture.hotelUid);
+  assert.equal(result.currency, fixture.currency);
+  assert.equal(result.inventoryPolicyVersion, 1);
+  assert.equal(result.recordedReceiptCount, 1);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].openingQuantity, 100);
+  assert.equal(result.items[0].netReceiptQuantity, 30);
+  assert.equal(result.items[0].closingQuantity, 80);
+  assert.equal(result.items[0].inferredUsageQuantity, 50);
+  assert.equal(result.items[0].periodUnitCost, 290 / 130);
+  assert.equal(result.items[0].inferredUsageValue, Math.round(50 * 290 / 130 * 10000) / 10000);
+  assert.deepEqual(result.coverage, { quantityComplete: true, costComplete: true, issues: [] });
+  assert.deepEqual(result.movementIds, ["fixture-receipt"]);
+  assert.deepEqual(result.intermediateCheckpointIds, []);
+  assert.deepEqual(result.postClosureIssues, []);
+  assert.equal(result.currentlyComplete, true);
+  assert.equal(result.computedAtMillis, revisionTime.toMillis());
+}
+function expectedStoredInventoryReport(fixture) {
+  const { hotelUid, currency } = fixture;
+  const view = (stockCountId, businessDate, sequence) => ({ id: checkpointId(stockCountId, "store"), stockCountId,
+    stockCountName: `Fictional ${stockCountId} count`, businessDate, sequence, currency, coverageIssues: [],
+    finishedAtMillis: revisionTime.toMillis() });
+  return { id: inventoryReportId(hotelUid).split("/").at(-1), inventoryPolicyVersion: 1, hotelUid, locationId: "store", currency,
+    opening: view("opening", "2026-10-01", 1), closing: view("closing", "2026-10-10", 3),
+    items: [{ catalogProductId: "milk", catalogProductName: "Fictional milk", baseUnit: "l", openingQuantity: 100,
+      netReceiptQuantity: 30, closingQuantity: 80, inferredUsageQuantity: 50, periodUnitCost: 290 / 130,
+      inferredUsageValue: Math.round(50 * 290 / 130 * 10000) / 10000 }],
+    coverage: { quantityComplete: true, costComplete: true, issues: [] }, recordedReceiptCount: 1,
+    computedAtMillis: revisionTime.toMillis(), movementIds: ["fixture-receipt"], intermediateCheckpointIds: [],
+    costBasis: "Period estimate from explicit opening costs and frozen net order prices; not invoice cost or live on-hand stock." };
+}
 
 try {
   if (process.argv[2] === "seed") {
@@ -86,16 +168,27 @@ try {
       auth.createUser({ uid: "restore-platform", email: "restore-platform@example.test", emailVerified: true }),
       auth.createUser({ uid: "restore-a", email: "restore-a@example.test", emailVerified: true, password: "Fictional-Restore-Only-42" }),
       auth.createUser({ uid: "restore-b", email: "restore-b@example.test", emailVerified: true, disabled: true }),
+      auth.createUser({ uid: "restore-b-counter", email: "restore-b-counter@example.test", emailVerified: true }),
     ]);
     await auth.setCustomUserClaims("restore-a", { hotelUids: ["restore-hotel-a"], platformAdmin: false });
     await auth.setCustomUserClaims("restore-platform", { platformAdmin: true });
+    await auth.setCustomUserClaims("restore-b-counter", { hotelUids: ["restore-hotel-b"], platformAdmin: false });
     const batch = database.batch();
     for (const [path, value] of Object.entries(documents)) batch.set(database.doc(path), value);
     await batch.commit();
     for (const [path, bytes] of Object.entries(objects)) {
       await bucket.file(path).save(bytes, { metadata: { contentType: "application/pdf", metadata: { fixture: "restore-only" } } });
     }
-    console.log("Seeded fictional two-hotel Firestore relationships, Auth users/claims and private Storage bytes.");
+    // Use the deployed-code handler to create complete immutable report DTOs;
+    // fixtures deliberately exercise independent opening and receipt costs.
+    for (const fixture of inventoryFixtures) {
+      const result = await getHotelInventoryPeriodHandler(inventoryRequest(fixture), inventoryServices);
+      verifyInventoryReport(result, fixture);
+      const snapshot = await database.doc(inventoryReportId(fixture.hotelUid)).get();
+      assert.equal(snapshot.exists, true);
+      assert.deepEqual(snapshot.data(), expectedStoredInventoryReport(fixture));
+    }
+    console.log("Seeded fictional two-hotel Firestore relationships, canonical inventory checkpoints/movements/reports, Auth users/claims and private Storage bytes.");
   } else if (process.argv[2] === "verify") {
     for (const [path, expected] of Object.entries(documents)) {
       const snapshot = await database.doc(path).get();
@@ -107,8 +200,40 @@ try {
     assert.equal(user.emailVerified, true);
     assert.deepEqual(user.customClaims, { hotelUids: ["restore-hotel-a"], platformAdmin: false });
     assert.equal((await auth.getUser("restore-b")).disabled, true);
+    const counterB = await auth.getUser("restore-b-counter");
+    assert.equal(counterB.emailVerified, true);
+    assert.equal(counterB.disabled, false);
+    assert.deepEqual(counterB.customClaims, { hotelUids: ["restore-hotel-b"], platformAdmin: false });
     assert.deepEqual((await auth.getUser("restore-platform")).customClaims, { platformAdmin: true });
     assert.deepEqual((await database.doc("users/restore-platform").get()).data().hotelUid, []);
+    for (const fixture of inventoryFixtures) {
+      const reportRef = database.doc(inventoryReportId(fixture.hotelUid));
+      const before = await reportRef.get();
+      assert.equal(before.exists, true, "An immutable inventory report must be restored before invoking its handler.");
+      assert.deepEqual(before.data(), expectedStoredInventoryReport(fixture), "Restored inventory report DTO or source evidence differs.");
+      const stateRef = database.doc(`hotels/${fixture.hotelUid}/inventoryLocationStates/store`);
+      const beforeState = await stateRef.get();
+      const countsBefore = await Promise.all(["inventoryMovements", "inventoryCheckpoints", "inventoryPeriodReports"].map(async (name) => {
+        const rows = await database.collection(`hotels/${fixture.hotelUid}/${name}`).get(); return [name, rows.docs.map((doc) => doc.id).sort()];
+      }));
+      const result = await getHotelInventoryPeriodHandler(inventoryRequest(fixture), inventoryServices);
+      verifyInventoryReport(result, fixture);
+      const repeated = await getHotelInventoryPeriodHandler(inventoryRequest(fixture), { ...inventoryServices, now: () => revisionTime.toMillis() + 60000 });
+      assert.deepEqual(repeated, result, "Repeating a restored report must preserve its original computation snapshot.");
+      const after = await reportRef.get();
+      assert.deepEqual(after.data(), before.data(), "Restored period reports must not be silently recalculated.");
+      assert.equal(after.updateTime.isEqual(before.updateTime), true, "A report retry must not write the stored snapshot.");
+      const afterState = await stateRef.get();
+      assert.deepEqual(afterState.data(), beforeState.data());
+      assert.equal(afterState.updateTime.isEqual(beforeState.updateTime), true);
+      const countsAfter = await Promise.all(["inventoryMovements", "inventoryCheckpoints", "inventoryPeriodReports"].map(async (name) => {
+        const rows = await database.collection(`hotels/${fixture.hotelUid}/${name}`).get(); return [name, rows.docs.map((doc) => doc.id).sort()];
+      }));
+      assert.deepEqual(countsAfter, countsBefore, "Report retries must not create additional inventory evidence.");
+    }
+    await assert.rejects(getHotelInventoryPeriodHandler({ auth: { uid: "restore-a", token: { email_verified: true } },
+      data: { hotelUid: "restore-hotel-b", locationId: "store", openingStockCountId: "opening", closingStockCountId: "closing" } }, inventoryServices),
+    (error) => error.code === "permission-denied");
     const { requireSupportSession } = createRequire(import.meta.url)("../../functions/src/platformSupport");
     const { getHotelOrderReceivingHandler, recordHotelOrderReceiptHandler } = createRequire(import.meta.url)("../../functions/src/orderReceiving");
     const receiving = await getHotelOrderReceivingHandler({ auth: { uid: "restore-a", token: { email_verified: true } },
@@ -131,7 +256,7 @@ try {
       assert.equal(metadata.contentType, "application/pdf");
       assert.equal(metadata.metadata.fixture, "restore-only");
     }
-    console.log("Verified two-hotel data, entitlements, roles, domain history, platform monitoring/audit, zero-hotel operator, expired support denial, Auth state and private Storage bytes/metadata.");
+    console.log("Verified two-hotel data, canonical counts/receipts and immutable period-report replay (50 inferred usage; weighted cost 290/130), entitlements, roles, domain history, platform monitoring/audit, zero-hotel operator, expired support denial, Auth state and private Storage bytes/metadata.");
   } else throw new Error("Expected seed or verify mode.");
 } finally {
   await deleteApp(app);

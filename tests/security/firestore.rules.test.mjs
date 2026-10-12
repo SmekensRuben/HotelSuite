@@ -240,12 +240,13 @@ describe("tenant isolation", () => {
     await assertFails(getDoc(doc(database, "hotels/hotel-b/catalogproducts", "product-b")));
   });
 
-  it("enforces action permissions in addition to membership", async () => {
+  it("catalog mutation requires protected commands even for members with create permission", async () => {
     const employeeDatabase = databaseFor(profiles.employeeA);
     await assertFails(setDoc(doc(employeeDatabase, "hotels/hotel-a/catalogproducts", "new"), { name: "Denied" }));
 
     const adminDatabase = databaseFor(profiles.hotelAdminA);
-    await assertSucceeds(setDoc(doc(adminDatabase, "hotels/hotel-a/catalogproducts", "new"), { name: "Allowed" }));
+    // Product policy v1 validates identity, units and revisions in the callable.
+    await assertFails(setDoc(doc(adminDatabase, "hotels/hotel-a/catalogproducts", "new"), { name: "Denied" }));
   });
 
   it("supports different permissions for the same user in hotels A and B", async () => {
@@ -253,7 +254,7 @@ describe("tenant isolation", () => {
     await assertSucceeds(getDoc(doc(database, "hotels/hotel-a/catalogproducts", "product-a")));
     await assertFails(setDoc(doc(database, "hotels/hotel-a/catalogproducts", "new"), { name: "Denied" }));
     await assertFails(getDoc(doc(database, "hotels/hotel-b/catalogproducts", "product-b")));
-    await assertSucceeds(setDoc(doc(database, "hotels/hotel-b/catalogproducts", "new"), { name: "Allowed" }));
+    await assertFails(setDoc(doc(database, "hotels/hotel-b/catalogproducts", "new"), { name: "Denied" }));
   });
 });
 

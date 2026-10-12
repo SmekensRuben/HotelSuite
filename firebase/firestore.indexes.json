@@ -1,4 +1,17 @@
 {
-  "indexes": [],
+  "indexes": [
+    { "collectionGroup": "inventoryCheckpoints", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "locationId", "order": "ASCENDING" }, { "fieldPath": "sequence", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "inventoryCheckpoints", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "locationId", "order": "ASCENDING" }, { "fieldPath": "sequence", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "inventoryMovements", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "locationId", "order": "ASCENDING" }, { "fieldPath": "sequence", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "inventoryMovements", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "locationId", "order": "ASCENDING" }, { "fieldPath": "receivedOn", "order": "ASCENDING" }
+    ] }
+  ],
   "fieldOverrides": []
 }
