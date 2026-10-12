@@ -25,3 +25,10 @@ it("requires a matching hotel filter on scoped audit responses", async () => {
   mock.invoke.mockResolvedValue({ data: { hotelUid: "selected", events: [], nextCursor: null } });
   expect((await listPlatformAudit(null, "selected")).events).toEqual([]);
 });
+it("pins the demo dataset version and uses its bounded timeout", async () => {
+  const { manageHotelDemoData } = await import("./firebasePlatform");
+  mock.invoke.mockResolvedValue({ data: { hotelUid: "test-hotel-2", status: "complete" } });
+  await manageHotelDemoData("test-hotel-2", "apply");
+  expect(mock.callable).toHaveBeenCalledWith({}, "manageHotelDemoData", { timeout: 150000 });
+  expect(mock.invoke).toHaveBeenCalledWith({ hotelUid: "test-hotel-2", action: "apply", datasetId: "procurement-demo-v1" });
+});
