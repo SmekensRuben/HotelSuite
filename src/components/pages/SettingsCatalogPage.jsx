@@ -1,18 +1,26 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import {
-  getCatalogTaxonomy, createCatalogCategory, updateCatalogCategory, deleteCatalogCategory,
-  createCatalogSubcategory, updateCatalogSubcategory, deleteCatalogSubcategory,
+  getCatalogTaxonomy,
+  createCatalogCategory,
+  updateCatalogCategory,
+  deleteCatalogCategory,
+  createCatalogSubcategory,
+  updateCatalogSubcategory,
+  deleteCatalogSubcategory,
 } from "../../services/firebaseSettings";
 import { usePermission } from "../../hooks/usePermission";
+import { Combobox } from "../ui/combobox";
 
 function sortByName(items) {
   return [...items].sort((firstItem, secondItem) =>
-    firstItem.name.localeCompare(secondItem.name, undefined, { sensitivity: "base" })
+    firstItem.name.localeCompare(secondItem.name, undefined, {
+      sensitivity: "base",
+    }),
   );
 }
 
@@ -33,7 +41,8 @@ export default function SettingsCatalogPage() {
   const [editingCategoryName, setEditingCategoryName] = useState("");
   const [editingSubcategoryId, setEditingSubcategoryId] = useState("");
   const [editingSubcategoryName, setEditingSubcategoryName] = useState("");
-  const [editingSubcategoryCategoryId, setEditingSubcategoryCategoryId] = useState("");
+  const [editingSubcategoryCategoryId, setEditingSubcategoryCategoryId] =
+    useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const requestVersion = useRef(0);
@@ -46,7 +55,7 @@ export default function SettingsCatalogPage() {
         month: "long",
         day: "numeric",
       }),
-    []
+    [],
   );
 
   const sortedCategories = useMemo(() => sortByName(categories), [categories]);
@@ -55,15 +64,19 @@ export default function SettingsCatalogPage() {
     const groupedMap = sortedCategories.map((category) => ({
       category,
       subcategories: sortByName(
-        subcategories.filter((subcategory) => subcategory.categoryId === category.id)
+        subcategories.filter(
+          (subcategory) => subcategory.categoryId === category.id,
+        ),
       ),
     }));
 
     const unlinkedSubcategories = sortByName(
       subcategories.filter(
         (subcategory) =>
-          !sortedCategories.some((category) => category.id === subcategory.categoryId)
-      )
+          !sortedCategories.some(
+            (category) => category.id === subcategory.categoryId,
+          ),
+      ),
     );
 
     if (unlinkedSubcategories.length > 0) {
@@ -103,16 +116,22 @@ export default function SettingsCatalogPage() {
     setSavingCategory(false);
     setSavingSubcategory(false);
     if (!hotelUid) return;
-    getCatalogTaxonomy(hotelUid).then((taxonomy) => {
-      if (version !== requestVersion.current) return;
-      setCategories(taxonomy.categories);
-      setSubcategories(taxonomy.subcategories);
-    }).catch(() => {
-      if (version === requestVersion.current) setError("Settings could not be loaded.");
-    }).finally(() => {
-      if (version === requestVersion.current) setLoading(false);
-    });
-    return () => { ++requestVersion.current; };
+    getCatalogTaxonomy(hotelUid)
+      .then((taxonomy) => {
+        if (version !== requestVersion.current) return;
+        setCategories(taxonomy.categories);
+        setSubcategories(taxonomy.subcategories);
+      })
+      .catch(() => {
+        if (version === requestVersion.current)
+          setError("Settings could not be loaded.");
+      })
+      .finally(() => {
+        if (version === requestVersion.current) setLoading(false);
+      });
+    return () => {
+      ++requestVersion.current;
+    };
   }, [hotelUid, loadAttempt]);
 
   const saveTaxonomy = async (mutation, successMessage) => {
@@ -133,7 +152,12 @@ export default function SettingsCatalogPage() {
       setMessage(successMessage);
       return true;
     } catch (error) {
-      if (version === requestVersion.current) setError(saved ? "Changes saved, but settings could not be refreshed. Reload settings." : error.message || "Settings could not be saved.");
+      if (version === requestVersion.current)
+        setError(
+          saved
+            ? "Changes saved, but settings could not be refreshed. Reload settings."
+            : error.message || "Settings could not be saved.",
+        );
       return version === requestVersion.current && saved;
     } finally {
       if (version === requestVersion.current) {
@@ -147,7 +171,13 @@ export default function SettingsCatalogPage() {
     event.preventDefault();
     const name = categoryName.trim();
     if (!canCreateSettings || !hotelUid || !name || savingCategory) return;
-    if (await saveTaxonomy(() => createCatalogCategory(hotelUid, { name }), "Category created.")) setCategoryName("");
+    if (
+      await saveTaxonomy(
+        () => createCatalogCategory(hotelUid, { name }),
+        "Category created.",
+      )
+    )
+      setCategoryName("");
   };
 
   const handleAddSubcategory = async (event) => {
@@ -155,10 +185,21 @@ export default function SettingsCatalogPage() {
     const name = subcategoryName.trim();
     if (!canCreateSettings || !hotelUid || savingSubcategory) return;
     if (!name || !subcategoryCategoryId) {
-      setError("Please select one category and enter a name for this subcategory.");
+      setError(
+        "Please select one category and enter a name for this subcategory.",
+      );
       return;
     }
-    if (await saveTaxonomy(() => createCatalogSubcategory(hotelUid, { name, categoryId: subcategoryCategoryId }), "Subcategory created.")) {
+    if (
+      await saveTaxonomy(
+        () =>
+          createCatalogSubcategory(hotelUid, {
+            name,
+            categoryId: subcategoryCategoryId,
+          }),
+        "Subcategory created.",
+      )
+    ) {
       setSubcategoryName("");
       setSubcategoryCategoryId("");
     }
@@ -171,20 +212,45 @@ export default function SettingsCatalogPage() {
 
   const handleSaveCategoryEdit = async () => {
     const name = editingCategoryName.trim();
-    if (!canUpdateSettings || !hotelUid || !editingCategoryId || !name || savingCategory) return;
-    if (await saveTaxonomy(() => updateCatalogCategory(hotelUid, editingCategoryId, { name }), "Category updated.")) {
+    if (
+      !canUpdateSettings ||
+      !hotelUid ||
+      !editingCategoryId ||
+      !name ||
+      savingCategory
+    )
+      return;
+    if (
+      await saveTaxonomy(
+        () => updateCatalogCategory(hotelUid, editingCategoryId, { name }),
+        "Category updated.",
+      )
+    ) {
       setEditingCategoryId("");
       setEditingCategoryName("");
     }
   };
 
   const handleDeleteCategory = async (categoryId) => {
-    if (!canDeleteSettings || !hotelUid || !categoryId || savingCategory) return;
-    const hasLinkedSubcategories = subcategories.some((subcategory) => subcategory.categoryId === categoryId);
-    if (!window.confirm(hasLinkedSubcategories
-      ? "This category has linked subcategories. Deleting it will also delete those subcategories. Continue?"
-      : "Delete this category?")) return;
-    if (await saveTaxonomy(() => deleteCatalogCategory(hotelUid, categoryId), "Category deleted.")) {
+    if (!canDeleteSettings || !hotelUid || !categoryId || savingCategory)
+      return;
+    const hasLinkedSubcategories = subcategories.some(
+      (subcategory) => subcategory.categoryId === categoryId,
+    );
+    if (
+      !window.confirm(
+        hasLinkedSubcategories
+          ? "This category has linked subcategories. Deleting it will also delete those subcategories. Continue?"
+          : "Delete this category?",
+      )
+    )
+      return;
+    if (
+      await saveTaxonomy(
+        () => deleteCatalogCategory(hotelUid, categoryId),
+        "Category deleted.",
+      )
+    ) {
       setEditingCategoryId("");
       setEditingCategoryName("");
     }
@@ -198,12 +264,29 @@ export default function SettingsCatalogPage() {
 
   const handleSaveSubcategoryEdit = async () => {
     const name = editingSubcategoryName.trim();
-    if (!canUpdateSettings || !hotelUid || !editingSubcategoryId || savingSubcategory) return;
+    if (
+      !canUpdateSettings ||
+      !hotelUid ||
+      !editingSubcategoryId ||
+      savingSubcategory
+    )
+      return;
     if (!name || !editingSubcategoryCategoryId) {
-      setError("Each subcategory must have a name and be linked to one category.");
+      setError(
+        "Each subcategory must have a name and be linked to one category.",
+      );
       return;
     }
-    if (await saveTaxonomy(() => updateCatalogSubcategory(hotelUid, editingSubcategoryId, { name, categoryId: editingSubcategoryCategoryId }), "Subcategory updated.")) {
+    if (
+      await saveTaxonomy(
+        () =>
+          updateCatalogSubcategory(hotelUid, editingSubcategoryId, {
+            name,
+            categoryId: editingSubcategoryCategoryId,
+          }),
+        "Subcategory updated.",
+      )
+    ) {
       setEditingSubcategoryId("");
       setEditingSubcategoryName("");
       setEditingSubcategoryCategoryId("");
@@ -211,76 +294,164 @@ export default function SettingsCatalogPage() {
   };
 
   const handleDeleteSubcategory = async (subcategoryId) => {
-    if (!canDeleteSettings || !hotelUid || !subcategoryId || savingSubcategory) return;
+    if (!canDeleteSettings || !hotelUid || !subcategoryId || savingSubcategory)
+      return;
     if (!window.confirm("Delete this subcategory?")) return;
-    if (await saveTaxonomy(() => deleteCatalogSubcategory(hotelUid, subcategoryId), "Subcategory deleted.")) {
+    if (
+      await saveTaxonomy(
+        () => deleteCatalogSubcategory(hotelUid, subcategoryId),
+        "Subcategory deleted.",
+      )
+    ) {
       setEditingSubcategoryId("");
       setEditingSubcategoryName("");
       setEditingSubcategoryCategoryId("");
     }
   };
 
+  const categoryOptions = sortedCategories;
+  const categoryPicker = (value, onChange, id, disabled = false) => (
+    <Combobox
+      id={id}
+      value={categoryOptions.find((category) => category.id === value) || null}
+      onChange={(category) => onChange(category?.id || "")}
+      options={categoryOptions}
+      displayValue={(category) => category.name}
+      getOptionValue={(category) => category.id}
+      placeholder="Search categories"
+      disabled={disabled || loading}
+      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+    />
+  );
+  const busy = savingCategory || savingSubcategory;
+  const actionClass =
+    "rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium hover:bg-gray-50 disabled:opacity-50";
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={todayLabel} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
-        <div>
-          <p className="text-sm text-gray-500 uppercase tracking-wide">Settings</p>
-          <h1 className="text-3xl font-semibold">Catalog Settings</h1>
+      <ProcurementPage className="space-y-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+              Purchasing &amp; Inventory · Settings
+            </p>
+            <h1 className="mt-1 text-3xl font-semibold">Catalog Settings</h1>
+            <p className="mt-2 max-w-xl text-sm text-gray-600">
+              Organize articles into categories and subcategories. Physical
+              storage and purchasing outlets have their own settings.
+            </p>
+          </div>
+          <nav
+            aria-label="Related catalog settings"
+            className="flex flex-wrap gap-2 text-sm"
+          >
+            <a href="/settings/locations" className={actionClass}>
+              Locations &amp; stock templates
+            </a>
+            <a href="/settings/outlets" className={actionClass}>
+              Outlets &amp; approvers
+            </a>
+          </nav>
         </div>
-
-        <Card>
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Categories</h2>
-            <form onSubmit={handleAddCategory} className="flex flex-col sm:flex-row gap-3">
+        {error && (
+          <p
+            role="alert"
+            className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+          >
+            {error}{" "}
+            <button
+              type="button"
+              onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+              className="underline"
+            >
+              Reload settings
+            </button>
+          </p>
+        )}
+        {message && (
+          <p
+            role="status"
+            className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"
+          >
+            {message}
+          </p>
+        )}
+        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
+          <Card className="space-y-5">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-xl font-semibold">Categories</h2>
+              <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600">
+                {sortedCategories.length}
+              </span>
+            </div>
+            <form
+              onSubmit={handleAddCategory}
+              className="space-y-2 rounded-xl bg-gray-50 p-3"
+            >
+              <label
+                htmlFor="new-category"
+                className="text-xs font-medium text-gray-700"
+              >
+                New category
+              </label>
               <input
-                type="text"
+                id="new-category"
                 maxLength={200}
                 value={categoryName}
+                disabled={!canCreateSettings || loading || busy}
                 onChange={(event) => setCategoryName(event.target.value)}
                 placeholder="New category"
-                className="rounded border border-gray-300 px-3 py-2 text-sm flex-1"
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
               />
               <button
                 type="submit"
-                disabled={!canCreateSettings || savingCategory}
-                className="bg-brand-800 text-white px-4 py-2 rounded font-semibold shadow hover:bg-brand-950 transition-colors disabled:opacity-60"
+                disabled={!canCreateSettings || loading || busy}
+                className="rounded-lg bg-brand-800 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
               >
-                {savingCategory ? "Adding..." : "Add category"}
+                {savingCategory ? "Saving..." : "Add category"}
               </button>
             </form>
-
             {loading ? (
-              <p className="text-gray-600">Loading data...</p>
+              <p className="text-sm text-gray-600">Loading categories...</p>
             ) : sortedCategories.length === 0 ? (
-              <p className="text-gray-600 text-sm">No categories yet.</p>
+              <p className="text-sm text-gray-600">No categories yet.</p>
             ) : (
-              <ul className="space-y-2">
+              <ul className="divide-y divide-gray-100">
                 {sortedCategories.map((category) => (
-                  <li
-                    key={category.id}
-                    className="border rounded px-3 py-2 text-sm flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3"
-                  >
-                    {editingCategoryId === category.id ? (
-                      <input
-                        type="text"
-                        maxLength={200}
-                        value={editingCategoryName}
-                        onChange={(event) => setEditingCategoryName(event.target.value)}
-                        className="rounded border border-gray-300 px-2 py-1 text-sm flex-1"
-                      />
-                    ) : (
-                      <span className="flex-1">{category.name}</span>
-                    )}
-
-                    <div className="flex flex-wrap items-center gap-2">
+                  <li key={category.id} className="space-y-2 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      {editingCategoryId === category.id ? (
+                        <input
+                          aria-label="Category name"
+                          maxLength={200}
+                          value={editingCategoryName}
+                          onChange={(event) =>
+                            setEditingCategoryName(event.target.value)
+                          }
+                          className="min-w-0 flex-1 rounded-lg border px-2 py-1.5 text-sm"
+                        />
+                      ) : (
+                        <span className="font-medium text-gray-800">
+                          {category.name}
+                        </span>
+                      )}
+                      <span className="shrink-0 text-xs text-gray-500">
+                        {
+                          subcategories.filter(
+                            (item) => item.categoryId === category.id,
+                          ).length
+                        }{" "}
+                        subcategories
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
                       {editingCategoryId === category.id ? (
                         <>
                           <button
                             type="button"
                             onClick={handleSaveCategoryEdit}
-                            disabled={!canUpdateSettings}
-                            className="text-xs px-2 py-1 rounded bg-green-600 text-white disabled:opacity-60"
+                            disabled={!canUpdateSettings || busy}
+                            className={actionClass}
                           >
                             Save
                           </button>
@@ -290,7 +461,8 @@ export default function SettingsCatalogPage() {
                               setEditingCategoryId("");
                               setEditingCategoryName("");
                             }}
-                            className="text-xs px-2 py-1 rounded border"
+                            disabled={busy}
+                            className={actionClass}
                           >
                             Cancel
                           </button>
@@ -300,18 +472,19 @@ export default function SettingsCatalogPage() {
                           <button
                             type="button"
                             onClick={() => startCategoryEdit(category)}
-                            className="text-xs px-2 py-1 rounded border"
+                            disabled={busy}
+                            className={actionClass}
                           >
                             Edit
                           </button>
                         )
                       )}
-
                       {canDeleteSettings && (
                         <button
                           type="button"
                           onClick={() => handleDeleteCategory(category.id)}
-                          className="text-xs px-2 py-1 rounded bg-red-600 text-white"
+                          disabled={busy}
+                          className={`${actionClass} text-red-700`}
                         >
                           Delete
                         </button>
@@ -321,98 +494,119 @@ export default function SettingsCatalogPage() {
                 ))}
               </ul>
             )}
-          </div>
-        </Card>
-
-        <Card>
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Subcategories</h2>
-            <form onSubmit={handleAddSubcategory} className="grid gap-3 sm:grid-cols-3">
-              <input
-                type="text"
-                maxLength={200}
-                value={subcategoryName}
-                onChange={(event) => setSubcategoryName(event.target.value)}
-                placeholder="New subcategory"
-                className="rounded border border-gray-300 px-3 py-2 text-sm sm:col-span-1"
-              />
-              <select
-                value={subcategoryCategoryId}
-                onChange={(event) => setSubcategoryCategoryId(event.target.value)}
-                className="rounded border border-gray-300 px-3 py-2 text-sm sm:col-span-1"
-              >
-                <option value="">Select category</option>
-                {sortedCategories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
+          </Card>
+          <Card className="space-y-5">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-xl font-semibold">Subcategories</h2>
+              <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600">
+                {subcategories.length}
+              </span>
+            </div>
+            <form
+              onSubmit={handleAddSubcategory}
+              className="space-y-3 rounded-xl bg-gray-50 p-3"
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="new-subcategory"
+                    className="text-xs font-medium text-gray-700"
+                  >
+                    Subcategory name
+                  </label>
+                  <input
+                    id="new-subcategory"
+                    maxLength={200}
+                    value={subcategoryName}
+                    disabled={!canCreateSettings || loading || busy}
+                    onChange={(event) => setSubcategoryName(event.target.value)}
+                    placeholder="New subcategory"
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="subcategory-category"
+                    className="text-xs font-medium text-gray-700"
+                  >
+                    Category
+                  </label>
+                  {categoryPicker(
+                    subcategoryCategoryId,
+                    setSubcategoryCategoryId,
+                    "subcategory-category",
+                    !canCreateSettings || busy,
+                  )}
+                </div>
+              </div>
               <button
                 type="submit"
-                disabled={!canCreateSettings || savingSubcategory || sortedCategories.length === 0}
-                className="bg-brand-800 text-white px-4 py-2 rounded font-semibold shadow hover:bg-brand-950 transition-colors disabled:opacity-60 sm:col-span-1"
+                disabled={
+                  !canCreateSettings ||
+                  loading ||
+                  busy ||
+                  sortedCategories.length === 0
+                }
+                className="rounded-lg bg-brand-800 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
               >
-                {savingSubcategory ? "Adding..." : "Add subcategory"}
+                {savingSubcategory ? "Saving..." : "Add subcategory"}
               </button>
             </form>
-
             {loading ? (
-              <p className="text-gray-600">Loading data...</p>
+              <p className="text-sm text-gray-600">Loading subcategories...</p>
             ) : subcategories.length === 0 ? (
-              <p className="text-gray-600 text-sm">No subcategories yet.</p>
+              <p className="text-sm text-gray-600">No subcategories yet.</p>
             ) : (
               <div className="space-y-4">
                 {groupedSubcategories.map((group) => (
-                  <div key={group.category.id} className="space-y-2">
-                    <h3 className="text-sm font-semibold text-gray-700">{group.category.name}</h3>
+                  <section
+                    key={group.category.id}
+                    className="rounded-xl border border-gray-200 p-3"
+                  >
+                    <h3 className="mb-2 text-sm font-semibold text-gray-700">
+                      {group.category.name}
+                    </h3>
                     {group.subcategories.length === 0 ? (
-                      <p className="text-gray-500 text-xs">No subcategories in this category.</p>
+                      <p className="text-xs text-gray-500">
+                        No subcategories in this category.
+                      </p>
                     ) : (
-                      <ul className="space-y-2">
+                      <ul className="divide-y divide-gray-100">
                         {group.subcategories.map((subcategory) => (
-                          <li
-                            key={subcategory.id}
-                            className="border rounded px-3 py-2 text-sm flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3"
-                          >
+                          <li key={subcategory.id} className="py-2.5">
                             {editingSubcategoryId === subcategory.id ? (
-                              <>
+                              <div className="grid gap-2 sm:grid-cols-2">
                                 <input
-                                  type="text"
+                                  aria-label="Subcategory name"
                                   maxLength={200}
                                   value={editingSubcategoryName}
                                   onChange={(event) =>
-                                    setEditingSubcategoryName(event.target.value)
+                                    setEditingSubcategoryName(
+                                      event.target.value,
+                                    )
                                   }
-                                  className="rounded border border-gray-300 px-2 py-1 text-sm flex-1"
+                                  className="min-w-0 rounded-lg border px-2 py-1.5 text-sm"
                                 />
-                                <select
-                                  value={editingSubcategoryCategoryId}
-                                  onChange={(event) =>
-                                    setEditingSubcategoryCategoryId(event.target.value)
-                                  }
-                                  className="rounded border border-gray-300 px-2 py-1 text-sm"
-                                >
-                                  <option value="">Select category</option>
-                                  {sortedCategories.map((category) => (
-                                    <option key={category.id} value={category.id}>
-                                      {category.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              </>
+                                {categoryPicker(
+                                  editingSubcategoryCategoryId,
+                                  setEditingSubcategoryCategoryId,
+                                  `category-${subcategory.id}`,
+                                  busy,
+                                )}
+                              </div>
                             ) : (
-                              <span className="flex-1">{subcategory.name}</span>
+                              <span className="text-sm font-medium text-gray-800">
+                                {subcategory.name}
+                              </span>
                             )}
-
-                            <div className="flex flex-wrap items-center gap-2">
+                            <div className="mt-2 flex flex-wrap gap-2">
                               {editingSubcategoryId === subcategory.id ? (
                                 <>
                                   <button
                                     type="button"
                                     onClick={handleSaveSubcategoryEdit}
-                                    disabled={!canUpdateSettings}
-                                    className="text-xs px-2 py-1 rounded bg-green-600 text-white disabled:opacity-60"
+                                    disabled={!canUpdateSettings || busy}
+                                    className={actionClass}
                                   >
                                     Save
                                   </button>
@@ -423,28 +617,34 @@ export default function SettingsCatalogPage() {
                                       setEditingSubcategoryName("");
                                       setEditingSubcategoryCategoryId("");
                                     }}
-                                    className="text-xs px-2 py-1 rounded border"
+                                    disabled={busy}
+                                    className={actionClass}
                                   >
                                     Cancel
                                   </button>
                                 </>
                               ) : (
                                 canUpdateSettings && (
-                                <button
-                                  type="button"
-                                  onClick={() => startSubcategoryEdit(subcategory)}
-                                  className="text-xs px-2 py-1 rounded border"
-                                >
-                                  Edit
-                                </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      startSubcategoryEdit(subcategory)
+                                    }
+                                    disabled={busy}
+                                    className={actionClass}
+                                  >
+                                    Edit
+                                  </button>
                                 )
                               )}
-
                               {canDeleteSettings && (
                                 <button
                                   type="button"
-                                  onClick={() => handleDeleteSubcategory(subcategory.id)}
-                                  className="text-xs px-2 py-1 rounded bg-red-600 text-white"
+                                  onClick={() =>
+                                    handleDeleteSubcategory(subcategory.id)
+                                  }
+                                  disabled={busy}
+                                  className={`${actionClass} text-red-700`}
                                 >
                                   Delete
                                 </button>
@@ -454,16 +654,13 @@ export default function SettingsCatalogPage() {
                         ))}
                       </ul>
                     )}
-                  </div>
+                  </section>
                 ))}
               </div>
             )}
-          </div>
-        </Card>
-
-        {error && <p role="alert" className="text-sm text-red-700">{error} <button type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)} className="underline">Reload settings</button></p>}
-        {message && <p role="status" className="text-sm text-green-700">{message}</p>}
-      </PageContainer>
+          </Card>
+        </div>
+      </ProcurementPage>
     </div>
   );
 }

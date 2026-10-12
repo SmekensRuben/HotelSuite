@@ -1,64 +1,445 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import PendingStockCommand from "../inventory/PendingStockCommand";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
+import { Combobox } from "../ui/combobox";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { usePermission } from "../../hooks/usePermission";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
-import { getCatalogProducts, getSupplierProducts } from "../../services/firebaseProducts";
+import { getCatalogProducts } from "../../services/firebaseProducts";
 import { collectPaginatedProducts } from "../../services/paginatedExport";
-import { addLocationStockTemplateItem, getLocationById, getLocationStockTemplateById, removeLocationStockTemplateItem, updateLocationStockTemplateItems } from "../../services/firebaseSettings";
+import { PRODUCT_BASE_UNITS } from "../../utils/productPurchaseOptions";
+import { productUnitLabel } from "../../utils/productUnitDisplay";
+import {
+  addLocationStockTemplateItem,
+  getLocationById,
+  getLocationStockTemplateById,
+  getHotelStockTemplateDisplay,
+  removeLocationStockTemplateItem,
+  updateLocationStockTemplateItems,
+} from "../../services/firebaseSettings";
 
+const itemKey = (item) =>
+  item.catalogProductId
+    ? `catalog:${item.catalogProductId}`
+    : `supplier:${item.supplierProductId}:${item.outletId}`;
 export default function LocationStockTemplateDetailPage() {
-  const { locationId, templateId } = useParams();
-  const { hotelUid } = useHotelContext();
-  const navigate = useNavigate();
-  const canUpdate = usePermission("locations", "update"), canReadCatalog = usePermission("catalogproducts", "read"), canReadSupplier = usePermission("supplierproducts", "read");
+  const { locationId, templateId } = useParams(),
+    { hotelUid } = useHotelContext(),
+    navigate = useNavigate();
+  const canUpdate = usePermission("locations", "update"),
+    canReadCatalog = usePermission("catalogproducts", "read");
   const scopeKey = `${hotelUid}:${locationId}:${templateId}`;
-  const active = useRef({ key: scopeKey }); if (active.current.key !== scopeKey) active.current = { key: scopeKey };
-  const [selectedId, setSelectedId] = useState(""), [search, setSearch] = useState(""), [saving, setSaving] = useState(false), [error, setError] = useState("");
+  const active = useRef({ key: scopeKey });
+  if (active.current.key !== scopeKey) active.current = { key: scopeKey };
+  const [selected, setSelected] = useState(null),
+    [saving, setSaving] = useState(false),
+    [error, setError] = useState("");
   const load = useCallback(async () => {
-    const [template, location] = await Promise.all([getLocationStockTemplateById(hotelUid, locationId, templateId), getLocationById(hotelUid, locationId)]);
+    const [template, location] = await Promise.all([
+      getLocationStockTemplateById(hotelUid, locationId, templateId),
+      getLocationById(hotelUid, locationId),
+    ]);
     return { template, location };
   }, [hotelUid, locationId, templateId]);
-  const query = useScopedAsync({ scopeKey, enabled: Boolean(hotelUid && locationId && templateId), load });
-  const loadProducts = useCallback(async () => {
-    const [catalog, supplier] = await Promise.all([
-      canReadCatalog ? collectPaginatedProducts((options) => getCatalogProducts(hotelUid, options)) : [],
-      canReadSupplier ? collectPaginatedProducts((options) => getSupplierProducts(hotelUid, options)) : [],
-    ]); return { catalog, supplier };
-  }, [hotelUid, canReadCatalog, canReadSupplier]);
-  const products = useScopedAsync({ scopeKey, enabled: Boolean(hotelUid && (canReadCatalog || canReadSupplier)), load: loadProducts });
-  useEffect(() => { active.current = { key: scopeKey }; setSelectedId(""); setSearch(""); setSaving(false); setError(""); return () => { active.current = { key: null }; }; }, [scopeKey]);
-  const template = query.data?.template, items = template?.items || [];
-  const catalog = products.data?.catalog || [], suppliers = products.data?.supplier || [];
-  const catalogById = useMemo(() => Object.fromEntries(catalog.map((item) => [item.id, item])), [catalog]);
-  const supplierById = useMemo(() => Object.fromEntries(suppliers.map((item) => [item.id, item])), [suppliers]);
-  const eligible = catalog.filter((product) => product.inventoryTracked === true && product.active !== false && product.archived !== true && !product.archivedAt && !items.some((item) => item.catalogProductId === product.id) && `${product.catalogProductName || product.name || ""} ${product.id}`.toLowerCase().includes(search.toLowerCase()));
+  const query = useScopedAsync({
+    scopeKey,
+    enabled: Boolean(hotelUid && locationId && templateId),
+    load,
+  });
+  const loadDisplay = useCallback(
+    () => getHotelStockTemplateDisplay(hotelUid, locationId, templateId),
+    [hotelUid, locationId, templateId],
+  );
+  const display = useScopedAsync({
+    scopeKey,
+    enabled: Boolean(hotelUid && locationId && templateId),
+    load: loadDisplay,
+  });
+  const loadProducts = useCallback(
+    () =>
+      collectPaginatedProducts((options) =>
+        getCatalogProducts(hotelUid, options),
+      ),
+    [hotelUid],
+  );
+  const products = useScopedAsync({
+    scopeKey: `${scopeKey}:${canReadCatalog}`,
+    enabled: Boolean(hotelUid && canReadCatalog),
+    load: loadProducts,
+  });
+  useEffect(() => {
+    active.current = { key: scopeKey };
+    setSelected(null);
+    setSaving(false);
+    setError("");
+    return () => {
+      active.current = { key: null };
+    };
+  }, [scopeKey]);
+  const template = query.data?.template,
+    location = query.data?.location,
+    items = template?.items || [];
+  const displayByKey = useMemo(
+    () =>
+      Object.fromEntries(
+        (display.data?.items || []).map((item) => [itemKey(item), item]),
+      ),
+    [display.data],
+  );
+  const eligible = useMemo(
+    () =>
+      (products.data || []).filter(
+        (product) =>
+          product.inventoryTracked === true &&
+          PRODUCT_BASE_UNITS.includes(product.baseUnit) &&
+          product.active !== false &&
+          product.archived !== true &&
+          !product.archivedAt &&
+          !items.some((item) => item.catalogProductId === product.id),
+      ),
+    [products.data, items],
+  );
+  const disabled =
+    !canUpdate ||
+    !template ||
+    !location ||
+    saving ||
+    template?.archived === true ||
+    location?.archived === true;
   const mutate = async (operation) => {
-    if (!canUpdate || saving || template?.archived === true) return;
-    const requested = active.current; setSaving(true); setError("");
-    try { await operation(); if (active.current === requested) { setSelectedId(""); await query.retry(); } }
-    catch (failure) { if (active.current === requested) setError(failure.message || "Unable to update template."); }
-    finally { if (active.current === requested) setSaving(false); }
+    if (disabled || !template) return;
+    const requested = active.current;
+    setSaving(true);
+    setError("");
+    try {
+      await operation();
+      if (active.current === requested) {
+        setSelected(null);
+        await Promise.all([query.retry(), display.retry()]);
+      }
+    } catch (failure) {
+      if (active.current === requested)
+        setError(failure.message || "Unable to update the template.");
+    } finally {
+      if (active.current === requested) setSaving(false);
+    }
   };
-  const move = (index, direction) => { const next = [...items], target = index + direction; if (target < 0 || target >= next.length) return; [next[index], next[target]] = [next[target], next[index]]; return mutate(() => updateLocationStockTemplateItems(hotelUid, locationId, templateId, next, template.revision ?? 0)); };
-  return <div className="min-h-screen bg-canvas text-gray-900"><HeaderBar today={new Date().toLocaleDateString()} onLogout={async () => { await signOut(auth); sessionStorage.clear(); window.location.href = "/login"; }} /><PageContainer className="space-y-6">
-    <div className="flex justify-between"><h1 className="text-3xl font-semibold">Stock Template Detail</h1><button onClick={() => navigate(`/settings/locations/${locationId}`)}>Back to location</button></div>
-    <PendingStockCommand kind="template" hotelUid={hotelUid} locationId={locationId} templateId={templateId} disabled={!canUpdate || saving} onComplete={query.retry} />
-    {query.loading && <p>Loading stock template...</p>}{query.error && <div role="alert"><p>{query.error.message}</p><button onClick={query.retry}>Retry template</button></div>}
-    {!query.loading && !query.error && !template && <Card>Stock template not found.</Card>}
-    {template && <><Card><h2 className="text-xl font-semibold">{query.data.location?.name || locationId} · {template.name}</h2><p className="mt-2 text-sm text-gray-600">Catalog products are counted once per physical location, irrespective of supplier or outlet. Legacy supplier entries remain visible and must have valid catalog links before a new count can start. Creating a count validates all sources and deduplicates linked catalog products.</p></Card>
-    <Card className="space-y-3">{items.length === 0 && <p>No stock template items yet.</p>}{items.map((item, index) => {
-      const supplier = supplierById[item.supplierProductId], product = catalogById[item.catalogProductId || supplier?.catalogProductId];
-      const label = product?.catalogProductName || product?.name || item.catalogProductId || supplier?.supplierProductName || item.supplierProductId || "Invalid item";
-      const unresolved = (!item.catalogProductId && !item.supplierProductId) || (!item.catalogProductId && products.data && (!supplier?.catalogProductId || !product));
-      return <div key={`${item.catalogProductId || item.supplierProductId}:${item.outletId || ""}:${index}`} className="flex flex-wrap items-center justify-between gap-3 rounded border p-3"><div><p className="font-semibold">{label}</p><p className="text-sm text-gray-500">{item.catalogProductId ? `Catalog · ${product?.baseUnit || "unit validated on count creation"}` : `Legacy supplier item · ${item.supplierProductId} · outlet ${item.outletId || "missing"}`}</p>{unresolved && <p role="alert" className="text-sm text-amber-700">Unresolved source. Repair the supplier catalog link or replace this item; it will not be silently omitted.</p>}</div><div className="flex gap-2"><button aria-label={`Move ${label} up`} disabled={!canUpdate || template.archived === true || saving || index === 0} onClick={() => move(index, -1)}>↑</button><button aria-label={`Move ${label} down`} disabled={!canUpdate || template.archived === true || saving || index === items.length - 1} onClick={() => move(index, 1)}>↓</button><button className="text-red-700" disabled={!canUpdate || template.archived === true || saving} onClick={() => mutate(() => removeLocationStockTemplateItem(hotelUid, locationId, templateId, item, undefined, template.revision ?? 0))}>Remove</button></div></div>;
-    })}</Card>
-    <Card className="space-y-3"><h3 className="font-semibold">Add catalog product</h3>{!canReadCatalog && <p>Catalog read permission is required to choose additional products.</p>}{products.error && <div role="alert"><p>{products.error.message}</p><button onClick={products.retry}>Retry product sources</button></div>}<label className="block text-sm">Search catalog<input aria-label="Search catalog" value={search} onChange={(event) => setSearch(event.target.value)} className="ml-2 rounded border px-3 py-2" /></label><select aria-label="Catalog product" value={selectedId} disabled={!canReadCatalog || products.loading || Boolean(products.error)} onChange={(event) => setSelectedId(event.target.value)} className="rounded border px-3 py-2"><option value="">Select tracked catalog product</option>{eligible.map((product) => <option key={product.id} value={product.id}>{product.catalogProductName || product.name || product.id} ({product.baseUnit})</option>)}</select><button className="ml-2 rounded bg-brand-800 px-4 py-2 text-white disabled:opacity-50" disabled={!canUpdate || template.archived === true || !selectedId || saving || items.length >= 250} onClick={() => mutate(() => addLocationStockTemplateItem(hotelUid, locationId, templateId, { catalogProductId: selectedId }, template.revision ?? 0))}>Add product</button></Card></>}
-    {error && <p role="alert" className="text-red-700">{error}</p>}
-  </PageContainer></div>;
+  const move = (index, direction) => {
+    const next = [...items],
+      target = index + direction;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    return mutate(() =>
+      updateLocationStockTemplateItems(
+        hotelUid,
+        locationId,
+        templateId,
+        next,
+        template.revision ?? 0,
+      ),
+    );
+  };
+  return (
+    <div className="min-h-screen bg-canvas text-gray-900">
+      <HeaderBar
+        today={new Date().toLocaleDateString()}
+        onLogout={async () => {
+          await signOut(auth);
+          sessionStorage.clear();
+          window.location.href = "/login";
+        }}
+      />
+      <ProcurementPage className="space-y-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+              Purchasing &amp; Inventory · Settings
+            </p>
+            <h1 className="mt-1 text-3xl font-semibold">
+              Stock Template Detail
+            </h1>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(`/settings/locations/${locationId}`)}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          >
+            Back to location
+          </button>
+        </div>
+        <PendingStockCommand
+          kind="template"
+          hotelUid={hotelUid}
+          locationId={locationId}
+          templateId={templateId}
+          disabled={disabled}
+          onComplete={() => Promise.all([query.retry(), display.retry()])}
+        />
+        {query.loading && (
+          <p className="text-sm text-gray-600">Loading stock template...</p>
+        )}
+        {query.error && (
+          <div role="alert" className="text-sm text-red-700">
+            <p>{query.error.message || "Unable to load stock template."}</p>
+            <button type="button" onClick={query.retry} className="underline">
+              Retry template
+            </button>
+          </div>
+        )}
+        {!query.loading && !query.error && !template && (
+          <Card>Stock template not found.</Card>
+        )}
+        {template && (
+          <>
+            <Card className="space-y-2">
+              <h2 className="text-xl font-semibold">
+                {location?.name || "Location name unavailable"} ·{" "}
+                {template.name || "Unnamed template"}
+              </h2>
+              <p className="max-w-3xl text-sm text-gray-600">
+                Choose the physical articles you count at this location. An
+                inventory-tracked catalog product has counting enabled in
+                Catalog Products. Supplier packages remain purchase options;
+                counts use each article's catalog base unit. Legacy supplier
+                entries require valid catalog links; count creation checks every
+                row and reports unresolved links.
+              </p>
+              {(template.archived === true || location?.archived === true) && (
+                <p className="text-sm text-amber-800">
+                  This template or location is archived. Historical rows remain
+                  visible and cannot be changed.
+                </p>
+              )}
+            </Card>
+            <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+              <Card className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-semibold">Included articles</h2>
+                  <span className="text-xs text-gray-500">
+                    {items.length} / 250
+                  </span>
+                </div>
+                {display.loading && (
+                  <p className="text-sm text-gray-600">
+                    Loading article names...
+                  </p>
+                )}
+                {display.error && (
+                  <div
+                    role="alert"
+                    className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800"
+                  >
+                    <p>
+                      Article names could not be loaded. The saved template rows
+                      have been preserved.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={display.retry}
+                      className="underline"
+                    >
+                      Retry article names
+                    </button>
+                  </div>
+                )}
+                {items.length === 0 && (
+                  <p className="text-sm text-gray-600">
+                    No stock template items yet.
+                  </p>
+                )}
+                <ul className="divide-y divide-gray-100">
+                  {items.map((item, index) => {
+                    const source = displayByKey[itemKey(item)];
+                    const label =
+                      source?.catalogProductName ||
+                      source?.supplierProductName ||
+                      (display.loading
+                        ? "Loading article name..."
+                        : "Article name unavailable");
+                    const unresolved =
+                      !display.loading &&
+                      !display.error &&
+                      (!source || source.available === false);
+                    return (
+                      <li
+                        key={`${itemKey(item)}:${index}`}
+                        className="flex flex-wrap items-start justify-between gap-3 py-3"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words text-sm font-semibold text-gray-800">
+                            {label}
+                          </p>
+                          <p className="mt-1 text-xs text-gray-500">
+                            {item.catalogProductId
+                              ? `Catalog article · ${source?.baseUnit ? productUnitLabel(source.baseUnit) : "unit unavailable"}`
+                              : `Legacy supplier entry · ${source?.outletName || "outlet name unavailable"}`}
+                          </p>
+                          {unresolved && (
+                            <p
+                              role="alert"
+                              className="mt-1 text-xs text-amber-800"
+                            >
+                              This article is unavailable or its legacy catalog
+                              link is unresolved. Repair the link or
+                              deliberately remove the row; it is not silently
+                              omitted.
+                            </p>
+                          )}
+                          {unresolved && (
+                            <p className="mt-1 break-all text-xs text-gray-400">
+                              Reference:{" "}
+                              {item.catalogProductId ||
+                                item.supplierProductId ||
+                                "missing"}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            aria-label={`Move ${label} up`}
+                            disabled={disabled || index === 0}
+                            onClick={() => move(index, -1)}
+                            className="rounded-md border px-2 py-1.5 text-sm disabled:opacity-40"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Move ${label} down`}
+                            disabled={disabled || index === items.length - 1}
+                            onClick={() => move(index, 1)}
+                            className="rounded-md border px-2 py-1.5 text-sm disabled:opacity-40"
+                          >
+                            ↓
+                          </button>
+                          <button
+                            type="button"
+                            disabled={disabled}
+                            onClick={() =>
+                              mutate(() =>
+                                removeLocationStockTemplateItem(
+                                  hotelUid,
+                                  locationId,
+                                  templateId,
+                                  item,
+                                  undefined,
+                                  template.revision ?? 0,
+                                ),
+                              )
+                            }
+                            className="rounded-md px-2 py-1.5 text-xs font-medium text-red-700 disabled:opacity-40"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </Card>
+              <Card className="space-y-4">
+                <h2 className="text-xl font-semibold">Add an article</h2>
+                <p className="text-sm text-gray-600">
+                  Search catalog articles with inventory tracking enabled. Each
+                  article appears once in this template.
+                </p>
+                {!canReadCatalog ? (
+                  <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">
+                    Catalog read permission is required to choose additional
+                    articles. Saved article names remain available through
+                    location access.
+                  </p>
+                ) : (
+                  <>
+                    <div>
+                      <label
+                        htmlFor="template-catalog-product"
+                        className="mb-2 block text-sm font-medium text-gray-700"
+                      >
+                        Catalog product
+                      </label>
+                      <Combobox
+                        id="template-catalog-product"
+                        value={selected}
+                        options={eligible}
+                        onChange={setSelected}
+                        displayValue={(product) =>
+                          `${product.catalogProductName || product.name || "Unnamed article"} (${productUnitLabel(product.baseUnit)})`
+                        }
+                        getOptionValue={(product) => product.id}
+                        placeholder="Search inventory-tracked articles"
+                        disabled={
+                          disabled ||
+                          products.loading ||
+                          Boolean(products.error)
+                        }
+                        loading={products.loading}
+                        emptyMessage="No more inventory-tracked articles available."
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                      />
+                    </div>
+                    {products.error && (
+                      <div role="alert" className="text-sm text-red-700">
+                        <p>
+                          {products.error.message ||
+                            "Catalog choices could not be loaded."}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={products.retry}
+                          className="underline"
+                        >
+                          Retry catalog choices
+                        </button>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      className="rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      disabled={
+                        disabled ||
+                        !selected ||
+                        products.loading ||
+                        Boolean(products.error) ||
+                        items.length >= 250
+                      }
+                      onClick={() =>
+                        mutate(() =>
+                          addLocationStockTemplateItem(
+                            hotelUid,
+                            locationId,
+                            templateId,
+                            { catalogProductId: selected.id },
+                            template.revision ?? 0,
+                          ),
+                        )
+                      }
+                    >
+                      Add product
+                    </button>
+                  </>
+                )}
+              </Card>
+            </div>
+          </>
+        )}
+        {error && (
+          <p role="alert" className="text-sm text-red-700">
+            {error}
+          </p>
+        )}
+      </ProcurementPage>
+    </div>
+  );
 }
