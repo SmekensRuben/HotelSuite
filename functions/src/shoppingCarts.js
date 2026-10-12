@@ -5,6 +5,7 @@ const { requireDocumentId } = require("./subscriptions");
 const { text, digest, revision: validRevision } = require("./validation");
 const { gated } = require("./saasRollout");
 const { resolvePurchaseOption } = require("./productPolicy");
+const { isArchived } = require("./procurementResources");
 
 function quantity(value, allowZero = false) {
   const n = value;
@@ -70,7 +71,10 @@ async function mutateShoppingCartHandler(request, services = {}) {
         if (input.action === "note") items[index] = { ...items[index], note: text(input.value, "Product note", 1000) };
         if (input.action === "outlet") {
           const outletId = input.value === "" ? "" : requireDocumentId(input.value, "outletId");
-          if (outletId && !(await tx.get(db.doc(`hotels/${hotelUid}/outlets/${outletId}`))).exists) throw new HttpsError("not-found", "Choose an outlet from this hotel.");
+          if (outletId) {
+            const outlet = await tx.get(db.doc(`hotels/${hotelUid}/outlets/${outletId}`));
+            if (!outlet.exists || isArchived(outlet.data())) throw new HttpsError("not-found", "Choose an active outlet from this hotel.");
+          }
           items[index] = { ...items[index], outletId };
         }
       }

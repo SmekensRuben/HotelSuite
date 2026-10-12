@@ -37,7 +37,7 @@ const mocks = vi.hoisted(() => {
       return { path: documentPath, id: documentPath.split("/").at(-1) };
     }),
     collection: vi.fn((_db, path) => ({ path })),
-    functions: {}, httpsCallable: vi.fn(),
+    functions: {}, auth: { currentUser: { uid: "settings-user" } }, httpsCallable: vi.fn(),
   };
 });
 

@@ -3,17 +3,18 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Pencil, Trash2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import PendingProductCommand from "../catalog/PendingProductCommand";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { deleteSupplierProduct, getSupplierProduct } from "../../services/firebaseProducts";
+import { deleteSupplierProduct, getSupplierProduct, getCatalogProduct } from "../../services/firebaseProducts";
 import AsyncError from "../shared/AsyncError";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 import { usePermission } from "../../hooks/usePermission";
+import { packageConversionLabel, productUnitLabel } from "../../utils/productUnitDisplay";
 
 function formatDate(value) {
   if (!value) return "-";
@@ -44,11 +45,16 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const canEditProducts = usePermission("supplierproducts", "update");
   const canDeleteProducts = usePermission("supplierproducts", "delete");
+  const canReadCatalog = usePermission("catalogproducts", "read");
   const scopeKey = `${hotelUid}:${productId}`;
   const load = useCallback(() => getSupplierProduct(hotelUid, productId), [hotelUid, productId]);
   const query = useScopedAsync({ scopeKey, enabled: Boolean(hotelUid && productId), load });
   const product = query.data;
   const loading = query.loading;
+  const catalogId = product?.catalogProductId || "";
+  const loadCatalog = useCallback(() => getCatalogProduct(hotelUid, catalogId), [hotelUid, catalogId]);
+  const catalogQuery = useScopedAsync({ scopeKey: `${hotelUid}:${catalogId}:${canReadCatalog}`, enabled: Boolean(hotelUid && catalogId && canReadCatalog), load: loadCatalog });
+  const catalogProduct = canReadCatalog ? catalogQuery.data : null;
   const { createdByName, updatedByName } = useStaffDisplayNames({ hotelUid, scopeKey, record: product });
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
@@ -84,7 +90,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage className="space-y-6">
         <PendingProductCommand hotelUid={hotelUid} collection="supplierproducts" productId={productId} onComplete={() => { if (mounted.current) navigate("/catalog/supplier-products"); }} />
         <AsyncError error={query.error} onRetry={query.retry} label="Could not load product." />
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -179,7 +185,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
                       />
                     ) : (
                       <div className="w-full max-w-[140px] aspect-[4/3] rounded-lg border border-dashed border-gray-300 bg-gray-50 text-gray-500 text-xs flex items-center justify-center px-3 text-center mx-auto">
-                        Geen image
+                        No image
                       </div>
                     )}
                   </div>
@@ -195,34 +201,40 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
                   <DetailField label="Price basis" value={product.priceBasis || "Unknown"} />
                   <DetailField label="VAT rate" value={product.vatRate == null ? "Unknown / not applicable" : `${product.vatRate * 100}%`} />
                   <DetailField label="Pricing Model" value={product.pricingModel || "Per Purchase Unit"} />
-                  <DetailField label="Base Unit" value={product.baseUnit} />
+                  <DetailField label="Supplier content unit" value={productUnitLabel(product.baseUnit)} />
                   {product.pricingModel === "Per Base Unit" ? (
                     <>
                       <DetailField label="Purchase Unit" value={product.purchaseUnit} />
                       <DetailField label="Price per Base Unit" value={product.pricePerBaseUnit == null ? "Unknown" : product.pricePerBaseUnit} />
-                      <DetailField label="Base Units per Purchase Unit" value={product.baseUnitsPerPurchaseUnit} />
+                      <DetailField label={`Package content (${product.baseUnit || "unknown unit"})`} value={product.baseUnitsPerPurchaseUnit} />
                       <DetailField label="Price per Purchase Unit" value={product.pricePerPurchaseUnit == null ? "Unknown" : product.pricePerPurchaseUnit} />
                     </>
                   ) : (
                     <>
                       <DetailField label="Purchase Unit" value={product.purchaseUnit} />
                       <DetailField label="Price per Purchase Unit" value={product.pricePerPurchaseUnit == null ? "Unknown" : product.pricePerPurchaseUnit} />
-                      <DetailField label="Base Units per Purchase Unit" value={product.baseUnitsPerPurchaseUnit} />
+                      <DetailField label={`Package content (${product.baseUnit || "unknown unit"})`} value={product.baseUnitsPerPurchaseUnit} />
                     </>
                   )}
                 </div>
               </Card>
 
               <Card className="border-0 shadow-md shadow-slate-200/70">
-                <h2 className="text-lg font-semibold mb-3">Classification</h2>
+                <h2 className="text-lg font-semibold mb-3">Catalog link & stock units</h2>
+                <AsyncError error={catalogQuery.error} onRetry={catalogQuery.retry} label="Could not load the linked catalog product." />
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <DetailField label="Catalog Product ID" value={product.catalogProductId} />
-                  <DetailField label="Has Variants" value={product.hasVariants ? "true" : "false"} />
+                  <DetailField label="Catalog product" value={catalogProduct?.name || (!catalogId ? "Unlinked — procurement only" : catalogQuery.loading ? "Loading catalog details…" : !canReadCatalog ? "Catalog read permission required" : "Catalog details unavailable")} />
+                  <DetailField label="Stock-count unit" value={catalogProduct ? productUnitLabel(catalogProduct.baseUnit) : "Unavailable"} />
+                  <DetailField label="Physical inventory tracking" value={!catalogProduct ? "Unavailable" : catalogProduct.inventoryTracked === true ? "Tracked" : catalogProduct.inventoryTracked === false ? "Not tracked" : "Needs review"} />
                 </div>
+                {catalogProduct && <p className="mt-4 rounded-lg bg-brand-50 p-3 text-sm text-gray-800">{packageConversionLabel(product.baseUnitsPerPurchaseUnit, product.baseUnit, catalogProduct.baseUnit)}</p>}
+                {catalogProduct && catalogProduct.inventoryTracked !== true && <p className="mt-3 text-sm text-amber-800">{catalogProduct.inventoryTracked === false ? "Catalog inventory tracking is disabled." : "Catalog inventory tracking needs review."} This unit preview does not make receipts available to stock-count reports.</p>}
+                {catalogProduct && (catalogProduct.active === false || catalogProduct.archived === true) && <p className="mt-3 text-sm text-amber-800">The linked catalog product is inactive for new purchasing. Existing orders keep their reviewed units.</p>}
+                <p className="mt-3 text-sm text-gray-600">The supplier content unit describes this package. Physical counts use the linked catalog unit; compatible ml/l and g/kg quantities are converted when receiving goods.</p>
               </Card>
 
               {product.hasVariants && !product.purchaseOptions?.length && <Card className="lg:col-span-2"><p className="text-amber-800">Legacy variants require review in Edit before this offer can be ordered.</p></Card>}
-              {product.purchaseOptions?.length > 0 && <Card className="lg:col-span-2"><h2 className="font-semibold mb-3">Additional purchase options</h2><div className="grid gap-3 md:grid-cols-2">{product.purchaseOptions.map((option) => <div key={option.id} className="rounded border p-3"><DetailField label="Package" value={option.purchaseUnit} /><DetailField label={`Content (${product.baseUnit})`} value={option.baseUnitsPerPurchaseUnit} /><DetailField label={`Price (${product.currency || "unknown currency"})`} value={option.pricePerPurchaseUnit == null ? "Unknown" : option.pricePerPurchaseUnit} /></div>)}</div></Card>}
+              {product.purchaseOptions?.length > 0 && <Card className="lg:col-span-2"><h2 className="font-semibold mb-3">Additional purchase options</h2><div className="grid gap-3 md:grid-cols-2">{product.purchaseOptions.map((option) => <div key={option.id} className="space-y-3 rounded border p-3"><DetailField label="Package" value={option.purchaseUnit} /><DetailField label={`Content (${product.baseUnit})`} value={option.baseUnitsPerPurchaseUnit} /><DetailField label={`Price (${product.currency || "unknown currency"})`} value={option.pricePerPurchaseUnit == null ? "Unknown" : option.pricePerPurchaseUnit} />{catalogProduct && <p className="text-sm text-gray-600">{packageConversionLabel(option.baseUnitsPerPurchaseUnit, product.baseUnit, catalogProduct.baseUnit)}</p>}</div>)}</div></Card>}
 
               <Card className="lg:col-span-2 border-0 shadow-md shadow-slate-200/70">
                 <h2 className="text-lg font-semibold mb-3">Audit</h2>
@@ -237,7 +249,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
             </div>
           </>
         )}
-      </PageContainer>
+      </ProcurementPage>
 
       <Modal
         open={showDeleteModal}

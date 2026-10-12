@@ -1,20 +1,24 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSuppliers } from "../../services/firebaseSuppliers";
 import { usePermission } from "../../hooks/usePermission";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import AsyncError from "../shared/AsyncError";
 
 export default function SuppliersPage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
   const canCreateSuppliers = usePermission("suppliers", "create");
-  const [suppliers, setSuppliers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const load = useCallback(() => getSuppliers(hotelUid), [hotelUid]);
+  const query = useScopedAsync({ scopeKey: hotelUid, enabled: Boolean(hotelUid), load });
+  const suppliers = query.data || [];
+  const loading = query.loading;
   const [searchTerm, setSearchTerm] = useState("");
 
   const today = useMemo(
@@ -32,17 +36,6 @@ export default function SuppliersPage() {
     sessionStorage.clear();
     window.location.href = "/login";
   };
-
-  useEffect(() => {
-    const loadSuppliers = async () => {
-      if (!hotelUid) return;
-      setLoading(true);
-      const result = await getSuppliers(hotelUid);
-      setSuppliers(result);
-      setLoading(false);
-    };
-    loadSuppliers();
-  }, [hotelUid]);
 
   const filteredSuppliers = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -66,7 +59,8 @@ export default function SuppliersPage() {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage className="space-y-6">
+        <AsyncError error={query.error} onRetry={query.retry} label="Could not load suppliers." />
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
@@ -86,7 +80,7 @@ export default function SuppliersPage() {
           </button>
         </div>
 
-        <div>
+        <div className="max-w-xl">
           <label className="sr-only" htmlFor="suppliers-search">
             Search suppliers
           </label>
@@ -102,7 +96,7 @@ export default function SuppliersPage() {
 
         {loading ? (
           <p className="text-gray-600">Loading suppliers...</p>
-        ) : (
+        ) : query.error ? null : (
           <DataListTable
             columns={columns}
             rows={filteredSuppliers}
@@ -110,7 +104,7 @@ export default function SuppliersPage() {
             emptyMessage="No suppliers found."
           />
         )}
-      </PageContainer>
+      </ProcurementPage>
     </div>
   );
 }

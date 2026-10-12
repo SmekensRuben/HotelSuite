@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useRef, useState } from "r
 import { auth, db, doc, getDoc, onSnapshot } from "../firebaseConfig";
 import { subscriptionIsActive } from "../utils/subscription";
 import { getHotelBootstrap } from "../services/firebaseSettings";
+import { invalidateProcurementReads } from "../services/procurementReadPool";
 import i18n from "../i18n";
 import { AuthContext } from "./AuthContext";
 import {
@@ -58,33 +59,55 @@ export function HotelProvider({ children }) {
   const [subscriptionAttempt, setSubscriptionAttempt] = useState(0);
   const [now, setNow] = useState(Date.now());
   const settingsRequest = useRef(0);
+  const subscriptionActive = subscriptionIsActive(subscription, now);
+  const previouslySubscribed = useRef(false);
+
+  useEffect(() => {
+    if (previouslySubscribed.current && !subscriptionActive) invalidateProcurementReads(selectedHotelUid);
+    previouslySubscribed.current = subscriptionActive;
+  }, [selectedHotelUid, subscriptionActive]);
 
   useEffect(() => {
     setPermissions([]); setIsHotelAdmin(false); setPermissionsLoading(true); setAuthorizationSource("none");
     const userUid = auth.currentUser?.uid;
     if (!selectedHotelUid || !userUid) { setPermissionsLoading(false); return; }
-    return onSnapshot(doc(db, `hotels/${selectedHotelUid}/members`, userUid), (snapshot) => {
-      if (auth.currentUser?.uid !== userUid) return;
+    let active = true, previousSignature;
+    const stop = onSnapshot(doc(db, `hotels/${selectedHotelUid}/members`, userUid), (snapshot) => {
+      if (!active || auth.currentUser?.uid !== userUid) return;
       const membership = snapshot.exists() ? snapshot.data() : null;
+      const signature = JSON.stringify(membership);
+      if (previousSignature !== undefined && signature !== previousSignature) invalidateProcurementReads(selectedHotelUid);
+      previousSignature = signature;
       setPermissions(Array.isArray(membership?.permissions) ? membership.permissions : []);
       setIsHotelAdmin(membership?.hotelAdmin === true);
       setAuthorizationSource(membership ? "membership" : "missing-membership");
       setPermissionsLoading(false);
     }, () => {
+      if (!active || auth.currentUser?.uid !== userUid) return;
+      invalidateProcurementReads(selectedHotelUid);
       setPermissions([]); setIsHotelAdmin(false); setAuthorizationSource("error"); setPermissionsLoading(false);
     });
+    return () => { active = false; stop(); };
   }, [selectedHotelUid, userData]);
 
   useEffect(() => {
     setSubscription(null); setSubscriptionLoading(true); setSubscriptionError(null);
     if (!selectedHotelUid || !auth.currentUser) { setSubscriptionLoading(false); return; }
+    const userUid = auth.currentUser.uid;
+    let active = true, previousSignature;
     const stop = onSnapshot(doc(db, "hotelSubscriptions", selectedHotelUid), (snapshot) => {
-      setSubscription(snapshot.exists() ? snapshot.data() : null); setSubscriptionLoading(false);
+      if (!active || auth.currentUser?.uid !== userUid) return;
+      const next = snapshot.exists() ? snapshot.data() : null, signature = JSON.stringify(next);
+      if (previousSignature !== undefined && signature !== previousSignature) invalidateProcurementReads(selectedHotelUid);
+      previousSignature = signature;
+      setSubscription(next); setSubscriptionLoading(false);
     }, (error) => {
+      if (!active || auth.currentUser?.uid !== userUid) return;
+      invalidateProcurementReads(selectedHotelUid);
       setSubscription(null); setSubscriptionError(error.code || "unavailable"); setSubscriptionLoading(false);
     });
     const clock = setInterval(() => setNow(Date.now()), 30000);
-    return () => { stop(); clearInterval(clock); };
+    return () => { active = false; stop(); clearInterval(clock); };
   }, [selectedHotelUid, userData, subscriptionAttempt]);
 
   useEffect(() => {
@@ -139,6 +162,7 @@ export function HotelProvider({ children }) {
   useEffect(() => {
     const observe = auth.onIdTokenChanged?.bind(auth) || auth.onAuthStateChanged.bind(auth);
     const unsubscribe = observe(async (user) => {
+      invalidateProcurementReads();
       const attempt = ++authRequest.current;
       ++settingsRequest.current;
       setAuthLoading(true);
@@ -203,6 +227,7 @@ export function HotelProvider({ children }) {
 
   const selectHotel = async (uid) => {
     if (!hotelUids.includes(uid)) return;
+    invalidateProcurementReads();
     setLoading(true);
     persistSelectedHotelUid(uid);
     setSelectedHotelUid(uid);
@@ -211,6 +236,7 @@ export function HotelProvider({ children }) {
   };
 
   const refreshHotelAssignments = async () => {
+    invalidateProcurementReads();
     const uid = auth.currentUser?.uid;
     const attempt = authRequest.current;
     if (!uid) return;
@@ -244,7 +270,7 @@ export function HotelProvider({ children }) {
         subscriptionLoading,
         subscriptionError,
         retrySubscription: () => setSubscriptionAttempt((attempt) => attempt + 1),
-        subscriptionActive: subscriptionIsActive(subscription, now),
+        subscriptionActive,
         selectHotel,
         refreshHotelAssignments,
         lightspeedShiftRolloverHour,

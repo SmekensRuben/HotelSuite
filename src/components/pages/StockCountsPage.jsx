@@ -2,7 +2,7 @@ import React, { useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
@@ -60,12 +60,12 @@ export default function StockCountsPage() {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
+            <p className="text-sm text-gray-500 uppercase tracking-wide">Purchasing & inventory</p>
             <h1 className="text-3xl font-semibold">Stock Counts</h1>
-            <p className="text-gray-600 mt-1">Count catalog quantities per physical location. Historical supplier-based counts remain available.</p>
+            <p className="max-w-2xl text-sm text-gray-600 mt-1">Count catalog quantities per physical location. Historical supplier-based counts remain available.</p>
           </div>
           <button
             onClick={() => navigate("/catalog/stock-counts/new")}
@@ -77,7 +77,7 @@ export default function StockCountsPage() {
             }`}
             title="Add stock count"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-4 w-4" /> New stock count
           </button>
         </div>
 
@@ -92,7 +92,7 @@ export default function StockCountsPage() {
             onRowClick={(row) => navigate(`/catalog/stock-counts/${row.id}`)}
           />
         )}
-      </PageContainer>
+      </ProcurementPage>
     </div>
   );
 }

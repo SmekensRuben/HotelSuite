@@ -3,6 +3,7 @@ const { admin } = require("./config");
 const { requireDocumentId } = require("./subscriptions");
 const { digest, text } = require("./validation");
 const policy = require("./inventoryPolicy");
+const { isArchived } = require("./procurementResources");
 const stamp = () => admin.firestore.FieldValue.serverTimestamp();
 const stateRef = (db, hotelUid, locationId) => db.doc(`hotels/${hotelUid}/inventoryLocationStates/${locationId}`);
 function sequence(snapshot) {
@@ -50,7 +51,7 @@ async function prepareReceiptMovement(db, tx, input) {
   const [location, state, existing] = await Promise.all([
     tx.get(db.doc(`hotels/${hotelUid}/locations/${locationId}`)), tx.get(stateRef(db, hotelUid, locationId)), tx.get(movementRef),
   ]);
-  if (!location.exists) throw new HttpsError("failed-precondition", "Choose an inventory location in this hotel.");
+  if (!location.exists || isArchived(location.data())) throw new HttpsError("failed-precondition", "Choose an active inventory location in this hotel.");
   if (existing.exists) throw new HttpsError("already-exists", "An inventory movement already exists for this receiving event.");
   const lines = normalizedLines(input.lines), next = sequence(state) + 1;
   if (!Array.isArray(input.coverageGaps || []) || (input.coverageGaps || []).length > 100) throw new HttpsError("invalid-argument", "Receipt coverage gaps exceed the supported bound.");

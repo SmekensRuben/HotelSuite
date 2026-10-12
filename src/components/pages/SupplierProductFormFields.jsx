@@ -4,7 +4,9 @@ import { getSuppliers } from "../../services/firebaseSuppliers";
 import { getCatalogProducts } from "../../services/firebaseProducts";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import AsyncError from "../shared/AsyncError";
+import { Combobox } from "../ui/combobox";
 import { PRODUCT_BASE_UNITS } from "../../utils/productPurchaseOptions";
+import { packageConversionLabel, productUnitLabel } from "../../utils/productUnitDisplay";
 
 const stringNumber = (value) => value == null ? "" : String(value);
 const nullableNumber = (value) => value === "" ? null : Number(value);
@@ -40,6 +42,9 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
     return { suppliers, catalog };
   }, [hotelUid]);
   const sources = useScopedAsync({ scopeKey: hotelUid, enabled: Boolean(hotelUid), load: loadSources });
+  const supplierOptions = sources.data?.suppliers || [];
+  const catalogOptions = (sources.data?.catalog || []).filter((product) => (product.active !== false && product.archived !== true) || product.id === form.catalogProductId);
+  const linkedCatalog = catalogOptions.find((product) => product.id === form.catalogProductId);
   useEffect(() => { setForm(initialForm(initialData)); setLegacyReviewed(false); setError(""); }, [initialData, hotelUid]);
   const change = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const changeOption = (id, key, value) => setForm((current) => ({ ...current, purchaseOptions: current.purchaseOptions.map((option) => option.id === id ? { ...option, [key]: value } : option) }));
@@ -82,23 +87,19 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
       <label className="flex gap-2"><input type="checkbox" checked={legacyReviewed} onChange={(event) => setLegacyReviewed(event.target.checked)} /> I reviewed and replaced the legacy variants.</label>
     </div>}
     <fieldset disabled={saving} className="grid gap-4 sm:grid-cols-2">
-      <Field title="Supplier *"><select required disabled={Boolean(initialData?.id && initialData?.supplierId)} value={form.supplierId} onChange={(event) => change("supplierId", event.target.value)} className={inputClass}>
-        <option value="">Choose a hotel supplier</option>
-        {form.supplierId && !sources.data?.suppliers.some((supplier) => supplier.id === form.supplierId) && <option value={form.supplierId} disabled>Unavailable supplier: {form.supplierId}</option>}
-        {(sources.data?.suppliers || []).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name || supplier.id}</option>)}
-      </select></Field>
+      <Field title="Supplier *"><Combobox required disabled={Boolean(initialData?.id && initialData?.supplierId)} value={supplierOptions.find((supplier) => supplier.id === form.supplierId) || null} options={supplierOptions} displayValue={(supplier) => supplier.name || "Unnamed supplier"} getOptionValue={(supplier) => supplier.id} onChange={(supplier) => change("supplierId", supplier?.id || "")} placeholder="Search hotel suppliers" loading={sources.loading} className={inputClass} />
+        {form.supplierId && !sources.loading && !supplierOptions.some((supplier) => supplier.id === form.supplierId) && <span className="text-xs font-normal text-amber-700">The existing supplier is unavailable. Review this offer before saving.</span>}
+      </Field>
       <Field title="Supplier SKU *"><input required value={form.supplierSku} onChange={(event) => change("supplierSku", event.target.value)} className={inputClass} /><span className="text-xs font-normal text-gray-500">Changing the SKU preserves the product's stable ID.</span></Field>
       <Field title="Supplier product name *" wide><input required value={form.supplierProductName} onChange={(event) => change("supplierProductName", event.target.value)} className={inputClass} /></Field>
-      <Field title="Catalog product"><select disabled={Boolean(initialData?.id && initialData?.catalogProductId)} value={form.catalogProductId} onChange={(event) => change("catalogProductId", event.target.value)} className={inputClass}>
-        <option value="">Unlinked — procurement only</option>
-        {form.catalogProductId && !sources.data?.catalog.some((product) => product.id === form.catalogProductId) && <option value={form.catalogProductId} disabled>Unavailable link: {form.catalogProductId}</option>}
-        {(sources.data?.catalog || []).filter((product) => (product.active !== false && product.archived !== true) || product.id === form.catalogProductId).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.baseUnit || "unit needs review"})</option>)}
-      </select></Field>
-      <Field title="Supplier base unit *"><select required value={form.baseUnit} onChange={(event) => change("baseUnit", event.target.value)} className={inputClass}>
+      <Field title="Catalog product"><Combobox disabled={Boolean(initialData?.id && initialData?.catalogProductId)} value={linkedCatalog || null} options={catalogOptions} displayValue={(product) => `${product.name || "Unnamed catalog product"} (${product.baseUnit || "unit needs review"})`} getOptionValue={(product) => product.id} onChange={(product) => change("catalogProductId", product?.id || "")} placeholder="Unlinked — procurement only" allowClear loading={sources.loading} className={inputClass} />
+        {form.catalogProductId && !sources.loading && !linkedCatalog && <span className="text-xs font-normal text-amber-700">The existing catalog link is unavailable. Its identity has been retained.</span>}
+      </Field>
+      <Field title="Supplier content unit *"><select required disabled={initialData?.productPolicyVersion === 1} value={form.baseUnit} onChange={(event) => change("baseUnit", event.target.value)} className={`${inputClass} disabled:bg-gray-100`}>
         <option value="">Choose a base unit</option>
         {form.baseUnit && !PRODUCT_BASE_UNITS.includes(form.baseUnit) && <option value={form.baseUnit} disabled>Legacy: {form.baseUnit} — select its meaning</option>}
-        {PRODUCT_BASE_UNITS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
-      </select></Field>
+        {PRODUCT_BASE_UNITS.map((unit) => <option key={unit} value={unit}>{productUnitLabel(unit)}</option>)}
+      </select>{initialData?.productPolicyVersion === 1 && <span className="text-xs font-normal text-gray-500">Reviewed content units are fixed. Create a new supplier offer for a different unit.</span>}</Field>
       <p className="sm:col-span-2 text-sm text-gray-600">An established supplier/catalog identity is preserved. Create a new offer for a different item. Package contents are expressed in the supplier base unit and converted to the linked catalog unit. Weight and volume cannot be mixed.</p>
       <Field title="Currency *"><input required pattern="[A-Za-z]{3}" maxLength={3} value={form.currency} onChange={(event) => change("currency", event.target.value)} className={inputClass} /></Field>
       <Field title="Price basis"><select value={form.priceBasis} onChange={(event) => change("priceBasis", event.target.value)} className={inputClass}>
@@ -108,6 +109,13 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
       <Field title="Default pricing model"><select value={form.pricingModel} onChange={(event) => change("pricingModel", event.target.value)} className={inputClass}><option>Per Purchase Unit</option><option>Per Base Unit</option></select></Field>
       <Field title="Default purchase unit *"><input required value={form.purchaseUnit} onChange={(event) => change("purchaseUnit", event.target.value)} placeholder="e.g. case of 24 bottles" className={inputClass} /></Field>
       <Field title={`Default package content (${form.baseUnit || "base units"}) *`}><input required type="number" min="0.000001" max="1000000" step="0.000001" value={form.baseUnitsPerPurchaseUnit} onChange={(event) => change("baseUnitsPerPurchaseUnit", event.target.value)} className={inputClass} /></Field>
+      <div className="sm:col-span-2 rounded-xl border border-brand-200 bg-brand-50 p-4 text-sm">
+        <p className="font-semibold text-gray-900">Physical stock-count conversion</p>
+        {linkedCatalog ? <><p className="mt-1">{linkedCatalog.name}: stock counts use {productUnitLabel(linkedCatalog.baseUnit)}.</p><p className="mt-1">{packageConversionLabel(form.baseUnitsPerPurchaseUnit, form.baseUnit, linkedCatalog.baseUnit)}</p></> : <p className="mt-1 text-gray-600">{form.catalogProductId ? "The catalog details are unavailable, so this conversion cannot be verified." : "Link a catalog product to include received goods in catalog stock-count comparisons."}</p>}
+        {linkedCatalog && linkedCatalog.inventoryTracked !== true && <p className="mt-2 text-amber-800">{linkedCatalog.inventoryTracked === false ? "Catalog inventory tracking is disabled." : "Catalog inventory tracking needs review."} This unit preview does not make receipts available to stock-count reports.</p>}
+        {linkedCatalog && (linkedCatalog.active === false || linkedCatalog.archived === true) && <p className="mt-2 text-amber-800">The linked catalog product is inactive. Review the link before activating this offer.</p>}
+        <p className="mt-2 text-xs text-gray-600">This is a unit preview. Orders preserve the reviewed package and receiving records quantities in the catalog unit; stock counts do not count supplier offers separately.</p>
+      </div>
       <Field title={form.pricingModel === "Per Base Unit" ? "Price per base unit (blank = unknown)" : "Default package price (blank = unknown)"}>
         <input type="number" min="0" step="0.0001" value={form.pricingModel === "Per Base Unit" ? form.pricePerBaseUnit : form.pricePerPurchaseUnit} onChange={(event) => change(form.pricingModel === "Per Base Unit" ? "pricePerBaseUnit" : "pricePerPurchaseUnit", event.target.value)} className={inputClass} />
       </Field>
@@ -119,6 +127,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
           <Field title="Package name *"><input required value={option.purchaseUnit} onChange={(event) => changeOption(option.id, "purchaseUnit", event.target.value)} className={inputClass} /></Field>
           <Field title={`Content (${form.baseUnit || "base units"}) *`}><input required type="number" min="0.000001" max="1000000" step="0.000001" value={option.baseUnitsPerPurchaseUnit} onChange={(event) => changeOption(option.id, "baseUnitsPerPurchaseUnit", event.target.value)} className={inputClass} /></Field>
           <Field title="Package price (blank = unknown)"><input type="number" min="0" step="0.0001" value={option.pricePerPurchaseUnit} onChange={(event) => changeOption(option.id, "pricePerPurchaseUnit", event.target.value)} className={inputClass} /></Field>
+          {linkedCatalog && <p className="sm:col-span-3 text-sm text-gray-600">{packageConversionLabel(option.baseUnitsPerPurchaseUnit, form.baseUnit, linkedCatalog.baseUnit)}</p>}
           <button type="button" onClick={() => change("purchaseOptions", form.purchaseOptions.filter((candidate) => candidate.id !== option.id))} className="text-sm text-red-700 text-left">Remove purchase option</button>
         </div>)}
         <button type="button" disabled={form.purchaseOptions.length >= 20} onClick={() => change("purchaseOptions", [...form.purchaseOptions, { id: crypto.randomUUID(), purchaseUnit: "", baseUnitsPerPurchaseUnit: "", pricePerPurchaseUnit: "" }])} className="rounded border px-3 py-2 text-sm">Add purchase option</button>

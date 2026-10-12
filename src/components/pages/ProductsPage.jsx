@@ -8,6 +8,8 @@ import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { collectPaginatedProducts } from "../../services/paginatedExport";
 import DataListTable from "../shared/DataListTable";
 import Modal from "../shared/Modal";
+import { Combobox } from "../ui/combobox";
+import { productUnitLabel } from "../../utils/productUnitDisplay";
 import { auth } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getCatalogProducts, importCatalogProducts } from "../../services/firebaseProducts";
@@ -132,7 +134,7 @@ function ScopedProductsPage({ hotelUid }) {
     { key: "brand", label: t("products.columns.brand") },
     { key: "category", label: t("products.columns.category") },
     { key: "subcategory", label: t("products.columns.subcategory") },
-    { key: "baseUnit", label: t("products.columns.baseUnit") },
+    { key: "baseUnit", label: "Stock-count unit", render: (product) => productUnitLabel(product.baseUnit) },
     { key: "inventoryTracked", label: "Inventory", render: (product) => product.inventoryTracked === true ? "Tracked" : product.inventoryTracked === false ? "Not tracked" : "Needs review" },
     {
       key: "active",
@@ -314,7 +316,7 @@ function ScopedProductsPage({ hotelUid }) {
   };
 
   return (
-    <PageShell>
+    <PageShell variant="procurement">
         <AsyncError error={query.error} onRetry={query.retry} label="Could not load products." />
         <AsyncError error={taxonomy.error} onRetry={taxonomy.retry} label="Could not load catalog categories." />
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -379,37 +381,33 @@ function ScopedProductsPage({ hotelUid }) {
             <label className="sr-only" htmlFor="products-category-filter">
               {t("products.filter.category")}
             </label>
-            <select
+            <Combobox
               id="products-category-filter"
-              value={selectedCategory}
-              onChange={(event) => setSelectedCategory(event.target.value)}
+              value={selectedCategory || null}
+              options={categories}
+              displayValue={(category) => category}
+              getOptionValue={(category) => category}
+              onChange={(category) => setSelectedCategory(category || "")}
+              placeholder={t("products.filter.allCategories")}
+              allowClear
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
-            >
-              <option value="">{t("products.filter.allCategories")}</option>
-              {categories.map((category) => (
-                <option key={category} value={category}>
-                  {category}
-                </option>
-              ))}
-            </select>
+            />
           </div>
           <div>
             <label className="sr-only" htmlFor="products-subcategory-filter">
               {t("products.filter.subcategory")}
             </label>
-            <select
+            <Combobox
               id="products-subcategory-filter"
-              value={selectedSubcategory}
-              onChange={(event) => setSelectedSubcategory(event.target.value)}
+              value={selectedSubcategory || null}
+              options={subcategories}
+              displayValue={(subcategory) => subcategory}
+              getOptionValue={(subcategory) => subcategory}
+              onChange={(subcategory) => setSelectedSubcategory(subcategory || "")}
+              placeholder={t("products.filter.allSubcategories")}
+              allowClear
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-800/20"
-            >
-              <option value="">{t("products.filter.allSubcategories")}</option>
-              {subcategories.map((subcategory) => (
-                <option key={subcategory} value={subcategory}>
-                  {subcategory}
-                </option>
-              ))}
-            </select>
+            />
           </div>
         </div>
 
@@ -425,7 +423,7 @@ function ScopedProductsPage({ hotelUid }) {
             />
             <div className="flex flex-wrap items-center justify-between gap-3">
               <span className="text-sm text-gray-500">
-                Pagina {pageIndex + 1} · Max. {PAGE_SIZE} producten per pagina{debouncedSearchTerm.trim() ? " · Server-side naamfilter actief" : ""}
+                Page {pageIndex + 1} · Up to {PAGE_SIZE} products per page
               </span>
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -439,7 +437,7 @@ function ScopedProductsPage({ hotelUid }) {
                   disabled={pageIndex === 0 || loading}
                   className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Vorige
+                  Previous
                 </button>
                 <button
                   type="button"
@@ -452,7 +450,7 @@ function ScopedProductsPage({ hotelUid }) {
                   disabled={!hasMorePages || loading}
                   className="rounded-lg border border-brand-800 bg-brand-800 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Volgende
+                  Next
                 </button>
               </div>
             </div>

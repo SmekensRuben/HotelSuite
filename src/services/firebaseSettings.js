@@ -12,6 +12,7 @@ import {
   writeBatch,
 } from "../firebaseConfig";
 import { runTransaction } from "firebase/firestore";
+import { invalidateProcurementReads, poolProcurementRead, requireServerSnapshot } from "./procurementReadPool";
 
 // Each settings domain has its own authority; never read the retired shared document.
 export async function getHotelBootstrap(hotelUid) {
@@ -44,12 +45,15 @@ const taxonomyPath = (hotelUid, domain, kind) =>
 
 async function getTaxonomy(hotelUid, domain) {
   if (!hotelUid) return { categories: [], subcategories: [] };
-  const [categories, subcategories] = await Promise.all([
-    getDocs(collection(db, taxonomyPath(hotelUid, domain, "categories"))),
-    getDocs(collection(db, taxonomyPath(hotelUid, domain, "subcategories"))),
-  ]);
-  const records = (snapshot) => snapshot.docs.map((record) => ({ ...record.data(), id: record.id }));
-  return { categories: records(categories), subcategories: records(subcategories) };
+  return poolProcurementRead(hotelUid, `taxonomy:${domain}`, async () => {
+    const [categories, subcategories] = await Promise.all([
+      getDocs(collection(db, taxonomyPath(hotelUid, domain, "categories"))),
+      getDocs(collection(db, taxonomyPath(hotelUid, domain, "subcategories"))),
+    ]);
+    requireServerSnapshot(categories); requireServerSnapshot(subcategories);
+    const records = (snapshot) => snapshot.docs.map((record) => ({ ...record.data(), id: record.id }));
+    return { categories: records(categories), subcategories: records(subcategories) };
+  });
 }
 
 async function createTaxonomyRecord(hotelUid, domain, kind, input) {
@@ -57,6 +61,7 @@ async function createTaxonomyRecord(hotelUid, domain, kind, input) {
   const payload = { name: requireName(input?.name) };
   if (kind === "subcategories") payload.categoryId = requireId(input?.categoryId, "Category ID");
   await setDoc(reference, payload);
+  invalidateProcurementReads(hotelUid);
   return { id: reference.id, ...payload };
 }
 
@@ -64,6 +69,7 @@ async function updateTaxonomyRecord(hotelUid, domain, kind, id, input) {
   const payload = { name: requireName(input?.name) };
   if (kind === "subcategories") payload.categoryId = requireId(input?.categoryId, "Category ID");
   await updateDoc(doc(db, taxonomyPath(hotelUid, domain, kind), requireId(id)), payload);
+  invalidateProcurementReads(hotelUid);
 }
 
 async function deleteTaxonomyCategory(hotelUid, domain, categoryId) {
@@ -83,10 +89,12 @@ async function deleteTaxonomyCategory(hotelUid, domain, categoryId) {
     });
     transaction.delete(categoryRef);
   });
+  invalidateProcurementReads(hotelUid);
 }
 
 async function deleteTaxonomySubcategory(hotelUid, domain, subcategoryId) {
   await deleteDoc(doc(db, taxonomyPath(hotelUid, domain, "subcategories"), requireId(subcategoryId)));
+  invalidateProcurementReads(hotelUid);
 }
 
 export const getCatalogTaxonomy = (hotelUid) => getTaxonomy(hotelUid, "catalog");
@@ -134,41 +142,43 @@ export async function deleteOperaUserMapping(hotelUid, operaUser) {
 }
 
 // *** OUTLETS ***
-export async function getOutlets(hotelUid) {
+export async function getOutlets(hotelUid, options = {}) {
   if (!hotelUid) return [];
+  return poolProcurementRead(hotelUid, `outlets:${options.includeArchived === true}`, async () => {
 
-  const outletsCol = collection(db, `hotels/${hotelUid}/outlets`);
-  const snapshot = await getDocs(outletsCol);
+    const outletsCol = collection(db, `hotels/${hotelUid}/outlets`);
+    const snapshot = requireServerSnapshot(await getDocs(outletsCol));
 
-  const outlets = snapshot.docs.map(docSnap => {
-    const data = docSnap.data() || {};
-    const normalizedId = String(data.id || docSnap.id || "").trim();
+    const outlets = snapshot.docs.map(docSnap => {
+      const data = docSnap.data() || {};
+      const normalizedId = docSnap.id;
 
-    return {
-      ...data,
-      id: normalizedId || undefined,
-      name: data.name || normalizedId,
-      subOutlets: Array.isArray(data.subOutlets)
-        ? data.subOutlets.map(sub => ({
-            ...sub,
-            subType: sub?.subType || "",
-          }))
-        : [],
-      menuCategories: Array.isArray(data.menuCategories) ? data.menuCategories : [],
-      costCenterIds: Array.isArray(data.costCenterIds)
-        ? data.costCenterIds
-            .map(id => (id === null || id === undefined ? "" : String(id).trim()))
-            .filter(Boolean)
-        : [],
-    };
+      return {
+        ...data,
+        id: normalizedId || undefined,
+        name: data.name || normalizedId,
+        subOutlets: Array.isArray(data.subOutlets)
+          ? data.subOutlets.map(sub => ({
+              ...sub,
+              subType: sub?.subType || "",
+            }))
+          : [],
+        menuCategories: Array.isArray(data.menuCategories) ? data.menuCategories : [],
+        costCenterIds: Array.isArray(data.costCenterIds)
+          ? data.costCenterIds
+              .map(id => (id === null || id === undefined ? "" : String(id).trim()))
+              .filter(Boolean)
+          : [],
+      };
+    });
+
+    return outlets.filter((outlet) => options.includeArchived === true || (outlet.archived !== true && outlet.active !== false && !outlet.archivedAt)).sort((a, b) =>
+      String(a?.name || "").localeCompare(String(b?.name || ""), undefined, {
+        sensitivity: "base",
+        numeric: true,
+      })
+    );
   });
-
-  return outlets.sort((a, b) =>
-    String(a?.name || "").localeCompare(String(b?.name || ""), undefined, {
-      sensitivity: "base",
-      numeric: true,
-    })
-  );
 }
 
 export async function setOutlets(hotelUid, outlets) {
@@ -221,6 +231,7 @@ export async function setOutlets(hotelUid, outlets) {
   });
 
   await batch.commit();
+  invalidateProcurementReads(hotelUid);
 
   return normalizedOutlets;
 }
@@ -245,6 +256,7 @@ export async function createOutlet(hotelUid, outletInput) {
   };
 
   await setDoc(outletRef, payload);
+  invalidateProcurementReads(hotelUid);
   return payload;
 }
 
@@ -252,13 +264,13 @@ export async function getOutletById(hotelUid, outletId) {
   if (!hotelUid || !outletId) return null;
 
   const outletRef = doc(db, `hotels/${hotelUid}/outlets`, outletId);
-  const snap = await getDoc(outletRef);
+  const snap = requireServerSnapshot(await getDoc(outletRef));
   if (!snap.exists()) return null;
 
   const data = snap.data() || {};
   return {
     ...data,
-    id: String(data.id || snap.id || "").trim() || snap.id,
+    id: snap.id,
     name: String(data.name || "").trim(),
   };
 }
@@ -275,6 +287,7 @@ export async function updateOutlet(hotelUid, outletId, outletInput) {
     updatedAt: new Date(),
     updatedBy: outletInput?.updatedBy || null,
   });
+  invalidateProcurementReads(hotelUid);
 }
 
 export async function getOutletApprovers(hotelUid, outletId) {
@@ -300,29 +313,31 @@ export async function setOutletApprovers(hotelUid, outletId, approvers) {
     userIds: (Array.isArray(approvers) ? approvers : []).map((a) => a.id) })).data;
 }
 
-export async function getLocations(hotelUid) {
+export async function getLocations(hotelUid, options = {}) {
   if (!hotelUid) return [];
+  return poolProcurementRead(hotelUid, `locations:${options.includeArchived === true}`, async () => {
 
-  const locationsCol = collection(db, `hotels/${hotelUid}/locations`);
-  const snapshot = await getDocs(locationsCol);
+    const locationsCol = collection(db, `hotels/${hotelUid}/locations`);
+    const snapshot = requireServerSnapshot(await getDocs(locationsCol));
 
-  const locations = snapshot.docs.map((docSnap) => {
-    const data = docSnap.data() || {};
-    const normalizedId = String(data.id || docSnap.id || "").trim();
+    const locations = snapshot.docs.map((docSnap) => {
+      const data = docSnap.data() || {};
+      const normalizedId = docSnap.id;
 
-    return {
-      ...data,
-      id: normalizedId || undefined,
-      name: String(data.name || normalizedId).trim(),
-    };
+      return {
+        ...data,
+        id: normalizedId || undefined,
+        name: String(data.name || normalizedId).trim(),
+      };
+    });
+
+    return locations.filter((location) => options.includeArchived === true || (location.archived !== true && location.active !== false && !location.archivedAt)).sort((a, b) =>
+      String(a?.name || "").localeCompare(String(b?.name || ""), undefined, {
+        sensitivity: "base",
+        numeric: true,
+      })
+    );
   });
-
-  return locations.sort((a, b) =>
-    String(a?.name || "").localeCompare(String(b?.name || ""), undefined, {
-      sensitivity: "base",
-      numeric: true,
-    })
-  );
 }
 
 export async function createLocation(hotelUid, locationInput) {
@@ -341,6 +356,7 @@ export async function createLocation(hotelUid, locationInput) {
   };
 
   await setDoc(locationRef, payload);
+  invalidateProcurementReads(hotelUid);
   return payload;
 }
 
@@ -348,13 +364,13 @@ export async function getLocationById(hotelUid, locationId) {
   if (!hotelUid || !locationId) return null;
 
   const locationRef = doc(db, `hotels/${hotelUid}/locations`, locationId);
-  const snap = await getDoc(locationRef);
+  const snap = requireServerSnapshot(await getDoc(locationRef));
   if (!snap.exists()) return null;
 
   const data = snap.data() || {};
   return {
     ...data,
-    id: String(data.id || snap.id || "").trim() || snap.id,
+    id: snap.id,
     name: String(data.name || "").trim(),
   };
 }
@@ -370,6 +386,77 @@ export async function updateLocation(hotelUid, locationId, locationInput) {
     name: cleanedName,
     updatedAt: new Date(),
     updatedBy: locationInput?.updatedBy || null,
+  });
+  invalidateProcurementReads(hotelUid);
+}
+
+function resourceCommandKey(hotelUid, resourceCollection, resourceId) {
+  requireId(hotelUid, "Hotel ID"); requireId(resourceId, "Resource ID");
+  if (!["locations", "outlets"].includes(resourceCollection)) throw new Error("Invalid procurement resource collection.");
+  const actor = auth.currentUser?.uid;
+  if (!actor) throw new Error("A signed-in hotel user is required.");
+  return `procurement-resource-command:${actor}:${hotelUid}:${resourceCollection}:${resourceId}`;
+}
+
+export function getPendingProcurementResourceCommand(hotelUid, resourceCollection, resourceId) {
+  if (!hotelUid || !resourceId || !auth.currentUser?.uid) return null;
+  return savedResourceCommand(hotelUid, resourceCollection, resourceId)?.input || null;
+}
+
+function savedResourceCommand(hotelUid, resourceCollection, resourceId) {
+  const raw = sessionStorage.getItem(resourceCommandKey(hotelUid, resourceCollection, resourceId));
+  if (!raw) return null;
+  try {
+    const pending = JSON.parse(raw), input = pending?.input;
+    if (!input || input.hotelUid !== hotelUid || input.collection !== resourceCollection || input.resourceId !== resourceId
+      || input.action !== "archive" || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0
+      || typeof pending.requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(pending.requestId)) throw new Error("Invalid command");
+    return pending;
+  } catch {
+    throw new Error("The saved archive request cannot be read. Its outcome needs review; no replacement request was created.");
+  }
+}
+
+export async function retryPendingProcurementResourceCommand(hotelUid, resourceCollection, resourceId) {
+  const input = getPendingProcurementResourceCommand(hotelUid, resourceCollection, resourceId);
+  if (!input) throw new Error("No pending archive request is available.");
+  return archiveProcurementResource(hotelUid, resourceCollection, resourceId, input.expectedRevision);
+}
+
+async function archiveProcurementResource(hotelUid, resourceCollection, resourceId, expectedRevision) {
+  const key = resourceCommandKey(hotelUid, resourceCollection, resourceId);
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error("The current resource revision is required.");
+  const input = { hotelUid, collection: resourceCollection, resourceId, action: "archive", expectedRevision };
+  let pending = savedResourceCommand(hotelUid, resourceCollection, resourceId);
+  if (pending && JSON.stringify(pending.input) !== JSON.stringify(input)) throw new Error("The previous archive result is uncertain. Retry the original request first.");
+  if (!pending) {
+    pending = { input, requestId: crypto.randomUUID() };
+    sessionStorage.setItem(key, JSON.stringify(pending));
+  }
+  try {
+    const { data } = await httpsCallable(functions, "mutateHotelProcurementResource")({ ...pending.input, requestId: pending.requestId });
+    if (data?.hotelUid !== hotelUid || data.collection !== resourceCollection || data.resourceId !== resourceId
+      || data.archived !== true || !Number.isSafeInteger(data.revision) || data.revision !== expectedRevision + 1) throw new Error("Archive response could not be validated. Retry the original request.");
+    sessionStorage.removeItem(key);
+    invalidateProcurementReads(hotelUid);
+    return data;
+  } catch (error) {
+    if (error?.details?.resourceRequestUncommitted === true) sessionStorage.removeItem(key);
+    invalidateProcurementReads(hotelUid);
+    throw error;
+  }
+}
+
+export const archiveLocation = (hotelUid, locationId, expectedRevision = 0) => archiveProcurementResource(hotelUid, "locations", locationId, expectedRevision);
+export const archiveOutlet = (hotelUid, outletId, expectedRevision = 0) => archiveProcurementResource(hotelUid, "outlets", outletId, expectedRevision);
+
+export async function getHotelStockTemplateDisplay(hotelUid, locationId, templateId) {
+  requireId(hotelUid, "Hotel ID"); requireId(locationId, "Location ID"); requireId(templateId, "Template ID");
+  return poolProcurementRead(hotelUid, `template-display:${locationId}:${templateId}`, async () => {
+    const { data } = await httpsCallable(functions, "getHotelStockTemplateDisplay")({ hotelUid, locationId, templateId });
+    if (data?.hotelUid !== hotelUid || data.locationId !== locationId || data.templateId !== templateId
+      || !Array.isArray(data.items) || data.items.length > 250) throw new Error("Stock template display response scope is invalid.");
+    return data;
   });
 }
 
@@ -470,10 +557,11 @@ async function mutateStockTemplate(hotelUid, locationId, templateId, intent, exp
     const result = await httpsCallable(functions, "mutateHotelStockTemplate")(pending.payload);
     const data = result.data;
     if (data?.hotelUid !== hotelUid || data.locationId !== locationId || data.templateId !== pending.payload.templateId || !Number.isSafeInteger(data.revision)) throw new Error("Stock template command response scope is invalid. Retry the same action.");
-    sessionStorage.removeItem(storageKey); notifyTemplateCommand();
+    sessionStorage.removeItem(storageKey); notifyTemplateCommand(); invalidateProcurementReads(hotelUid);
     return data;
   } catch (error) {
     if (error?.details?.stockTemplateRequestUncommitted === true) sessionStorage.removeItem(storageKey);
+    invalidateProcurementReads(hotelUid);
     notifyTemplateCommand();
     throw error;
   }

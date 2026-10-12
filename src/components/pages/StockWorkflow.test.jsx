@@ -17,6 +17,7 @@ vi.mock("../../services/firebaseStockCounts", () => ({ getPendingCountCreation: 
   finishStockCount: mocks.finishParent,
   STOCK_COUNT_TYPES: ["Ad Hoc", "Daily", "Weekly", "Month-End"] }));
 vi.mock("../../services/firebaseProducts", () => ({ getSupplierProducts: mocks.products, getCatalogProducts: mocks.catalog }));
+vi.mock("../../services/firebaseUserManagement", () => ({ getHotelUserDisplayName: vi.fn().mockResolvedValue("Hotel employee") }));
 vi.mock("../../services/firebaseInventory", () => ({ getInventoryLocations: mocks.inventoryLocations, getInventoryCheckpoints: mocks.checkpoints, getInventoryPeriod: mocks.period }));
 vi.mock("../../services/firebaseSettings", () => ({ getPendingStockTemplateCommand: () => null, retryPendingStockTemplateCommand: vi.fn(), getOutlets: mocks.outlets }));
 vi.mock("../layout/HeaderBar", () => ({ default: () => null }));
@@ -26,6 +27,13 @@ const count = (label = "Coffee", revision = 7) => ({ id: "stock-a", name: "Weekl
   locations: [{ locationId: "store", locationName: "Store", stockTemplateId: "template", status: "In Progress",
     stockTemplate: { id: "template", name: "Weekly", items: [{ supplierProductId: "coffee", outletId: "bar",
       supplierProductName: label, outletName: "Bar", pricePerPurchaseUnit: 12.5 }] }, countedItems: [] }] });
+const chooseCombo = async (label, option) => {
+  const input = screen.getByRole("combobox", { name: label });
+  await waitFor(() => expect(input).toBeEnabled());
+  await act(async () => fireEvent.focus(input));
+  const choice = await screen.findByRole("option", { name: option });
+  await act(async () => fireEvent.click(choice));
+};
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 beforeEach(() => {
   vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.permissions = ["stockcounts.read", "stockcounts.update", "stockcounts.create"];
@@ -188,6 +196,50 @@ const catalogCount = (label = "Milk", revision = 12) => ({ id: "stock-a", invent
   locations: [{ locationId: "store", locationName: "Store", status: "In Progress", stockTemplate: { id: "template", name: "Catalog", items: [
     { catalogProductId: "milk", catalogProductName: label, baseUnit: "l", unitCost: null }, { catalogProductId: "flour", catalogProductName: "Flour", baseUnit: "kg", unitCost: null } ] }, countedItems: [] }] });
 describe("catalog physical counts and periodic inventory", () => {
+  it("does not fetch optional catalog choices until requested and exposes later tracked results", async () => {
+    mocks.permissions.push("catalogproducts.read"); mocks.getCount.mockResolvedValue(catalogCount());
+    mocks.catalog.mockImplementation(async (_hotel, options) => options.cursor
+      ? { products: [{ id: "juice", catalogProductName: "Orange juice", baseUnit: "l", inventoryTracked: true }], hasMore: false }
+      : { products: [{ id: "untracked", catalogProductName: "Untracked product", baseUnit: "each", inventoryTracked: false }], hasMore: true, cursor: "next" });
+    render(<StockCountLocationPage />); await screen.findByText("Milk");
+    expect(mocks.catalog).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Add a product outside the template" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Load more catalog choices" }));
+    await chooseCombo("Additional catalog product", "Orange juice (l)");
+    fireEvent.click(screen.getByRole("button", { name: "Add catalog product" }));
+    expect(await screen.findByLabelText("Count Orange juice")).toBeInTheDocument();
+    expect(mocks.catalog).toHaveBeenNthCalledWith(1, "hotel-a", { pageSize: 100, searchTerm: "" });
+    expect(mocks.catalog).toHaveBeenNthCalledWith(2, "hotel-a", { pageSize: 100, searchTerm: "", cursor: "next" });
+    expect(screen.queryByText("Untracked product (each)")).not.toBeInTheDocument();
+  });
+  it("pages Firestore-style cursors without serializing their internal reference objects", async () => {
+    mocks.permissions.push("catalogproducts.read"); mocks.getCount.mockResolvedValue(catalogCount());
+    const first = { id: "one", ref: { path: "hotels/hotel-a/catalogProducts/one" } }; first.internal = first;
+    const next = { id: "two", ref: { path: "hotels/hotel-a/catalogProducts/two" } }; next.internal = next;
+    mocks.catalog.mockImplementation(async (_hotel, options) => options.cursor === first
+      ? { products: [{ id: "juice", catalogProductName: "Orange juice", baseUnit: "l", inventoryTracked: true }], hasMore: true, cursor: next }
+      : options.cursor === next ? { products: [], hasMore: false }
+      : { products: [], hasMore: true, cursor: first });
+    render(<StockCountLocationPage />); await screen.findByText("Milk");
+    fireEvent.click(screen.getByRole("button", { name: "Add a product outside the template" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Load more catalog choices" }));
+    await chooseCombo("Additional catalog product", "Orange juice (l)");
+    fireEvent.click(screen.getByRole("button", { name: "Load more catalog choices" }));
+    await waitFor(() => expect(mocks.catalog).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add catalog product" })).toBeEnabled();
+  });
+  it("keeps a catalog count editable when lazily requested product choices fail", async () => {
+    mocks.permissions.push("catalogproducts.read"); mocks.getCount.mockResolvedValue(catalogCount());
+    render(<StockCountLocationPage />); await screen.findByText("Milk");
+    fireEvent.change(screen.getByLabelText("Count Milk"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add a product outside the template" }));
+    await screen.findByText("Catalog denied");
+    expect(screen.getByLabelText("Count Milk")).toHaveValue(2);
+    expect(screen.getByRole("button", { name: "Save Counts" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Save Counts" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledWith("hotel-a", "stock-a", "store", expect.arrayContaining([expect.objectContaining({ catalogProductId: "milk", quantity: 2 })]), "counter", 12));
+  });
   it("counts base quantities without catalog access, keeps unknown cost, requires explicit zero", async () => {
     mocks.getCount.mockResolvedValue(catalogCount());
     render(<StockCountLocationPage />);
@@ -224,11 +276,9 @@ describe("catalog physical counts and periodic inventory", () => {
   it("shows period quantity evidence and unknown cost, without requiring private catalog permissions", async () => {
     mocks.permissions = ["stockcounts.read"];
     render(<InventoryPeriodsPage />);
-    await screen.findByRole("option", { name: "Store" });
-    fireEvent.change(screen.getByLabelText("Physical location"), { target: { value: "store" } });
-    await screen.findAllByRole("option", { name: /Opening ·/ });
-    fireEvent.change(screen.getByLabelText("Opening count"), { target: { value: "opening" } });
-    fireEvent.change(screen.getByLabelText("Closing count"), { target: { value: "closing" } });
+    await chooseCombo("Physical location", "Store");
+    await chooseCombo("Opening count", /Opening ·/);
+    await chooseCombo("Closing count", /Closing ·/);
     fireEvent.click(screen.getByRole("button", { name: "Compare counts" }));
     await screen.findByText("Opening cost is unknown.");
     expect(screen.getByText("50")).toBeInTheDocument(); expect(screen.getAllByText("Unavailable")).toHaveLength(2);
@@ -238,20 +288,20 @@ describe("catalog physical counts and periodic inventory", () => {
   it("keeps saved comparison distinct from incomplete current evidence after late receipts", async () => {
     const saved = await mocks.period();
     mocks.period.mockResolvedValue({ ...saved, currentlyComplete: false, postClosureIssues: [{ code: "late-posting-after-closing", detail: "Late milk receipt" }], items: saved.items.map((item) => ({ ...item, periodUnitCost: 2, inferredUsageValue: 100 })) });
-    render(<InventoryPeriodsPage />); await screen.findByRole("option", { name: "Store" });
-    fireEvent.change(screen.getByLabelText("Physical location"), { target: { value: "store" } }); await screen.findAllByRole("option", { name: /Opening ·/ });
-    fireEvent.change(screen.getByLabelText("Opening count"), { target: { value: "opening" } }); fireEvent.change(screen.getByLabelText("Closing count"), { target: { value: "closing" } });
+    render(<InventoryPeriodsPage />);
+    await chooseCombo("Physical location", "Store");
+    await chooseCombo("Opening count", /Opening ·/);
+    await chooseCombo("Closing count", /Closing ·/);
     fireEvent.click(screen.getByRole("button", { name: "Compare counts" })); await screen.findByText("Late milk receipt");
-    expect(screen.getByText(/Current period evidence: Incomplete/)).toBeInTheDocument();
+    expect(screen.getByText("Incomplete — review cutoff and late postings")).toBeInTheDocument();
     expect(screen.getAllByText("Unavailable")).toHaveLength(2);
     expect(screen.queryByText("$100.00")).not.toBeInTheDocument();
   });
   it("rejects reversed count selection without calling report", async () => {
-    render(<InventoryPeriodsPage />); await screen.findByRole("option", { name: "Store" });
-    fireEvent.change(screen.getByLabelText("Physical location"), { target: { value: "store" } });
-    await screen.findAllByRole("option", { name: /Opening ·/ });
-    fireEvent.change(screen.getByLabelText("Opening count"), { target: { value: "closing" } });
-    fireEvent.change(screen.getByLabelText("Closing count"), { target: { value: "opening" } });
+    render(<InventoryPeriodsPage />);
+    await chooseCombo("Physical location", "Store");
+    await chooseCombo("Opening count", /Closing ·/);
+    await chooseCombo("Closing count", /Opening ·/);
     expect(screen.getByRole("button", { name: "Compare counts" })).toBeDisabled(); expect(mocks.period).not.toHaveBeenCalled();
   });
 });

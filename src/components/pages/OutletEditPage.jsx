@@ -1,11 +1,13 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
+import OutletApproverPicker from "./OutletApproverPicker";
 import { auth, signOut } from "../../firebaseConfig";
 import { usePermission } from "../../hooks/usePermission";
 import { useHotelContext } from "../../contexts/HotelContext";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { listHotelUsers } from "../../services/firebaseOnboarding";
 import {
   getOutletApprovers,
@@ -15,148 +17,182 @@ import {
 } from "../../services/firebaseSettings";
 
 export default function OutletEditPage() {
-  const navigate = useNavigate();
-  const { outletId } = useParams();
-  const { hotelUid } = useHotelContext();
-  const canManageApprovers = usePermission("outlets", "approvers");
-  const [saveError, setSaveError] = useState("");
-  const [name, setName] = useState("");
-  const [users, setUsers] = useState([]);
-  const [selectedApproverIds, setSelectedApproverIds] = useState([]);
-  const [saving, setSaving] = useState(false);
-
-  const today = useMemo(
-    () =>
-      new Date().toLocaleDateString(undefined, {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }),
-    []
-  );
-
-  const handleLogout = async () => {
-    await signOut(auth);
-    sessionStorage.clear();
-    window.location.href = "/login";
-  };
-
-  useEffect(() => {
-    const init = async () => {
-      if (!hotelUid || !outletId) return;
-      const [allUsers, outlet, approvers] = await Promise.all([
-        canManageApprovers ? listHotelUsers(hotelUid) : Promise.resolve([]),
-        getOutletById(hotelUid, outletId),
-        canManageApprovers ? getOutletApprovers(hotelUid, outletId) : Promise.resolve([]),
-      ]);
-      const filteredUsers = allUsers.filter((user) => user.canApprove);
-      setUsers(filteredUsers);
-      setName(String(outlet?.name || ""));
-      setSelectedApproverIds(approvers.map((item) => item.id));
+  const navigate = useNavigate(),
+    { outletId } = useParams(),
+    { hotelUid } = useHotelContext();
+  const canUpdate = usePermission("outlets", "update"),
+    canManageApprovers = usePermission("outlets", "approvers");
+  const [name, setName] = useState(""),
+    [selectedIds, setSelectedIds] = useState([]),
+    [saving, setSaving] = useState(false),
+    [error, setError] = useState("");
+  const scopeKey = `${hotelUid}:${outletId}:${canManageApprovers}`;
+  const active = useRef({ key: scopeKey });
+  if (active.current.key !== scopeKey) active.current = { key: scopeKey };
+  const load = useCallback(async () => {
+    const [outlet, users, approvers] = await Promise.all([
+      getOutletById(hotelUid, outletId),
+      canManageApprovers ? listHotelUsers(hotelUid) : [],
+      canManageApprovers ? getOutletApprovers(hotelUid, outletId) : [],
+    ]);
+    return {
+      outlet,
+      users: users.filter((user) => user.canApprove),
+      approvers,
     };
-
-    init().catch((error) => setSaveError(error.message || "Unable to load the outlet."));
   }, [hotelUid, outletId, canManageApprovers]);
-
-  const handleSubmit = async (event) => {
+  const query = useScopedAsync({
+    scopeKey,
+    enabled: Boolean(hotelUid && outletId),
+    load,
+  });
+  useEffect(() => {
+    active.current = { key: scopeKey };
+    setName("");
+    setSelectedIds([]);
+    setSaving(false);
+    setError("");
+    return () => {
+      active.current = { key: null };
+    };
+  }, [scopeKey]);
+  useEffect(() => {
+    if (query.data) {
+      setName(query.data.outlet?.name || "");
+      setSelectedIds(query.data.approvers.map((user) => user.id));
+    }
+  }, [query.data]);
+  const outlet = query.data?.outlet;
+  const submit = async (event) => {
     event.preventDefault();
-    if (!hotelUid || !outletId || !name.trim()) return;
-
+    if (
+      !canUpdate ||
+      !hotelUid ||
+      !outletId ||
+      !name.trim() ||
+      saving ||
+      !outlet ||
+      outlet.archived === true
+    )
+      return;
+    const requested = active.current;
     setSaving(true);
-    setSaveError("");
+    setError("");
     try {
-      const selectedUsers = users.filter((user) => selectedApproverIds.includes(user.id));
       await updateOutlet(hotelUid, outletId, {
         name: name.trim(),
-        updatedBy: auth.currentUser?.uid || "unknown",
+        updatedBy: auth.currentUser?.uid || null,
       });
-      if (canManageApprovers) await setOutletApprovers(
-        hotelUid,
-        outletId,
-        selectedUsers.map((user) => ({
-          id: user.id,
-          email: user.email || "",
-          firstName: user.firstName || "",
-          lastName: user.lastName || "",
-          displayName: `${user.firstName || ""} ${user.lastName || ""}`.trim(),
-        }))
-      );
-      navigate(`/settings/outlets/${outletId}`);
-    } catch (error) { setSaveError(error.message || "Unable to save the outlet."); }
-    finally { setSaving(false); }
+      if (active.current !== requested) return;
+      if (canManageApprovers)
+        await setOutletApprovers(
+          hotelUid,
+          outletId,
+          query.data.users.filter((user) => selectedIds.includes(user.id)),
+        );
+      if (active.current === requested)
+        navigate(`/settings/outlets/${outletId}`);
+    } catch (failure) {
+      if (active.current === requested)
+        setError(failure.message || "Unable to save the outlet.");
+    } finally {
+      if (active.current === requested) setSaving(false);
+    }
   };
-
-  const toggleApprover = (userId) => {
-    setSelectedApproverIds((prev) =>
-      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
-    );
-  };
-
+  const disabled =
+    !canUpdate ||
+    saving ||
+    query.loading ||
+    Boolean(query.error) ||
+    !outlet ||
+    outlet.archived === true;
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
-      <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <HeaderBar
+        today={new Date().toLocaleDateString()}
+        onLogout={async () => {
+          await signOut(auth);
+          sessionStorage.clear();
+          window.location.href = "/login";
+        }}
+      />
+      <ProcurementPage width="form" className="space-y-6">
         <div>
-          <p className="text-sm text-gray-500 uppercase tracking-wide">Settings</p>
-          <h1 className="text-3xl font-semibold">Edit Outlet</h1>
+          <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+            Purchasing &amp; Inventory · Settings
+          </p>
+          <h1 className="mt-1 text-3xl font-semibold">Edit Outlet</h1>
         </div>
-
-        <Card>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="outlet-name" className="block text-sm font-medium text-gray-700 mb-1">
-                Name
-              </label>
-              <input
-                id="outlet-name"
-                type="text"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Outlet name"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                required
-              />
-            </div>
-
-            {canManageApprovers && <div>
-              <p className="block text-sm font-medium text-gray-700 mb-2">Approvers</p>
-              <div className="max-h-64 overflow-y-auto rounded-lg border border-gray-200 p-3 space-y-2">
-                {users.map((user) => {
-                  const label = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email || user.id;
-                  return (
-                    <label key={user.id} className="flex flex-wrap items-center gap-2 text-sm text-gray-700">
-                      <input
-                        type="checkbox"
-                        checked={selectedApproverIds.includes(user.id)}
-                        onChange={() => toggleApprover(user.id)}
-                      />
-                      <span>{label} {user.email ? `(${user.email})` : ""}</span>
-                    </label>
-                  );
-                })}
+        {query.loading ? (
+          <p>Loading outlet and approvers...</p>
+        ) : query.error ? (
+          <div role="alert" className="text-sm text-red-700">
+            <p>{query.error.message || "Unable to load outlet."}</p>
+            <button type="button" onClick={query.retry} className="underline">
+              Retry outlet
+            </button>
+          </div>
+        ) : !outlet ? (
+          <Card>Outlet not found.</Card>
+        ) : (
+          <Card>
+            <form onSubmit={submit} className="space-y-5">
+              {outlet.archived === true && (
+                <p className="text-sm text-amber-800">
+                  This outlet is archived and cannot be edited.
+                </p>
+              )}
+              <div>
+                <label
+                  htmlFor="outlet-name"
+                  className="mb-2 block text-sm font-medium text-gray-700"
+                >
+                  Name
+                </label>
+                <input
+                  id="outlet-name"
+                  maxLength={200}
+                  value={name}
+                  disabled={disabled}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Outlet name"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  required
+                />
               </div>
-            </div>}
-
-            {saveError && <p role="alert" className="text-sm text-red-700">{saveError}</p>}
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => navigate(`/settings/outlets/${outletId}`)}
-                className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium hover:bg-gray-100"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="px-4 py-2 rounded-lg bg-brand-800 text-white text-sm font-semibold hover:bg-brand-950 disabled:opacity-60"
-              >
-                {saving ? "Saving..." : "Save Outlet"}
-              </button>
-            </div>
-          </form>
-        </Card>
-      </PageContainer>
+              {canManageApprovers && (
+                <OutletApproverPicker
+                  users={query.data.users}
+                  selectedIds={selectedIds}
+                  onChange={setSelectedIds}
+                  disabled={disabled}
+                />
+              )}
+              {error && (
+                <p role="alert" className="text-sm text-red-700">
+                  {error}
+                </p>
+              )}
+              <div className="flex justify-end gap-2 border-t border-gray-100 pt-4">
+                <button
+                  type="button"
+                  onClick={() => navigate(`/settings/outlets/${outletId}`)}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={disabled || !name.trim()}
+                  className="rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  {saving ? "Saving..." : "Save Outlet"}
+                </button>
+              </div>
+            </form>
+          </Card>
+        )}
+      </ProcurementPage>
     </div>
   );
 }

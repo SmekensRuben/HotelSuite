@@ -4,6 +4,7 @@ import { uploadCatalogProductImage } from "../../services/firebaseProducts";
 import { getCatalogTaxonomy } from "../../services/firebaseSettings";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import AsyncError from "../shared/AsyncError";
+import { productUnitLabel } from "../../utils/productUnitDisplay";
 
 const defaultState = {
   name: "",
@@ -211,17 +212,18 @@ export default function ProductFormFields({
       </SectionCard>
 
       <SectionCard title={t("products.sections.units")}>
-        <p className="sm:col-span-2 text-sm text-gray-600">Physical counts use this catalog unit. Supplier packaging is configured separately.</p>
+        <p className="sm:col-span-2 text-sm text-gray-600">This is the stock-count unit for the physical article. Supplier packages may use compatible units, such as 1000 ml for a catalog product counted in 1 l. Receiving converts package contents into this unit.</p>
         <label className="sm:col-span-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
           <input type="checkbox" checked={formState.inventoryTracked === true} onChange={(event) => updateField("inventoryTracked", event.target.checked)} /> Track this item in physical inventory counts
         </label>
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           {t("products.fields.baseUnit")}
-          <select required value={formState.baseUnit} onChange={(event) => updateField("baseUnit", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm">
+          <select required disabled={initialData?.productPolicyVersion === 1} value={formState.baseUnit} onChange={(event) => updateField("baseUnit", event.target.value)} className="rounded border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100">
             <option value="">Choose a base unit</option>
             {formState.baseUnit && !["g", "kg", "ml", "l", "each"].includes(formState.baseUnit) && <option value={formState.baseUnit} disabled>Legacy unit: {formState.baseUnit} — select its meaning</option>}
-            {["g", "kg", "ml", "l", "each"].map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+            {["g", "kg", "ml", "l", "each"].map((unit) => <option key={unit} value={unit}>{productUnitLabel(unit)}</option>)}
           </select>
+          {initialData?.productPolicyVersion === 1 && <span className="text-xs font-normal text-gray-500">The reviewed stock unit is fixed to protect existing counts and receipts. Create a new catalog identity for a different unit.</span>}
         </label>
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           Legacy quantity metadata (optional)

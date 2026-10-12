@@ -5,6 +5,7 @@ const { requireDocumentId } = require("./subscriptions");
 const { text, revision, digest } = require("./validation");
 const { gated } = require("./saasRollout");
 const { resolvePurchaseOption, inventoryTerms } = require("./productPolicy");
+const { isArchived } = require("./procurementResources");
 
 const stamp = () => admin.firestore.FieldValue.serverTimestamp();
 function dateOnly(value) {
@@ -64,6 +65,7 @@ async function canonicalLines(db, tx, hotelUid, items) {
   const refs = [...supplierIds.map((id) => db.doc(`hotels/${hotelUid}/suppliers/${id}`)), ...outletIds.map((id) => db.doc(`hotels/${hotelUid}/outlets/${id}`))];
   const snapshots = await tx.getAll(...refs);
   if (snapshots.some((s) => !s.exists)) throw new HttpsError("failed-precondition", "A supplier or outlet no longer exists in this hotel.");
+  if (snapshots.slice(supplierIds.length).some((s) => isArchived(s.data()))) throw new HttpsError("failed-precondition", "Choose an active outlet before creating or confirming this order.");
   const suppliers = new Map(snapshots.slice(0, supplierIds.length).map((s) => [s.id, s.data()]));
   const outlets = new Map(snapshots.slice(supplierIds.length).map((s) => [s.id, s.data()]));
   const lines = input.map((item) => {
@@ -262,6 +264,7 @@ async function setOutletApproversHandler(request, services = {}) {
     await requireHotelPermission(db, { ...request }, hotelUid, "outlets", "approvers", tx);
     const outlet = await tx.get(db.doc(`hotels/${hotelUid}/outlets/${outletId}`));
     if (!outlet.exists) throw new HttpsError("not-found", "Outlet not found.");
+    if (isArchived(outlet.data())) throw new HttpsError("failed-precondition", "Archived outlets cannot receive new approver assignments.");
     const members = ids.length ? await tx.getAll(...ids.map((id) => db.doc(`hotels/${hotelUid}/members/${id}`))) : [];
     if (members.some((m) => !m.exists || !permissionAllows(normalizedPermissions(m.data().permissions), "orders", "approve"))) throw new HttpsError("failed-precondition", "Every approver must belong to this hotel and have orders.approve.");
     const existing = await tx.get(db.collection(`hotels/${hotelUid}/outlets/${outletId}/approvers`));
@@ -285,6 +288,7 @@ async function saveSupplierOutletAccountHandler(request, services = {}) {
     const [supplier, outlet, existing] = await Promise.all([tx.get(db.doc(`hotels/${hotelUid}/suppliers/${supplierId}`)),
       tx.get(db.doc(`hotels/${hotelUid}/outlets/${outletId}`)), tx.get(db.collection(`hotels/${hotelUid}/supplierOutletAccounts`).where("supplierId", "==", supplierId).where("outletId", "==", outletId).limit(2))]);
     if (!supplier.exists || !outlet.exists) throw new HttpsError("not-found", "Choose a supplier and outlet belonging to this hotel.");
+    if (isArchived(outlet.data())) throw new HttpsError("failed-precondition", "Choose an active outlet for this account assignment.");
     if (existing.size > 1) throw new HttpsError("failed-precondition", "Duplicate account assignments need review.");
     const target = existing.docs[0]?.ref || ref;
     tx.set(target, { supplierId, outletId, supplierName: supplier.data().name || supplierId,

@@ -16,7 +16,8 @@ const fill = async () => {
   await screen.findByRole("button", { name: "Record goods receipt" });
   fireEvent.change(screen.getByLabelText("Delivery note / receipt reference"), { target: { value: "DN-2" } });
   fireEvent.change(screen.getByLabelText("Accepted Coffee"), { target: { value: "1.25" } });
-  fireEvent.change(screen.getByLabelText("Physical receiving location"), { target: { value: "store" } });
+  fireEvent.focus(screen.getByRole("combobox", { name: "Physical receiving location" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Store" }));
 };
 beforeEach(() => {
   vi.clearAllMocks(); sessionStorage.clear(); mocks.rights = ["receive"];

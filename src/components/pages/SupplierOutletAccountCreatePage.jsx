@@ -1,189 +1,66 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import PageShell from "../layout/PageShell";
 import { Card } from "../layout/Card";
-import { auth, signOut } from "../../firebaseConfig";
+import { Combobox } from "../ui/combobox";
+import AsyncError from "../shared/AsyncError";
+import { auth } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { usePermission } from "../../hooks/usePermission";
 import { getOutlets } from "../../services/firebaseSettings";
 import { createSupplierOutletAccount, getSuppliers } from "../../services/firebaseSuppliers";
 
 export default function SupplierOutletAccountCreatePage() {
-  const navigate = useNavigate();
   const { supplierId } = useParams();
   const { hotelUid } = useHotelContext();
-  const [suppliers, setSuppliers] = useState([]);
-  const [outlets, setOutlets] = useState([]);
-  const [formState, setFormState] = useState({ supplier: "", outletId: "", accountNumber: "" });
+  return <ScopedSupplierOutletAccountCreatePage key={`${hotelUid}:${supplierId}`} hotelUid={hotelUid} supplierId={supplierId} />;
+}
+
+function ScopedSupplierOutletAccountCreatePage({ hotelUid, supplierId }) {
+  const navigate = useNavigate();
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const [selectedSupplierId, setSelectedSupplierId] = useState(supplierId || "");
+  const [outletId, setOutletId] = useState("");
+  const [accountNumber, setAccountNumber] = useState("");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const canManage = usePermission("suppliers", "update");
+  const load = useCallback(async () => {
+    const [suppliers, outlets] = await Promise.all([getSuppliers(hotelUid), getOutlets(hotelUid)]);
+    return { suppliers, outlets: outlets.filter((outlet) => outlet.archived !== true) };
+  }, [hotelUid]);
+  const sources = useScopedAsync({ scopeKey: hotelUid, enabled: Boolean(hotelUid), load });
+  const supplier = sources.data?.suppliers.find((entry) => entry.id === selectedSupplierId);
+  const outlet = sources.data?.outlets.find((entry) => entry.id === outletId);
 
-  const today = useMemo(
-    () =>
-      new Date().toLocaleDateString(undefined, {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }),
-    []
-  );
-
-  const supplierLookup = useMemo(() => {
-    const byId = {};
-    const byName = {};
-
-    suppliers.forEach((supplier) => {
-      const id = String(supplier?.id || "").trim();
-      const name = String(supplier?.name || "").trim();
-      if (id) byId[id.toLowerCase()] = supplier;
-      if (!name) return;
-
-      const key = name.toLowerCase();
-      if (!byName[key]) byName[key] = supplier;
-      else byName[key] = null;
-    });
-
-    return { byId, byName };
-  }, [suppliers]);
-
-  const handleLogout = async () => {
-    await signOut(auth);
-    sessionStorage.clear();
-    window.location.href = "/login";
-  };
-
-  useEffect(() => {
-    const loadOptions = async () => {
-      if (!hotelUid) return;
-      const [loadedSuppliers, loadedOutlets] = await Promise.all([
-        getSuppliers(hotelUid),
-        getOutlets(hotelUid),
-      ]);
-      setSuppliers(loadedSuppliers || []);
-      setOutlets(loadedOutlets || []);
-
-      const selectedSupplier = (loadedSuppliers || []).find((item) => item.id === supplierId);
-      if (selectedSupplier?.name) {
-        setFormState((prev) => ({ ...prev, supplier: selectedSupplier.name }));
-      }
-    };
-
-    loadOptions();
-  }, [hotelUid, supplierId]);
-
-  const handleSubmit = async (event) => {
+  const submit = async (event) => {
     event.preventDefault();
-    if (!hotelUid) return;
-
-    const supplierValue = String(formState.supplier || "").trim();
-    const supplier =
-      supplierLookup.byName[supplierValue.toLowerCase()] ||
-      supplierLookup.byId[supplierValue.toLowerCase()] ||
-      null;
-
-    if (!supplier) {
-      window.alert("Selecteer een bestaande supplier.");
-      return;
-    }
-
-    setSaving(true);
+    if (!hotelUid || !canManage || saving || !supplier || !outlet || !accountNumber.trim()) return;
+    setSaving(true); setError(null);
     try {
-      const actor = auth.currentUser?.uid || "unknown";
-      await createSupplierOutletAccount(
-        hotelUid,
-        {
-          supplierId: supplier.id,
-          supplierName: String(supplier.name || "").trim() || supplier.id,
-          outletId: String(formState.outletId || "").trim(),
-          outletName: String((outlets.find((outlet) => String(outlet.id || "") === String(formState.outletId || ""))?.name) || formState.outletId || "").trim(),
-          accountNumber: String(formState.accountNumber || "").trim(),
-        },
-        actor
-      );
-      navigate(`/catalog/suppliers/${supplier.id}/outlet-accounts`);
-    } catch (error) {
-      console.error("Failed to create supplier outlet account", error);
-      window.alert(String(error?.message || "Kon supplier outlet account niet aanmaken."));
-    } finally {
-      setSaving(false);
-    }
+      await createSupplierOutletAccount(hotelUid, {
+        supplierId: supplier.id, supplierName: supplier.name || "Unnamed supplier",
+        outletId: outlet.id, outletName: outlet.name || "Unnamed outlet", accountNumber: accountNumber.trim(),
+      }, auth.currentUser?.uid || "unknown");
+      if (mounted.current) navigate(`/catalog/suppliers/${supplier.id}/outlet-accounts`);
+    } catch (failure) { if (mounted.current) setError(failure); }
+    finally { if (mounted.current) setSaving(false); }
   };
 
-  return (
-    <div className="min-h-screen bg-canvas text-gray-900">
-      <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
-            <h1 className="text-3xl font-semibold">Nieuwe Supplier Outlet Account</h1>
-          </div>
-          <button
-            type="button"
-            onClick={() => navigate(`/catalog/suppliers/${supplierId}/outlet-accounts`)}
-            className="inline-flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            Terug
-          </button>
-        </div>
-
-        <Card>
-          <form onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-              Supplier *
-              <input
-                required
-                list="supplier-options"
-                value={formState.supplier}
-                onChange={(event) => setFormState((prev) => ({ ...prev, supplier: event.target.value }))}
-                className="rounded border border-gray-300 px-3 py-2 text-sm"
-                placeholder="Kies supplier naam"
-              />
-              <datalist id="supplier-options">
-                {suppliers.map((supplier) => (
-                  <option key={supplier.id} value={supplier.name || supplier.id} />
-                ))}
-              </datalist>
-            </label>
-
-            <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-              Outlet *
-              <select
-                required
-                value={formState.outletId}
-                onChange={(event) => setFormState((prev) => ({ ...prev, outletId: event.target.value }))}
-                className="rounded border border-gray-300 px-3 py-2 text-sm"
-              >
-                <option value="">Kies outlet</option>
-                {outlets.map((outlet) => (
-                  <option key={outlet.id || outlet.name} value={outlet.id || outlet.name}>
-                    {outlet.name || outlet.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="sm:col-span-2 flex flex-col gap-1 text-sm font-semibold text-gray-700">
-              Account Number *
-              <input
-                required
-                value={formState.accountNumber}
-                onChange={(event) => setFormState((prev) => ({ ...prev, accountNumber: event.target.value }))}
-                className="rounded border border-gray-300 px-3 py-2 text-sm"
-              />
-            </label>
-
-            <div className="sm:col-span-2 flex justify-end">
-              <button
-                type="submit"
-                disabled={saving}
-                className="inline-flex h-10 items-center justify-center rounded-lg bg-brand-800 px-4 text-sm font-semibold text-white hover:bg-brand-950 disabled:opacity-50"
-              >
-                {saving ? "Opslaan..." : "Opslaan"}
-              </button>
-            </div>
-          </form>
-        </Card>
-      </PageContainer>
+  return <PageShell variant="procurement" width="form">
+    <div className="flex flex-wrap items-center justify-between gap-4">
+      <div><p className="text-sm uppercase tracking-wide text-gray-500">Purchasing & Inventory</p><h1 className="text-3xl font-semibold">New supplier outlet account</h1><p className="mt-2 text-sm text-gray-600">Use a supplier account dedicated to one operational outlet.</p></div>
+      <button type="button" onClick={() => navigate(`/catalog/suppliers/${supplierId}/outlet-accounts`)} className="rounded-lg border bg-white px-4 py-2 text-sm">Back</button>
     </div>
-  );
+    <AsyncError error={sources.error} onRetry={sources.retry} label="Could not load suppliers and outlets." />
+    <AsyncError error={error} label="Could not save the supplier outlet account." />
+    <Card><form onSubmit={submit} className="grid gap-5 sm:grid-cols-2">
+      <label className="space-y-1 text-sm font-medium">Supplier *<Combobox required value={supplier || null} options={sources.data?.suppliers || []} getOptionValue={(entry) => entry.id} displayValue={(entry) => entry.name || "Unnamed supplier"} onChange={(entry) => setSelectedSupplierId(entry?.id || "")} placeholder="Search suppliers" disabled={saving || sources.loading} /></label>
+      <label className="space-y-1 text-sm font-medium">Outlet *<Combobox required value={outlet || null} options={sources.data?.outlets || []} getOptionValue={(entry) => entry.id} displayValue={(entry) => entry.name || "Unnamed outlet"} onChange={(entry) => setOutletId(entry?.id || "")} placeholder="Search outlets" disabled={saving || sources.loading} /></label>
+      <label className="space-y-1 text-sm font-medium sm:col-span-2">Account number *<input required value={accountNumber} onChange={(event) => setAccountNumber(event.target.value)} disabled={saving} className="w-full rounded-lg border px-3 py-2" /></label>
+      <div className="flex justify-end sm:col-span-2"><button type="submit" disabled={!canManage || saving || sources.loading || Boolean(sources.error) || !supplier || !outlet} className="rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Saving…" : "Save account"}</button></div>
+    </form></Card>
+  </PageShell>;
 }

@@ -1,5 +1,5 @@
 import React from "react";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ProductsPage from "./ProductsPage";
 import SupplierProductsPage from "./SupplierProductsPage";
@@ -15,6 +15,11 @@ vi.mock("../../services/firebaseSettings", () => ({ getCatalogTaxonomy: () => Pr
 vi.mock("xlsx", () => ({ read: mocks.read, utils: { sheet_to_json: mocks.parse, json_to_sheet: mocks.rows, book_new: () => ({}), book_append_sheet: vi.fn() }, writeFile: mocks.write }));
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 const page = (rows) => ({ products: rows, hasMore: false, cursor: null });
+const choose = async (input, name) => {
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: name } });
+  fireEvent.click(await screen.findByRole("option", { name }));
+};
 
 describe("catalog loading, taxonomy and complete export", () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.permissions = ["catalogproducts.read", "catalogproducts.create", "supplierproducts.read", "supplierproducts.create", "suppliers.read"]; mocks.suppliers.mockResolvedValue([{ id: "supplier", name: "Supplier" }]); mocks.catalog.mockResolvedValue(page([{ id: "early-product", name: "Early product", category: "Early" }])); mocks.supplier.mockResolvedValue(page([])); });
@@ -34,8 +39,7 @@ describe("catalog loading, taxonomy and complete export", () => {
   it("removes a selected supplier filter when supplier read permission is revoked", async () => {
     mocks.supplier.mockResolvedValue(page([{ id: "product", supplierProductName: "Available product" }]));
     const view = render(<SupplierProductsPage />);
-    await screen.findByRole("option", { name: "Supplier" });
-    fireEvent.change(screen.getByRole("combobox", { name: "Filter by supplier" }), { target: { value: "supplier" } });
+    await choose(screen.getByRole("combobox", { name: "Filter by supplier" }), "Supplier");
     await waitFor(() => expect(mocks.supplier).toHaveBeenLastCalledWith("hotel-a", expect.objectContaining({ supplierId: "supplier" })));
     const supplierCalls = mocks.suppliers.mock.calls.length;
     mocks.permissions = ["supplierproducts.read"];
@@ -48,10 +52,13 @@ describe("catalog loading, taxonomy and complete export", () => {
     render(<ProductsPage />);
     expect(await screen.findByText("Early product")).toBeInTheDocument();
     const category = screen.getByLabelText("products.filter.category");
-    expect(within(category).getByRole("option", { name: "Later" })).toBeInTheDocument();
-    fireEvent.change(category, { target: { value: "Later" } });
+    await choose(category, "Later");
+    const subcategory = screen.getByLabelText("products.filter.subcategory");
+    fireEvent.focus(subcategory);
     expect(await screen.findByRole("option", { name: "Later subcategory" })).toBeInTheDocument();
-    expect(within(category).getByRole("option", { name: "Early" })).toBeInTheDocument();
+    fireEvent.blur(subcategory);
+    fireEvent.focus(category);
+    expect(screen.getByRole("option", { name: "Early" })).toBeInTheDocument();
     await waitFor(() => expect(mocks.catalog).toHaveBeenLastCalledWith("hotel-a", expect.objectContaining({ category: "Later" })));
   });
   it("exports every page with no active view filters and writes all 51 records", async () => {
@@ -61,7 +68,7 @@ describe("catalog loading, taxonomy and complete export", () => {
       : page(all.slice(0, 1)));
     render(<ProductsPage />);
     await screen.findByText("Product 0");
-    fireEvent.change(screen.getByLabelText("products.filter.category"), { target: { value: "Later" } });
+    await choose(screen.getByLabelText("products.filter.category"), "Later");
     fireEvent.click(screen.getByRole("button", { name: "products.actions.export" }));
     fireEvent.click(screen.getByRole("button", { name: "products.export.full" }));
     await waitFor(() => expect(mocks.write).toHaveBeenCalled());
@@ -82,8 +89,7 @@ describe("catalog loading, taxonomy and complete export", () => {
     mocks.catalog.mockReturnValueOnce(early.promise).mockReturnValueOnce(later.promise);
     render(<ProductsPage />);
     const select = screen.getByLabelText("products.filter.category");
-    await screen.findByRole("option", { name: "Later" });
-    fireEvent.change(select, { target: { value: "Later" } });
+    await choose(select, "Later");
     await act(async () => later.resolve(page([{ id: "new", name: "New product", category: "Later" }])));
     await act(async () => early.resolve(page([{ id: "old", name: "Obsolete product", category: "Early" }])));
     expect(screen.getByText("New product")).toBeInTheDocument();

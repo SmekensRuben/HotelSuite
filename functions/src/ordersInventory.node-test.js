@@ -66,6 +66,24 @@ test("gross pricing removes explicit VAT once, unknown price contracts keep cost
   assert.equal(unknown.netPricePerPurchaseUnit, null);
   assert.equal(unknown.inventoryTerms.netUnitCost, null);
 });
+
+test("orange juice supplier millilitres become catalog litres for receipts and physical count comparisons", async () => {
+  const product = (await lines(offer({ supplierProductName: "Orange juice", pricePerPurchaseUnit: 15.9, priceBasis: "gross", vatRate: 0.06 }),
+    [input("default", 2)], { name: "Orange juice", baseUnit: "l", inventoryTracked: true, active: true }))[0];
+  assert.equal(product.baseUnit, "ml"); assert.equal(product.inventoryTerms.catalogBaseUnit, "l");
+  assert.equal(product.inventoryTerms.catalogUnitsPerPurchaseUnit, 6);
+  const received = receiptInventoryLines([product], [{ supplierProductId: product.supplierProductId, orderLineId: product.orderLineId, acceptedQuantity: 2, rejectedQuantity: 0 }]);
+  assert.equal(received.lines[0].quantity, 12); assert.equal(received.lines[0].baseUnit, "l");
+  assert.equal(received.lines[0].netValue, 30); assert.equal(received.lines[0].netUnitCost, 2.5);
+  const { period } = require("./inventoryPolicy");
+  const checkpoint = { locationId: "store", currency: "EUR", businessDate: "2026-10-01", sequence: 1,
+    items: [{ catalogProductId: "milk", catalogProductName: "Orange juice", baseUnit: "l", quantity: 20, unitCost: 2 }] };
+  const closing = { ...checkpoint, sequence: 3, businessDate: "2026-10-10", items: [{ ...checkpoint.items[0], quantity: 15 }] };
+  const movement = { id: "receipt", kind: "receipt", inventoryPolicyVersion: 1, locationId: "store", sequence: 2,
+    receivedOn: "2026-10-05", lines: received.lines, coverageGaps: [] };
+  const report = period(checkpoint, closing, [movement]);
+  assert.equal(report.items[0].netReceiptQuantity, 12); assert.equal(report.items[0].inferredUsageQuantity, 17);
+});
 test("foreign catalog identity and ambiguous legacy conversion stay explicit inventory coverage gaps", async () => {
   const foreign = (await lines(offer({ catalogProductId: "foreign" })))[0];
   assert.equal(foreign.inventoryTerms.available, false);

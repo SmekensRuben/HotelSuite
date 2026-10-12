@@ -11,11 +11,13 @@ vi.mock("../layout/PageShell", () => ({ default: ({ children }) => <main>{childr
 vi.mock("../../services/firebaseOrders", () => ({ getOrders: mocks.orders, listOrderStatuses: () => ["Created"] }));
 vi.mock("../../services/firebaseSuppliers", () => ({ getSuppliers: mocks.suppliers }));
 vi.mock("../../services/firebaseUserManagement", () => ({ getHotelUserDisplayName: mocks.display }));
+const openCombo = (label) => fireEvent.focus(screen.getByRole("combobox", { name: label }));
+const chooseCombo = async (label, option) => { openCombo(label); fireEvent.click(await screen.findByRole("option", { name: option })); };
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 
 describe("scoped order loading", () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.permissions = ["orders.read", "suppliers.read"]; mocks.suppliers.mockResolvedValue([]); mocks.display.mockResolvedValue("Hotel employee"); });
-  it("shows frozen supplier names and ID fallbacks for an orders-only reader without fetching suppliers", async () => {
+  it("shows frozen supplier names and supplier ID fallbacks for an orders-only reader without fetching suppliers", async () => {
     mocks.permissions = ["orders.read"];
     mocks.suppliers.mockRejectedValue(new Error("Forbidden supplier read"));
     mocks.orders.mockResolvedValue([
@@ -27,6 +29,7 @@ describe("scoped order loading", () => {
     expect(within(firstRow).getByText("Frozen supplier")).toBeInTheDocument();
     const secondRow = screen.getByText("2027-05-02").closest("tr");
     expect(within(secondRow).getByText("supplier-b")).toBeInTheDocument();
+    openCombo("Filter supplier");
     expect(screen.getByRole("option", { name: "Frozen supplier" })).toBeInTheDocument();
     expect(mocks.suppliers).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -38,6 +41,7 @@ describe("scoped order loading", () => {
     expect(await screen.findByText("2027-05-01")).toBeInTheDocument();
     expect(await screen.findByText("Supplier names offline")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    openCombo("Filter supplier");
     expect(await screen.findByRole("option", { name: "Current supplier" })).toBeInTheDocument();
     expect(mocks.orders).toHaveBeenCalledTimes(1);
   });
@@ -51,11 +55,13 @@ describe("scoped order loading", () => {
     ]);
     render(<OrdersPage />);
     const row = (await screen.findByText("2027-05-01")).closest("tr");
-    expect(within(row).getByText("creator")).toBeInTheDocument();
+    expect(within(row).getAllByText("Unknown user").length).toBeGreaterThan(0);
+    expect(screen.queryByText("creator")).not.toBeInTheDocument();
     expect(within(screen.getByText("2027-05-02").closest("tr")).getByText("Saved creator")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await act(async () => pending.resolve("Current employee"));
     expect(within(row).getByText("Current employee")).toBeInTheDocument();
+    openCombo("Filter creator");
     expect(screen.getByRole("option", { name: "Saved creator" })).toBeInTheDocument();
     expect(mocks.orders).toHaveBeenCalledTimes(1);
   });
@@ -68,25 +74,24 @@ describe("scoped order loading", () => {
     await waitFor(() => expect(mocks.display).toHaveBeenCalledWith("hotel-a", "creator"));
     mocks.hotel = "hotel-b";
     view.rerender(<OrdersPage />);
+    openCombo("Filter creator");
     await screen.findByRole("option", { name: "Current employee" });
     await act(async () => oldNames.resolve("Previous employee"));
     expect(screen.queryByText("Previous employee")).not.toBeInTheDocument();
     expect(within(screen.getByText("2027-05-02").closest("tr")).getByText("Current employee")).toBeInTheDocument();
   });
   it("clears old supplier and creator filters when the selected hotel changes", async () => {
-    mocks.display.mockImplementation((_, userId) => Promise.resolve(userId));
+    mocks.display.mockImplementation((hotel) => Promise.resolve(`${hotel} employee`));
     mocks.orders.mockImplementation((hotel) => Promise.resolve([{ id: hotel, status: "Created", deliveryDate: hotel === "hotel-a" ? "2027-05-01" : "2027-05-02", supplierId: `${hotel}-supplier`, supplierName: `${hotel} supplier`, createdBy: `${hotel}-creator` }]));
     const view = render(<OrdersPage />);
     await screen.findByText("2027-05-01");
-    const supplier = screen.getByRole("option", { name: "hotel-a supplier" }).closest("select");
-    const creator = (await screen.findByRole("option", { name: "hotel-a-creator" })).closest("select");
-    fireEvent.change(supplier, { target: { value: "hotel-a-supplier" } });
-    fireEvent.change(creator, { target: { value: "hotel-a-creator" } });
+    await chooseCombo("Filter supplier", "hotel-a supplier");
+    await chooseCombo("Filter creator", "hotel-a employee");
     mocks.hotel = "hotel-b";
     view.rerender(<OrdersPage />);
     expect(await screen.findByText("2027-05-02")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "hotel-b supplier" }).closest("select")).toHaveValue("");
-    expect((await screen.findByRole("option", { name: "hotel-b-creator" })).closest("select")).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Filter supplier" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Filter creator" })).toHaveValue("");
   });
   it("completes failed loading and retries with scoped staff projections", async () => {
     mocks.orders.mockRejectedValueOnce(new Error("Orders offline")).mockResolvedValue([{ id: "order-a", deliveryDate: "2027-05-01", status: "Created", createdBy: "employee" }]);
@@ -106,6 +111,16 @@ describe("scoped order loading", () => {
     await act(async () => old.resolve([{ id: "order-a", deliveryDate: "2027-05-01", status: "Created" }]));
     expect(screen.getByText("2027-05-02")).toBeInTheDocument();
     expect(screen.queryByText("2027-05-01")).not.toBeInTheDocument();
+  });
+  it("resolves both actor fields without showing document identities", async () => {
+    mocks.permissions = ["orders.read"];
+    mocks.display.mockImplementation((_, id) => Promise.resolve(id === "employee-a" ? "Ruben Smekens" : id));
+    mocks.orders.mockResolvedValue([{ id: "order-a", deliveryDate: "2027-05-01", status: "Created", createdBy: "employee-a", updatedBy: "opaque-actor-id" }]);
+    render(<OrdersPage />);
+    const row = (await screen.findByText("2027-05-01")).closest("tr");
+    await waitFor(() => expect(within(row).getByText("Ruben Smekens")).toBeInTheDocument());
+    expect(within(row).getByText("Unknown user")).toBeInTheDocument();
+    expect(screen.queryByText("opaque-actor-id")).not.toBeInTheDocument();
   });
   it("shows order price bases beside unchanged totals and leaves historical bases unknown", async () => {
     mocks.permissions = ["orders.read"];

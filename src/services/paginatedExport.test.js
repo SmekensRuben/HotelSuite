@@ -21,4 +21,12 @@ describe("complete product export", () => {
   it("fails safely for non-advancing pagination", async () => {
     await expect(collectPaginatedProducts(async () => ({ products: [], hasMore: true, cursor: "same" }))).rejects.toThrow("did not advance");
   });
+  it("detects repeated backend offsets even when each cursor is a new object", async () => {
+    const load = vi.fn(async () => ({ products: [], hasMore: true, cursor: { offset: 100 } }));
+    await expect(collectPaginatedProducts(load)).rejects.toThrow("did not advance");
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+  it("fails an invalid page instead of silently returning an incomplete export", async () => {
+    await expect(collectPaginatedProducts(async () => ({ products: null, hasMore: false }))).rejects.toThrow("response is invalid");
+  });
 });

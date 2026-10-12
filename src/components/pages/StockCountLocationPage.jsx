@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Plus } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
+import { Combobox } from "../ui/combobox";
 import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import DataListTable from "../shared/DataListTable";
@@ -330,7 +331,7 @@ export default function StockCountLocationPage() {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">Stock Count</p>
@@ -539,7 +540,7 @@ export default function StockCountLocationPage() {
             </Card>
           </>
         )}
-      </PageContainer>
+      </ProcurementPage>
 
       <Modal open={showAddModal && !isFinished && additionsAvailable} onClose={() => setShowAddModal(false)} title="Add Supplier Product">
         <div className="space-y-3">
@@ -578,16 +579,9 @@ export default function StockCountLocationPage() {
               </tbody>
             </table>
           </div>
-          <select
-            value={selectedOutletId}
-            onChange={(event) => setSelectedOutletId(event.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-          >
-            <option value="">Select outlet</option>
-            {outlets.map((outlet) => (
-              <option key={outlet.id} value={outlet.id}>{outlet.name}</option>
-            ))}
-          </select>
+          <label className="block text-sm font-medium">Outlet
+            <Combobox aria-label="Additional product outlet" options={outlets} value={outlets.find((outlet) => outlet.id === selectedOutletId) || null} onChange={(outlet) => setSelectedOutletId(outlet?.id || "")} displayValue={(outlet) => outlet.name || "Unnamed outlet"} getOptionValue={(outlet) => outlet.id} placeholder="Search outlets" className="ht-field mt-1" />
+          </label>
           <div className="flex justify-end gap-2">
             <button type="button" className="rounded border border-gray-300 px-3 py-2 text-sm" onClick={() => setShowAddModal(false)}>Cancel</button>
             <button

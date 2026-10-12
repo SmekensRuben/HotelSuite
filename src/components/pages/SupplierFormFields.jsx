@@ -108,7 +108,7 @@ export default function SupplierFormFields({
   return (
     <form className="space-y-6" onSubmit={handleSubmit}>
       {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
-      <section className="space-y-4">
+      <section className="space-y-4 rounded-xl border border-gray-200 bg-gray-50/60 p-4 sm:p-5">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">General</h2>
           <p className="text-sm text-gray-600">Basic information and contact details.</p>
@@ -140,7 +140,7 @@ export default function SupplierFormFields({
         <TextAreaField label="Notes" value={formValues.notes} onChange={(value) => setValue("notes", value)} />
       </section>
 
-      <section className="space-y-4 border-t border-gray-200 pt-6">
+      <section className="space-y-4 rounded-xl border border-gray-200 bg-gray-50/60 p-4 sm:p-5">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Order settings</h2>
           <p className="text-sm text-gray-600">How orders should be sent.</p>
@@ -216,7 +216,7 @@ export default function SupplierFormFields({
         </div>
       </section>
 
-      <section className="space-y-4 border-t border-gray-200 pt-6">
+      <section className="space-y-4 rounded-xl border border-gray-200 bg-gray-50/60 p-4 sm:p-5">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Classification</h2>
           <p className="text-sm text-gray-600">Category mapping for this supplier.</p>
@@ -231,7 +231,7 @@ export default function SupplierFormFields({
         </div>
       </section>
 
-      {canManageCredentials && <section className="space-y-4 border-t border-gray-200 pt-6">
+      {canManageCredentials && <section className="space-y-4 rounded-xl border border-gray-200 bg-gray-50/60 p-4 sm:p-5">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Webshop access</h2>
           <p className="text-sm text-gray-600">Optional credentials for external supplier portals.</p>

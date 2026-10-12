@@ -36,17 +36,27 @@ describe("catalog units, supplier packages and ordering workflow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ name: "Milk", baseUnit: "ml", inventoryTracked: true, baseQtyPerUnit: null })));
   });
+  it("keeps reviewed catalog and supplier units fixed while permitting package-content edits", async () => {
+    const catalogView = render(<ProductFormFields hotelUid="hotel-a" initialData={{ id: "milk", productPolicyVersion: 1, name: "Milk", baseUnit: "ml" }} onSubmit={vi.fn()} savingLabel="Saving" submitLabel="Save" />);
+    await act(async () => {});
+    expect(screen.getByLabelText(/products.fields.baseUnit/)).toBeDisabled();
+    catalogView.unmount();
+    render(<SupplierProductFormFields initialData={{ id: "offer", ...validOffer, productPolicyVersion: 1 }} onSubmit={vi.fn()} savingLabel="Saving" submitLabel="Save" />);
+    await screen.findByDisplayValue("Supplier A");
+    expect(screen.getByLabelText(/Supplier content unit/)).toBeDisabled();
+    expect(screen.getByLabelText(/Default package content/)).not.toBeDisabled();
+  });
   it("keeps blank supplier prices unknown and permits compatible l/ml catalog links", async () => {
     const submit = vi.fn().mockResolvedValue(undefined);
     render(<SupplierProductFormFields initialData={{ ...validOffer, pricePerPurchaseUnit: null }} onSubmit={submit} savingLabel="Saving" submitLabel="Save" />);
-    await screen.findByRole("option", { name: "Catalog milk (ml)" });
+    await screen.findByDisplayValue("Catalog milk (ml)");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ baseUnit: "l", catalogProductId: "milk", pricePerPurchaseUnit: null })));
   });
   it("rejects incompatible catalog dimensions before saving", async () => {
     const submit = vi.fn();
     render(<SupplierProductFormFields initialData={{ ...validOffer, baseUnit: "kg" }} onSubmit={submit} savingLabel="Saving" submitLabel="Save" />);
-    await screen.findByRole("option", { name: "Catalog milk (ml)" });
+    await screen.findByDisplayValue("Catalog milk (ml)");
     fireEvent.submit(screen.getByRole("button", { name: "Save" }).closest("form"));
     expect(await screen.findByRole("alert")).toHaveTextContent("same dimension");
     expect(submit).not.toHaveBeenCalled();
@@ -54,7 +64,7 @@ describe("catalog units, supplier packages and ordering workflow", () => {
   it("requires review of legacy variants rather than silently losing them", async () => {
     const submit = vi.fn();
     render(<SupplierProductFormFields initialData={{ ...validOffer, hasVariants: true, variants: [{ perBaseUnit: 1, packages: 24 }] }} onSubmit={submit} savingLabel="Saving" submitLabel="Save" />);
-    await screen.findByRole("option", { name: "Supplier A" });
+    await screen.findByDisplayValue("Supplier A");
     fireEvent.submit(screen.getByRole("button", { name: "Save" }).closest("form"));
     expect(await screen.findByRole("alert")).toHaveTextContent("Review the old variants");
     expect(submit).not.toHaveBeenCalled();
@@ -62,7 +72,7 @@ describe("catalog units, supplier packages and ordering workflow", () => {
   it("preserves blank gross VAT as missing rather than treating it as zero", async () => {
     const submit = vi.fn();
     render(<SupplierProductFormFields initialData={{ ...validOffer, priceBasis: "gross", vatRate: null }} onSubmit={submit} savingLabel="Saving" submitLabel="Save" />);
-    await screen.findByRole("option", { name: "Supplier A" });
+    await screen.findByDisplayValue("Supplier A");
     fireEvent.submit(screen.getByRole("button", { name: "Save" }).closest("form"));
     expect(await screen.findByRole("alert")).toHaveTextContent("VAT rate"); expect(submit).not.toHaveBeenCalled();
   });
@@ -70,7 +80,8 @@ describe("catalog units, supplier packages and ordering workflow", () => {
     mocks.products.mockResolvedValue({ products: [{ id: "offer", ...validOffer, purchaseOptions: [{ id: "single", purchaseUnit: "bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 2.5 }] }], hasMore: false });
     render(<OrderCreatePage />);
     const select = await screen.findByRole("combobox", { name: "Purchase option for Milk" });
-    fireEvent.change(select, { target: { value: "single" } });
+    fireEvent.focus(select);
+    fireEvent.click(await screen.findByRole("option", { name: "bottle" }));
     expect(await screen.findByText(/2.50 EUR \/ bottle/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     await waitFor(() => expect(mocks.add).toHaveBeenCalledWith("hotel-a", "cart", expect.objectContaining({ id: "offer", purchaseOptionId: "single" }), 1, "single", 0));

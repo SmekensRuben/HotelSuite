@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, ShoppingCart } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import DataListTable from "../shared/DataListTable";
+import { Combobox } from "../ui/combobox";
 import PendingCartCommand from "../catalog/PendingCartCommand";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
@@ -75,7 +76,7 @@ function ScopedOrderCreatePage() {
   const loadProductsPage = async (nextPageIndex, cursor) => {
     if (!hotelUid) return;
 
-    setLoading(true);
+    setLoading(true); setError("");
     const currentGeneration = ++generation.current;
     try {
     const normalizedStatus = selectedStatus.trim().toLowerCase();
@@ -195,7 +196,7 @@ function ScopedOrderCreatePage() {
     },
     { key: "supplierProductName", label: "Product" },
     { key: "supplierSku", label: "SKU" },
-    { key: "purchaseUnit", label: "Purchase option", sortable: false, render: (row) => <select aria-label={`Purchase option for ${row.supplierProductName}`} value={row.purchaseOptionId} disabled={!row.options.length || savingId === row.id} onChange={(event) => setSelectedOptions((current) => ({ ...current, [row.id]: event.target.value }))} className="rounded border px-2 py-1">{!row.options.length && <option value="">Review legacy packages</option>}{row.options.map((option) => <option key={option.id} value={option.id}>{option.purchaseUnit}</option>)}</select> },
+    { key: "purchaseUnit", label: "Purchase option", sortable: false, render: (row) => <div className="min-w-[11rem]"><Combobox aria-label={`Purchase option for ${row.supplierProductName}`} options={row.options} value={row.selectedOption || null} disabled={!row.options.length || Boolean(savingId)} onChange={(option) => { if (option) setSelectedOptions((current) => ({ ...current, [row.id]: option.id })); }} displayValue={(option) => option.purchaseUnit} getOptionValue={(option) => option.id} placeholder="Review legacy packages" className="ht-field" /></div> },
     { key: "contentLabel", label: "Content" },
     {
       key: "qty",
@@ -241,12 +242,12 @@ function ScopedOrderCreatePage() {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage className="space-y-6">
         <PendingCartCommand hotelUid={hotelUid} cartId={shoppingCart?.id || "active"} onComplete={async (result) => { const cart = await getShoppingCart(hotelUid, result.cartId); if (mounted.current) { setShoppingCart(cart); setError(""); } }} />
         {error && <p role="alert" className="text-red-700">{error}</p>}
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h1 className="text-2xl font-semibold">New order</h1>
+            <div><p className="text-xs uppercase tracking-wider text-slate-500">Purchasing & inventory</p><h1 className="text-2xl font-semibold">New order</h1><p className="mt-1 text-sm text-slate-600">Choose supplier packages, then review your cart before placing an order.</p></div>
             <div className="flex flex-wrap items-center gap-2 ml-auto">
               <button
                 type="button"
@@ -278,18 +279,7 @@ function ScopedOrderCreatePage() {
               placeholder="Search supplier products..."
               className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
             />
-            <select
-              value={selectedSupplierId}
-              onChange={(event) => setSelectedSupplierId(event.target.value)}
-              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-            >
-              <option value="">All suppliers</option>
-              {supplierOptions.map((supplier) => (
-                <option key={supplier.id} value={supplier.id}>
-                  {supplier.name}
-                </option>
-              ))}
-            </select>
+            <Combobox aria-label="Filter supplier" options={[{ id: "", name: "All suppliers" }, ...supplierOptions]} value={supplierOptions.find((supplier) => supplier.id === selectedSupplierId) || null} onChange={(supplier) => setSelectedSupplierId(supplier?.id || "")} displayValue={(supplier) => supplier.name} getOptionValue={(supplier) => supplier.id} placeholder="All suppliers" className="ht-field" />
             <select
               value={selectedStatus}
               onChange={(event) => setSelectedStatus(event.target.value)}
@@ -335,7 +325,7 @@ function ScopedOrderCreatePage() {
             Next
           </button>
         </div>
-      </PageContainer>
+      </ProcurementPage>
     </div>
   );
 }
