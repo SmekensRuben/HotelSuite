@@ -11,10 +11,17 @@ async function dispatchOrderHandler(event, services = {}) {
   if (!dispatchId || before.dispatchRequestId === dispatchId) return;
   const { hotelUid, orderId } = event.params;
   const db = services.firestore || admin.firestore();
+  // Reserved demo suppliers never reach email/SFTP, even if a malformed pending
+  // dispatch or edited public contact information is encountered.
+  if (await require("./demoDataPolicy").demoSupplierMode(db, hotelUid, after.supplierId)) return;
   const dispatch = await claimDispatch(db, hotelUid, orderId, dispatchId, services.auth);
   if (!dispatch) return;
   let externalAttempt = false;
   try {
+    if (await require("./demoDataPolicy").demoSupplierMode(db, hotelUid, dispatch.supplier.id)) {
+      await completeDispatch(db, hotelUid, orderId, dispatchId, "blocked", { error: "Demo supplier delivery must be simulated by the protected confirmation workflow." });
+      return;
+    }
     if (dispatch.supplier.orderSystem === "SFTP csv") {
       const secret = await db.doc(`hotels/${hotelUid}/supplierSecrets/${dispatch.supplier.id}`).get();
       if (!secret.exists) throw new Error("Missing private supplier connection.");

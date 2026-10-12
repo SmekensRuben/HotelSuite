@@ -224,4 +224,21 @@ describe("scoped procurement records and optional staff labels", () => {
     expect(screen.getByText("2.00 EUR")).toBeInTheDocument();
   });
 
+  it("labels demo confirmation and exports as simulated instead of claiming supplier delivery", async () => {
+    mocks.permissions = ["orders.read", "orders.approve"];
+    mocks.approvers.mockResolvedValue([{ id: "employee" }]);
+    mocks.order.mockResolvedValue(record("Demo milk", { dispatchMode: "simulation", supplierId: "demo-supplier", supplierName: "DEMO supplier", outletId: "bar" }));
+    render(<OrderDetailPage />);
+    const confirm = await screen.findByRole("button", { name: "Confirm simulated order" });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    expect(screen.getByText(/No email or SFTP file is sent/)).toBeInTheDocument();
+    fireEvent.click(confirm);
+    expect(screen.getByText(/Confirm this test order using the normal approver checks/)).toBeInTheDocument();
+    expect(screen.queryByText("orderConfirm.description2")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "orderConfirm.close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download PDF" }));
+    await waitFor(() => expect(mocks.pdfSave).toHaveBeenCalled());
+    expect(mocks.pdfText).toHaveBeenCalledWith("DEMO Order record-a (simulation)", 14, 18);
+  });
+
 });

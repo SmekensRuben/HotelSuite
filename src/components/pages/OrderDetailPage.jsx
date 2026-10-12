@@ -103,7 +103,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
       const dispatchStatus = String(latestOrder?.dispatchStatus || "").toLowerCase();
 
       if (dispatchStatus === "sent") {
-        setProgressMessage("Dispatch completed successfully.");
+        setProgressMessage(latestOrder.dispatchMode === "simulation" ? "Demo confirmation completed; no supplier was contacted." : "Dispatch completed successfully.");
         clearInterval(interval);
         return;
       }
@@ -159,6 +159,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
     );
   }
 
+  const isSimulation = order.dispatchMode === "simulation";
   const isCreated = order.status === "Created" && !order.dispatchRequestId;
   const dispatchStatus = String(order.dispatchStatus || "").toLowerCase();
   const dispatchError = String(order.dispatchError || "").trim();
@@ -193,7 +194,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
     const outletName = String(order?.outletName || order?.outletId || "-").trim() || "-";
 
     doc.setFontSize(16);
-    doc.text(`Order ${orderId}`, 14, 18);
+    doc.text(isSimulation ? `DEMO Order ${orderId} (simulation)` : `Order ${orderId}`, 14, 18);
     doc.setFontSize(11);
     doc.text(`Hotel: ${pdfHotelName || "-"}`, 14, 26);
     doc.text(`Outlet: ${outletName}`, 14, 32);
@@ -333,6 +334,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
           </div>
         </Card>
 
+        {order.dispatchMode === "simulation" && <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm">DEMO order: supplier delivery is simulated. No email or SFTP file is sent. Receiving and stock-count actions still use the normal hotel permissions.</p>}
         {actionError && <p className="text-sm text-red-600">{actionError}</p>}
         <p className="text-xs text-gray-600">Quoted amounts are shown as recorded. No VAT conversion is applied; missing historical price bases remain unknown.</p>
         <DataListTable columns={columns} rows={rows} emptyMessage="No order lines found." />
@@ -353,7 +355,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
               disabled={!canConfirmOrder}
               className="px-4 py-2 border border-brand-300 text-brand-800 rounded font-semibold hover:bg-brand-50 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Confirm Order
+              {isSimulation ? "Confirm simulated order" : "Confirm Order"}
             </button>
             </div>
           </div>
@@ -364,10 +366,11 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
       <Modal
         open={showOrderConfirmModal}
         onClose={closeConfirmModal}
-        title="Confirm Order & Dispatch"
+        title={isSimulation ? "Confirm simulated order" : "Confirm Order & Dispatch"}
       >
         <AsyncError error={query.error} onRetry={query.retry} label="Could not refresh this order." />
         <div className="space-y-3 text-sm text-gray-700">
+          {isSimulation ? <p>Confirm this test order using the normal approver checks. Delivery is simulated; no supplier email or SFTP file is sent.</p> : <>
           <p>
             {t("orderConfirm.description1", {
               supplier: supplierName || order.supplierId || "supplier",
@@ -379,6 +382,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
           <p>
             {t("orderConfirm.description3")}
           </p>
+          </>}
 
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
             <p className="font-semibold text-gray-800">{t("orderConfirm.progress")}</p>
@@ -388,7 +392,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
             )}
             {!ordering && dispatchStatus === "sent" && (
               <p className="mt-1 text-green-700">
-                Dispatch successful via {dispatchedVia === "sftp" ? "SFTP" : "email"}. Status is now Ordered.
+                {isSimulation ? "Demo confirmation successful. No supplier was contacted. Status is now Ordered." : <>Dispatch successful via {dispatchedVia === "sftp" ? "SFTP" : "email"}. Status is now Ordered.</>}
               </p>
             )}
             {!ordering && dispatchStatus === "failed" && (
@@ -431,7 +435,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
               setActionError("");
               setConfirmSubmitted(true);
               setConfirmStartedAt(Date.now());
-              setProgressMessage("Confirmation started. Waiting for dispatch result...");
+              setProgressMessage(isSimulation ? "Confirmation started. Simulating delivery..." : "Confirmation started. Waiting for dispatch result...");
               try {
                 const key = `confirm-request:${hotelUid}:${orderId}`;
                 let requestId = sessionStorage.getItem(key);
@@ -446,7 +450,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
             }}
             className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
           >
-            {ordering || dispatchStatus === "processing" ? t("orderConfirm.confirming") : t("orderConfirm.confirm")}
+            {ordering || dispatchStatus === "processing" ? t("orderConfirm.confirming") : isSimulation ? "Confirm simulation" : t("orderConfirm.confirm")}
           </button>
         </div>
       </Modal>

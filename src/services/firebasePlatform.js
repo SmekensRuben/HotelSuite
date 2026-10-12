@@ -1,7 +1,7 @@
 import { functions, httpsCallable } from "../firebaseConfig";
 
 async function call(name, input = {}) {
-  const { data } = await httpsCallable(functions, name, name === "retryPlatformImport" ? { timeout: 540000 } : undefined)(input);
+  const { data } = await httpsCallable(functions, name, name === "retryPlatformImport" ? { timeout: 540000 } : name === "manageHotelDemoData" ? { timeout: 150000 } : undefined)(input);
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("The platform response is invalid.");
   if (input.hotelUid && input.hotelUid !== data.hotelUid) throw new Error("The platform response belongs to another hotel.");
   return data;
@@ -27,3 +27,5 @@ export function platformError(error) {
   if (["functions/invalid-argument", "functions/failed-precondition", "functions/already-exists", "functions/not-found"].includes(error?.code)) return error.message;
   return "The platform request could not be completed. Check your connection and refresh.";
 }
+
+export const manageHotelDemoData = (hotelUid, action) => call("manageHotelDemoData", { hotelUid, action, datasetId: "procurement-demo-v1" });

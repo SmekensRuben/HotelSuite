@@ -115,11 +115,12 @@ async function createOrdersFromCartHandler(request, services = {}) {
       groups.get(key).push(line);
     }
     if (groups.size > 25) throw new HttpsError("invalid-argument", "Create at most 25 supplier/outlet orders at a time.");
-    const accounts = new Map();
+    const accounts = new Map(), deliveryModes = new Map();
     for (const [key, products] of groups) {
       const [supplierId, outletId] = key.split("/");
       accounts.set(key, await canonicalAccount(db, tx, hotelUid, supplierId, outletId, suppliers.get(supplierId)));
       orderPriceContract(products);
+      deliveryModes.set(key, await require("./demoDataPolicy").demoSupplierMode(db, hotelUid, supplierId, tx) ? "simulation" : "external");
     }
     const result = { orderIds: [], deliveryDateAdjustments: [] };
     for (const [key, products] of groups) {
@@ -133,7 +134,7 @@ async function createOrdersFromCartHandler(request, services = {}) {
         outletId, outletName: products[0].outletName, accountNumber: accounts.get(key), products,
         totalAmount: Math.round(products.reduce((sum, p) => sum + p.pricePerPurchaseUnit * p.qtyPurchaseUnits, 0) * 100) / 100,
         currency: products[0].currency, priceBasis: orderPriceContract(products).priceBasis, deliveryDate: resolvedDate, shoppingCartId: cartId, status: "Created", revision: 1,
-        createdBy: request.auth.uid, createdAt: stamp(), updatedAt: stamp(), dispatchStatus: "" });
+        createdBy: request.auth.uid, createdAt: stamp(), updatedAt: stamp(), dispatchStatus: "", dispatchMode: deliveryModes.get(key) });
     }
     tx.update(cart.ref, { items: [], revision: cartRevision + 1, updatedAt: stamp() });
     tx.create(operation, { fingerprint, result, actorUid: request.auth.uid, createdAt: stamp() });
@@ -230,17 +231,19 @@ async function confirmOrderHandler(request, services = {}) {
     if (lines.some((p, i) => !sameOrderContract(p, order.products[i], order))) {
       throw new HttpsError("failed-precondition", "Pricing, packaging or inventory terms changed. Edit and review this order before confirming.");
     }
+    const simulation = await require("./demoDataPolicy").demoSupplierMode(db, hotelUid, order.supplierId, tx);
     const snapshot = { id: orderId, products: lines, deliveryDate: dateOnly(order.deliveryDate),
       supplierId: order.supplierId, supplierName: publicSupplier.name, outletId: order.outletId, outletName: order.outletName,
       accountNumber, currency: order.currency, priceBasis: order.priceBasis ?? "unknown",
       hotelName: hotel.data().hotelName || hotel.data().name || hotelUid,
       dispatchRequestedByEmail: request.auth.token?.email || "", supplierOrderReference: orderId };
-    tx.create(db.doc(`hotels/${hotelUid}/dispatches/${dispatchId}`), { orderId, status: "pending", actorUid: request.auth.uid,
+    tx.create(db.doc(`hotels/${hotelUid}/dispatches/${dispatchId}`), { orderId, status: simulation ? "simulated" : "pending", deliveryMode: simulation ? "simulation" : "external", actorUid: request.auth.uid,
       order: snapshot, supplier: publicSupplier, createdAt: stamp() });
-    tx.update(ref, { dispatchRequestId: dispatchId, dispatchStatus: "pending", dispatchProgress: 5, dispatchStep: "Awaiting delivery worker",
+    tx.update(ref, { dispatchRequestId: dispatchId, dispatchStatus: simulation ? "sent" : "pending", dispatchMode: simulation ? "simulation" : "external",
+      ...(simulation ? { status: "Ordered" } : {}), dispatchProgress: simulation ? 100 : 5, dispatchStep: simulation ? "Demo simulation: no supplier contacted" : "Awaiting delivery worker",
       dispatchError: "", dispatchRequestedByEmail: snapshot.dispatchRequestedByEmail, revision: expected + 1, updatedAt: stamp(), updatedBy: request.auth.uid });
     tx.create(db.doc(`hotels/${hotelUid}/orderAudit/${dispatchId}`), { orderId, action: "approve", actorUid: request.auth.uid, revision: expected + 1, createdAt: stamp() });
-    return { dispatchId, status: "pending" };
+    return { dispatchId, status: simulation ? "sent" : "pending" };
   });
 }
 
