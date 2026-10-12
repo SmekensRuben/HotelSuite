@@ -3,6 +3,7 @@ const { requireDocumentId, requireHotelSubscription } = require("./subscriptions
 const { requireCurrentVerifiedUser } = require("./validation");
 const { enforceRequestRollout } = require("./saasRollout");
 const { featureModule } = require("./modulePolicy");
+const explicitPermissions = new Set(require("./explicitPermissions.json"));
 
 function normalizedPermissions(value) {
   return Array.isArray(value)
@@ -13,8 +14,9 @@ function normalizedPermissions(value) {
 function permissionAllows(permissions, feature, action) {
   const normalizedFeature = String(feature || "").trim().toLowerCase();
   const normalizedAction = String(action || "").trim().toLowerCase();
-  return permissions.includes(`${normalizedFeature}.${normalizedAction}`)
-    || permissions.includes(`${normalizedFeature}.*`);
+  const key = `${normalizedFeature}.${normalizedAction}`;
+  return permissions.includes(key)
+    || !explicitPermissions.has(key) && permissions.includes(`${normalizedFeature}.*`);
 }
 
 async function requireHotelPermission(db, request, hotelUid, feature, action, transaction, auth) {

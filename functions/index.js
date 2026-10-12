@@ -50,6 +50,7 @@ exports.searchHotelProducts = searchHotelProducts;
 
 // Protected SaaS onboarding and procurement boundaries.
 const onboarding = require("./src/onboarding");
+exports.getHotelSetupReadiness = require("./src/hotelSetup").getHotelSetupReadiness;
 const suppliers = require("./src/suppliers");
 const orders = require("./src/orders");
 for (const name of ["createHotel", "inviteHotelUser", "listHotelUsers", "getHotelOnboardingStatus"]) exports[name] = onboarding[name];
@@ -57,6 +58,8 @@ for (const name of ["listSuppliers", "getSupplierConnection", "saveSupplier", "d
 for (const name of ["createOrdersFromCart", "updateHotelOrder", "deleteHotelOrder", "confirmHotelOrder", "setHotelOutletApprovers", "saveSupplierOutletAccount"]) exports[name] = orders[name];
 exports.mutateHotelShoppingCart = require("./src/shoppingCarts").mutateHotelShoppingCart;
 exports.reviewHotelOrderDelivery = require("./src/deliveryRecovery").reviewHotelOrderDelivery;
+const receiving = require("./src/orderReceiving");
+for (const name of ["recordHotelOrderReceipt", "reverseHotelOrderReceipt", "finalizeHotelOrderReceiving", "getHotelOrderReceiving"]) exports[name] = receiving[name];
 const stockCounts = require("./src/stockCounts");
 for (const name of ["createHotelStockCount", "mutateHotelStockCount", "listHotelStockCountSources"]) exports[name] = stockCounts[name];
 exports.getHotelUserDisplayName = require("./src/staffDisplay").getHotelUserDisplayName;

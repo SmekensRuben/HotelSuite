@@ -4,6 +4,10 @@ const currentAuth = { getUser: async () => ({ emailVerified: true, customClaims:
 const { permissionAllows, requireHotelPermission } = require("./authorization");
 
 test("permissionAllows accepts exact and feature wildcard permissions", () => {
+  for (const action of ["receive", "finalize"]) {
+    assert.equal(permissionAllows(["orders.*"], "orders", action), false);
+    assert.equal(permissionAllows([`orders.${action}`], "orders", action), true);
+  }
   assert.equal(permissionAllows(["orders.read"], "orders", "read"), true);
   assert.equal(permissionAllows(["orders.*"], "orders", "approve"), true);
   assert.equal(permissionAllows(["orders.read"], "orders", "approve"), false);
