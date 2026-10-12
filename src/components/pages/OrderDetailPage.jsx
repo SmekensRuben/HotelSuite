@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import DataListTable from "../shared/DataListTable";
+import { frozenStockContent } from "../orders/orderInventoryDisplay";
 import { useTranslation } from "react-i18next";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
@@ -44,7 +45,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
   const order = query.data;
   const loading = query.loading;
   const refreshOrder = query.run;
-  const { createdByName } = useStaffDisplayNames({ hotelUid, scopeKey, record: order });
+  const { createdByName, updatedByName } = useStaffDisplayNames({ hotelUid, scopeKey, record: order });
   const canReadSuppliers = usePermission("suppliers", "read");
   const supplierId = order?.supplierId || "";
   const loadSupplier = useCallback(() => getSupplier(hotelUid, supplierId), [hotelUid, supplierId]);
@@ -137,24 +138,24 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
     return (
       <div className="min-h-screen bg-canvas text-gray-900">
         <HeaderBar today={today} onLogout={handleLogout} />
-        <PageContainer>
+        <ProcurementPage>
           <p role="status" className="text-sm text-gray-600">Loading order...</p>
-        </PageContainer>
+        </ProcurementPage>
       </div>
     );
   }
 
-  if (query.error && !order) return <div className="min-h-screen bg-canvas text-gray-900"><HeaderBar today={today} onLogout={handleLogout} /><PageContainer><AsyncError error={query.error} onRetry={query.retry} label="Could not load this order." /></PageContainer></div>;
+  if (query.error && !order) return <div className="min-h-screen bg-canvas text-gray-900"><HeaderBar today={today} onLogout={handleLogout} /><ProcurementPage><AsyncError error={query.error} onRetry={query.retry} label="Could not load this order." /></ProcurementPage></div>;
 
   if (!order) {
     return (
       <div className="min-h-screen bg-canvas text-gray-900">
         <HeaderBar today={today} onLogout={handleLogout} />
-        <PageContainer>
+        <ProcurementPage>
           <Card>
-            <p className="text-sm text-gray-600">Order niet gevonden.</p>
+            <p className="text-sm text-gray-600">Order not found.</p>
           </Card>
-        </PageContainer>
+        </ProcurementPage>
       </div>
     );
   }
@@ -179,6 +180,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
       supplierSku: item.supplierSku || "-",
       purchaseUnit: item.purchaseUnit || "-",
       content: formatContent(item),
+      stockContent: frozenStockContent(item),
       qty,
       price: formatOrderMoney(unitPrice, item.currency || order.currency),
       priceBasisLabel: formatOrderPriceBasis(item.priceBasis),
@@ -269,7 +271,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
     },
     { key: "supplierSku", label: "SKU" },
     { key: "purchaseUnit", label: "Purchase Unit" },
-    { key: "content", label: "Content" },
+    { key: "content", label: "Package content", render: (row) => <div><p>{row.content}</p><p className="mt-1 max-w-[15rem] text-xs text-slate-500">{row.stockContent}</p></div> },
     { key: "qty", label: "Qty" },
     { key: "price", label: "Package price" },
     { key: "priceBasisLabel", label: "Price basis" },
@@ -279,7 +281,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage className="space-y-6">
         <AsyncError error={query.error} onRetry={query.retry} label="Could not refresh this order." />
         {canReadSuppliers && <AsyncError error={supplierQuery.error} onRetry={supplierQuery.retry} label="Could not load supplier details. Saved order names remain available." />}
         {canApproveOrders && <AsyncError error={approvalQuery.error} onRetry={approvalQuery.retry} label="Could not verify outlet approval." />}
@@ -329,6 +331,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
             <p><span className="font-semibold">Supplier:</span> {supplierName || order.supplierId || "-"}</p>
             <p><span className="font-semibold">Delivery Date:</span> {order.deliveryDate || "-"}</p>
             <p><span className="font-semibold">Created By:</span> {createdByName}</p>
+            <p><span className="font-semibold">Updated By:</span> {updatedByName}</p>
             <p><span className="font-semibold">Created At:</span> {order.createdAtDate ? new Date(order.createdAtDate).toLocaleString() : "-"}</p>
             <p><span className="font-semibold">Quoted total:</span> {formatOrderMoney(order.totalAmount, order.currency)}</p>
           </div>
@@ -361,7 +364,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
           </div>
         )}
         {["Ordered", "Received", "Finalized"].includes(order.status) && <OrderReceivingPanel hotelUid={hotelUid} orderId={orderId} onChanged={refreshOrder} disabled={loading || Boolean(query.error)} />}
-      </PageContainer>
+      </ProcurementPage>
 
       <Modal
         open={showOrderConfirmModal}
@@ -455,7 +458,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
         </div>
       </Modal>
 
-      {isPlatformAdmin && ["failed", "blocked", "needs-review", "processing"].includes(dispatchStatus) && <PageContainer as="section" id="order-recovery">
+      {isPlatformAdmin && ["failed", "blocked", "needs-review", "processing"].includes(dispatchStatus) && <ProcurementPage as="section" id="order-recovery">
         <Card>
           <h2 className="text-lg font-semibold">Delivery review</h2>
           <p className="mt-2 text-sm leading-6 text-gray-600">Check the email provider or supplier's SFTP receipt before recording delivery. An unconfirmed delivery cannot be resent. Preparation can be retried only when the backend confirms that no external send was attempted.</p>
@@ -470,7 +473,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
           }}>{label}</button>)}</div>
           {actionError && <p role="alert" className="mt-3 text-sm text-red-700">{actionError}</p>}
         </Card>
-      </PageContainer>}
+      </ProcurementPage>}
 
       <Modal open={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete order">
         <p className="text-sm text-gray-700">Are you sure you want to delete this order?</p>

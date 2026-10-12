@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import DataListTable from "../shared/DataListTable";
+import { frozenStockContent } from "../orders/orderInventoryDisplay";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getOrderById, updateOrder } from "../../services/firebaseOrders";
@@ -32,7 +33,7 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
   const query = useScopedAsync({ scopeKey, enabled: Boolean(hotelUid && orderId), load });
   const order = query.data;
   const loading = query.loading;
-  const { createdByName } = useStaffDisplayNames({ hotelUid, scopeKey, record: order });
+  const { createdByName, updatedByName } = useStaffDisplayNames({ hotelUid, scopeKey, record: order });
   const mounted = useRef(false);
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -65,22 +66,22 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
     return (
       <div className="min-h-screen bg-canvas text-gray-900">
         <HeaderBar today={today} onLogout={handleLogout} />
-        <PageContainer>
+        <ProcurementPage>
           <p role="status" className="text-sm text-gray-600">Loading order...</p>
-        </PageContainer>
+        </ProcurementPage>
       </div>
     );
   }
 
-  if (query.error) return <div className="min-h-screen bg-canvas text-gray-900"><HeaderBar today={today} onLogout={handleLogout} /><PageContainer><AsyncError error={query.error} onRetry={query.retry} label="Could not load this order." /></PageContainer></div>;
+  if (query.error) return <div className="min-h-screen bg-canvas text-gray-900"><HeaderBar today={today} onLogout={handleLogout} /><ProcurementPage><AsyncError error={query.error} onRetry={query.retry} label="Could not load this order." /></ProcurementPage></div>;
 
   if (!order) {
     return (
       <div className="min-h-screen bg-canvas text-gray-900">
         <HeaderBar today={today} onLogout={handleLogout} />
-        <PageContainer>
-          <Card><p className="text-sm text-gray-600">Order niet gevonden.</p></Card>
-        </PageContainer>
+        <ProcurementPage>
+          <Card><p className="text-sm text-gray-600">Order not found.</p></Card>
+        </ProcurementPage>
       </div>
     );
   }
@@ -89,12 +90,12 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
     return (
       <div className="min-h-screen bg-canvas text-gray-900">
         <HeaderBar today={today} onLogout={handleLogout} />
-        <PageContainer>
+        <ProcurementPage>
           <Card>
-            <p className="text-sm text-gray-600">Alleen orders met status Created kunnen bewerkt worden.</p>
-            <button type="button" onClick={() => navigate(`/orders/${orderId}`)} className="mt-3 px-4 py-2 border border-gray-300 rounded font-semibold hover:bg-gray-100">Terug</button>
+            <p className="text-sm text-gray-600">Only draft orders with status Created can be edited.</p>
+            <button type="button" onClick={() => navigate(`/orders/${orderId}`)} className="mt-3 px-4 py-2 border border-gray-300 rounded font-semibold hover:bg-gray-100">Back</button>
           </Card>
-        </PageContainer>
+        </ProcurementPage>
       </div>
     );
   }
@@ -108,6 +109,7 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
       supplierSku: item.supplierSku || "-",
       purchaseUnit: item.purchaseUnit || "-",
       content: formatContent(item),
+      stockContent: frozenStockContent(item),
       qty,
       price: formatOrderMoney(unitPrice, item.currency || order.currency),
       priceBasisLabel: formatOrderPriceBasis(item.priceBasis),
@@ -120,7 +122,7 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
     { key: "supplierProductName", label: "Product" },
     { key: "supplierSku", label: "SKU" },
     { key: "purchaseUnit", label: "Purchase Unit" },
-    { key: "content", label: "Content" },
+    { key: "content", label: "Package content", render: (row) => <div><p>{row.content}</p><p className="mt-1 max-w-[15rem] text-xs text-slate-500">{row.stockContent}</p></div> },
     {
       key: "qtyEditor",
       label: "Qty",
@@ -160,7 +162,7 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage className="space-y-6">
         {saveError && <p role="alert" className="rounded-lg bg-red-50 p-4 text-red-800">{saveError}</p>}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-3xl font-semibold">Edit order detail</h1>
@@ -191,8 +193,9 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
           <div className="grid gap-3 md:grid-cols-3 text-sm">
             <p><span className="font-semibold">Status:</span> {order.status}</p>
             <p><span className="font-semibold">Price basis:</span> {formatOrderPriceBasis(order.priceBasis)}</p>
-            <p><span className="font-semibold">Supplier:</span> {order.supplierId || "-"}</p>
+            <p><span className="font-semibold">Supplier:</span> {order.supplierName || order.supplierId || "-"}</p>
             <p><span className="font-semibold">Created By:</span> {createdByName}</p>
+            <p><span className="font-semibold">Updated By:</span> {updatedByName}</p>
             <label className="md:col-span-2 text-sm font-semibold text-gray-700">
               Delivery Date
               <input type="date" value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" />
@@ -201,8 +204,8 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
         </Card>
 
         <p className="text-xs text-gray-600">Quoted amounts are shown as recorded. No VAT conversion is applied; missing historical price bases remain unknown.</p>
-        <DataListTable columns={columns} rows={rows} emptyMessage="Geen orderregels meer." />
-      </PageContainer>
+        <DataListTable columns={columns} rows={rows} emptyMessage="No order lines remaining." />
+      </ProcurementPage>
     </div>
   );
 }

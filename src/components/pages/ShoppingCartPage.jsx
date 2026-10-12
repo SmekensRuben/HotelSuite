@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, MessageSquarePlus, ShoppingCart, Trash2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
+import { Combobox } from "../ui/combobox";
 import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import DataListTable from "../shared/DataListTable";
@@ -102,7 +103,7 @@ function ScopedShoppingCartPage() {
   const performMutation = async (operation) => {
     if (mutating) return false;
     setMutating(true); setErrorMessage("");
-    try { await operation(); await refreshCart(); return true; }
+    try { await operation(); if (!mounted.current) return false; await refreshCart(); return mounted.current; }
     catch (error) { if (mounted.current) setErrorMessage(error?.message || "Could not update this cart. Refresh stale data or retry the saved request."); return false; }
     finally { if (mounted.current) setMutating(false); }
   };
@@ -178,22 +179,12 @@ function ScopedShoppingCartPage() {
       label: "Outlet",
       sortable: false,
       render: (row) => (
-        <select
-          disabled={mutating}
-          value={row.outletId}
-          onChange={async (event) => {
-            const value = event.target.value;
-            await performMutation(() => updateShoppingCartItemOutlet(hotelUid, cartId, row.supplierProductId, value, row.purchaseOptionId, shoppingCart.revision ?? 0));
-          }}
-          className="w-40 border border-gray-300 rounded px-2 py-1"
-        >
-          <option value="">Select an outlet</option>
-          {outlets.map((outlet) => (
-            <option key={outlet.id} value={outlet.id}>
-              {outlet.name || outlet.id}
-            </option>
-          ))}
-        </select>
+        <div className="min-w-[12rem]">
+          <Combobox aria-label={`Outlet for ${row.supplierProductName}`} options={outlets} value={outlets.find((outlet) => outlet.id === row.outletId) || null} onChange={async (outlet) => {
+            if (!outlet) return;
+            await performMutation(() => updateShoppingCartItemOutlet(hotelUid, cartId, row.supplierProductId, outlet.id, row.purchaseOptionId, shoppingCart.revision ?? 0));
+          }} displayValue={(outlet) => outlet.name || "Unnamed outlet"} getOptionValue={(outlet) => outlet.id} placeholder="Search outlets" disabled={mutating || creatingOrder} className="ht-field" />
+        </div>
       ),
     },
     {
@@ -261,12 +252,12 @@ function ScopedShoppingCartPage() {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage className="space-y-6">
         <PendingCartCommand hotelUid={hotelUid} cartId={cartId} onComplete={async () => { setErrorMessage(""); await refreshCart(); }} />
         {errorMessage && <p role="alert" className="text-red-700">{errorMessage}</p>}
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h1 className="text-2xl font-semibold">Shopping Cart</h1>
+            <div><p className="text-xs uppercase tracking-wider text-slate-500">Purchasing & inventory</p><h1 className="text-2xl font-semibold">Shopping cart</h1><p className="mt-1 text-sm text-slate-600">Assign each package to an outlet and review quantities before creating draft orders.</p></div>
             <div className="flex flex-wrap items-center gap-2 ml-auto">
               <button type="button" disabled={loading || mutating} onClick={refreshCart} className="rounded border border-gray-300 px-3 py-2 text-sm font-semibold disabled:opacity-50">Refresh cart</button>
               <button
@@ -292,7 +283,7 @@ function ScopedShoppingCartPage() {
         ) : (
           <>
             <DataListTable columns={columns} rows={rows} emptyMessage="The shopping cart is empty." />
-            <div className="flex flex-col items-end gap-3">
+            <div className="ml-auto flex max-w-md flex-col items-end gap-3 rounded-2xl border border-slate-200 bg-white p-5">
               {Object.entries(cartTotals).map(([label, total]) => <p key={label} className="text-lg font-semibold">Quoted cart total: {total.toFixed(2)} {label}</p>)}
               {hasUnknownPricing && <p className="text-sm text-red-700">Some prices or currencies are unavailable. Review these offers before creating orders.</p>}
               {hasMissingOutlets && (
@@ -314,7 +305,7 @@ function ScopedShoppingCartPage() {
             </div>
           </>
         )}
-      </PageContainer>
+      </ProcurementPage>
 
       <Modal open={showCreateOrderModal} onClose={() => setShowCreateOrderModal(false)} title="Create Order">
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
@@ -344,6 +335,7 @@ function ScopedShoppingCartPage() {
               try {
                 const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
                 const result = await createOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, actor, shoppingCart?.revision || 0);
+                if (!mounted.current) return;
                 const adjustments = Array.isArray(result?.deliveryDateAdjustments)
                   ? result.deliveryDateAdjustments
                   : [];
@@ -357,9 +349,9 @@ function ScopedShoppingCartPage() {
                   navigate("/orders");
                 }
               } catch (error) {
-                setErrorMessage(error?.message || "Could not create orders");
+                if (mounted.current) setErrorMessage(error?.message || "Could not create orders");
               } finally {
-                setCreatingOrder(false);
+                if (mounted.current) setCreatingOrder(false);
               }
             }}
             className="px-4 py-2 rounded bg-brand-800 text-white hover:bg-brand-950 disabled:opacity-50"

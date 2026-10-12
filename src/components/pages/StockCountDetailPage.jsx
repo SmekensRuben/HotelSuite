@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Download } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import DataListTable from "../shared/DataListTable";
 import { auth, signOut } from "../../firebaseConfig";
@@ -10,6 +10,7 @@ import { useHotelContext } from "../../contexts/HotelContext";
 import { finishStockCount, getStockCountById } from "../../services/firebaseStockCounts";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { formatInventoryValue } from "../inventory/inventoryFormatting";
+import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 import { usePermission } from "../../hooks/usePermission";
 
 function formatCurrency(value) {
@@ -62,6 +63,7 @@ export default function StockCountDetailPage() {
   const { data: stockCount, loading, error: loadError, retry, setData: setStockCount } = useScopedAsync({
     scopeKey, enabled: Boolean(hotelUid && stockCountId), load: loadStockCount,
   });
+  const { createdByName, updatedByName } = useStaffDisplayNames({ hotelUid, scopeKey, record: stockCount });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -182,7 +184,7 @@ export default function StockCountDetailPage() {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
@@ -240,6 +242,7 @@ export default function StockCountDetailPage() {
               </div>
             </Card>
 
+            <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-500"><p>Created by <span className="font-medium text-slate-700">{createdByName}</span></p><p>Updated by <span className="font-medium text-slate-700">{updatedByName}</span></p></div>
             <Card className="space-y-4">
               <p className="text-sm text-gray-600">{stockCount.inventoryPolicyVersion === 1 ? `Catalog quantities by physical location · ${stockCount.businessDate || "business date unavailable"}. Values are operator cost estimates; missing costs stay unavailable. This is not live stock.` : "Historical supplier-based count. Original packaging and price snapshots are retained; currency was not captured by the legacy policy."}</p>
               <DataListTable
@@ -279,7 +282,7 @@ export default function StockCountDetailPage() {
             </Card>
           </>
         )}
-      </PageContainer>
+      </ProcurementPage>
     </div>
   );
 }

@@ -3,7 +3,7 @@
 ## Scope and policies
 
 This release implements product/unit policy v1 and periodic inventory policy v1.
-The Rules contract is `saas-platform-v4`. It does not implement recipes, POS
+The current Rules contract is `saas-platform-v5`. It does not implement recipes, POS
 integrations or a continuously calculated on-hand inventory. No physical stock
 is increased by ordering goods. The Inventory periods page reports evidence
 between two completed physical counts, not guaranteed sales consumption.
@@ -129,8 +129,41 @@ CSV import for now. A typed supplier-feed adapter is future work.
 
 Private hotel collections are productOperations, productSkuKeys, productAudit,
 stockTemplateOperations, inventoryLocationStates, inventoryCheckpoints,
-inventoryMovements, inventoryReversals and inventoryPeriodReports. They are not
+inventoryMovements, inventoryReversals, inventoryPeriodReports,
+procurementResourceOperations and procurementResourceAudit. They are not
 descendants of the former recursive location write grant.
+
+## Resource archival, display names and loading
+
+Locations and outlets use protected archive commands (resource policy v1),
+authorized with the existing delete permission. Archival retains IDs, stock
+templates, approvers, account assignments and historic orders/counts/evidence.
+Archived resources leave new-source selectors and cannot be used for new counts,
+receipt destinations, order contracts, cart assignment or template/approver/account
+mutations. Existing frozen counts can finish; historical reversals keep their
+original destination. No hard-delete or reactivation workflow is exposed.
+Browser writes and generic imports cannot bypass the lifecycle boundary.
+
+Template display names are a bounded same-hotel projection, independent from
+optional catalog search. A label does not prove counting eligibility: missing
+links, incompatible units, inactive/untracked products and archived resources stay
+explicitly unavailable. Audit display names use a name-only hotel projection.
+A completed private same-hotel demo receipt can prove its nonmember operator;
+unprovable or missing names remain unknown instead of exposing a UID as a name.
+
+Supplier package-content units and catalog stock-count units are displayed
+separately. Compatible conversions such as 6,000 ml to 6 l are exact; no catalog
+identity or historical quantity is changed by presentation. Optional source lists
+load when requested, search pages obey the 100-row backend bound, and additional
+pages are explicit. Unfiltered supplier pages use authorized Firestore reads;
+search hydration and staff-name lookups are batched.
+
+Concurrent read pooling is partitioned by authenticated session and hotel and is
+invalidated on mutations and access changes. Operational records are not retained
+as a settled cache. The touched direct procurement reads reject known offline SDK
+cache fallback rather than presenting stale data as current. This is not a claim
+that all legacy application reads have been migrated or that production latency
+has been measured. See `procurement-usability-plan.md` for verification and rollout.
 
 I've set up prototype Security Rules to keep the data in Firestore safe. They
 are designed to be secure for hotel isolation, protected product commands and
@@ -144,15 +177,15 @@ it does not certify the entire application or a production deployment.
 
 Do not merge or deploy this implementation automatically. Main activates production
 delivery. Review the complete PR and schedule a coordinated release window.
-The v4 Functions runtime intentionally blocks gated procurement while the global
-marker still describes v3, including any index-build window after deployment.
+The v5 Functions runtime intentionally blocks gated procurement while the global
+marker still describes an older policy, including any index-build window after deployment.
 Publishing only the client or Functions does not complete the release.
 
 Use the existing operator rollout from the exact reviewed merged-main SHA. Its
 read-only preflight verifies release/CI/App Hosting/Functions, existing identity
 consistency and the required indexes. `--apply` creates only missing reviewed
 indexes and waits for READY before pausing/releasing Rules, then verifies indexes
-again before enabling v4. Unrelated indexes are preserved. The helper inspects
+again before enabling the current policy. Unrelated indexes are preserved. The helper inspects
 the actual database edition/type and stops if it differs from the reviewed
 Standard/Native default-database contract; it never provisions a database.
 Failures retain an exact reviewed resume point and never enable an unverified

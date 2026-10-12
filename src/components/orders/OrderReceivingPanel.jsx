@@ -4,6 +4,7 @@ import { getHotelOrderReceiving, recordHotelOrderReceipt, reverseHotelOrderRecei
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { usePermission } from "../../hooks/usePermission";
 import AsyncError from "../shared/AsyncError";
+import { Combobox } from "../ui/combobox";
 
 const field = "ht-field mt-1";
 const kinds = { receipt: recordHotelOrderReceipt, reversal: reverseHotelOrderReceipt, finalization: finalizeHotelOrderReceiving };
@@ -97,7 +98,7 @@ function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = fa
   const setLine = (id, name, value) => setForm((previous) => ({ ...previous, lines: { ...previous.lines, [id]: { ...previous.lines[id], [name]: value } } }));
   return <section className="ht-panel mt-6 space-y-5 p-5 sm:p-6" aria-label="Goods receiving">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">Goods receiving</h2>
-      <p className="mt-2 text-sm text-slate-600">Use the purchase units recorded on the order. Accepted goods fulfill the order; rejected goods remain separate. Stock counts stay independent.</p></div>
+      <p className="mt-2 text-sm text-slate-600">Enter quantities in the purchase units recorded on this order. Accepted goods are converted to the frozen catalog unit for receipt evidence. Rejected goods remain separate; physical stock counts use catalog units.</p></div>
       <button type="button" className="ht-button-secondary" disabled={busy || query.loading} onClick={refresh}>Refresh receiving</button></div>
     {message && <p role={message.error ? "alert" : "status"} className={`rounded-xl border p-4 text-sm ${message.error ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>{message.text}</p>}
     {pending && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">
@@ -141,9 +142,9 @@ function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = fa
             <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium">Receipt business date<input required type="date" className={field} value={form.receivedOn} onChange={(event) => setForm({ ...form, receivedOn: event.target.value })} /></label>
               <label className="text-sm font-medium">Delivery note / receipt reference<input required maxLength={120} className={field} value={form.deliveryReference} onChange={(event) => setForm({ ...form, deliveryReference: event.target.value })} /></label></div>
             <p className="text-xs text-slate-500">Use a unique delivery reference for this order. A reversed receipt retains its reference; use a new correction reference.</p>
-            <label className="block text-sm font-medium">Physical receiving location<select className={field} value={form.inventoryLocationId} onChange={(event) => setForm({ ...form, inventoryLocationId: event.target.value })}>
-              <option value="">Select a location</option>{(data.inventoryLocations || []).map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
-            </select></label>
+            <label className="block text-sm font-medium">Physical receiving location
+              <Combobox aria-label="Physical receiving location" options={data.inventoryLocations || []} value={(data.inventoryLocations || []).find((location) => location.id === form.inventoryLocationId) || null} onChange={(location) => setForm({ ...form, inventoryLocationId: location?.id || "" })} displayValue={(location) => location.name || "Unnamed location"} getOptionValue={(location) => location.id} placeholder="Search receiving locations" disabled={blocked} className={field} />
+            </label>
             {data.inventoryLocationsTruncated && <p className="text-sm text-amber-900">Showing the first 100 locations. Ask a hotel administrator to review the destination if it is not listed.</p>}
             {data.inventoryCoverageReasons?.length > 0 && <p className="text-sm text-amber-900">Some frozen product conversions or price contracts need review. Receiving remains traceable; affected inventory quantities or values will be unavailable in period comparisons.</p>}
             <p className="text-xs text-slate-500">Accepted goods create receipt evidence for this location. This does not represent live on-hand stock.</p>
@@ -174,7 +175,7 @@ function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = fa
         {!events.length && <p className="mt-2 text-sm text-slate-600">No receiving events recorded.</p>}
         <ol className="mt-3 space-y-3">{events.map((event) => <li key={event.id} className="rounded-xl border border-slate-200 p-4 text-sm">
           <div className="flex flex-wrap justify-between gap-2"><p className="font-semibold">{event.kind === "receipt" ? `Delivery ${event.deliveryReference}` : event.kind === "reversal" ? "Receipt reversal" : "Receiving finalized"}{event.reversed && " · reversed"}</p><time>{moment(event.createdAtMillis)}</time></div>
-          <p className="mt-1 break-all text-xs text-slate-500">Recorded by {event.actorName || event.actorUid}{event.receivedOn && ` · receipt date ${event.receivedOn}`}</p>
+          <p className="mt-1 text-xs text-slate-500">Recorded by {event.actorName && event.actorName !== event.actorUid ? event.actorName : "Unknown user"}{event.receivedOn && ` · receipt date ${event.receivedOn}`}</p>
           {event.kind === "reversal" && <p className="mt-2 break-all text-xs">Original receipt: {event.receiptId}</p>}
           {event.lines.map((line) => <p key={lineKey(line)} className="mt-2">{line.productName}: {line.acceptedQuantity} accepted, {line.rejectedQuantity} rejected · {line.purchaseUnit}{line.reason && ` · ${line.reason}`}</p>)}
           {["receipt", "reversal"].includes(event.kind) && <p className="mt-2 text-xs text-slate-500">{event.inventoryMovement

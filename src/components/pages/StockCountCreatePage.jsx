@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom";
 import PendingStockCommand from "../inventory/PendingStockCommand";
 import HeaderBar from "../layout/HeaderBar";
-import PageContainer from "../layout/PageContainer";
+import ProcurementPage from "../layout/ProcurementPage";
+import { Combobox } from "../ui/combobox";
 import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
@@ -124,7 +125,7 @@ export default function StockCountCreatePage() {
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
-      <PageContainer className="space-y-6">
+      <ProcurementPage width="form" className="space-y-6">
         <div>
           <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
           <h1 className="text-3xl font-semibold">Create Stock Count</h1>
@@ -172,7 +173,7 @@ export default function StockCountCreatePage() {
               </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-3 rounded-xl bg-slate-50 p-4 sm:p-5">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">Locations</h2>
                 <p className="text-sm text-gray-600">
@@ -187,7 +188,7 @@ export default function StockCountCreatePage() {
                   No locations found.
                 </p>
               ) : (
-                <div className="overflow-hidden rounded-xl border border-gray-200">
+                <div className="rounded-xl border border-gray-200">
                   <div className="divide-y divide-gray-100 bg-white">
                     {locationRows.map((row) => (
                       <div key={row.locationId} className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_minmax(220px,320px)] md:items-center">
@@ -201,22 +202,7 @@ export default function StockCountCreatePage() {
                           <span>{row.locationName}</span>
                         </label>
 
-                        <select
-                          value={row.stockTemplateId}
-                          onChange={(event) => handleTemplateChange(row.locationId, event.target.value)}
-                          disabled={!row.selected || row.templates.length === 0}
-                          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-500"
-                        >
-                          {row.templates.length === 0 ? (
-                            <option value="">No templates available</option>
-                          ) : (
-                            row.templates.map((template) => (
-                              <option key={template.id} value={template.id}>
-                                {template.name}
-                              </option>
-                            ))
-                          )}
-                        </select>
+                        <Combobox aria-label={`Template for ${row.locationName}`} options={row.templates} value={row.templates.find((template) => template.id === row.stockTemplateId) || null} onChange={(template) => handleTemplateChange(row.locationId, template?.id || "")} displayValue={(template) => template.name} getOptionValue={(template) => template.id} disabled={!row.selected || row.templates.length === 0 || saving} placeholder={row.templates.length ? "Select a template" : "No templates available"} className="ht-field" />
                       </div>
                     ))}
                   </div>
@@ -244,7 +230,7 @@ export default function StockCountCreatePage() {
             </div>
           </form>
         </Card>
-      </PageContainer>
+      </ProcurementPage>
     </div>
   );
 }
