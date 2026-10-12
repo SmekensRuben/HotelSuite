@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { getPlatformHotel, updatePlatformHotel, startPlatformSupport, platformError } from "../../services/firebasePlatform";
 import { usePlatformQuery, usePlatformScope } from "../../hooks/usePlatformQuery";
 import { Title, QueryState, Status, Moment, button, primary, field, panel } from "./PlatformShared";
+import HotelSetupChecklist from "./HotelSetupChecklist";
 
 export default function PlatformHotelPage() {
   const { hotelUid } = useParams(), navigate = useNavigate();
@@ -31,6 +32,7 @@ export default function PlatformHotelPage() {
   return <><Title title={query.data?.name || "Hotel details"} actions={<Link className={button} to="/platform/hotels">All hotels</Link>}>Property administration is separate from operational hotel access.</Title>
     {message && <p role={message.error ? "alert" : "status"} className={`${panel} mb-4`}>{message.text}</p>}
     <QueryState query={query}>{query.data && <div className="grid gap-6 xl:grid-cols-2">
+      <div className="xl:col-span-2"><HotelSetupChecklist hotelUid={hotelUid} refreshKey={query.data.revision} /></div>
       <form onSubmit={save} className={panel}><h2 className="text-lg font-semibold">Property and contact</h2><p className="mt-1 text-xs text-slate-500">Permanent hotel ID: {hotelUid}</p>
         {[["name", "Hotel name", true], ["timeZone", "Hotel time zone", true], ["contactName", "Primary contact name", false], ["contactEmail", "Primary contact email", false]].map(([key, label, required]) => <label key={key} className="mt-4 block text-sm font-medium">{label}<input required={required} disabled={busy} type={key === "contactEmail" ? "email" : "text"} maxLength={key === "contactEmail" ? 254 : key === "name" ? 200 : key === "timeZone" ? 80 : 120} placeholder={key === "timeZone" ? "Europe/Brussels" : undefined} className={field} value={form[key] || ""} onChange={(event) => setForm({ ...form, [key]: event.target.value })} /></label>)}
         <button disabled={busy} className={`${primary} mt-5`}>Save hotel details</button></form>

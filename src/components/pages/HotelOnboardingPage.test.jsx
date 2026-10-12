@@ -10,6 +10,7 @@ vi.mock("../../firebaseConfig", () => ({ auth: {}, signOut: vi.fn() }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ refreshHotelAssignments: vi.fn().mockResolvedValue(undefined) }) }));
 vi.mock("../../services/firebaseSubscriptions", () => ({ getHotelSubscriptions: vi.fn().mockResolvedValue([{ hotelUid: "hotel-a", hotelName: "Hotel A" }]) }));
 vi.mock("../../services/firebaseOnboarding", () => ({ createHotel: vi.fn(), inviteHotelUser: vi.fn(), getHotelOnboardingStatus: vi.fn() }));
+vi.mock("../platform/HotelSetupChecklist", () => ({ default: ({ hotelUid }) => <section>Setup assessment for {hotelUid}</section> }));
 beforeEach(() => { vi.clearAllMocks(); getHotelOnboardingStatus.mockReset().mockResolvedValue({ enabled: true }); });
 
 describe("hotel onboarding", () => {
@@ -19,12 +20,15 @@ describe("hotel onboarding", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Create hotel" }).disabled).toBe(false));
     fireEvent.change(screen.getByLabelText("Hotel name"), { target: { value: "Hotel C" } });
     fireEvent.change(screen.getByLabelText(/Hotel ID/), { target: { value: "hotel-c" } });
+    fireEvent.change(screen.getByLabelText(/Hotel time zone/), { target: { value: "Europe/Brussels" } });
     fireEvent.click(screen.getByRole("button", { name: "Create hotel" }));
     await screen.findByRole("alert");
     fireEvent.click(screen.getByRole("button", { name: "Create hotel" }));
-    await screen.findByText("Hotel C is ready. Invite a primary and backup hotel administrator below.");
+    await screen.findByText("Hotel C was created. Invite its administrators and complete the setup checklist.");
     expect(createHotel.mock.calls[0][0].requestId).toBe(createHotel.mock.calls[1][0].requestId);
-    expect(createHotel.mock.calls[1][0]).toMatchObject({ status: "trialing", trialDays: 14 });
+    expect(createHotel.mock.calls[1][0]).toMatchObject({ status: "trialing", trialDays: 14, timeZone: "Europe/Brussels" });
+    expect(screen.queryByText(/Hotel C is ready/)).not.toBeInTheDocument();
+    expect(screen.getByText("Setup assessment for hotel-c")).toBeInTheDocument();
     expect(screen.getByLabelText("Hotel").value).toBe("hotel-c");
   });
 
