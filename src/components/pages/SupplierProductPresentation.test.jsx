@@ -9,6 +9,8 @@ vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelU
 vi.mock("react-router-dom", () => ({ useParams: () => ({ productId: "orange-offer" }), useNavigate: () => vi.fn() }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key) => key }) }));
 vi.mock("../layout/HeaderBar", () => ({ default: () => null }));
+vi.mock("../catalog/SupplierProductImage", () => ({ default: ({ product }) => <span>Image for {product.supplierProductName}</span> }));
+vi.mock("../catalog/SupplierProductImageUpload", () => ({ default: () => <button type="button">Upload product image</button> }));
 vi.mock("../../firebaseConfig", () => ({ auth: { currentUser: { uid: "employee" } }, signOut: vi.fn() }));
 vi.mock("../../services/firebaseProducts", () => ({ getSupplierProduct: mocks.detail, getCatalogProduct: mocks.catalog, getCatalogProducts: mocks.catalogList, deleteSupplierProduct: vi.fn(), getPendingProductCommand: () => null, retryPendingProductCommand: vi.fn() }));
 vi.mock("../../services/firebaseSuppliers", () => ({ getSuppliers: mocks.suppliers }));
@@ -68,5 +70,39 @@ describe("supplier package presentation", () => {
     expect(await screen.findByText("1000 ml = 1 l per purchase unit for stock counts.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ baseUnit: "ml", baseUnitsPerPurchaseUnit: 1000, catalogProductId: "catalog-orange" })));
+  });
+  it("retains default and additional package barcode strings without confusing them with the catalog identity", async () => {
+    const save = vi.fn().mockResolvedValue(undefined);
+    const product = { ...offer, gtin: "036000291452", purchaseOptions: [{ id: "single-bottle", purchaseUnit: "Bottle", gtin: "06291041500213", baseUnitsPerPurchaseUnit: 500, pricePerPurchaseUnit: null }] };
+    render(<SupplierProductFormFields initialData={product} onSubmit={save} submitLabel="Save" savingLabel="Saving" />);
+    await screen.findByDisplayValue("Supplier A");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ gtin: "036000291452", catalogProductId: "catalog-orange", purchaseOptions: [{ id: "single-bottle", purchaseUnit: "Bottle", gtin: "06291041500213", baseUnitsPerPurchaseUnit: 500, pricePerPurchaseUnit: null }] })));
+  });
+  it("requires an explicit contract currency when the saved product currency is unknown", async () => {
+    const save = vi.fn();
+    const view = render(<SupplierProductFormFields initialData={{ ...offer, currency: null }} onSubmit={save} submitLabel="Save" savingLabel="Saving" />);
+    await screen.findByDisplayValue("Supplier A");
+    const currency = screen.getByRole("combobox", { name: /Supplier contract currency/ });
+    expect(currency).toHaveValue("");
+    fireEvent.submit(view.container.querySelector("form"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Select a supported supplier contract currency");
+    expect(save).not.toHaveBeenCalled();
+    fireEvent.focus(currency); fireEvent.change(currency, { target: { value: "Euro" } });
+    fireEvent.click(await screen.findByRole("option", { name: "EUR — Euro" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ currency: "EUR" })));
+  });
+  it("offers managed-image editing only with product-update rights", async () => {
+    const view = render(<SupplierProductDetailPage />);
+    await screen.findByText("Orange juice");
+    expect(screen.queryByRole("button", { name: "Upload product image" })).not.toBeInTheDocument();
+    mocks.permissions = ["supplierproducts.read", "supplierproducts.update", "catalogproducts.read"];
+    view.rerender(<SupplierProductDetailPage />);
+    expect(await screen.findByRole("button", { name: "Upload product image" })).toBeInTheDocument();
+    mocks.permissions = ["supplierproducts.read"];
+    view.rerender(<SupplierProductDetailPage />);
+    await screen.findByText("Catalog read permission required");
+    expect(screen.queryByRole("button", { name: "Upload product image" })).not.toBeInTheDocument();
   });
 });

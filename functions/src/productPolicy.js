@@ -102,6 +102,22 @@ function optionalPriceDate(value, field) {
   if (!validDate(value)) fail(`${field} must be a valid YYYY-MM-DD date or blank.`);
   return value;
 }
+function packageGtin(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const result = text(value, "Package GTIN", 14);
+  if (result === "") return null;
+  if (!/^([0-9]{8}|[0-9]{12}|[0-9]{13}|[0-9]{14})$/.test(result)) {
+    fail("Package GTIN must contain 8, 12, 13 or 14 digits, including its check digit.");
+  }
+  // GS1 modulo 10: starting immediately before the check digit, weights
+  // alternate 3 and 1. Keep the supplied spelling and any leading zeroes.
+  let sum = 0;
+  for (let index = result.length - 2, weight = 3; index >= 0; index--, weight = weight === 3 ? 1 : 3) {
+    sum += Number(result[index]) * weight;
+  }
+  if ((10 - sum % 10) % 10 !== Number(result.at(-1))) fail("Package GTIN has an invalid GS1 check digit.");
+  return result;
+}
 function netPrice(price, basis, vatRate) {
   price = optionalNumber(price, "Price", { maximum: MAX_PRICE });
   if (price === null || basis === "unknown") return null;
@@ -130,24 +146,25 @@ function normalizeCatalogProduct(input) {
   return result;
 }
 function normalizeOption(input) {
-  supportedFields(input, ["id", "purchaseUnit", "baseUnitsPerPurchaseUnit", "pricePerPurchaseUnit"], "purchase option");
+  supportedFields(input, ["id", "purchaseUnit", "baseUnitsPerPurchaseUnit", "pricePerPurchaseUnit", "gtin"], "purchase option");
   return { id: requireDocumentId(input.id, "Purchase option ID"), purchaseUnit: text(input.purchaseUnit, "Purchase unit", 100, true),
     baseUnitsPerPurchaseUnit: decimal(input.baseUnitsPerPurchaseUnit, "Base units per purchase unit", { maximum: MAX_QUANTITY, positive: true }),
-    pricePerPurchaseUnit: optionalNumber(input.pricePerPurchaseUnit, "Purchase price", { maximum: MAX_PRICE }) };
+    pricePerPurchaseUnit: optionalNumber(input.pricePerPurchaseUnit, "Purchase price", { maximum: MAX_PRICE }), gtin: packageGtin(input.gtin) };
 }
 function normalizeSupplierProduct(input) {
-  supportedFields(input, ["supplierId", "supplierSku", "supplierProductName", "supplierName", "currency", "pricingModel", "pricePerBaseUnit", "pricePerPurchaseUnit", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "catalogProductId", "imageUrl", "active", "priceBasis", "vatRate", "purchaseOptions", "priceValidFrom", "priceValidUntil"], "supplier product");
+  if (input && Object.hasOwn(input, "imageUrl")) fail("Supplier product images must use the protected image upload workflow; external image URLs are not supported.");
+  supportedFields(input, ["supplierId", "supplierSku", "supplierProductName", "supplierName", "currency", "pricingModel", "pricePerBaseUnit", "pricePerPurchaseUnit", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "catalogProductId", "active", "priceBasis", "vatRate", "purchaseOptions", "priceValidFrom", "priceValidUntil", "gtin"], "supplier product");
   if (!/^[A-Z]{3}$/.test(input.currency ?? "")) fail("Currency must be an explicit three-letter uppercase code.");
   if (!["Per Purchase Unit", "Per Base Unit"].includes(input.pricingModel)) fail("Choose Per Purchase Unit or Per Base Unit pricing.");
   const result = { supplierId: requireDocumentId(input.supplierId, "supplierId"),
     supplierSku: text(input.supplierSku, "Supplier SKU", 150, true), supplierProductName: text(input.supplierProductName, "Supplier product name", 200, true),
     currency: input.currency, pricingModel: input.pricingModel, baseUnit: baseUnit(input.baseUnit),
-    purchaseUnit: text(input.purchaseUnit, "Purchase unit", 100, true),
+    purchaseUnit: text(input.purchaseUnit, "Purchase unit", 100, true), gtin: packageGtin(input.gtin),
     baseUnitsPerPurchaseUnit: decimal(input.baseUnitsPerPurchaseUnit, "Base units per purchase unit", { maximum: MAX_QUANTITY, positive: true }),
     pricePerBaseUnit: optionalNumber(input.pricePerBaseUnit, "Base unit price", { maximum: MAX_PRICE }),
     pricePerPurchaseUnit: optionalNumber(input.pricePerPurchaseUnit, "Purchase price", { maximum: MAX_PRICE }),
     catalogProductId: input.catalogProductId === null || input.catalogProductId === undefined || input.catalogProductId === "" ? null : requireDocumentId(input.catalogProductId, "catalogProductId"),
-    imageUrl: text(input.imageUrl ?? "", "Image URL", 1000), active: boolean(input.active, "active"), ...priceContract(input),
+    active: boolean(input.active, "active"), ...priceContract(input),
     priceValidFrom: optionalPriceDate(input.priceValidFrom, "Price valid from"), priceValidUntil: optionalPriceDate(input.priceValidUntil, "Price valid until"),
     productPolicyVersion: PRODUCT_POLICY_VERSION };
   if (result.priceValidFrom && result.priceValidUntil && result.priceValidFrom > result.priceValidUntil) fail("Price valid from must not be after price valid until.");

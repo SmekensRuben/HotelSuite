@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ call: vi.fn(), endpoint: vi.fn(), getDoc: vi.fn(), suppliers: vi.fn(), auth: { currentUser: { uid: "hotel-user" } } }));
-vi.mock("../firebaseConfig", () => ({ auth: mocks.auth, functions: {}, httpsCallable: (functions, endpoint) => { mocks.endpoint(endpoint); return mocks.call; }, db: {}, collection: (...parts) => parts.join("/"), doc: (...parts) => parts.join("/"), getDoc: mocks.getDoc }));
+const mocks = vi.hoisted(() => ({ call: vi.fn(), endpoint: vi.fn(), getDoc: vi.fn(), getDocs: vi.fn(), suppliers: vi.fn(), auth: { currentUser: { uid: "hotel-user" } } }));
+vi.mock("../firebaseConfig", () => ({ auth: mocks.auth, functions: {}, httpsCallable: (functions, endpoint) => { mocks.endpoint(endpoint); return mocks.call; }, db: {}, collection: (...parts) => parts.join("/"), doc: (...parts) => parts.join("/"), getDoc: mocks.getDoc, getDocs: mocks.getDocs }));
 vi.mock("./firebaseSuppliers", () => ({ getSuppliers: mocks.suppliers }));
-import { createCatalogProduct, createSupplierProduct, updateSupplierProduct, importCatalogProducts } from "./firebaseProducts";
+import { createCatalogProduct, createSupplierProduct, updateSupplierProduct, importCatalogProducts, importSupplierProducts } from "./firebaseProducts";
+import { invalidateProcurementReads } from "./procurementReadPool";
 
 const catalog = (name) => ({ name, baseUnit: "each", inventoryTracked: true, active: true });
 describe("protected product commands and exact retry identity", () => {
-  beforeEach(() => { vi.clearAllMocks(); sessionStorage.clear(); mocks.auth.currentUser = { uid: "hotel-user" }; mocks.getDoc.mockResolvedValue({ exists: () => false }); mocks.suppliers.mockResolvedValue([]); });
+  beforeEach(() => { vi.clearAllMocks(); sessionStorage.clear(); invalidateProcurementReads(); mocks.auth.currentUser = { uid: "hotel-user" }; mocks.getDoc.mockResolvedValue({ exists: () => false }); mocks.getDocs.mockResolvedValue({ docs: [] }); mocks.suppliers.mockResolvedValue([]); });
   it("preserves create identity after a lost response and blocks changed input", async () => {
     mocks.call.mockRejectedValueOnce(new Error("Offline")).mockImplementation(async (input) => ({ data: { hotelUid: input.hotelUid, productId: "stable-id", revision: 1 } }));
     await expect(createCatalogProduct("hotel-a", catalog("Milk"))).rejects.toThrow("Offline");
@@ -69,6 +70,49 @@ describe("protected product commands and exact retry identity", () => {
     const changed = products.map((product, index) => index === 25 ? catalog("Changed") : product);
     await expect(importCatalogProducts("hotel-a", changed)).rejects.toThrow("reconcile its result first");
     expect(mocks.call).toHaveBeenCalledTimes(3);
+  });
+  it("keeps managed image fields out of ordinary product edits while retaining editable barcode metadata", async () => {
+    mocks.call.mockResolvedValue({ data: { hotelUid: "hotel-a", productId: "offer", revision: 4 } });
+    await updateSupplierProduct("hotel-a", "offer", { supplierSku: "sku", gtin: "036000291452", image: { assetId: "forged" }, imageRevision: 9, purchaseOptions: [{ id: "single", gtin: "06291041500213", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: null }] }, undefined, { expectedRevision: 3 });
+    const product = mocks.call.mock.calls[0][0].product;
+    expect(product).not.toHaveProperty("image"); expect(product).not.toHaveProperty("imageRevision");
+    expect(product.gtin).toBe("036000291452"); expect(product.purchaseOptions[0].gtin).toBe("06291041500213");
+  });
+  it.each(["same-uid-session", "other-account", "access-revoked"])("stops importing after the first batch when %s changes and preserves exact recovery", async (change) => {
+    const products = Array.from({ length: 26 }, (_, index) => catalog(`Item ${index}`));
+    const actor = mocks.auth.currentUser;
+    mocks.call.mockImplementationOnce(async () => {
+      if (change === "access-revoked") invalidateProcurementReads();
+      else mocks.auth.currentUser = { uid: change === "other-account" ? "other-user" : actor.uid };
+      return { data: { hotelUid: "hotel-a", imported: 25, skipped: 0 } };
+    });
+    await expect(importCatalogProducts("hotel-a", products)).rejects.toThrow("Hotel access changed");
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    const original = mocks.call.mock.calls[0][0];
+    const saved = JSON.parse(sessionStorage.getItem("product-command:hotel-user:hotel-a:import:catalogproducts"));
+    expect(saved.offset).toBe(0); expect(saved.failedUncommitted).toBe(false);
+    expect(saved.batches[0].requestId).toBe(original.requestId);
+    mocks.auth.currentUser = actor;
+    mocks.call.mockImplementation(async (input) => ({ data: { hotelUid: "hotel-a", imported: input.products.length, skipped: 0 } }));
+    await expect(importCatalogProducts("hotel-a", products)).resolves.toEqual({ imported: 26, skipped: 0 });
+    expect(mocks.call.mock.calls[1][0]).toEqual(original);
+    expect(mocks.call).toHaveBeenCalledTimes(3);
+  });
+  it("does not prepare or send a supplier import after its supplier lookup crosses an Auth-session boundary", async () => {
+    mocks.suppliers.mockImplementation(async () => { mocks.auth.currentUser = { uid: "hotel-user" }; return [{ id: "supplier", name: "Supplier" }]; });
+    await expect(importSupplierProducts("hotel-a", [{ supplierId: "supplier", supplierSku: "sku", supplierProductName: "Milk" }])).rejects.toThrow("Hotel access changed");
+    expect(mocks.getDocs).not.toHaveBeenCalled(); expect(mocks.call).not.toHaveBeenCalled(); expect(sessionStorage.length).toBe(0);
+  });
+  it("retains the original uncertain product command after a same-UID Auth replacement", async () => {
+    const actor = mocks.auth.currentUser;
+    mocks.call.mockImplementationOnce(async () => { mocks.auth.currentUser = { uid: actor.uid }; return { data: { hotelUid: "hotel-a", productId: "stable-id", revision: 1 } }; });
+    await expect(createSupplierProduct("hotel-a", { supplierSku: "sku" })).rejects.toThrow("Hotel access changed");
+    const original = mocks.call.mock.calls[0][0];
+    expect(sessionStorage.getItem("product-command:hotel-user:hotel-a:supplierproducts:create")).not.toBeNull();
+    mocks.auth.currentUser = actor;
+    mocks.call.mockResolvedValue({ data: { hotelUid: "hotel-a", productId: "stable-id", revision: 1 } });
+    await expect(createSupplierProduct("hotel-a", { supplierSku: "sku" })).resolves.toBe("stable-id");
+    expect(mocks.call.mock.calls[1][0]).toEqual(original);
   });
 
 });

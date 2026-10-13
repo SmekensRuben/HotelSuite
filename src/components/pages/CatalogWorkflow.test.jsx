@@ -1,16 +1,18 @@
 import React from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ProductsPage from "./ProductsPage";
 import SupplierProductsPage from "./SupplierProductsPage";
 
-const mocks = vi.hoisted(() => ({ hotel: "hotel-a", permissions: [], catalog: vi.fn(), supplier: vi.fn(), suppliers: vi.fn(), importCatalog: vi.fn(), importSupplier: vi.fn(), read: vi.fn(), parse: vi.fn(), rows: vi.fn(), write: vi.fn() }));
+const mocks = vi.hoisted(() => ({ hotel: "hotel-a", actor: null, permissions: [], catalog: vi.fn(), supplier: vi.fn(), suppliers: vi.fn(), importCatalog: vi.fn(), importSupplier: vi.fn(), read: vi.fn(), parse: vi.fn(), rows: vi.fn(), write: vi.fn() }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, permissions: mocks.permissions, isPlatformAdmin: false, subscriptionActive: true, subscription: { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null } }) }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key) => key }) }));
+vi.mock("../../firebaseConfig", () => ({ auth: { get currentUser() { return mocks.actor; } } }));
 vi.mock("../layout/PageShell", () => ({ default: ({ children }) => <main>{children}</main> }));
 vi.mock("../../services/firebaseProducts", () => ({ getCatalogProducts: mocks.catalog, getSupplierProducts: mocks.supplier, importCatalogProducts: mocks.importCatalog, importSupplierProducts: mocks.importSupplier }));
 vi.mock("../../services/firebaseSuppliers", () => ({ getSuppliers: mocks.suppliers }));
+vi.mock("../catalog/SupplierProductImage", () => ({ default: () => null }));
 vi.mock("../../services/firebaseSettings", () => ({ getCatalogTaxonomy: () => Promise.resolve({ categories: [{ id: "early", name: "Early" }, { id: "later", name: "Later" }], subcategories: [{ id: "later-sub", name: "Later subcategory", categoryId: "later" }] }) }));
 vi.mock("xlsx", () => ({ read: mocks.read, utils: { sheet_to_json: mocks.parse, json_to_sheet: mocks.rows, book_new: () => ({}), book_append_sheet: vi.fn() }, writeFile: mocks.write }));
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
@@ -22,7 +24,7 @@ const choose = async (input, name) => {
 };
 
 describe("catalog loading, taxonomy and complete export", () => {
-  beforeEach(() => { vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.permissions = ["catalogproducts.read", "catalogproducts.create", "supplierproducts.read", "supplierproducts.create", "suppliers.read"]; mocks.suppliers.mockResolvedValue([{ id: "supplier", name: "Supplier" }]); mocks.catalog.mockResolvedValue(page([{ id: "early-product", name: "Early product", category: "Early" }])); mocks.supplier.mockResolvedValue(page([])); });
+  beforeEach(() => { vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.actor = null; mocks.permissions = ["catalogproducts.read", "catalogproducts.create", "supplierproducts.read", "supplierproducts.create", "suppliers.read"]; mocks.suppliers.mockResolvedValue([{ id: "supplier", name: "Supplier" }]); mocks.catalog.mockResolvedValue(page([{ id: "early-product", name: "Early product", category: "Early" }])); mocks.supplier.mockResolvedValue(page([])); });
   afterEach(() => vi.restoreAllMocks());
   it("shows supplier products to a supplierproducts-only reader without forbidden supplier lookups or filters", async () => {
     mocks.permissions = ["supplierproducts.read"];
@@ -77,6 +79,34 @@ describe("catalog loading, taxonomy and complete export", () => {
     expect(exports).toHaveLength(2);
     expect(exports.every(([, options]) => options.category === undefined && options.searchTerm === undefined)).toBe(true);
   });
+  it("provides one close control in the supplier export dialog", async () => {
+    render(<SupplierProductsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "products.actions.export" }));
+    const dialog = await screen.findByRole("dialog", { name: "products.export.title" });
+    expect(within(dialog).getAllByRole("button", { name: /close|cancel/i })).toHaveLength(1);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close dialog" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+  it("exports all supplier pages with canonical contract, package and read-only provenance fields", async () => {
+    const all = Array.from({ length: 51 }, (_, id) => ({ id: `offer-${id}`, revision: id, supplierId: "supplier", supplierSku: `sku-${id}`, supplierProductName: `Offer ${id}`, currency: null, priceBasis: "unknown", gtin: "036000291452", purchaseOptions: [{ id: "single", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: null }], createdBy: "actor", image: { assetId: "asset", status: "ready", policyVersion: 1 }, imageRevision: 2 }));
+    mocks.supplier.mockImplementation(async (_, options) => options.pageSize === 200
+      ? options.cursor ? page(all.slice(50)) : { products: all.slice(0, 50), hasMore: true, cursor: "last" }
+      : page(all.slice(0, 1)));
+    render(<SupplierProductsPage />);
+    await screen.findByText("Offer 0");
+    await choose(screen.getByRole("combobox", { name: "Filter by supplier" }), "Supplier");
+    fireEvent.click(screen.getByRole("button", { name: "products.actions.export" }));
+    fireEvent.click(screen.getByRole("button", { name: "products.export.full" }));
+    await waitFor(() => expect(mocks.write).toHaveBeenCalled());
+    const [rows, { header }] = mocks.rows.mock.calls[0];
+    expect(rows).toHaveLength(51);
+    expect(rows[0]).toMatchObject({ documentId: "offer-0", revision: 0, currency: "", gtin: "036000291452", createdBy: "actor", managedImageAssetId: "asset", managedImageStatus: "ready", imageRevision: 2 });
+    expect(JSON.parse(rows[0].purchaseOptions)).toEqual([{ id: "single", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: null }]);
+    expect(header).toEqual(expect.arrayContaining(["priceBasis", "priceValidFrom", "priceValidUntil", "revision", "gtin", "updatedBy", "managedImageAssetId"]));
+    const exports = mocks.supplier.mock.calls.filter(([, options]) => options.pageSize === 200);
+    expect(exports).toHaveLength(2);
+    expect(exports.every(([, options]) => options.supplierId === undefined && options.searchTerm === undefined)).toBe(true);
+  });
   it.each([["catalog", ProductsPage], ["supplier", SupplierProductsPage]])("%s completes failed loading and retries", async (service, Component) => {
     mocks[service].mockRejectedValueOnce(new Error("Offline")).mockResolvedValue(page([{ id: "recovered", name: "Recovered product", supplierProductName: "Recovered product" }]));
     render(<Component />);
@@ -103,6 +133,39 @@ describe("catalog loading, taxonomy and complete export", () => {
     mocks.parse.mockReturnValue([{ name: "Parsed for hotel A", supplierProductName: "Parsed for hotel A", supplierId: "supplier", supplierSku: "sku" }]);
   };
   const upload = (view, bytes = Promise.resolve(new ArrayBuffer(1))) => fireEvent.change(view.container.querySelector('input[type="file"]'), { target: { files: [{ arrayBuffer: () => bytes }] } });
+
+  it("shows the invalid supplier row without dropping it or opening an overwrite dialog", async () => {
+    prepareImport();
+    mocks.parse.mockReturnValue([{ supplierId: "supplier", supplierSku: "valid", supplierProductName: "Valid row" }, { supplierId: "supplier", supplierProductName: "Missing SKU" }]);
+    const view = render(<SupplierProductsPage />);
+    upload(view);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Row 3: Supplier, SKU and product name are required");
+    expect(screen.queryByText("products.import.title")).not.toBeInTheDocument();
+    expect(mocks.importSupplier).not.toHaveBeenCalled();
+    expect(window.alert).not.toHaveBeenCalled();
+  });
+  it("removes a parsed supplier workbook after permission revocation", async () => {
+    prepareImport();
+    const view = render(<SupplierProductsPage />); upload(view);
+    await screen.findByText("products.import.title");
+    mocks.permissions = ["supplierproducts.read"];
+    await act(async () => view.rerender(<SupplierProductsPage />));
+    expect(screen.queryByText("products.import.title")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "products.actions.import" })).toBeDisabled();
+    expect(mocks.importSupplier).not.toHaveBeenCalled();
+  });
+  it("ignores a supplier workbook finishing after the actual Auth session changed", async () => {
+    prepareImport();
+    const pending = deferred();
+    const actor = { uid: "same-uid" }, replacement = { uid: "same-uid" };
+    mocks.actor = actor;
+    const view = render(<SupplierProductsPage />); upload(view, pending.promise);
+    mocks.actor = replacement;
+    view.rerender(<SupplierProductsPage />);
+    await act(async () => pending.resolve(new ArrayBuffer(1)));
+    expect(mocks.read).not.toHaveBeenCalled();
+    expect(screen.queryByText("products.import.title")).not.toBeInTheDocument();
+  });
 
   it.each(mutationCases)("%s clears parsed imports when the selected hotel changes", async (_, Component, importer) => {
     prepareImport();

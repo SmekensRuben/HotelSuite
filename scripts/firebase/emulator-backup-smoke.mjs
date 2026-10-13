@@ -4,6 +4,9 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { initializeTestEnvironment, assertFails } from "@firebase/rules-unit-testing";
+import { doc, getDoc } from "firebase/firestore";
+import { ref, getBytes, getDownloadURL } from "firebase/storage";
 
 // Handler injection must use the same SDK installation as Functions; FieldPath
 // and Timestamp constructors from a second installation are not interchangeable.
@@ -45,6 +48,8 @@ const require = createRequire(import.meta.url);
 const { checkpointId, prepareCheckpoint, readLocationSequence } = require("../../functions/src/inventoryMovements");
 const { getHotelInventoryPeriodHandler } = require("../../functions/src/inventoryReports");
 const { mutateHotelSupplierProductHandler } = require("../../functions/src/products");
+const { uploadSupplierProductImage, readSupplierProductImage, sourcePath } = require("../../functions/src/supplierProductImages");
+const sharp = requireFunctions("sharp");
 const { recordHotelInventoryAdjustmentHandler, reverseHotelInventoryAdjustmentHandler } = require("../../functions/src/inventoryAdjustments");
 const { recordHotelSupplierConfirmationHandler, reviewHotelSupplierConfirmationHandler, getHotelSupplierConfirmationsHandler } = require("../../functions/src/supplierConfirmations");
 const { recordHotelOrderReceiptHandler: recordConfirmedReceipt } = require("../../functions/src/orderReceiving");
@@ -58,13 +63,15 @@ const inventoryRequest = (fixture) => ({ auth: { uid: fixture.actorUid, token: {
 data: { hotelUid: fixture.hotelUid, locationId: "store", openingStockCountId: "opening", closingStockCountId: "closing" } });
 const inventoryServices = { firestore: database, auth, now: () => revisionTime.toMillis() };
 const procurementServices = { firestore: database, auth, now: () => Date.parse("2026-10-12T10:00:00Z") };
+const imageServices = { firestore: database, auth, bucket };
+let imageRulesEnvironment;
 // A temporary test proof survives the two emulator processes; it is not hotel
 // data, and contains only fictional fixture payloads and timestamp evidence.
 const procurementProofPath = join(tmpdir(), `hotelsuite-restore-proof-${digest(import.meta.url, projectId).slice(0, 16)}.json`);
 const procurementRequest = (fixture, data) => ({ auth: { uid: fixture.actorUid, token: { email_verified: true } }, data: { hotelUid: fixture.hotelUid, ...data } });
 const offerInput = (fixture, price) => ({ supplierId: "restore-dairy", supplierSku: "RESTORE-MILK6", supplierProductName: "Fictional milk six-pack",
   currency: fixture.currency, pricingModel: "Per Purchase Unit", pricePerBaseUnit: null, pricePerPurchaseUnit: price,
-  baseUnit: "ml", purchaseUnit: "Case", baseUnitsPerPurchaseUnit: 6000, catalogProductId: "milk", imageUrl: "", active: true,
+  baseUnit: "ml", purchaseUnit: "Case", baseUnitsPerPurchaseUnit: 6000, catalogProductId: "milk", active: true,
   priceBasis: "net", vatRate: null, purchaseOptions: [], priceValidFrom: "2026-10-01", priceValidUntil: "2026-10-31" });
 const offerCommand = (fixture, action) => ({ action, productId: "restore-priced-milk", expectedRevision: action === "create" ? 0 : 1,
   requestId: `restore-price-${action}`, product: offerInput(fixture, action === "create" ? 12 : 15) });
@@ -154,7 +161,7 @@ for (const fixture of inventoryFixtures) {
     kind: "receipt", hotelUid, locationId: "store", orderId: "fixture-inventory-order", receiptId: "fixture-inventory-receipt",
     receivedOn: "2026-10-05", sequence: 2, actorUid, coverageGaps: [], backdatedAgainstCheckpoint: false, postedAt: revisionTime,
     lines: [{ catalogProductId: "milk", catalogProductName: "Fictional milk", baseUnit: "l", quantity: 30, netUnitCost: 3, netValue: 90, currency }] };
-  documents[`${root}/members/${actorUid}`].permissions.push("supplierproducts.create", "supplierproducts.update", "inventorymovements.read", "inventorymovements.create", "inventorymovements.reverse", "orders.read", "orders.recordconfirmation", "orders.reviewconfirmation", "orders.receive");
+  documents[`${root}/members/${actorUid}`].permissions.push("supplierproducts.read", "supplierproducts.create", "supplierproducts.update", "inventorymovements.read", "inventorymovements.create", "inventorymovements.reverse", "orders.read", "orders.recordconfirmation", "orders.reviewconfirmation", "orders.receive");
   documents[`${root}/suppliers/restore-dairy`] = { name: "Fictional dairy supplier", active: true };
   for (const location of ["movements-store", "movements-bar"]) documents[`${root}/locations/${location}`] = { name: `Fictional ${location}`, active: true };
 }
@@ -221,11 +228,85 @@ async function seedSupplierConfirmation(fixture) {
 async function procurementEvidence(fixture) {
   const root = `hotels/${fixture.hotelUid}`, collections = ["productOperations", "productAudit", "productSkuKeys", "inventoryAdjustments", "inventoryAdjustmentOperations",
     "inventoryAdjustmentReversals", "inventoryMovements", "inventoryLocationStates", "inventoryCheckpoints", "inventoryPeriodReports", "supplierPriceHistory/restore-priced-milk/entries", "orderAudit",
+    "supplierProductImages", "supplierProductImageOperations",
     ...["supplierConfirmations", "supplierConfirmationReferences", "receipts", "receiptReferences"].map((name) => `orders/${confirmationOrderId}/${name}`)];
   const rows = (await Promise.all(collections.map((name) => database.collection(`${root}/${name}`).get()))).flatMap((snapshot) => snapshot.docs);
   rows.push(await database.doc(`${root}/supplierproducts/restore-priced-milk`).get());
   rows.push(await database.doc(`${root}/orders/${confirmationOrderId}`).get());
   return Object.fromEntries(rows.map((doc) => [doc.ref.path, { data: canonical(doc.data()), updateTime: canonical(doc.updateTime) }]).sort(([left], [right]) => left.localeCompare(right)));
+}
+
+const imageRequest = (fixture) => ({ auth: { uid: fixture.actorUid, token: { email_verified: true, auth_time: Math.floor(Date.now() / 1000) } } });
+const imageReadInput = (fixture, assetId, variant) => ({ hotelUid: fixture.hotelUid, productId: "restore-priced-milk", assetId, variant });
+const bytesHash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+async function seedManagedImage(fixture) {
+  const productRef = database.doc(`hotels/${fixture.hotelUid}/supplierproducts/restore-priced-milk`), before = (await productRef.get()).data();
+  const bytes = await sharp({ create: { width: 640, height: 480, channels: 3,
+    background: fixture.hotelUid === "restore-hotel-a" ? "#b96f43" : "#416f57" } }).png().toBuffer();
+  const uploaded = await uploadSupplierProductImage(imageRequest(fixture), { hotelUid: fixture.hotelUid, productId: "restore-priced-milk",
+    requestId: "restore-managed-image", expectedImageRevision: 0, mimeType: "image/png" }, bytes, imageServices);
+  assert.equal(uploaded.status, "ready", "The real managed-image pipeline must finish before this fixture is exported.");
+  const after = (await productRef.get()).data(), asset = (await database.doc(`hotels/${fixture.hotelUid}/supplierProductImages/${uploaded.assetId}`).get()).data();
+  assert.equal(after.revision, before.revision); assert.equal(after.imageRevision, 1);
+  for (const field of ["updatedAt", "priceUpdatedOn", "pricePerPurchaseUnit", "catalogProductId"]) assert.deepEqual(after[field], before[field]);
+  const proof = { assetId: uploaded.assetId, imageRevision: uploaded.imageRevision, objects: {} };
+  for (const variant of ["source", "thumbnail", "display"]) {
+    const path = variant === "source" ? sourcePath(fixture.hotelUid, "restore-priced-milk", uploaded.assetId) : after.image[variant].path;
+    const [metadata] = await bucket.file(path).getMetadata();
+    const actual = variant === "source" ? (await bucket.file(path, { generation: metadata.generation }).download({ decompress: false }))[0]
+      : (await readSupplierProductImage(imageRequest(fixture), imageReadInput(fixture, uploaded.assetId, variant), imageServices)).bytes;
+    assert.equal(metadata.metadata?.firebaseStorageDownloadTokens, undefined); assert.equal(metadata.cacheControl, "private, no-store");
+    assert.equal(metadata.metadata.sha256, bytesHash(actual));
+    assert.equal(metadata.generation, variant === "source" ? asset.sourceGeneration : after.image[variant].generation);
+    if (variant === "source") assert.deepEqual(actual, bytes);
+    proof.objects[variant] = { path, generation: metadata.generation, sha256: bytesHash(actual), bytes: actual.toString("base64"),
+      size: actual.length, contentType: variant === "source" ? "image/png" : "image/webp" };
+  }
+  return proof;
+}
+
+async function verifyManagedImage(fixture, proof) {
+  assert.ok(proof?.assetId, "Managed-image source/derivative backup evidence is required.");
+  const productRef = database.doc(`hotels/${fixture.hotelUid}/supplierproducts/restore-priced-milk`), before = await productRef.get();
+  const product = before.data(), assetRef = database.doc(`hotels/${fixture.hotelUid}/supplierProductImages/${proof.assetId}`), assetBefore = await assetRef.get();
+  assert.equal(product.image.assetId, proof.assetId); assert.equal(product.imageRevision, proof.imageRevision);
+  assert.equal(product.image.status, "ready"); assert.equal(assetBefore.data().status, "ready");
+  for (const [variant, expected] of Object.entries(proof.objects)) {
+    const file = bucket.file(expected.path, { generation: expected.generation }), [metadata] = await file.getMetadata();
+    // Object generations are evidence. A restore that allocates a new generation
+    // requires a reviewed media recovery process; never silently rewrite pins.
+    assert.equal(metadata.generation, expected.generation, `Restored image generation changed: ${expected.path}`);
+    assert.equal(metadata.generation, variant === "source" ? assetBefore.data().sourceGeneration : product.image[variant].generation);
+    assert.equal(Number(metadata.size), expected.size); assert.equal(metadata.contentType, expected.contentType);
+    assert.equal(metadata.cacheControl, "private, no-store"); assert.equal(metadata.metadata?.firebaseStorageDownloadTokens, undefined);
+    const [bytes] = await file.download({ decompress: false });
+    assert.deepEqual(bytes, Buffer.from(expected.bytes, "base64"), `Restored image bytes differ: ${expected.path}`);
+    assert.equal(bytesHash(bytes), expected.sha256); assert.equal(metadata.metadata.sha256, expected.sha256);
+    if (variant !== "source") {
+      const delivered = await readSupplierProductImage(imageRequest(fixture), imageReadInput(fixture, proof.assetId, variant), imageServices);
+      assert.deepEqual(delivered.bytes, bytes, "Authorized restored reads must return the exact pinned derivative bytes.");
+      const decoded = await sharp(delivered.bytes).metadata();
+      assert.equal(decoded.format, "webp"); assert.equal(decoded.width, variant === "thumbnail" ? 160 : 640); assert.equal(decoded.height, variant === "thumbnail" ? 120 : 480);
+    }
+  }
+  const otherFixture = inventoryFixtures.find((value) => value.hotelUid !== fixture.hotelUid);
+  await assert.rejects(readSupplierProductImage(imageRequest(otherFixture), imageReadInput(fixture, proof.assetId, "thumbnail"), imageServices), (error) => error.code === "permission-denied");
+  await assert.rejects(readSupplierProductImage({ auth: { uid: "restore-platform", token: { email_verified: true, platformAdmin: true } } },
+    imageReadInput(fixture, proof.assetId, "thumbnail"), imageServices), (error) => error.code === "permission-denied");
+  imageRulesEnvironment ??= await initializeTestEnvironment({ projectId,
+    firestore: { host: "127.0.0.1", port: Number(process.env.FIRESTORE_EMULATOR_HOST.split(":").at(-1)) },
+    storage: { host: "127.0.0.1", port: Number(process.env.FIREBASE_STORAGE_EMULATOR_HOST.split(":").at(-1)) },
+  });
+  for (const context of [imageRulesEnvironment.authenticatedContext(fixture.actorUid, { email_verified: true }), imageRulesEnvironment.unauthenticatedContext()]) {
+    const storage = context.storage(`gs://${bucket.name}`);
+    for (const object of Object.values(proof.objects)) {
+      await assertFails(getBytes(ref(storage, object.path))); await assertFails(getDownloadURL(ref(storage, object.path)));
+    }
+    await assertFails(getDoc(doc(context.firestore(), `hotels/${fixture.hotelUid}/supplierProductImages/${proof.assetId}`)));
+  }
+  const after = await productRef.get(), assetAfter = await assetRef.get();
+  assert.deepEqual(after.data(), before.data()); assert.equal(after.updateTime.isEqual(before.updateTime), true);
+  assert.deepEqual(assetAfter.data(), assetBefore.data()); assert.equal(assetAfter.updateTime.isEqual(assetBefore.updateTime), true);
 }
 async function verifyProcurementReplay(fixture, proof) {
   const before = await procurementEvidence(fixture);
@@ -315,12 +396,13 @@ try {
       assert.equal(snapshot.exists, true);
       assert.deepEqual(snapshot.data(), expectedStoredInventoryReport(fixture));
     }
-    const proof = {};
+    const proof = { managedImages: {} };
     for (const fixture of inventoryFixtures) {
       for (const action of ["create", "update"]) await mutateHotelSupplierProductHandler(procurementRequest(fixture, offerCommand(fixture, action)), procurementServices);
       const history = await database.collection(`hotels/${fixture.hotelUid}/supplierPriceHistory/restore-priced-milk/entries`).orderBy("revision").get();
       assert.deepEqual(history.docs.map((doc) => [doc.data().revision, doc.data().observation, doc.data().terms.currency, doc.data().terms.options[0].pricePerPurchaseUnit]),
         [[1, "initial-create", fixture.currency, 12], [2, "terms-changed", fixture.currency, 15]]);
+      proof.managedImages[fixture.hotelUid] = await seedManagedImage(fixture);
       await finishAdjustmentCheckpoints(fixture, "opening");
       const transfer = await recordHotelInventoryAdjustmentHandler(procurementRequest(fixture, adjustmentCommand(fixture, "transfer")), procurementServices);
       assert.equal(transfer.adjustmentId, transferId(fixture));
@@ -334,7 +416,7 @@ try {
       proof[fixture.hotelUid] = Object.fromEntries(Object.entries(await procurementEvidence(fixture)).map(([path, row]) => [path, row.data]));
     }
     await writeFile(procurementProofPath, JSON.stringify(proof), { mode: 0o600 });
-    console.log("Seeded fictional two-hotel data, supplier responses and approved-price receipts, protected supplier price changes, paired manual transfer/reversal/waste/return evidence, immutable v1/v2 reports, Auth users/claims and private Storage bytes.");
+    console.log("Seeded fictional two-hotel data, supplier responses and approved-price receipts, protected supplier price changes, paired manual transfer/reversal/waste/return evidence, immutable v1/v2 reports, Auth users/claims, private Storage bytes and real managed product-image sources/derivatives with pinned generations.");
   } else if (process.argv[2] === "verify") {
     for (const [path, expected] of Object.entries(documents)) {
       const snapshot = await database.doc(path).get();
@@ -378,6 +460,7 @@ try {
       assert.deepEqual(countsAfter, countsBefore, "Report retries must not create additional inventory evidence.");
     }
     const proof = JSON.parse(await readFile(procurementProofPath, "utf8"));
+    for (const fixture of inventoryFixtures) await verifyManagedImage(fixture, proof.managedImages[fixture.hotelUid]);
     for (const fixture of inventoryFixtures) await verifyProcurementReplay(fixture, proof[fixture.hotelUid]);
     await assert.rejects(recordHotelInventoryAdjustmentHandler({ auth: { uid: "restore-a", token: { email_verified: true } },
       data: { hotelUid: "restore-hotel-b", ...adjustmentCommand(inventoryFixtures[0], "transfer") } }, procurementServices),
@@ -407,9 +490,10 @@ try {
       assert.equal(metadata.contentType, "application/pdf");
       assert.equal(metadata.metadata.fixture, "restore-only");
     }
-    console.log("Verified two-hotel data, unchanged v1 period replay (50 inferred usage; weighted cost 290/130), supplier response/review/approved-price receipt restore and exact replay, supplier price-history restore, exact paired manual movement/reversal replay and immutable v2 reports with explicit unknown costs, frozen timestamps/updateTimes, entitlements, roles, platform history, Auth and private Storage bytes/metadata.");
+    console.log("Verified two-hotel data, unchanged v1 period replay (50 inferred usage; weighted cost 290/130), supplier response/review/approved-price receipt restore and exact replay, supplier price-history restore, exact paired manual movement/reversal replay and immutable v2 reports with explicit unknown costs, frozen timestamps/updateTimes, entitlements, roles, platform history, Auth, private Storage bytes/metadata and exact managed product-image hashes/generations with authorized reads and browser/cross-hotel denials.");
   } else throw new Error("Expected seed or verify mode.");
 } finally {
+  if (imageRulesEnvironment) await imageRulesEnvironment.cleanup();
   await deleteApp(app);
   if (process.argv[2] === "verify") await unlink(procurementProofPath).catch((error) => { if (error.code !== "ENOENT") throw error; });
 }

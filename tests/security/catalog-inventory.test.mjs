@@ -33,7 +33,7 @@ const client = (actor = staff) => environment.authenticatedContext(actor.uid, ac
 const catalog = (patch = {}) => ({ name: "Bottled water", baseUnit: "each", active: true, inventoryTracked: true, allergens: [], ...patch });
 const offer = (patch = {}) => ({ supplierId: "vendor", supplierSku: "WATER24", supplierProductName: "Water crate", currency: "EUR", pricingModel: "Per Purchase Unit",
   pricePerBaseUnit: null, pricePerPurchaseUnit: 24, baseUnit: "each", purchaseUnit: "Crate of 24", baseUnitsPerPurchaseUnit: 24,
-  catalogProductId: "water", imageUrl: "", active: true, priceBasis: "net", vatRate: null,
+  catalogProductId: "water", active: true, priceBasis: "net", vatRate: null,
   purchaseOptions: [{ id: "bottle", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 1.25 }], ...patch });
 const catalogCommand = (patch = {}, actor = staff) => mutateHotelCatalogProductHandler(request({ hotelUid: "hotel-a", action: "create", expectedRevision: 0, requestId: next(), product: catalog(), ...patch }, actor), services);
 const offerCommand = (patch = {}, actor = staff) => mutateHotelSupplierProductHandler(request({ hotelUid: "hotel-a", action: "create", expectedRevision: 0, requestId: next(), product: offer(), ...patch }, actor), services);

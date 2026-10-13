@@ -28,6 +28,23 @@ function uncommitted(error) {
   if (error instanceof HttpsError) return new HttpsError(error.code, error.message, { ...error.details, productRequestUncommitted: true });
   return error;
 }
+function preserveSupplierMetadata(input, previous) {
+  if (!previous || !input || typeof input !== "object" || Array.isArray(input)) return input;
+  const result = { ...input };
+  for (const key of ["priceValidFrom", "priceValidUntil", "gtin"]) {
+    if (!Object.hasOwn(input, key)) result[key] = previous[key] ?? null;
+  }
+  if (Array.isArray(input.purchaseOptions)) {
+    // A package's stable option ID identifies its optional barcode metadata;
+    // never copy a removed package's GTIN onto a new purchase option.
+    const priorOptions = new Map((Array.isArray(previous.purchaseOptions) ? previous.purchaseOptions : []).map((option) => [option?.id, option]));
+    result.purchaseOptions = input.purchaseOptions.map((option) => {
+      if (!option || typeof option !== "object" || Array.isArray(option) || Object.hasOwn(option, "gtin")) return option;
+      return { ...option, gtin: priorOptions.get(option.id)?.gtin ?? null };
+    });
+  }
+  return result;
+}
 
 async function prepareProduct(tx, db, hotelUid, collection, productId, action, expected, input, plannedSkus) {
   const ref = db.doc(`hotels/${hotelUid}/${collection}/${productId}`);
@@ -37,11 +54,9 @@ async function prepareProduct(tx, db, hotelUid, collection, productId, action, e
   if (currentRevision(previous) !== expected) throw new HttpsError("aborted", "The product changed. Refresh before saving.");
   if (!current.exists && expected !== 0) throw new HttpsError("aborted", "New products require expectedRevision zero.");
   if (action === "archive") return { ref, previous, next: { ...previous, active: false, archived: true }, expected, action, productId };
-  // Older clients/imports predate optional contract bounds. An omitted update
-  // field preserves its stored value; only an explicit null/blank clears it.
-  const productInput = collection === "supplierproducts" && previous && input && typeof input === "object" && !Array.isArray(input)
-    ? { ...input, ...Object.fromEntries(["priceValidFrom", "priceValidUntil"].filter((key) => !Object.hasOwn(input, key)).map((key) => [key, previous[key] ?? null])) }
-    : input;
+  // Older clients/imports predate optional contract bounds and package GTINs.
+  // Omission preserves stored metadata; only explicit null/blank clears it.
+  const productInput = collection === "supplierproducts" ? preserveSupplierMetadata(input, previous) : input;
   const next = collection === "catalogproducts" ? policy.normalizeCatalogProduct(productInput) : policy.normalizeSupplierProduct(productInput);
   if (previous?.archived === true && next.active) throw new HttpsError("failed-precondition", "Archived product identities cannot be reactivated. Create a distinct product instead.");
   // Canonical inventory units become immutable after the first reviewed save.
@@ -102,6 +117,11 @@ function writeProduct(tx, plan, collection, actorUid) {
   // the public product schema and leave frozen downstream records untouched.
   const next = { ...plan.next, createdAt: plan.previous?.createdAt ?? now, createdBy: plan.previous?.createdBy ?? actorUid,
     revision: plan.expected + 1, updatedAt: now, updatedBy: actorUid };
+  // Media is managed independently of purchase/pricing commands. A routine edit
+  // or import cannot erase an upload or manufacture a private image reference.
+  if (collection === "supplierproducts") for (const key of ["image", "imageRevision"]) {
+    if (plan.previous?.[key] !== undefined) next[key] = plan.previous[key];
+  }
   if (plan.previous?.archived === true || plan.action === "archive") next.archived = true;
   if (collection === "supplierproducts" && plan.action !== "archive") {
     next.priceUpdatedOn = plan.priceChanged ? now : plan.previous?.priceUpdatedOn ?? null;

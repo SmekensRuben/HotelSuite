@@ -53,14 +53,20 @@ test("supplier templates resolve same catalog once across suppliers and outlets,
   await mutate(db, stockCountId, "finish-location", 1, null); await mutate(db, stockCountId, "finish-count", 0, null, 1);
   assert.equal(db.records.get(`hotels/${hotel}/stockCounts/${stockCountId}`).countedValue, null);
 });
-test("an actual newly onboarded hotel counts using canonical bootstrap currency without requiring invented root currency", async () => {
+test("a newly onboarded hotel counts using matching canonical property currencies and rejects later disagreements", async () => {
   const db = fixture(); db.records.delete(`hotels/${hotel}`); db.records.delete(`hotelSubscriptions/${hotel}`);
   const platformRequest = { auth: { uid: "platform", token: { email_verified: true, platformAdmin: true } }, data: {
     hotelUid: hotel, name: "New hotel", timeZone: "Europe/Brussels", status: "active", modules: ["procurement"], requestId: "new-hotel" } };
   await require("./onboarding").createHotelHandler(platformRequest, { firestore: db, auth: { getUser: async () => ({ emailVerified: true, disabled: false, customClaims: { platformAdmin: true } }) } });
-  assert.equal(db.records.get(`hotels/${hotel}`).currency, undefined);
+  assert.equal(db.records.get(`hotels/${hotel}`).currency, "EUR");
   assert.equal(db.records.get(`hotels/${hotel}/settings/bootstrap`).currency, "EUR");
   const { stockCountId } = await create(db); assert.equal(db.records.get(`hotels/${hotel}/stockCounts/${stockCountId}`).currency, "EUR");
+  // Existing properties without the root compatibility field still use the
+  // explicit bootstrap contract; this never guesses a missing bootstrap value.
+  const legacyRoot = { ...db.records.get(`hotels/${hotel}`) }; delete legacyRoot.currency;
+  db.records.set(`hotels/${hotel}`, legacyRoot);
+  const legacyCount = await create(db, "legacy-root");
+  assert.equal(db.records.get(`hotels/${hotel}/stockCounts/${legacyCount.stockCountId}`).currency, "EUR");
   db.records.set(`hotels/${hotel}`, { ...db.records.get(`hotels/${hotel}`), currency: "USD" });
   await assert.rejects(create(db, "conflict"), (error) => error.code === "failed-precondition");
 });

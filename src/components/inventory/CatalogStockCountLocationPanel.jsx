@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import StockCountPackageEntry from "./StockCountPackageEntry";
 import InventoryCostProposal from "./InventoryCostProposal";
@@ -59,7 +59,8 @@ export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, l
     } catch (failure) { if (generation === productGeneration.current) setMoreError(failure.message || "Could not load more catalog choices."); }
     finally { if (generation === productGeneration.current) setMoreLoading(false); }
   };
-  useEffect(() => {
+  // Hydrate the saved draft before interaction can overwrite or be overwritten by it.
+  useLayoutEffect(() => {
     active.current = { key: scopeKey, actor: auth.currentUser };
     const saved = location.countedItems || [];
     const included = new Set((location.stockTemplate?.items || []).map((item) => item.catalogProductId));

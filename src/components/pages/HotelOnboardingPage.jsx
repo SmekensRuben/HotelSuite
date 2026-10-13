@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Building2, Mail, ShieldCheck, Loader2 } from "lucide-react";
 import HeaderBar from "../layout/HeaderBar";
@@ -11,6 +11,8 @@ import { MODULE_CATALOG } from "../../constants/moduleCatalog";
 import ModuleRolePicker from "../shared/ModuleRolePicker";
 import HotelSetupChecklist from "../platform/HotelSetupChecklist";
 import { usePlatformScope } from "../../hooks/usePlatformQuery";
+import { Combobox } from "../ui/combobox";
+import { currencyChoices, timeZoneChoices, validTimeZoneChoice } from "../../utils/propertySettingChoices";
 
 const fieldClass = "mt-2 w-full rounded-xl border border-slate-200 bg-white p-3";
 const buttonClass = "inline-flex items-center justify-center gap-2 rounded-xl bg-brand-800 px-5 py-3 text-sm font-semibold text-white hover:bg-brand-950 disabled:opacity-50";
@@ -28,6 +30,7 @@ export default function HotelOnboardingPage({ platform = false }) {
   const [name, setName] = useState("");
   const [hotelUid, setHotelUid] = useState("");
   const [timeZone, setTimeZone] = useState("");
+  const [currency, setCurrency] = useState("");
   const [status, setStatus] = useState("trialing");
   const [trialDays, setTrialDays] = useState(14);
   const [selectedHotel, setSelectedHotel] = useState("");
@@ -46,6 +49,8 @@ export default function HotelOnboardingPage({ platform = false }) {
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const createAttempt = useRef(null);
   const inviteAttempt = useRef(null);
+  const zones = useMemo(() => timeZoneChoices(), []);
+  const currencies = useMemo(() => currencyChoices(), []);
   const attempt = (ref, details) => {
     const fingerprint = JSON.stringify(details);
     if (ref.current?.fingerprint !== fingerprint) ref.current = { fingerprint, requestId: crypto.randomUUID() };
@@ -61,9 +66,9 @@ export default function HotelOnboardingPage({ platform = false }) {
 
   const create = async (event) => {
     event.preventDefault();
-    if (busy || rolloutReady !== true) return;
+    if (busy || rolloutReady !== true || !validTimeZoneChoice(timeZone) || !currencies.some((choice) => choice.id === currency)) return;
     setBusy("create"); setMessage(null);
-    const details = { name, hotelUid, timeZone, status, trialDays: Number(trialDays), modules };
+    const details = { name, hotelUid, timeZone, currency, status, trialDays: Number(trialDays), modules };
     try {
       const result = await createHotel({ ...details, requestId: attempt(createAttempt, details) });
       await refreshHotelAssignments();
@@ -72,7 +77,7 @@ export default function HotelOnboardingPage({ platform = false }) {
       setSelectedHotel(result.hotelUid);
       setMessage({ text: `${result.name} was created. Invite its administrators and complete the setup checklist.` });
       setReadinessRevision((value) => value + 1);
-      setName(""); setHotelUid(""); setTimeZone(""); createAttempt.current = null;
+      setName(""); setHotelUid(""); setTimeZone(""); setCurrency(""); createAttempt.current = null;
     } catch (error) { if (mounted.current) setMessage({ error: true, text: messageFor(error) }); }
     finally { if (mounted.current) setBusy(""); }
   };
@@ -114,7 +119,8 @@ export default function HotelOnboardingPage({ platform = false }) {
           <Building2 size={24} className="text-brand-800" /><div><p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Step 1</p><h2 className="mt-2 text-xl font-semibold">Create a property</h2></div>
           <label className="block text-sm font-medium">Hotel name<input required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} className={fieldClass} disabled={Boolean(busy)} /></label>
           <label className="block text-sm font-medium">Hotel ID<input required pattern="[a-z0-9][a-z0-9-]{2,59}" value={hotelUid} onChange={(e) => setHotelUid(e.target.value.toLowerCase())} className={fieldClass} disabled={Boolean(busy)} /><span className="mt-2 block text-xs font-normal text-slate-500">A unique, permanent ID, such as riverside-hotel.</span></label>
-          <label className="block text-sm font-medium">Hotel time zone<input required maxLength={80} placeholder="Europe/Brussels" value={timeZone} onChange={(event) => setTimeZone(event.target.value)} className={fieldClass} disabled={Boolean(busy)} /><span className="mt-2 block text-xs font-normal text-slate-500">Use the hotel's IANA time zone for delivery schedules.</span></label>
+          <div><label htmlFor="new-hotel-time-zone" className="block text-sm font-medium">Hotel time zone</label><Combobox id="new-hotel-time-zone" name="timeZone" aria-label="Hotel time zone" required options={zones} value={zones.find((choice) => choice.id === timeZone) || null} getOptionValue={(choice) => choice.id} displayValue={(choice) => choice.label} onChange={(choice) => setTimeZone(choice?.id || "")} placeholder="Search a country or city" className={fieldClass} disabled={Boolean(busy)} description="For a hotel in Belgium, select Belgium — Brussels. Daylight-saving time is handled automatically." /></div>
+          <div><label htmlFor="new-hotel-currency" className="block text-sm font-medium">Hotel currency</label><Combobox id="new-hotel-currency" name="currency" aria-label="Hotel currency" required options={currencies} value={currencies.find((choice) => choice.id === currency) || null} getOptionValue={(choice) => choice.id} displayValue={(choice) => choice.label} onChange={(choice) => setCurrency(choice?.id || "")} placeholder="Search a currency, for example Euro" className={fieldClass} disabled={Boolean(busy)} description="Select the currency used for new hotel operations. Supplier prices must carry their own currency." /></div>
           <label className="block text-sm font-medium">Initial access<select value={status} onChange={(e) => setStatus(e.target.value)} className={fieldClass} disabled={Boolean(busy)}><option value="trialing">Trial</option><option value="active">Active · manual invoicing</option></select></label>
           <fieldset disabled={Boolean(busy)} className="space-y-3"><legend className="mb-3 text-sm font-semibold">Initial modules</legend>{Object.entries(MODULE_CATALOG).map(([id, module]) => <label key={id} className="flex flex-wrap items-center gap-3 text-sm"><input type="checkbox" checked={modules.includes(id)} onChange={() => setModules((previous) => previous.includes(id) ? previous.filter((key) => key !== id) : [...previous, id])} />{module.label}</label>)}</fieldset>
           {status === "trialing" && <label className="block text-sm font-medium">Trial length in days<input required type="number" min={1} max={90} value={trialDays} onChange={(e) => setTrialDays(e.target.value)} className={fieldClass} disabled={Boolean(busy)} /></label>}
