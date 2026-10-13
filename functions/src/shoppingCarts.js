@@ -57,7 +57,7 @@ async function mutateShoppingCartHandler(request, services = {}) {
         if (index >= 0) items[index] = { ...items[index], qtyPurchaseUnits: quantity(Number(items[index].qtyPurchaseUnits) + qty) };
         else {
           const item = { supplierProductId: productId, purchaseOptionId, supplierId: requireDocumentId(p.supplierId, "Product supplier ID"), qtyPurchaseUnits: qty, outletId: "", note: "" };
-          for (const key of ["supplierName", "supplierSku", "supplierProductName", "pricingModel", "imageUrl"]) if (p[key] !== undefined) item[key] = p[key];
+          for (const key of ["supplierName", "supplierSku", "supplierProductName", "pricingModel", "image", "imageRevision"]) if (p[key] !== undefined) item[key] = p[key];
           for (const key of ["purchaseUnit", "pricePerPurchaseUnit", "currency", "baseUnit", "baseUnitsPerPurchaseUnit", "priceBasis", "vatRate"]) item[key] = option[key];
           items.push(item);
         }

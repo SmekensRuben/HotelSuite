@@ -5,7 +5,14 @@ const policy = require("./productPolicy");
 const catalog = (patch = {}) => ({ id: "milk", name: "Milk", baseUnit: "l", inventoryTracked: true, active: true, ...patch });
 const supplier = (patch = {}) => ({ supplierId: "dairy", supplierSku: "MILK-6", supplierProductName: "Milk six pack", currency: "EUR",
   pricingModel: "Per Purchase Unit", pricePerBaseUnit: null, pricePerPurchaseUnit: 12, purchaseUnit: "Case of six", baseUnit: "l",
-  baseUnitsPerPurchaseUnit: 6, catalogProductId: "milk", imageUrl: "", active: true, priceBasis: "net", vatRate: null, purchaseOptions: [], ...patch });
+  baseUnitsPerPurchaseUnit: 6, catalogProductId: "milk", active: true, priceBasis: "net", vatRate: null, purchaseOptions: [], ...patch });
+
+test("supplier images are upload-only and external URL fields cannot enter the public schema", () => {
+  assert.equal(Object.hasOwn(policy.normalizeSupplierProduct(supplier()), "imageUrl"), false);
+  for (const imageUrl of ["", null, "https://supplier.example/milk.jpg"]) {
+    assert.throws(() => policy.normalizeSupplierProduct(supplier({ imageUrl })), (error) => error.code === "invalid-argument" && /protected image upload/.test(error.message));
+  }
+});
 
 test("explicit units convert kg/g and l/ml exactly without deriving a mass/volume conversion", () => {
   assert.equal(policy.convertQuantity(1.25, "kg", "g"), 1250);

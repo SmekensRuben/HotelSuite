@@ -43,7 +43,7 @@ function fixture() {
 }
 const catalog = (patch = {}) => ({ name: "Flour", baseUnit: "kg", active: true, inventoryTracked: true, allergens: [], ...patch });
 const offer = (patch = {}) => ({ supplierId: "dairy", supplierSku: "MILK6", supplierProductName: "Milk six pack", currency: "EUR", pricingModel: "Per Purchase Unit",
-  pricePerBaseUnit: null, pricePerPurchaseUnit: 12, baseUnit: "l", purchaseUnit: "Case", baseUnitsPerPurchaseUnit: 6, catalogProductId: "milk", imageUrl: "", active: true,
+  pricePerBaseUnit: null, pricePerPurchaseUnit: 12, baseUnit: "l", purchaseUnit: "Case", baseUnitsPerPurchaseUnit: 6, catalogProductId: "milk", active: true,
   priceBasis: "net", vatRate: null, purchaseOptions: [], ...patch });
 const createCatalog = (db, patch = {}) => mutateHotelCatalogProductHandler(request({ hotelUid, requestId: "catalog-create", action: "create", expectedRevision: 0, product: catalog(), ...patch }), { firestore: db, auth });
 const createOffer = (db, patch = {}) => mutateHotelSupplierProductHandler(request({ hotelUid, requestId: "offer-create", action: "create", expectedRevision: 0, product: offer(), ...patch }), { firestore: db, auth });

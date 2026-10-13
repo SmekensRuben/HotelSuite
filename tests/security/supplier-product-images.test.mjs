@@ -18,6 +18,7 @@ const { compileMemberAccess } = require("../../functions/src/modulePolicy");
 const { SAAS_RULES_VERSION } = require("../../functions/src/saasRollout");
 const { mutateHotelSupplierProductHandler, importHotelProductsHandler } = require("../../functions/src/products");
 const { requireHotelImportTarget } = require("../../functions/src/fileImportTypes");
+const { mutateShoppingCartHandler } = require("../../functions/src/shoppingCarts");
 const {
   uploadSupplierProductImage, readSupplierProductImage, supplierProductImageHandler,
   processSupplierProductImageHandler, sourcePath, variantPath,
@@ -35,7 +36,7 @@ const rejected = (promise, code) => assert.rejects(promise, (error) => error.cod
 const productRef = () => db.doc("hotels/hotel-a/supplierproducts/milk-offer");
 const offer = (patch = {}) => ({ supplierId: "dairy", supplierSku: "MILK6", supplierProductName: "Milk six pack", currency: "EUR",
   pricingModel: "Per Purchase Unit", pricePerBaseUnit: null, pricePerPurchaseUnit: 12, baseUnit: "l", purchaseUnit: "Case", baseUnitsPerPurchaseUnit: 6,
-  catalogProductId: "milk", imageUrl: "", active: true, priceBasis: "net", vatRate: null, purchaseOptions: [], ...patch });
+  catalogProductId: "milk", active: true, priceBasis: "net", vatRate: null, purchaseOptions: [], ...patch });
 const uploadData = (patch = {}) => ({ hotelUid: "hotel-a", productId: "milk-offer", requestId: "image-upload", expectedImageRevision: 0, mimeType: "image/png", ...patch });
 const upload = (patch = {}, actor = "manager", bytes = png, overrides = services) => uploadSupplierProductImage(request(actor), uploadData(patch), bytes, overrides);
 const read = (assetId, actor = "manager", patch = {}, overrides = services) => readSupplierProductImage(request(actor), {
@@ -76,6 +77,25 @@ beforeEach(async () => {
 after(async () => environment.cleanup());
 
 describe("private supplier-product image workflow with real hotel identities and decoded bytes", () => {
+  it("rejects external image URLs through both create and import commands without changing saved media", async () => {
+    const before = (await productRef().get()).data();
+    const external = offer({ imageUrl: "https://supplier.example/milk.jpg", supplierSku: "OTHER" });
+    await rejected(mutateHotelSupplierProductHandler({ ...request(), data: { hotelUid: "hotel-a", action: "create", expectedRevision: 0, requestId: "external-create", product: external } }, services), "invalid-argument");
+    await assert.rejects(importHotelProductsHandler({ ...request(), data: { hotelUid: "hotel-a", collection: "supplierproducts", requestId: "external-import", onExisting: "skip", products: [{ expectedRevision: 0, product: external }] } }, services), (error) => error.code === "invalid-argument" && /protected image upload/.test(error.message));
+    assert.deepEqual((await productRef().get()).data(), before);
+    assert.equal((await db.collection("hotels/hotel-a/supplierproducts").get()).size, 1);
+  });
+  it("copies only server-owned managed image references into a newly added cart line", async () => {
+    await upload();
+    await productRef().update({ imageUrl: "https://external.example/untrusted.jpg" });
+    const product = (await productRef().get()).data();
+    const cart = await mutateShoppingCartHandler({ ...request(), data: { hotelUid: "hotel-a", action: "get-or-create", requestId: "image-cart" } }, services);
+    await mutateShoppingCartHandler({ ...request(), data: { hotelUid: "hotel-a", action: "add", requestId: "image-cart-add", cartId: cart.cartId, productId: "milk-offer", purchaseOptionId: "default", value: 1, expectedRevision: cart.revision } }, services);
+    const [line] = (await db.doc(`hotels/hotel-a/shoppingCarts/${cart.cartId}`).get()).data().items;
+    assert.deepEqual(line.image, product.image); assert.equal(line.imageRevision, product.imageRevision);
+    assert.equal(Object.hasOwn(line, "imageUrl"), false);
+    assert.equal(line.pricePerPurchaseUnit, 12); assert.equal(line.baseUnitsPerPurchaseUnit, 6);
+  });
   it("supports established dotted and spaced product IDs without replacing their identity", async () => {
     const productId = "milk.offer v1";
     await db.doc(`hotels/hotel-a/supplierproducts/${productId}`).set((await productRef().get()).data());

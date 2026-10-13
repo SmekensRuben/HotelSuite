@@ -9,6 +9,9 @@ import { PRODUCT_BASE_UNITS } from "../../utils/productPurchaseOptions";
 import { packageConversionLabel, productUnitLabel } from "../../utils/productUnitDisplay";
 import { currencyChoices } from "../../utils/propertySettingChoices";
 import { useSupplierProductAuthority } from "../../hooks/useSupplierProductAuthority";
+import { usePermission } from "../../hooks/usePermission";
+import SupplierProductImagePicker from "../catalog/SupplierProductImagePicker";
+import SupplierProductImage from "../catalog/SupplierProductImage";
 
 const stringNumber = (value) => value == null ? "" : String(value);
 const nullableNumber = (value) => value === "" ? null : Number(value);
@@ -24,7 +27,7 @@ function initialForm(product = {}) {
     pricePerBaseUnit: stringNumber(product.pricePerBaseUnit), pricePerPurchaseUnit: stringNumber(product.pricePerPurchaseUnit),
     purchaseUnit: product.purchaseUnit || "", baseUnit: product.baseUnit || "",
     baseUnitsPerPurchaseUnit: stringNumber(product.baseUnitsPerPurchaseUnit),
-    catalogProductId: product.catalogProductId || "", imageUrl: product.imageUrl || "", active: product.active !== false,
+    catalogProductId: product.catalogProductId || "", active: product.active !== false,
     purchaseOptions: (product.purchaseOptions || []).filter((option) => option.id !== "default").map((option) => ({ ...option, baseUnitsPerPurchaseUnit: stringNumber(option.baseUnitsPerPurchaseUnit), pricePerPurchaseUnit: stringNumber(option.pricePerPurchaseUnit) })),
   };
 }
@@ -38,11 +41,13 @@ export default function SupplierProductFormFields(props) {
   return <ScopedSupplierProductFormFields key={authority} {...props} />;
 }
 
-function ScopedSupplierProductFormFields({ initialData, onSubmit, savingLabel, submitLabel }) {
+function ScopedSupplierProductFormFields({ initialData, onSubmit, savingLabel, submitLabel, disabled = false }) {
   const { hotelUid } = useHotelContext();
   const [form, setForm] = useState(() => initialForm(initialData));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [imageFile, setImageFile] = useState(null), [imageError, setImageError] = useState(null);
+  const canUpload = usePermission("supplierproducts", "update");
   const [legacyReviewed, setLegacyReviewed] = useState(false);
   const legacyVariants = initialData?.hasVariants && !initialData?.purchaseOptions?.length;
   const loadSources = useCallback(async () => {
@@ -53,7 +58,7 @@ function ScopedSupplierProductFormFields({ initialData, onSubmit, savingLabel, s
   const supplierOptions = sources.data?.suppliers || [];
   const catalogOptions = (sources.data?.catalog || []).filter((product) => (product.active !== false && product.archived !== true) || product.id === form.catalogProductId);
   const linkedCatalog = catalogOptions.find((product) => product.id === form.catalogProductId);
-  useEffect(() => { setForm(initialForm(initialData)); setLegacyReviewed(false); setError(""); }, [initialData, hotelUid]);
+  useEffect(() => { setForm(initialForm(initialData)); setLegacyReviewed(false); setError(""); setImageFile(null); setImageError(null); }, [initialData, hotelUid]);
   const change = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const changeOption = (id, key, value) => setForm((current) => ({ ...current, purchaseOptions: current.purchaseOptions.map((option) => option.id === id ? { ...option, [key]: value } : option) }));
   const computedDefaultPrice = form.pricingModel === "Per Base Unit"
@@ -63,12 +68,9 @@ function ScopedSupplierProductFormFields({ initialData, onSubmit, savingLabel, s
 
   const submit = async (event) => {
     event.preventDefault(); setError("");
+    if (saving || disabled || imageError) return;
     if (!PRODUCT_BASE_UNITS.includes(form.baseUnit)) { setError("Select a supported base unit."); return; }
     if (!currencies.some((currency) => currency.id === form.currency)) { setError("Select a supported supplier contract currency."); return; }
-    if (form.imageUrl.trim()) {
-      try { const url = new URL(form.imageUrl.trim()); if (url.protocol !== "https:" || url.username || url.password) throw new Error(); }
-      catch { setError("External image URL must use HTTPS without embedded credentials."); return; }
-    }
     if (legacyVariants && !legacyReviewed) { setError("Review the old variants and replace them with explicit purchase options before saving."); return; }
     if (!sources.data?.suppliers.some((supplier) => supplier.id === form.supplierId)) { setError("Select an existing supplier from this hotel."); return; }
     if (form.priceBasis === "gross" && form.vatPercent === "") { setError("Enter the VAT rate for a gross price contract."); return; }
@@ -85,11 +87,11 @@ function ScopedSupplierProductFormFields({ initialData, onSubmit, savingLabel, s
       pricePerBaseUnit: form.pricingModel === "Per Base Unit" ? nullableNumber(form.pricePerBaseUnit) : null,
       pricePerPurchaseUnit: computedDefaultPrice, purchaseUnit: form.purchaseUnit.trim(), baseUnit: form.baseUnit,
       baseUnitsPerPurchaseUnit: Number(form.baseUnitsPerPurchaseUnit), catalogProductId: form.catalogProductId || null,
-      imageUrl: form.imageUrl.trim(), active: form.active,
+      active: form.active,
       purchaseOptions: form.purchaseOptions.map((option) => ({ id: option.id, purchaseUnit: option.purchaseUnit.trim(), gtin: option.gtin?.trim() || null, baseUnitsPerPurchaseUnit: Number(option.baseUnitsPerPurchaseUnit), pricePerPurchaseUnit: nullableNumber(option.pricePerPurchaseUnit) })),
     };
     setSaving(true);
-    try { await onSubmit(payload); }
+    try { if (imageFile) await onSubmit(payload, imageFile); else await onSubmit(payload); }
     catch (failure) { setError(failure?.message || "Could not save the supplier product."); }
     finally { setSaving(false); }
   };
@@ -102,7 +104,7 @@ function ScopedSupplierProductFormFields({ initialData, onSubmit, savingLabel, s
       <pre className="overflow-x-auto text-xs">{JSON.stringify(initialData.variants || [], null, 2)}</pre>
       <label className="flex gap-2"><input type="checkbox" checked={legacyReviewed} onChange={(event) => setLegacyReviewed(event.target.checked)} /> I reviewed and replaced the legacy variants.</label>
     </div>}
-    <fieldset disabled={saving} className="grid gap-4 sm:grid-cols-2">
+    <fieldset disabled={saving || disabled} className="grid gap-4 sm:grid-cols-2">
       <div className="sm:col-span-2"><h2 className="font-display text-xl text-brand-950">Offer identity</h2><p className="mt-1 text-sm font-normal text-stone-500">Connect the supplier's offer to the hotel's stable catalog item.</p></div>
       <Field title="Supplier *"><Combobox required disabled={Boolean(initialData?.id && initialData?.supplierId)} value={supplierOptions.find((supplier) => supplier.id === form.supplierId) || null} options={supplierOptions} displayValue={(supplier) => supplier.name || "Unnamed supplier"} getOptionValue={(supplier) => supplier.id} onChange={(supplier) => change("supplierId", supplier?.id || "")} placeholder="Search hotel suppliers" loading={sources.loading} className={inputClass} />
         {form.supplierId && !sources.loading && !supplierOptions.some((supplier) => supplier.id === form.supplierId) && <span className="text-xs font-normal text-amber-700">The existing supplier is unavailable. Review this offer before saving.</span>}
@@ -157,9 +159,16 @@ function ScopedSupplierProductFormFields({ initialData, onSubmit, savingLabel, s
         <button type="button" disabled={form.purchaseOptions.length >= 20} onClick={() => change("purchaseOptions", [...form.purchaseOptions, { id: crypto.randomUUID(), purchaseUnit: "", baseUnitsPerPurchaseUnit: "", pricePerPurchaseUnit: "" }])} className="rounded border px-3 py-2 text-sm">Add purchase option</button>
       </div>
       <div className="border-t border-stone-200 pt-5 sm:col-span-2"><h2 className="font-display text-xl text-brand-950">Image and availability</h2></div>
-      <Field title="External image URL (optional)" wide><input type="url" maxLength={1000} value={form.imageUrl} onChange={(event) => change("imageUrl", event.target.value)} placeholder="https://supplier.example/product.jpg" className={inputClass} /><span className="text-xs font-normal text-gray-500">Supplier-hosted HTTPS links remain supported. After saving, users with supplier-product update rights can upload a managed hotel image with automatic thumbnails from the detail page. External links can change or stop working.</span></Field>
+      <div className="sm:col-span-2 space-y-3 rounded-xl border border-stone-200 bg-stone-50 p-4">
+        {initialData?.image?.assetId && <SupplierProductImage hotelUid={hotelUid} product={initialData} variant="display" className="h-28 w-36" />}
+        {canUpload ? <>
+          <SupplierProductImagePicker file={imageFile} onChange={setImageFile} onError={setImageError} disabled={saving || disabled} label={initialData?.image?.assetId ? "Replace product image (optional)" : "Product image (optional)"} />
+          <p className="text-xs text-stone-500">Choose the image now. Saving the product also uploads this file and prepares its thumbnails.</p>
+          {imageError && <div className="space-y-2"><p role="alert" className="text-sm text-red-700">{imageError.message}</p><button type="button" className="ht-button-secondary" onClick={() => setImageError(null)}>Continue without an image</button></div>}
+        </> : <p className="text-sm text-stone-600">Product image uploads require supplier-product update permission. You can save this product without an image.</p>}
+      </div>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.active} onChange={(event) => change("active", event.target.checked)} /> Active</label>
     </fieldset>
-    <button type="submit" disabled={saving || sources.loading || Boolean(sources.error)} className="rounded bg-brand-800 px-4 py-2 font-semibold text-white disabled:opacity-60">{saving ? savingLabel : submitLabel}</button>
+    <button type="submit" disabled={saving || disabled || Boolean(imageError) || sources.loading || Boolean(sources.error)} className="rounded bg-brand-800 px-4 py-2 font-semibold text-white disabled:opacity-60">{saving ? savingLabel : submitLabel}</button>
   </form>;
 }

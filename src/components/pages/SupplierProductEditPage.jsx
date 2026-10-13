@@ -6,9 +6,10 @@ import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import SupplierProductFormFields from "./SupplierProductFormFields";
 import PendingProductCommand from "../catalog/PendingProductCommand";
+import SupplierProductSavedImage from "../catalog/SupplierProductSavedImage";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { getSupplierProduct, updateSupplierProduct } from "../../services/firebaseProducts";
+import { getSupplierProduct, updateSupplierProduct, getPendingProductCommand } from "../../services/firebaseProducts";
 import { useSupplierProductAuthority } from "../../hooks/useSupplierProductAuthority";
 import { LoadingStatus } from "../ui/ResourceLoading";
 
@@ -20,10 +21,18 @@ function ScopedSupplierProductEditPage() {
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [saved, setSaved] = useState(null);
+  const [pending, setPending] = useState(false);
+  const imageRequest = useRef(null);
 
   const mounted = useRef(true);
   const actorAtMount = useRef(auth.currentUser).current;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    const refresh = () => setPending(Boolean(getPendingProductCommand(hotelUid, "supplierproducts", productId)));
+    refresh(); window.addEventListener("product-command-changed", refresh);
+    return () => window.removeEventListener("product-command-changed", refresh);
+  }, [hotelUid, productId]);
 
   const today = useMemo(
     () =>
@@ -52,17 +61,23 @@ function ScopedSupplierProductEditPage() {
     return () => { active = false; };
   }, [hotelUid, productId]);
 
-  const handleUpdate = async (payload) => {
+  const complete = (updatedProductId) => {
+    if (!mounted.current || auth.currentUser !== actorAtMount) return;
+    if (imageRequest.current?.file) setSaved({ product: { ...product, id: updatedProductId, supplierProductName: imageRequest.current.name }, file: imageRequest.current.file });
+    else navigate(`/catalog/supplier-products/${updatedProductId}`);
+  };
+  const handleUpdate = async (payload, file) => {
     if (!mounted.current || auth.currentUser !== actorAtMount) throw new Error("Hotel access changed. Reload before changing a product.");
+    imageRequest.current = { file, name: payload.supplierProductName };
     const updatedProductId = await updateSupplierProduct(hotelUid, productId, payload, undefined, { expectedRevision: product?.revision ?? 0 });
-    if (mounted.current && auth.currentUser === actorAtMount) navigate(`/catalog/supplier-products/${updatedProductId}`);
+    complete(updatedProductId);
   };
 
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <ProcurementPage width="form" className="space-y-6">
-        <PendingProductCommand hotelUid={hotelUid} collection="supplierproducts" productId={productId} onComplete={(result) => { if (mounted.current && auth.currentUser === actorAtMount) navigate(`/catalog/supplier-products/${result.productId}`); }} />
+        <PendingProductCommand hotelUid={hotelUid} collection="supplierproducts" productId={productId} onComplete={(result) => complete(result.productId)} />
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
@@ -95,13 +110,14 @@ function ScopedSupplierProductEditPage() {
         ) : (
           <>
             <Card>
-              <SupplierProductFormFields
+              {saved ? <SupplierProductSavedImage hotelUid={hotelUid} product={saved.product} file={saved.file} onOpen={() => { if (mounted.current && auth.currentUser === actorAtMount) navigate(`/catalog/supplier-products/${saved.product.id}`); }} /> : <SupplierProductFormFields
             key={hotelUid}
                 initialData={product}
                 onSubmit={handleUpdate}
                 savingLabel={t("products.actions.saving")}
                 submitLabel={t("products.actions.saveChanges")}
-              />
+                disabled={pending}
+              />}
             </Card>
           </>
         )}

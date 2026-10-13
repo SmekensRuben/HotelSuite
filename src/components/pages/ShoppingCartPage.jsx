@@ -8,6 +8,7 @@ import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import DataListTable from "../shared/DataListTable";
 import PendingCartCommand from "../catalog/PendingCartCommand";
+import SupplierProductImage from "../catalog/SupplierProductImage";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { createOrdersFromShoppingCart } from "../../services/firebaseOrders";
@@ -163,7 +164,7 @@ function ScopedShoppingCartPage() {
       supplierId: item.supplierId || "-",
       supplierName: item.supplierName || item.supplierId || "-",
       supplierProductName: item.supplierProductName || "-",
-      imageUrl: item.imageUrl || "",
+      image: item.image, imageRevision: item.imageRevision,
       supplierSku: item.supplierSku || "-",
       purchaseUnit: item.purchaseUnit || "-",
       content: formatContent(item),
@@ -189,20 +190,10 @@ function ScopedShoppingCartPage() {
       sortValue: (row) => String(row.supplierName || ""),
     },
     {
-      key: "imageUrl",
+      key: "image",
       label: "Image",
       sortable: false,
-      render: (row) => (
-        row.imageUrl ? (
-          <img
-            src={row.imageUrl}
-            alt={row.supplierProductName || "Supplier product"}
-            className="h-14 w-14 rounded object-cover border border-gray-200"
-          />
-        ) : (
-          <span className="text-xs text-gray-500">-</span>
-        )
-      ),
+      render: (row) => <SupplierProductImage hotelUid={hotelUid} product={{ ...row, id: row.supplierProductId }} className="h-14 w-14" />,
     },
     { key: "supplierProductName", label: "Product" },
     { key: "supplierSku", label: "SKU" },

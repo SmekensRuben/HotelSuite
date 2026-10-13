@@ -7,6 +7,7 @@ import { Card } from "../layout/Card";
 import DataListTable from "../shared/DataListTable";
 import { Combobox } from "../ui/combobox";
 import PendingCartCommand from "../catalog/PendingCartCommand";
+import SupplierProductImage from "../catalog/SupplierProductImage";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSupplierProducts } from "../../services/firebaseProducts";
@@ -163,7 +164,7 @@ function ScopedOrderCreatePage() {
     const option = options.find((candidate) => candidate.id === (selectedOptions[product.id] || "default")) || options[0];
     return {
       ...product, options, purchaseOptionId: option?.id || "", selectedOption: option,
-      purchaseUnit: option?.purchaseUnit || "", imageUrl: product.imageUrl || "",
+      purchaseUnit: option?.purchaseUnit || "",
       contentLabel: option ? formatContent({ ...product, ...option }) : "Legacy packages need review",
       priceLabel: formatPurchasePrice(option, product.currency, product.priceBasis),
       orderable: product.active !== false && product.archived !== true && Boolean(option?.purchaseUnit) && knownPrice(option?.pricePerPurchaseUnit) !== null,
@@ -190,20 +191,10 @@ function ScopedOrderCreatePage() {
 
   const columns = [
     {
-      key: "imageUrl",
+      key: "image",
       label: "Image",
       sortable: false,
-      render: (row) => (
-        row.imageUrl ? (
-          <img
-            src={row.imageUrl}
-            alt={row.supplierProductName || "Supplier product"}
-            className="h-14 w-14 rounded object-cover border border-gray-200"
-          />
-        ) : (
-          <span className="text-xs text-gray-500">-</span>
-        )
-      ),
+      render: (row) => <SupplierProductImage hotelUid={hotelUid} product={row} className="h-14 w-14" />,
     },
     {
       key: "supplier",

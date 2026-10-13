@@ -152,7 +152,8 @@ function normalizeOption(input) {
     pricePerPurchaseUnit: optionalNumber(input.pricePerPurchaseUnit, "Purchase price", { maximum: MAX_PRICE }), gtin: packageGtin(input.gtin) };
 }
 function normalizeSupplierProduct(input) {
-  supportedFields(input, ["supplierId", "supplierSku", "supplierProductName", "supplierName", "currency", "pricingModel", "pricePerBaseUnit", "pricePerPurchaseUnit", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "catalogProductId", "imageUrl", "active", "priceBasis", "vatRate", "purchaseOptions", "priceValidFrom", "priceValidUntil", "gtin"], "supplier product");
+  if (input && Object.hasOwn(input, "imageUrl")) fail("Supplier product images must use the protected image upload workflow; external image URLs are not supported.");
+  supportedFields(input, ["supplierId", "supplierSku", "supplierProductName", "supplierName", "currency", "pricingModel", "pricePerBaseUnit", "pricePerPurchaseUnit", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "catalogProductId", "active", "priceBasis", "vatRate", "purchaseOptions", "priceValidFrom", "priceValidUntil", "gtin"], "supplier product");
   if (!/^[A-Z]{3}$/.test(input.currency ?? "")) fail("Currency must be an explicit three-letter uppercase code.");
   if (!["Per Purchase Unit", "Per Base Unit"].includes(input.pricingModel)) fail("Choose Per Purchase Unit or Per Base Unit pricing.");
   const result = { supplierId: requireDocumentId(input.supplierId, "supplierId"),
@@ -163,7 +164,7 @@ function normalizeSupplierProduct(input) {
     pricePerBaseUnit: optionalNumber(input.pricePerBaseUnit, "Base unit price", { maximum: MAX_PRICE }),
     pricePerPurchaseUnit: optionalNumber(input.pricePerPurchaseUnit, "Purchase price", { maximum: MAX_PRICE }),
     catalogProductId: input.catalogProductId === null || input.catalogProductId === undefined || input.catalogProductId === "" ? null : requireDocumentId(input.catalogProductId, "catalogProductId"),
-    imageUrl: text(input.imageUrl ?? "", "Image URL", 1000), active: boolean(input.active, "active"), ...priceContract(input),
+    active: boolean(input.active, "active"), ...priceContract(input),
     priceValidFrom: optionalPriceDate(input.priceValidFrom, "Price valid from"), priceValidUntil: optionalPriceDate(input.priceValidUntil, "Price valid until"),
     productPolicyVersion: PRODUCT_POLICY_VERSION };
   if (result.priceValidFrom && result.priceValidUntil && result.priceValidFrom > result.priceValidUntil) fail("Price valid from must not be after price valid until.");

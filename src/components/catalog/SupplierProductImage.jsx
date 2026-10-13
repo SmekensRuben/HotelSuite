@@ -5,10 +5,6 @@ import { getSupplierProductImage } from "../../services/firebaseSupplierProductI
 import { useHotelContext } from "../../contexts/HotelContext";
 import { usePermission } from "../../hooks/usePermission";
 
-function externalImage(value) {
-  try { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password ? url.href : null; }
-  catch { return null; }
-}
 export default function SupplierProductImage({ hotelUid, product, variant = "thumbnail", className = "h-12 w-12" }) {
   const actor = auth.currentUser;
   const { permissions, subscription, subscriptionActive } = useHotelContext();
@@ -16,7 +12,7 @@ export default function SupplierProductImage({ hotelUid, product, variant = "thu
   const authority = JSON.stringify([hotelUid, permissions, subscription, subscriptionActive]);
   const assetId = product?.image?.assetId, status = product?.image?.status;
   const [state, setState] = useState({ actor: null, authority: null, assetId: null, variant: null, url: null });
-  const [externalFailed, setExternalFailed] = useState(null);
+  const [failedUrl, setFailedUrl] = useState(null);
   const element = useRef(null);
   const [visible, setVisible] = useState(() => variant !== "thumbnail" || typeof IntersectionObserver === "undefined");
   useEffect(() => {
@@ -40,12 +36,11 @@ export default function SupplierProductImage({ hotelUid, product, variant = "thu
   }, [hotelUid, product?.id, assetId, status, variant, actor, authority, canRead, visible]);
   const managed = Boolean(assetId);
   const verified = state.actor === actor && state.authority === authority && state.assetId === assetId && state.variant === variant;
-  const url = managed ? status === "ready" && verified ? state.url : null
-    : canRead ? externalImage(product?.imageUrl) : null;
+  const url = canRead && managed && status === "ready" && verified ? state.url : null;
   const loading = canRead && managed && (status === "pending" || status === "ready" && !verified);
   const name = product?.supplierProductName || "Supplier product";
   return <span ref={element} className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 ${className}`} aria-busy={loading || undefined}>
-    {url && externalFailed !== url ? <img src={url} alt={name} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="h-full w-full object-contain" onError={() => setExternalFailed(url)} />
+    {url && failedUrl !== url ? <img src={url} alt={name} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="h-full w-full object-contain" onError={() => setFailedUrl(url)} />
       : <span role="img" aria-label={loading ? `Preparing image for ${name}` : `No available image for ${name}`} className={`flex h-full w-full items-center justify-center text-stone-400 ${loading ? "motion-safe:animate-pulse" : ""}`}><ImageIcon size={20} aria-hidden="true" /></span>}
   </span>;
 }

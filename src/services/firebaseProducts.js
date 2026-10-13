@@ -657,10 +657,6 @@ export async function uploadCatalogProductImage(hotelUid, file) {
   return uploadEntityProductImage(hotelUid, file, "catalogproducts");
 }
 
-export async function uploadSupplierProductImage(hotelUid, file) {
-  return uploadEntityProductImage(hotelUid, file, "supplierproducts");
-}
-
 async function uploadEntityProductImage(hotelUid, file, entityCollection) {
   if (!hotelUid || !file) return "";
   const fileExtension = file.name?.split(".").pop();

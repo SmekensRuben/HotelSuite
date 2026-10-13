@@ -1,9 +1,9 @@
 // Workbook audit columns describe the source; only protected commands author new audit data.
-export const SUPPLIER_PRODUCT_FIELDS = ["documentId", "revision", "supplierId", "supplierSku", "supplierProductName", "gtin", "currency", "pricingModel", "priceBasis", "vatRate", "priceValidFrom", "priceValidUntil", "pricePerBaseUnit", "pricePerPurchaseUnit", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "purchaseOptions", "catalogProductId", "imageUrl", "active", "hasVariants", "variants"];
+export const SUPPLIER_PRODUCT_FIELDS = ["documentId", "revision", "supplierId", "supplierSku", "supplierProductName", "gtin", "currency", "pricingModel", "priceBasis", "vatRate", "priceValidFrom", "priceValidUntil", "pricePerBaseUnit", "pricePerPurchaseUnit", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "purchaseOptions", "catalogProductId", "active", "hasVariants", "variants"];
 export const SUPPLIER_PRODUCT_AUDIT_FIELDS = ["supplierName", "createdAt", "createdBy", "updatedAt", "updatedBy", "priceUpdatedOn", "managedImageAssetId", "managedImageStatus", "managedImagePolicyVersion", "imageRevision"];
 export const SUPPLIER_PRODUCT_EXPORT_HEADERS = [...SUPPLIER_PRODUCT_FIELDS, ...SUPPLIER_PRODUCT_AUDIT_FIELDS];
 export const SUPPLIER_PRODUCT_TEMPLATE_HEADERS = SUPPLIER_PRODUCT_FIELDS.filter((field) => !["documentId", "revision", "hasVariants", "variants"].includes(field));
-export const SUPPLIER_PRODUCT_TEMPLATE_ROW = { supplierId: "", supplierSku: "", supplierProductName: "", gtin: "", currency: "", pricingModel: "Per Purchase Unit", priceBasis: "unknown", vatRate: "", priceValidFrom: "", priceValidUntil: "", pricePerBaseUnit: "", pricePerPurchaseUnit: "", purchaseUnit: "", baseUnit: "", baseUnitsPerPurchaseUnit: "", purchaseOptions: "[]", catalogProductId: "", imageUrl: "", active: "true" };
+export const SUPPLIER_PRODUCT_TEMPLATE_ROW = { supplierId: "", supplierSku: "", supplierProductName: "", gtin: "", currency: "", pricingModel: "Per Purchase Unit", priceBasis: "unknown", vatRate: "", priceValidFrom: "", priceValidUntil: "", pricePerBaseUnit: "", pricePerPurchaseUnit: "", purchaseUnit: "", baseUnit: "", baseUnitsPerPurchaseUnit: "", purchaseOptions: "[]", catalogProductId: "", active: "true" };
 
 function auditDate(value) {
   if (value == null || value === "") return "";
@@ -21,7 +21,7 @@ export function supplierProductExportRow(product) {
     currency: product.currency || "", pricingModel: product.pricingModel || "", priceBasis: product.priceBasis || "unknown", vatRate: product.vatRate ?? "",
     priceValidFrom: product.priceValidFrom || "", priceValidUntil: product.priceValidUntil || "", pricePerBaseUnit: product.pricePerBaseUnit ?? "", pricePerPurchaseUnit: product.pricePerPurchaseUnit ?? "",
     purchaseUnit: product.purchaseUnit || "", baseUnit: product.baseUnit || "", baseUnitsPerPurchaseUnit: product.baseUnitsPerPurchaseUnit ?? "", purchaseOptions: JSON.stringify(product.purchaseOptions || []),
-    catalogProductId: product.catalogProductId || "", imageUrl: product.imageUrl || "", active: product.active !== false ? "true" : "false", hasVariants: product.hasVariants === true ? "true" : "false", variants: JSON.stringify(product.variants || []),
+    catalogProductId: product.catalogProductId || "", active: product.active !== false ? "true" : "false", hasVariants: product.hasVariants === true ? "true" : "false", variants: JSON.stringify(product.variants || []),
     supplierName: product.supplierName || "", createdAt: auditDate(product.createdAt), createdBy: product.createdBy || "", updatedAt: auditDate(product.updatedAt), updatedBy: product.updatedBy || "", priceUpdatedOn: auditDate(product.priceUpdatedOn),
     managedImageAssetId: product.image?.assetId || "", managedImageStatus: product.image?.status || "", managedImagePolicyVersion: product.image?.policyVersion ?? "", imageRevision: product.imageRevision ?? "",
   };
@@ -56,6 +56,7 @@ export function parseSupplierProductRows(rows) {
     if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error(`Row ${index + 2}: invalid worksheet row.`);
     if (!Object.values(row).some((value) => clean(value) !== "")) return;
     try {
+      if (clean(row.imageUrl)) throw new Error("External image URLs are not supported. Upload image files through the product image workflow.");
       if (!clean(row.supplierId) || !clean(row.supplierSku) || !clean(row.supplierProductName)) throw new Error("Supplier, SKU and product name are required; incomplete rows are never skipped.");
       const revision = number(row.revision, "revision");
       if (revision !== undefined && (!Number.isSafeInteger(revision) || revision < 0 || revision >= Number.MAX_SAFE_INTEGER)) throw new Error("revision must be a non-negative whole number within the supported range.");
@@ -78,7 +79,7 @@ export function parseSupplierProductRows(rows) {
         ...(Object.hasOwn(row, "priceValidUntil") ? { priceValidUntil: clean(row.priceValidUntil) || null } : {}),
         pricePerBaseUnit: number(row.pricePerBaseUnit, "pricePerBaseUnit") ?? null, pricePerPurchaseUnit: number(row.pricePerPurchaseUnit, "pricePerPurchaseUnit") ?? null,
         purchaseUnit: clean(row.purchaseUnit), baseUnit: clean(row.baseUnit), baseUnitsPerPurchaseUnit: number(row.baseUnitsPerPurchaseUnit, "baseUnitsPerPurchaseUnit"), purchaseOptions,
-        catalogProductId: clean(row.catalogProductId), imageUrl: clean(row.imageUrl), active: boolean(row.active, "active", true), hasVariants: false, variants: [],
+        catalogProductId: clean(row.catalogProductId), active: boolean(row.active, "active", true), hasVariants: false, variants: [],
       });
     } catch (error) { throw new Error(`Row ${index + 2}: ${error.message}`); }
   });

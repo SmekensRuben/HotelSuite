@@ -25,7 +25,7 @@ const request = (data, actor = staff) => ({ auth: actor, data });
 const deny = (result, code) => assert.rejects(result, (error) => error.code === code);
 const offer = (patch = {}) => ({ supplierId: "drinks", supplierSku: "JUICE6", supplierProductName: "Orange juice case", currency: "EUR",
   pricingModel: "Per Purchase Unit", pricePerBaseUnit: null, pricePerPurchaseUnit: 15.9, baseUnit: "ml", purchaseUnit: "Case",
-  baseUnitsPerPurchaseUnit: 6000, catalogProductId: "juice", imageUrl: "", active: true, priceBasis: "gross", vatRate: 0.06, purchaseOptions: [], ...patch });
+  baseUnitsPerPurchaseUnit: 6000, catalogProductId: "juice", active: true, priceBasis: "gross", vatRate: 0.06, purchaseOptions: [], ...patch });
 let environment, serial = 0;
 const next = () => `extension-command-${++serial}`;
 const transferInput = (patch = {}) => ({ hotelUid: "hotel-a", requestId: next(), expectedActorUid: staff.uid,

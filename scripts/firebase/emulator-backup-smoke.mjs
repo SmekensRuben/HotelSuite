@@ -71,7 +71,7 @@ const procurementProofPath = join(tmpdir(), `hotelsuite-restore-proof-${digest(i
 const procurementRequest = (fixture, data) => ({ auth: { uid: fixture.actorUid, token: { email_verified: true } }, data: { hotelUid: fixture.hotelUid, ...data } });
 const offerInput = (fixture, price) => ({ supplierId: "restore-dairy", supplierSku: "RESTORE-MILK6", supplierProductName: "Fictional milk six-pack",
   currency: fixture.currency, pricingModel: "Per Purchase Unit", pricePerBaseUnit: null, pricePerPurchaseUnit: price,
-  baseUnit: "ml", purchaseUnit: "Case", baseUnitsPerPurchaseUnit: 6000, catalogProductId: "milk", imageUrl: "", active: true,
+  baseUnit: "ml", purchaseUnit: "Case", baseUnitsPerPurchaseUnit: 6000, catalogProductId: "milk", active: true,
   priceBasis: "net", vatRate: null, purchaseOptions: [], priceValidFrom: "2026-10-01", priceValidUntil: "2026-10-31" });
 const offerCommand = (fixture, action) => ({ action, productId: "restore-priced-milk", expectedRevision: action === "create" ? 0 : 1,
   requestId: `restore-price-${action}`, product: offerInput(fixture, action === "create" ? 12 : 15) });

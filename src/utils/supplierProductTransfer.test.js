@@ -32,6 +32,8 @@ describe("supplier product workbook boundary", () => {
     expect(parsed).not.toHaveProperty("managedImageAssetId");
     expect(parsed).not.toHaveProperty("image");
     expect(parsed).not.toHaveProperty("imageRevision");
+    expect(parsed).not.toHaveProperty("imageUrl");
+    expect(rows[0]).not.toHaveProperty("imageUrl");
   });
   it("does not invent a currency, a missing price or a contract validity bound", () => {
     const row = supplierProductExportRow({ ...offer, currency: null, pricePerPurchaseUnit: null, vatRate: null, priceValidFrom: null, priceValidUntil: null });
@@ -40,6 +42,9 @@ describe("supplier product workbook boundary", () => {
     expect(SUPPLIER_PRODUCT_TEMPLATE_ROW.currency).toBe("");
     expect(SUPPLIER_PRODUCT_TEMPLATE_HEADERS).not.toContain("revision");
     expect(SUPPLIER_PRODUCT_TEMPLATE_HEADERS).not.toContain("createdBy");
+    expect(SUPPLIER_PRODUCT_EXPORT_HEADERS).not.toContain("imageUrl");
+    expect(SUPPLIER_PRODUCT_TEMPLATE_HEADERS).not.toContain("imageUrl");
+    expect(SUPPLIER_PRODUCT_TEMPLATE_ROW).not.toHaveProperty("imageUrl");
   });
   it("intentionally exports legacy missing revision as zero but rejects corrupt stored revisions", () => {
     expect(supplierProductExportRow({ ...offer, revision: undefined }).revision).toBe(0);
@@ -63,5 +68,8 @@ describe("supplier product workbook boundary", () => {
     expect(() => parseSupplierProductRows([row, row])).toThrow(/duplicate product identity/);
     delete row.documentId;
     expect(() => parseSupplierProductRows([row, row])).toThrow(/duplicate product identity/);
+  });
+  it("rejects external image URLs in worksheets instead of silently importing or downloading them", () => {
+    expect(() => parseSupplierProductRows([{ ...supplierProductExportRow(offer), imageUrl: "https://supplier.example/juice.jpg" }])).toThrow("Row 2: External image URLs are not supported");
   });
 });

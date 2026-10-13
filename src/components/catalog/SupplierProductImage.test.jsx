@@ -48,3 +48,16 @@ it("loads private thumbnails only when they approach the viewport", async () => 
     await screen.findByAltText("Coffee"); expect(mocks.read).toHaveBeenCalledTimes(1); expect(disconnect).toHaveBeenCalled();
   } finally { vi.unstubAllGlobals(); }
 });
+it("never displays an external image URL, even without a managed image", () => {
+  render(<SupplierProductImage hotelUid="hotel-a" product={{ ...product, imageUrl: "https://external.example/coffee.png" }} />);
+  expect(screen.queryByAltText("Coffee")).not.toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "No available image for Coffee" })).toBeInTheDocument();
+  expect(mocks.read).not.toHaveBeenCalled();
+});
+it("automatically uploads the file selected in the product form once under Strict Mode", async () => {
+  const file = new File(["image"], "coffee.png", { type: "image/png" });
+  render(<React.StrictMode><SupplierProductImageUpload hotelUid="hotel-a" product={product} initialFile={file} autoUpload onChanged={mocks.changed} /></React.StrictMode>);
+  await screen.findByText("Product image saved with its thumbnail.");
+  expect(mocks.upload).toHaveBeenCalledTimes(1); expect(mocks.upload).toHaveBeenCalledWith("hotel-a", product, file);
+  expect(mocks.changed).toHaveBeenCalledWith({ status: "ready" });
+});
