@@ -18,6 +18,7 @@ import { usePermission } from "../../hooks/usePermission";
 import { SUPPLIER_PRODUCT_EXPORT_HEADERS, SUPPLIER_PRODUCT_TEMPLATE_HEADERS, SUPPLIER_PRODUCT_TEMPLATE_ROW, supplierProductExportRow, parseSupplierProductRows } from "../../utils/supplierProductTransfer";
 import SupplierProductImage from "../catalog/SupplierProductImage";
 import SupplierAiImportDialog from "../catalog/SupplierAiImportDialog";
+import { useSupplierAiImportProgress } from "../../contexts/SupplierAiImportProgressContext";
 import { useSupplierProductAuthority } from "../../hooks/useSupplierProductAuthority";
 import { formatOrderPriceBasis } from "../../utils/orderPricing";
 import { ArticleRowsSkeleton } from "../ui/ResourceLoading";
@@ -46,6 +47,7 @@ export default function SupplierProductsPage() {
 }
 
 function ScopedSupplierProductsPage({ hotelUid }) {
+  const aiImportProgress = useSupplierAiImportProgress();
   const actorAtMount = useRef(auth.currentUser).current;
   const navigate = useNavigate();
   const { t } = useTranslation("common");
@@ -385,12 +387,12 @@ function ScopedSupplierProductsPage({ hotelUid }) {
         <div className="space-y-3">
           <p className="text-sm text-stone-600">Choose a prepared Hotel Toolkit template or ask AI to prepare a review from your supplier's document.</p>
           <button type="button" className="ht-button-secondary w-full" onClick={() => { setShowImportChoice(false); fileInputRef.current?.click(); }} disabled={busy || !canCreateProducts}>Template Import</button>
-          <button type="button" className="ht-button-primary w-full" onClick={() => { setShowImportChoice(false); setAiImportOpened(true); setShowAiImport(true); }} disabled={!canCreateProducts || !canReadSuppliers}>AI Import</button>
+          <button type="button" className="ht-button-primary w-full" onClick={() => { setShowImportChoice(false); if (aiImportProgress) aiImportProgress.openNew({ suppliers: supplierFilters, suppliersLoading: supplierQuery.loading, initialSupplierId: selectedSupplierId, onImported: () => { if (!current()) return; setPageStartCursors({ 0: null }); loadProductsPage(0, null); } }); else { setAiImportOpened(true); setShowAiImport(true); } }} disabled={!canCreateProducts || !canReadSuppliers}>AI Import</button>
           {!canReadSuppliers && <p className="text-xs text-stone-500">AI import also requires access to this hotel's suppliers.</p>}
-          <p className="text-xs text-stone-500">AI proposes changes. You review and confirm every included row; expensive automatic model fallback is disabled.</p>
+          <p className="text-xs text-stone-500">AI prepares a draft. Review and confirm every included product before anything is saved.</p>
         </div>
       </Modal>
-      {aiImportOpened && <SupplierAiImportDialog open={showAiImport} onClose={() => setShowAiImport(false)} hotelUid={hotelUid} suppliers={supplierFilters} suppliersLoading={supplierQuery.loading} initialSupplierId={selectedSupplierId} onImported={() => { if (!current()) return; setPageStartCursors({ 0: null }); loadProductsPage(0, null); }} />}
+      {!aiImportProgress && aiImportOpened && <SupplierAiImportDialog open={showAiImport} onClose={() => setShowAiImport(false)} hotelUid={hotelUid} suppliers={supplierFilters} suppliersLoading={supplierQuery.loading} initialSupplierId={selectedSupplierId} onImported={() => { if (!current()) return; setPageStartCursors({ 0: null }); loadProductsPage(0, null); }} />}
 
       <Modal open={showImportModal} onClose={() => setShowImportModal(false)} title={t("products.import.title")}>
         <p className="mb-4 text-sm text-gray-700">{t("products.import.message")}</p>

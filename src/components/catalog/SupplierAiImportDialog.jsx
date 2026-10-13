@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { auth } from "../../firebaseConfig";
 import { usePermission } from "../../hooks/usePermission";
+import { getSuppliers } from "../../services/firebaseSuppliers";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { useSupplierProductAuthority } from "../../hooks/useSupplierProductAuthority";
 import { Combobox } from "../ui/combobox";
 import Modal from "../shared/Modal";
@@ -14,15 +16,15 @@ const processing = new Set(["queued", "processing"]);
 const reviewable = new Set(["review", "partially_committed", "completed"]);
 const statuses = {
   queued: "Your document is queued.", processing: "Reading the document and preparing a review…",
-  review: "Review the proposed products before importing.", failed: "Document processing failed. No automatic model fallback was used.",
-  response_unknown: "The provider response is uncertain. A further AI call will not start automatically.",
+  review: "Review the proposed products before importing.", failed: "Document processing failed. No products were changed.",
+  response_unknown: "The import result could not be confirmed. Contact your hotel administrator before starting another import.",
   partially_committed: "Some rows have been processed. Review the remaining rows.", completed: "Import processing is complete.", expired: "This private draft is no longer available. Start a new document when you are ready.",
 };
 export default function SupplierAiImportDialog(props) {
   const authority = useSupplierProductAuthority();
   return <ScopedSupplierAiImportDialog key={authority} {...props} />;
 }
-function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [], suppliersLoading = false, initialSupplierId = "", onImported }) {
+function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [], suppliersLoading = false, initialSupplierId = "", onImported, trackedJobId = null, trackedJob = null, backgroundManaged = false, onJobChange, onNewDocument }) {
   const actor = useRef(auth.currentUser).current, alive = useRef(true);
   const current = useCallback(() => alive.current && auth.currentUser === actor, [actor]);
   const canRead = usePermission("supplierproducts", "read"), canCreate = usePermission("supplierproducts", "create"), canReadSuppliers = usePermission("suppliers", "read");
@@ -36,9 +38,44 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
   const [outcomes, setOutcomes] = useState([]), [uncertainUpload, setUncertainUpload] = useState(false), [uncertainCommit, setUncertainCommit] = useState(false);
   const pendingCommit = useRef(null), lastReviewJob = useRef(null), input = useRef(null);
   const generation = useRef(0), jobRequests = useRef(0), rowRequests = useRef(0), latestJob = useRef(job), latestRows = useRef(rows); latestJob.current = job; latestRows.current = rows;
-  const [resuming, setResuming] = useState(false);
-  const renderedGeneration = generation.current;
+  const [resuming, setResuming] = useState(false), [closeIn, setCloseIn] = useState(null);
+  const closeDeadline = useRef(null);
+  const previousTrackedJobId = useRef(trackedJobId);
+  const jobChange = useRef(onJobChange); jobChange.current = onJobChange;
+  const publishJob = (value) => { const accepted = jobChange.current?.(value); setJob(accepted || value); };
+  const close = () => { setCloseIn(null); onClose?.(); };
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => {
+    if (!backgroundManaged || !current() || busy || uncertainUpload || uncertainCommit) return;
+    if (!trackedJobId) {
+      if (previousTrackedJobId.current && latestJob.current) {
+        generation.current += 1; rowRequests.current += 1; jobRequests.current += 1;
+        setJob(null); setRows([]); setSelected({}); setOutcomes([]); setCursor(null); setCursorHistory([null]); setNextCursor(null); setError(null); setPollError(null); setCloseIn(null);
+        pendingCommit.current = null; lastReviewJob.current = null; setReviewLoading(false); setFile(null); setSupplierId(initialSupplierId); setResuming(false);
+      }
+      previousTrackedJobId.current = null; return;
+    }
+    previousTrackedJobId.current = trackedJobId;
+    if (latestJob.current?.jobId !== trackedJobId) {
+      generation.current += 1; rowRequests.current += 1; jobRequests.current += 1;
+      setRows([]); setSelected({}); setOutcomes([]); setCursor(null); setCursorHistory([null]); setNextCursor(null); setError(null); setPollError(null); setCloseIn(null);
+      pendingCommit.current = null; lastReviewJob.current = null; setUncertainCommit(false); setUncertainUpload(false); setReviewLoading(false); setFile(null);
+    }
+    if (trackedJob) { setJob(trackedJob); setSupplierId(trackedJob.supplierId || ""); setResuming(false); return; }
+    const captured = generation.current; setResuming(true);
+    getSupplierAiImport(hotelUid, trackedJobId).then((value) => { if (current() && captured === generation.current) { publishJob(value); setSupplierId(value.supplierId || ""); } }).catch((failure) => { if (current() && captured === generation.current) setError(failure); }).finally(() => { if (current() && captured === generation.current) setResuming(false); });
+  }, [backgroundManaged, trackedJobId, trackedJob, hotelUid, current, busy, uncertainUpload, uncertainCommit, initialSupplierId]);
+  useEffect(() => {
+    if (closeIn === null) return;
+    if (!open || !job || !processing.has(job.status) || !current()) { setCloseIn(null); return; }
+    const timer = setTimeout(() => {
+      if (!current()) return;
+      const remaining = Math.ceil((closeDeadline.current - Date.now()) / 1000);
+      if (remaining <= 0) { setCloseIn(null); onClose?.(); } else setCloseIn(remaining);
+    }, Math.min(1000, Math.max(0, closeDeadline.current - Date.now())));
+    return () => clearTimeout(timer);
+  }, [closeIn, open, job?.jobId, job?.status, current, onClose]);
+  const renderedGeneration = generation.current;
   const remember = useCallback((value) => { try { sessionStorage.setItem(storageKey, JSON.stringify({ jobId: value.jobId })); } catch { /* Recovery remains available in the open view. */ } }, [storageKey]);
   const forget = () => { try { sessionStorage.removeItem(storageKey); } catch { /* Browser storage is optional. */ } };
   const loadAvailability = useCallback(async () => {
@@ -52,30 +89,30 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
     if (!open || !permitted) return;
     loadAvailability();
     let jobId; try { jobId = JSON.parse(sessionStorage.getItem(storageKey) || "null")?.jobId; } catch { /* Invalid local reference is ignored. */ }
-    if (!jobId || job) return;
+    if (backgroundManaged || !jobId || job) return;
     const captured = generation.current; setResuming(true);
-    getSupplierAiImport(hotelUid, jobId).then((value) => { if (current() && captured === generation.current) { generation.current += 1; setJob(value); setSupplierId(value.supplierId); setResuming(false); } }).catch((failure) => { if (current() && captured === generation.current) { setError(failure); try { sessionStorage.removeItem(storageKey); } catch { /* Optional browser storage. */ } } }).finally(() => { if (current() && (captured === generation.current || latestJob.current?.jobId === jobId)) setResuming(false); });
-  }, [open, permitted, loadAvailability, hotelUid, storageKey, current]); // Job is resumed only when this view opens.
+    getSupplierAiImport(hotelUid, jobId).then((value) => { if (current() && captured === generation.current) { generation.current += 1; publishJob(value); setSupplierId(value.supplierId); setResuming(false); } }).catch((failure) => { if (current() && captured === generation.current) { setError(failure); try { sessionStorage.removeItem(storageKey); } catch { /* Optional browser storage. */ } } }).finally(() => { if (current() && (captured === generation.current || latestJob.current?.jobId === jobId)) setResuming(false); });
+  }, [open, permitted, loadAvailability, hotelUid, storageKey, current, backgroundManaged]); // Job is resumed only when this view opens.
   const refreshJob = useCallback(async () => {
     if (!job?.jobId || !current()) return;
     const captured = { jobId: job.jobId, generation: generation.current, request: ++jobRequests.current };
     const active = () => current() && generation.current === captured.generation && latestJob.current?.jobId === captured.jobId && jobRequests.current === captured.request;
-    try { const value = await getSupplierAiImport(hotelUid, captured.jobId); if (active()) { setJob(value); setPollError(null); } }
+    try { const value = await getSupplierAiImport(hotelUid, captured.jobId); if (active()) { publishJob(value); setPollError(null); } }
     catch (failure) { if (active()) {
       setPollError(failure);
       if (["not-found", "failed-precondition"].includes(String(failure.code || "").replace(/^functions\//, ""))) {
         setPollError(null);
-        setJob((prior) => ({ hotelUid: prior?.hotelUid, jobId: prior?.jobId, status: "expired", error: { message: failure.message } }));
+        const expired = { hotelUid, jobId: captured.jobId, ownerUid: actor?.uid, status: "expired", error: { message: failure.message } }; publishJob(expired);
         setRows([]); setSelected({}); setOutcomes([]); pendingCommit.current = null; setUncertainCommit(false);
         try { sessionStorage.removeItem(storageKey); } catch { /* An expired reference contains no source content. */ }
       }
     } }
   }, [job?.jobId, hotelUid, current, storageKey]);
   useEffect(() => {
-    if (!job || !processing.has(job.status) || !current()) return;
+    if (backgroundManaged || !job || !processing.has(job.status) || !current()) return;
     const timer = setTimeout(refreshJob, pollError ? 10000 : 3000);
     return () => clearTimeout(timer);
-  }, [job, refreshJob, pollError, current]);
+  }, [job, refreshJob, pollError, current, backgroundManaged]);
   const loadRows = useCallback(async (next = null) => {
     if (!job?.jobId || !current()) return;
     const captured = { jobId: job.jobId, generation: generation.current, request: ++rowRequests.current };
@@ -97,7 +134,7 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
     } catch (failure) { if (active()) setError(failure); }
     finally { if (active()) setReviewLoading(false); }
   }, [hotelUid, job?.jobId, current]);
-  useEffect(() => { if (job && reviewable.has(job.status) && lastReviewJob.current !== job.jobId) { lastReviewJob.current = job.jobId; loadRows(null); } }, [job, loadRows]);
+  useEffect(() => { if (open && job && reviewable.has(job.status) && lastReviewJob.current !== job.jobId) { lastReviewJob.current = job.jobId; loadRows(null); } }, [open, job, loadRows]);
   const chooseFile = (event) => {
     const chosen = event.target.files?.[0];
     if (busy || uncertainUpload || !current()) return;
@@ -106,62 +143,68 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
     catch (failure) { event.target.value = ""; setFile(null); setError(failure); }
   };
   const start = async () => {
-    if (!file || !supplierId || busy || resuming || !permitted || !availability?.available || !current()) return;
+    if (!file || !supplierId || !supplierOptions.some((supplier) => supplier.id === supplierId) || directoryLoading || supplierDirectory.error || busy || resuming || !permitted || !availability?.available || !current()) return;
     const captured = ++generation.current;
     setBusy(true); setError(null);
     try {
       const value = await startSupplierAiImport(hotelUid, supplierId, file);
       if (!current() || captured !== generation.current) return;
-      setJob(value); remember(value); setUncertainUpload(false); setFile(null);
+      publishJob(value); remember(value); setUncertainUpload(false); setFile(null); if (processing.has(value.status)) { closeDeadline.current = Date.now() + 5000; setCloseIn(5); }
     } catch (failure) {
-      if (!current()) return;
+      if (!current() || captured !== generation.current) return;
       setError(failure);
       setUncertainUpload(!["invalid-argument", "permission-denied", "unauthenticated", "failed-precondition", "resource-exhausted", "already-exists", "not-found"].includes(String(failure.code || "").replace(/^functions\//, "")));
-    } finally { if (current()) setBusy(false); }
+    } finally { if (current() && captured === generation.current) setBusy(false); }
   };
   const select = (rowId, checked, reviewRevision) => setSelected((prior) => { const next = { ...prior }; if (checked) next[rowId] = reviewRevision; else delete next[rowId]; return next; });
   const corrected = (row) => { if (!current() || generation.current !== renderedGeneration || latestJob.current?.jobId !== job?.jobId || !row?.rowId) return; setRows((prior) => prior.map((value) => value.rowId === row.rowId ? row : value)); select(row.rowId, false); };
   const confirm = async () => {
     if (busy || !current() || !job || !permitted) return;
+    const captured = { generation: generation.current, jobId: job.jobId };
+    const active = () => current() && generation.current === captured.generation && latestJob.current?.jobId === captured.jobId;
     const commandRows = pendingCommit.current || Object.entries(selected).map(([rowId, reviewRevision]) => ({ rowId, reviewRevision, acknowledged: true }));
     if (!commandRows.length) return;
     pendingCommit.current = commandRows; setBusy(true); setError(null);
     try {
-      const result = await confirmSupplierAiImport(hotelUid, job.jobId, commandRows);
-      if (!current()) return;
+      const result = await confirmSupplierAiImport(hotelUid, captured.jobId, commandRows);
+      if (!active()) return;
       setOutcomes(result.outcomes); setUncertainCommit(false); pendingCommit.current = null; setSelected({});
-      await loadRows(cursor); if (current()) { onImported?.(result); await refreshJob(); }
-    } catch (failure) { if (current()) { setError(failure); setUncertainCommit(true); } }
-    finally { if (current()) setBusy(false); }
+      await loadRows(cursor); if (active()) { onImported?.(result); await refreshJob(); }
+    } catch (failure) { if (active()) { setError(failure); setUncertainCommit(true); } }
+    finally { if (active()) setBusy(false); }
   };
-  const reset = () => { if (busy || uncertainUpload || uncertainCommit) return; generation.current += 1; rowRequests.current += 1; jobRequests.current += 1; setReviewLoading(false); setResuming(false); setPollError(null); forget(); setJob(null); setRows([]); setSelected({}); setOutcomes([]); setCursor(null); setCursorHistory([null]); setNextCursor(null); lastReviewJob.current = null; setError(null); };
+  const reset = () => { if (busy || uncertainUpload || uncertainCommit) return; generation.current += 1; rowRequests.current += 1; jobRequests.current += 1; setReviewLoading(false); setResuming(false); setPollError(null); forget(); setCloseIn(null); setJob(null); onNewDocument?.(); setRows([]); setSelected({}); setOutcomes([]); setCursor(null); setCursorHistory([null]); setNextCursor(null); lastReviewJob.current = null; setError(null); };
+  const loadSupplierDirectory = useCallback(() => getSuppliers(hotelUid), [hotelUid]);
+  const supplierDirectory = useScopedAsync({ scopeKey: `${hotelUid}:ai-import-suppliers`, enabled: Boolean(backgroundManaged && open && !job && permitted), initialData: null, load: loadSupplierDirectory });
+  const supplierOptions = backgroundManaged ? supplierDirectory.data || [] : suppliers;
+  const directoryLoading = backgroundManaged ? supplierDirectory.loading : suppliersLoading;
   const limits = availability?.limits || {};
-  return <Modal open={open} onClose={onClose} title="AI supplier-product import">
+  return <Modal open={open} onClose={close} title="AI supplier-product import">
     <div className="min-w-0 space-y-4 [overflow-wrap:anywhere]">
-      <p className="text-sm text-stone-600">Convert a supplier document into a draft. Nothing is saved as a product until you review and confirm selected rows. Automatic model fallback is disabled.</p>
+      <p className="text-sm text-stone-600">Convert a supplier document into a draft. Nothing is saved as a product until you review and confirm selected rows.</p>
       {!permitted && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Supplier-product read and create permissions, supplier read access and an active Procurement subscription are required.</p>}
       {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{error.message}</p>}
       {!job && permitted && <>
         {resuming && <p role="status" className="animate-pulse text-sm text-stone-600">Recovering the saved private draft…</p>}
-        {availabilityLoading && <p role="status" className="animate-pulse text-sm text-stone-600">Checking hotel import access and budget…</p>}
+        {availabilityLoading && <p role="status" className="animate-pulse text-sm text-stone-600">Checking hotel import access…</p>}
         {!availabilityLoading && !availability && <button type="button" className="ht-button-secondary" onClick={loadAvailability}>Retry access check</button>}
         {availability && !availability.available && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">AI supplier imports are disabled. Ask the platform operator to enable the global AI import settings.</p>}
         {availability?.available && <>
-          <label className="block text-sm font-semibold">Supplier<Combobox aria-label="AI import supplier" disabled={busy || resuming || uncertainUpload} value={suppliers.find((supplier) => supplier.id === supplierId) || null} options={suppliers} displayValue={(supplier) => supplier.name || "Unnamed supplier"} getOptionValue={(supplier) => supplier.id} onChange={(supplier) => setSupplierId(supplier?.id || "")} loading={suppliersLoading} placeholder="Choose this document's supplier" /></label>
+          <label className="block text-sm font-semibold">Supplier<Combobox aria-label="AI import supplier" disabled={busy || resuming || uncertainUpload} value={supplierOptions.find((supplier) => supplier.id === supplierId) || null} options={supplierOptions} displayValue={(supplier) => supplier.name || "Unnamed supplier"} getOptionValue={(supplier) => supplier.id} onChange={(supplier) => setSupplierId(supplier?.id || "")} loading={directoryLoading} placeholder="Choose this document's supplier" /></label>
+          {backgroundManaged && supplierDirectory.error && <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><p role="alert">The supplier directory could not be loaded. {supplierDirectory.error.message}</p><button type="button" onClick={supplierDirectory.run} className="mt-2 underline">Retry supplier directory</button></div>}
           <label className="block text-sm font-semibold">Supplier document<input ref={input} type="file" accept={SUPPLIER_AI_IMPORT_ACCEPT} disabled={busy || resuming || uncertainUpload} onChange={chooseFile} className="mt-2 block max-w-full text-sm" /></label>
           {file && <p className="text-xs text-stone-600">Selected: {file.name} · {(file.size / 1024).toFixed(1)} KiB</p>}
           <p className="text-xs text-stone-500">CSV, XLSX, PDF, DOCX, EML or TXT. Maximum {Math.floor((limits.maxFileBytes || 10485760) / 1048576)} MiB, {limits.maxPages || 50} document pages and {limits.maxProducts || 1000} products. Do not upload guest or personal data. Documents are private and expire automatically.</p>
-          {typeof limits.maxCostPerImportUsd === "number" && <p className="text-xs text-stone-500">Maximum AI budget: ${limits.maxCostPerImportUsd.toFixed(2)} per import. Every attempt counts toward this budget.</p>}
           {uncertainUpload && <p className="text-sm text-amber-800">The upload acknowledgement was lost. Retry this same file and supplier to recover the original import; a new run will not be started.</p>}
-          <button type="button" disabled={!file || !supplierId || busy || resuming || suppliersLoading} onClick={start} className="ht-button-primary w-full">{busy ? "Uploading document…" : uncertainUpload ? "Recover original upload" : "Prepare AI import review"}</button>
+          <button type="button" disabled={!file || !supplierId || !supplierOptions.some((supplier) => supplier.id === supplierId) || busy || resuming || directoryLoading || Boolean(supplierDirectory.error)} onClick={start} className="ht-button-primary w-full">{busy ? "Uploading document…" : uncertainUpload ? "Recover original upload" : "Prepare AI import review"}</button>
         </>}
       </>}
       {job && <>
-        <div role="status" className="rounded-xl border border-brand-200 bg-brand-50 p-3 text-sm"><p className="font-semibold">{statuses[job.status] || `Import status: ${job.status}`}</p><p className="mt-1 text-xs">{job.source?.fileName || "Supplier document"}</p>{processing.has(job.status) && <div aria-hidden="true" className="mt-3 h-1.5 overflow-hidden rounded-full bg-brand-100"><div className="h-full w-1/2 animate-pulse rounded-full bg-brand-700" /></div>}</div>
-        {job.expiresAtMillis && <p className="text-xs text-stone-500">Private draft expires {new Date(job.expiresAtMillis).toLocaleString()}. Closing this dialog keeps the import available in this browser session.</p>}
-        {job.usage && <p className="text-xs text-stone-600">AI calls: {job.usage.attempts ?? "Unknown"}. Estimated cost: {typeof job.usage.actualCostUsd === "number" ? `$${job.usage.actualCostUsd.toFixed(4)}` : "Unavailable"}{job.usage.unknownCalls > 0 ? " · unresolved provider usage remains reserved" : ""}.</p>}
+        <div role="status" className={`rounded-xl border p-3 text-sm ${["failed", "response_unknown", "expired"].includes(job.status) ? "border-red-200 bg-red-50 text-red-900" : "border-brand-200 bg-brand-50"}`}><p className="font-semibold">{statuses[job.status] || `Import status: ${job.status}`}</p><p className="mt-1 text-xs">{job.source?.fileName || "Supplier document"}</p>{processing.has(job.status) && <div aria-hidden="true" className="mt-3 h-1.5 overflow-hidden rounded-full bg-brand-100"><div className="h-full w-1/2 animate-pulse rounded-full bg-brand-700" /></div>}</div>
+        {processing.has(job.status) && job.progress?.totalChunks > 0 && <p className="text-xs text-stone-600">{job.progress.completedChunks} of {job.progress.totalChunks} document sections processed.</p>}
+        {closeIn !== null && processing.has(job.status) && <div className="flex items-center justify-between gap-3 rounded-lg bg-stone-50 p-3 text-sm"><p role="status">This dialog closes in {closeIn} {closeIn === 1 ? "second" : "seconds"}. The import continues in the background.</p><button type="button" onClick={() => setCloseIn(null)} className="shrink-0 text-brand-800 underline">Keep open</button></div>}
+        {job.expiresAtMillis && <p className="text-xs text-stone-500">Private draft expires {new Date(job.expiresAtMillis).toLocaleString()}. Your import keeps running when you close this dialog or visit another page.</p>}
         {Array.isArray(job.warnings) && job.warnings.map((warning, index) => <p key={index} className="rounded-lg bg-amber-50 p-2 text-xs text-amber-900">{typeof warning === "string" ? warning : warning.message || warning.code || "Document extraction needs review."}</p>)}
-        {job.usage && (typeof job.usage.knownCostUsd === "number" || typeof job.usage.reservedCostUsd === "number") && <p className="text-xs text-stone-600">Known cost: {typeof job.usage.knownCostUsd === "number" ? `$${job.usage.knownCostUsd.toFixed(4)}` : "Unavailable"} · Reserved budget: {typeof job.usage.reservedCostUsd === "number" ? `$${job.usage.reservedCostUsd.toFixed(4)}` : "Unavailable"}. Reserved budget is not a confirmed charge.</p>}
         {job.error && <p role="alert" className="text-sm text-red-800">{job.error.message || String(job.error)}</p>}
         {pollError && <p role="alert" className="text-sm text-amber-800">{pollError.message} The original import reference is retained.</p>}
         <button type="button" onClick={refreshJob} disabled={busy} className="ht-button-secondary">Refresh import status</button>
