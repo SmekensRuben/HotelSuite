@@ -1,9 +1,11 @@
-import { functions, httpsCallable } from "../firebaseConfig";
+import { auth, functions, httpsCallable } from "../firebaseConfig";
 import { invalidateProcurementReads, poolProcurementRead, requireServerSnapshot } from "./procurementReadPool";
 import {
   db,
   collection,
   getDocs,
+  query,
+  where,
 } from "../firebaseConfig";
 
 export async function getSuppliers(hotelUid) {
@@ -74,10 +76,10 @@ export async function getSupplierOutletAccounts(hotelUid, options = {}) {
 
   const supplierIdFilter = String(options.supplierId || "").trim();
   const accountsCol = collection(db, `hotels/${hotelUid}/supplierOutletAccounts`);
-  const snap = requireServerSnapshot(await getDocs(accountsCol));
+  const snap = requireServerSnapshot(await getDocs(supplierIdFilter ? query(accountsCol, where("supplierId", "==", supplierIdFilter)) : accountsCol));
 
   return snap.docs
-    .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+    .map((docSnap) => ({ ...(docSnap.data() || {}), id: docSnap.id }))
     .filter((item) => !supplierIdFilter || String(item.supplierId || "").trim() === supplierIdFilter)
     .sort((a, b) => {
       const supplierCompare = String(a.supplierName || a.supplierId || "").localeCompare(
@@ -90,7 +92,33 @@ export async function getSupplierOutletAccounts(hotelUid, options = {}) {
     });
 }
 
+// Reuse uncertain commands within this signed-in session. Revisions also protect a fresh session.
+const pendingAccountCommands = new WeakMap();
+async function saveAccount(hotelUid, payload) {
+  const actor = auth.currentUser;
+  if (!actor?.uid) throw new Error("Sign in before changing a supplier account.");
+  if (!pendingAccountCommands.has(actor)) pendingAccountCommands.set(actor, new Map());
+  const commands = pendingAccountCommands.get(actor), key = JSON.stringify([hotelUid, payload]);
+  const command = commands.get(key) || { hotelUid, ...payload, requestId: crypto.randomUUID(), expectedActorUid: actor.uid };
+  commands.set(key, command);
+  try {
+    const { data } = await httpsCallable(functions, "saveSupplierOutletAccount")(command);
+    if (typeof data?.id !== "string" || !data.id || data.id.includes("/") || data.revision !== payload.expectedRevision + 1
+      || payload.accountId && data.id !== payload.accountId) throw new Error("The account change response could not be verified. Reload the account list or retry the same change.");
+    commands.delete(key);
+    if (auth.currentUser !== actor) throw new Error("The signed-in account changed. Reload this view.");
+    return data;
+  } catch (error) {
+    if (["invalid-argument", "permission-denied", "unauthenticated", "aborted", "already-exists", "not-found", "failed-precondition"].includes(String(error.code || "").replace(/^functions\//, ""))) commands.delete(key);
+    throw error;
+  } finally { invalidateProcurementReads(hotelUid); }
+}
+
 export async function createSupplierOutletAccount(hotelUid, payload) {
-  return (await httpsCallable(functions, "saveSupplierOutletAccount")({ hotelUid,
-    supplierId: payload.supplierId, outletId: payload.outletId, accountNumber: payload.accountNumber })).data.id;
+  return (await saveAccount(hotelUid, { supplierId: payload.supplierId, outletId: payload.outletId, accountNumber: payload.accountNumber, expectedRevision: 0 })).id;
+}
+
+export async function updateSupplierOutletAccount(hotelUid, account, accountNumber) {
+  return saveAccount(hotelUid, { accountId: account.id, supplierId: account.supplierId, outletId: account.outletId,
+    accountNumber, expectedRevision: account.revision ?? 0 });
 }

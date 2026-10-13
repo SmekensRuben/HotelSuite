@@ -15,7 +15,7 @@ export default function HotelSetupChecklist({ hotelUid, refreshKey = 0 }) {
   const linkFor = (action) => action === "subscription" ? "/platform/subscriptions"
     : action === "team" ? `/platform/hotels/${hotelUid}/team`
       : action === "imports" ? `/platform/hotels/${hotelUid}/imports`
-        : action === "hotel" ? `/platform/hotels/${hotelUid}` : null;
+        : action === "hotel" ? `/platform/hotels/${hotelUid}#property-and-contact` : null;
   return <section className={`${panel} space-y-4`} aria-label="Hotel setup checklist">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Hotel setup checklist</h2>
       <p className="mt-1 text-sm text-slate-600">A current setup assessment. Access and import health are checked separately.</p></div>

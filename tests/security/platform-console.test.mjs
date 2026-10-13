@@ -20,6 +20,7 @@ const { requireHotelPermission } = require("../../functions/src/authorization");
 const { recordImportReceived, syncImportTelemetry } = require("../../functions/src/importTelemetry");
 const { importRunId } = require("../../functions/src/importProcessing");
 const { SAAS_RULES_VERSION } = require("../../functions/src/saasRollout");
+const { getHotelSetupReadinessHandler } = require("../../functions/src/hotelSetup");
 const db = admin.firestore(), auth = admin.auth();
 const operator = { uid: "operator", token: { email_verified: true, platformAdmin: true, email: "operator@example.test" } };
 const otherOperator = { uid: "other-operator", token: { email_verified: true, platformAdmin: true, email: "other@example.test" } };
@@ -131,6 +132,59 @@ describe("platform authority is independent from hotel work", () => {
     await rejected(usersApi.listPlatformUsers.run(request(member, {})), "permission-denied");
     await db.doc("users/member").update({ hotelUid: "malformed-assignment" });
     await rejected(usersApi.getPlatformUserAccess.run(request(operator, { userId: member.uid })), "failed-precondition");
+  });
+});
+
+describe("operational property settings", () => {
+  const settingsInput = (dto, patch = {}) => ({ hotelUid: "hotel-a", name: "Renamed hotel", contactName: "Contact", contactEmail: "contact@example.test",
+    expectedRevision: dto.revision, settingsFingerprint: dto.settingsFingerprint, timeZone: "Europe/Brussels", currency: "EUR", ...patch });
+  const detail = () => consoleApi.getPlatformHotelHandler(request(operator, { hotelUid: "hotel-a" }), services);
+  it("returns unknown operational fields separately from legacy metadata and aligns the actual checklist sources atomically", async () => {
+    await db.doc("hotels/hotel-a").update({ platformDetails: { timeZone: "Europe/Brussels", otherMetadata: "preserved" } });
+    await db.doc("hotels/hotel-a/settings/bootstrap").set({ currency: "EUR", language: "nl", customSetting: "preserved" });
+    const dto = await detail(); assert.equal(dto.timeZone, null); assert.equal(dto.legacyTimeZone, "Europe/Brussels"); assert.equal(dto.currency, "EUR");
+    const before = await getHotelSetupReadinessHandler(request(operator, { hotelUid: "hotel-a" }), services);
+    assert.equal(before.checks.find((check) => check.id === "property").status, "pending");
+    await consoleApi.updatePlatformHotelHandler(request(operator, settingsInput(dto)), services);
+    const root = (await db.doc("hotels/hotel-a").get()).data(), bootstrap = (await db.doc("hotels/hotel-a/settings/bootstrap").get()).data();
+    assert.equal(root.timeZone, "Europe/Brussels"); assert.equal(root.currency, "EUR"); assert.equal(root.platformDetails.timeZone, root.timeZone);
+    assert.equal(root.platformDetails.otherMetadata, "preserved"); assert.equal(bootstrap.currency, root.currency);
+    assert.equal(bootstrap.hotelName, "Renamed hotel"); assert.equal(bootstrap.language, "nl"); assert.equal(bootstrap.customSetting, "preserved");
+    const after = await getHotelSetupReadinessHandler(request(operator, { hotelUid: "hotel-a" }), services);
+    assert.equal(after.checks.find((check) => check.id === "property").status, "ready");
+    assert.equal((await detail()).timeZone, root.timeZone);
+  });
+  it("never guesses a missing currency and rejects unsupported zones, codes and ordinary hotel actors", async () => {
+    const dto = await detail(); assert.equal(dto.currency, null);
+    for (const patch of [{ currency: "ZZZ" }, { currency: "eur" }, { currency: "" }, { timeZone: "Belgium" }, { settingsFingerprint: undefined }]) {
+      await rejected(consoleApi.updatePlatformHotelHandler(request(operator, settingsInput(dto, patch)), services), "invalid-argument");
+    }
+    await rejected(consoleApi.updatePlatformHotelHandler(request(member, settingsInput(dto)), services), "permission-denied");
+    assert.equal((await db.doc("hotels/hotel-a/settings/bootstrap").get()).exists, false);
+  });
+  it("requires an explicit currency-change acknowledgement and preserves independent historic source snapshots", async () => {
+    await db.doc("hotels/hotel-a").update({ currency: "EUR", timeZone: "Europe/Brussels" });
+    await db.doc("hotels/hotel-a/settings/bootstrap").set({ currency: "EUR", language: "en" });
+    const paths = ["orders/ordered", "stockCounts/completed", "inventoryMovements/receipt", "inventoryReports/period"];
+    const historical = { currency: "EUR", netAmount: 123.45, immutableSnapshot: { timeZone: "Europe/Brussels", price: 9.50 } };
+    for (const path of paths) await db.doc(`hotels/hotel-a/${path}`).set(historical);
+    const dto = await detail(), input = settingsInput(dto, { currency: "USD", timeZone: "America/New_York" });
+    await rejected(consoleApi.updatePlatformHotelHandler(request(operator, input), services), "failed-precondition");
+    await consoleApi.updatePlatformHotelHandler(request(operator, { ...input, confirmCurrencyChange: true }), services);
+    assert.equal((await db.doc("hotels/hotel-a/settings/bootstrap").get()).data().currency, "USD");
+    for (const path of paths) assert.deepEqual((await db.doc(`hotels/hotel-a/${path}`).get()).data(), historical);
+  });
+  it("detects operational changes outside platformRevision and reconciles conflicting current currencies only on reviewed save", async () => {
+    await db.doc("hotels/hotel-a").update({ currency: "USD" });
+    await db.doc("hotels/hotel-a/settings/bootstrap").set({ currency: "EUR" });
+    const dto = await detail(); assert.equal(dto.currencyConflict, true); assert.equal(dto.currency, "EUR");
+    await db.doc("hotels/hotel-a/settings/bootstrap").update({ currency: "GBP" });
+    await rejected(consoleApi.updatePlatformHotelHandler(request(operator, settingsInput(dto, { confirmCurrencyChange: true })), services), "aborted");
+    const fresh = await detail();
+    await rejected(consoleApi.updatePlatformHotelHandler(request(operator, settingsInput(fresh)), services), "failed-precondition");
+    await consoleApi.updatePlatformHotelHandler(request(operator, settingsInput(fresh, { confirmCurrencyChange: true })), services);
+    assert.equal((await db.doc("hotels/hotel-a").get()).data().currency, "EUR");
+    assert.equal((await db.doc("hotels/hotel-a/settings/bootstrap").get()).data().currency, "EUR");
   });
 });
 
