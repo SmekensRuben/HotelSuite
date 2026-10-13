@@ -11,6 +11,7 @@ const inventory = require("./inventoryPolicy");
 const policy = require("./inventoryCostProposalPolicy");
 const { validateManualPeriodEvidence } = require("./inventoryAdjustments");
 const { receiptInventoryLines } = require("./orderReceiving");
+const { verifyReceiptSupplierTerms } = require("./supplierConfirmations");
 const MAX_ANCHORS = 100;
 const object = (value) => value && typeof value === "object" && !Array.isArray(value);
 function input(value) {
@@ -61,7 +62,16 @@ async function validateReceiptEvidence(db, tx, hotelUid, sources) {
     throw new HttpsError("failed-precondition", "Original receipt evidence needs reconciliation.");
   }
   const snapshots = await readMany(db, tx, [...receipts.flatMap((row) => [orderPath(row.orderId), eventPath(row)]), ...originalRows.map(eventPath)]);
-  function receiptSource(row) {
+  const supplierPaths = originalRows.flatMap((row) => {
+    const evidence = snapshots.get(eventPath(row))?.data()?.supplierConfirmationTerms;
+    if (evidence === undefined) return [];
+    if (!evidence || evidence.policyVersion !== 1) throw new HttpsError("failed-precondition", "Supplier pricing evidence needs reconciliation.");
+    const base = `${orderPath(row.orderId)}/supplierConfirmations/`;
+    return [base + requireDocumentId(evidence.responseId, "Receipt supplier response ID"),
+      ...(evidence.reviewId === null ? [] : [base + requireDocumentId(evidence.reviewId, "Receipt supplier review ID")])];
+  });
+  const supplierSnapshots = await readMany(db, tx, supplierPaths);
+  async function receiptSource(row) {
     const event = snapshots.get(eventPath(row))?.data(), order = snapshots.get(orderPath(row.orderId))?.data();
     if (!event || !order || event.kind !== "receipt" || event.policyVersion !== 1 || event.hotelUid !== hotelUid || event.orderId !== row.orderId
       || event.receivedOn !== row.receivedOn || event.inventoryMovement?.movementId !== row.id
@@ -71,14 +81,15 @@ async function validateReceiptEvidence(db, tx, hotelUid, sources) {
       || !Array.isArray(order.products) || order.products.length > 100 || order.products.some((line) => !object(line))) {
       throw new HttpsError("failed-precondition", "Accepted receipt source or frozen order evidence needs reconciliation.");
     }
-    const expected = receiptInventoryLines(order.products, event.lines);
+    const supplierTerms = await verifyReceiptSupplierTerms(db, tx, hotelUid, row.orderId, order, event.supplierConfirmationTerms, event, event.revision, supplierSnapshots);
+    const expected = receiptInventoryLines(order.products, event.lines, supplierTerms);
     if (!sameLines(row.lines, expected.lines) || JSON.stringify(row.coverageGaps || []) !== JSON.stringify(expected.coverageGaps)) {
       throw new HttpsError("failed-precondition", "Frozen receipt quantities or net values disagree with the accepted source event.");
     }
   }
   for (let index = 0; index < receipts.length; index++) {
     const row = receipts[index], original = originalRows[index];
-    receiptSource(original);
+    await receiptSource(original);
     if (row.kind !== "reversal") continue;
     const event = snapshots.get(eventPath(row))?.data(), pointer = originals.get(`hotels/${hotelUid}/inventoryReversals/${row.originalMovementId}`)?.data();
     if (row.orderId !== original.orderId || row.locationId !== original.locationId || row.receivedOn !== original.receivedOn

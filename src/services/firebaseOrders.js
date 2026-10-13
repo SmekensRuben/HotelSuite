@@ -101,6 +101,7 @@ export async function getHotelOrderReceiving({ hotelUid, orderId, afterEventId =
   const { data } = await httpsCallable(functions, "getHotelOrderReceiving")({ hotelUid, orderId, afterEventId });
   const validQuantity = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
   if (!data || data.hotelUid !== hotelUid || data.orderId !== orderId || data.policyVersion !== 1
+    || data.supplierPricingPolicyVersion !== 1 || !(data.supplierReceiptBlockReason === null || typeof data.supplierReceiptBlockReason === "string" && data.supplierReceiptBlockReason.length <= 2000)
     || !Number.isSafeInteger(data.orderRevision) || data.orderRevision < 0 || typeof data.releaseReady !== "boolean"
     || !["available", "not-started", "review-required"].includes(data.availability)
     || !Array.isArray(data.events) || !(data.nextCursor === null || typeof data.nextCursor === "string")
@@ -124,6 +125,7 @@ async function receivingCommand(name, input) {
   }
   return data;
 }
-export const recordHotelOrderReceipt = (input) => receivingCommand("recordHotelOrderReceipt", input);
+// Older Functions reject this field instead of accepting goods with a stale pricing policy.
+export const recordHotelOrderReceipt = (input) => receivingCommand("recordHotelOrderReceipt", { ...input, supplierPricingPolicyVersion: 1 });
 export const reverseHotelOrderReceipt = (input) => receivingCommand("reverseHotelOrderReceipt", input);
 export const finalizeHotelOrderReceiving = (input) => receivingCommand("finalizeHotelOrderReceiving", input);

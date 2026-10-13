@@ -1,5 +1,7 @@
 [
   "orders.receive",
   "orders.finalize",
+  "orders.recordconfirmation",
+  "orders.reviewconfirmation",
   "inventorymovements.reverse"
 ]

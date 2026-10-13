@@ -18,6 +18,7 @@ import { getSupplier } from "../../services/firebaseSuppliers";
 import { StickyNote } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
 import OrderReceivingPanel from "../orders/OrderReceivingPanel";
+import SupplierConfirmationPanel from "../orders/SupplierConfirmationPanel";
 import { formatOrderMoney, formatOrderSubtotal, formatOrderPriceBasis } from "../../utils/orderPricing";
 
 function formatContent(item) {
@@ -104,7 +105,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
       const dispatchStatus = String(latestOrder?.dispatchStatus || "").toLowerCase();
 
       if (dispatchStatus === "sent") {
-        setProgressMessage(latestOrder.dispatchMode === "simulation" ? "Demo confirmation completed; no supplier was contacted." : "Dispatch completed successfully.");
+        setProgressMessage(latestOrder.dispatchMode === "simulation" ? "Demo confirmation completed; no supplier was contacted." : "Dispatch completed. Supplier acceptance is tracked separately.");
         clearInterval(interval);
         return;
       }
@@ -363,7 +364,8 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
             </div>
           </div>
         )}
-        {["Ordered", "Received", "Finalized"].includes(order.status) && <OrderReceivingPanel hotelUid={hotelUid} orderId={orderId} onChanged={refreshOrder} disabled={loading || Boolean(query.error)} />}
+        {["Ordered", "Received", "Finalized"].includes(order.status) && <SupplierConfirmationPanel hotelUid={hotelUid} orderId={orderId} orderRevision={order.revision} onChanged={refreshOrder} disabled={loading || Boolean(query.error)} />}
+        {["Ordered", "Received", "Finalized"].includes(order.status) && <OrderReceivingPanel hotelUid={hotelUid} orderId={orderId} orderRevision={order.revision} onChanged={refreshOrder} disabled={loading || Boolean(query.error)} />}
       </ProcurementPage>
 
       <Modal
@@ -395,7 +397,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
             )}
             {!ordering && dispatchStatus === "sent" && (
               <p className="mt-1 text-green-700">
-                {isSimulation ? "Demo confirmation successful. No supplier was contacted. Status is now Ordered." : <>Dispatch successful via {dispatchedVia === "sftp" ? "SFTP" : "email"}. Status is now Ordered.</>}
+                {isSimulation ? "Demo confirmation successful. No supplier was contacted. Status is now Ordered." : <>Dispatch successful via {dispatchedVia === "sftp" ? "SFTP" : "email"}. Status is now Ordered; supplier acceptance is tracked separately.</>}
               </p>
             )}
             {!ordering && dispatchStatus === "failed" && (

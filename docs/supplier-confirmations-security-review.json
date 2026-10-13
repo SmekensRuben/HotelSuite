@@ -1,0 +1,34 @@
+{
+  "score": 5,
+  "summary": "The reviewed supplier-confirmation boundary uses server-only immutable evidence, explicit action rights and current same-hotel Auth/subscription checks. The generated Rules change only extends the shared module-licensing removal list; existing default-deny Rules already deny all direct confirmation/reference subcollection reads and writes. This assessment covers this change, not every existing application boundary.",
+  "findings": [],
+  "scope": [
+    "firebase/firestore.rules: generated procurement licensing keys and orders subcollection default denial",
+    "functions/src/supplierConfirmations.js: read/record/review authorization and immutable transaction evidence",
+    "functions/src/supplierConfirmationPolicy.js: bounded response/review and price contracts",
+    "functions/src/orderReceiving.js: supplier decision guard and new receipt pricing",
+    "functions/src/inventoryCostProposals.js: independently verified historic supplier receipt terms"
+  ],
+  "checks": {
+    "create_update_delete_bypass": "Direct client read/create/update/delete was denied for supplier response and reference evidence, including platform actors. Commands create immutable response/review events and update only the protected parent summary.",
+    "authority_source": "Fresh verified Auth, authoritative hotel membership and explicit server-side action permissions. Payload actor must match Auth; no self-assigned supplier authenticity or platform bypass.",
+    "business_workflow": "Orders-only readers receive scoped projections. Coordinators record complete responses; separately assigned terms approvers review them. Existing dispatch, receiving, reversal and shortfall-finalization authority remains distinct.",
+    "resource_bounds": "Maximum 100 complete response lines, bounded text/decimal quantities/prices, 500 events per order and 25 history events per page. Historical supplier proofs use deduplicated bounded Firestore batches within the existing movement window.",
+    "type_safety": "Strict supported fields and explicit numeric/date/unknown contracts on server; client validates tenant/order, aggregate/review consistency and exact command acknowledgement before displaying validity.",
+    "identity_and_field_security": "Hotel-scoped paths at every boundary; no browser writes, cross-hotel customer account matching, global order scan or unauthenticated supplier URL introduced.",
+    "history_integrity": "Original order and earlier receipt prices remain immutable. New receipt terms refer to a supplier response and an earlier valid hotel review; wrong source, revision, currency or tampered price evidence cannot yield a valid weighted cost."
+  },
+  "evidence": {
+    "tests": [
+      "tests/security/supplier-confirmations.test.mjs",
+      "tests/security/catalog-inventory.test.mjs",
+      "functions/src/supplierConfirmationPolicy.node-test.js",
+      "functions/src/supplierConnectorContract.node-test.js",
+      "src/services/firebaseSupplierConfirmations.test.js",
+      "src/components/orders/SupplierConfirmationPanel.test.jsx",
+      "scripts/firebase/emulator-backup-smoke.mjs"
+    ],
+    "local_status": "Full security suite passed; updated supplier/receipt/cost boundaries passed focused emulator re-verification. Final acceptance details are recorded in supplier-order-confirmations-plan.md.",
+    "deployed_status": "Not run. No merge, production data mutation or deployment was performed."
+  }
+}
