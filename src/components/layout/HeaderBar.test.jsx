@@ -47,4 +47,17 @@ describe("HeaderBar Front Office permissions", () => {
     renderHeader();
     expect(screen.getByRole("link", { name: "Inventory movements" })).toHaveAttribute("href", "/catalog/inventory-movements");
   });
+  it.each(["catalogsettings.read", "outlets.read", "locations.read"])("offers one module settings link for %s", (permission) => {
+    permissions = [permission];
+    renderHeader();
+    expect(screen.getByRole("link", { name: "Purchasing & Inventory Settings" })).toHaveAttribute("href", "/settings/procurement");
+    expect(screen.queryByRole("link", { name: "Catalog Settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Outlet Settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Location Settings" })).not.toBeInTheDocument();
+  });
+  it("does not expose a module settings link for creation authority alone", () => {
+    permissions = ["outlets.create", "locations.create", "catalogsettings.create"];
+    renderHeader();
+    expect(screen.queryByRole("link", { name: "Purchasing & Inventory Settings" })).not.toBeInTheDocument();
+  });
 });

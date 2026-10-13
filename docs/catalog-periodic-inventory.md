@@ -325,3 +325,17 @@ receiver and stock-counter browser workflows; verify two-hotel isolation and
 pending-request recovery. Review operator-entered opening estimates before relying
 on monetary reports. Recipe production, manual transfers/waste classification and
 POS deduction remain future modules on the same catalog identities.
+
+## Weighted recorded-source cost suggestions (proposal policy v1)
+
+Unfinished catalog counts and physical movement drafts can request a cost proposal for one article/location/business date. Existing stockcounts.read monetary authority is required, together with stockcounts.update or inventorymovements.create for that draft. The protected readonly provider uses the latest eligible fully finished checkpoint and reconciled frozen receipts/manual movements through its fixed cutoff. It does not scan current supplier offers or guess a missing opening cost.
+
+The quantity-weighted recorded net-source pool includes opening quantity/value and signed receipt, transfer, waste, physical-return and reversal quantities/values. It is not a live moving average or an inferred sales ledger. Source date, unit, currency, paired evidence, completeness and bounded windows must reconcile; otherwise the suggestion stays unavailable. Zero value over positive quantity is valid. Complete unknown costs stay unknown, rather than becoming zero.
+
+Request suggestions lazily with **Suggest unit cost** and inspect the displayed source date, quantities, net values and proposal policy version. **Apply estimate to this draft** explicitly replaces the draft cost with a reviewed numeric estimate; saved/manual values are never silently overwritten. Context changes invalidate old proposals; an applied estimate whose source/date/unit/currency/revision changed needs a fresh review, clearing or an explicit manual replacement before saving. Existing saved counts, movements and period reports remain unchanged.
+
+## Coherent template loading
+
+Stock Template Detail reads its template revision, location and ordered included-article names through one bounded locations.read projection. Additional catalog choices load only when opened, in debounced 25-item pages with cursor checks and a 500-item browsing cap. Search narrows larger directories. No settled operational cache or eager complete catalog export is used.
+
+Reduced-motion-aware skeletons cover initial loading. Same-authority refresh keeps verified names visible and locks edits; unsuccessful verification clears stale names and exposes Retry. Hotel, actual Auth identity, subscription or permission changes clear previous data immediately. Location template lists and outlet/location settings lists reuse the loading presentation. Actual deployed cold-start/network latency still requires production measurement.

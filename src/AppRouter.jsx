@@ -36,12 +36,10 @@ const SupplierDetailPage = lazy(() => import("./components/pages/SupplierDetailP
 const SupplierEditPage = lazy(() => import("./components/pages/SupplierEditPage.jsx"));
 const SupplierOutletAccountsPage = lazy(() => import("./components/pages/SupplierOutletAccountsPage.jsx"));
 const SupplierOutletAccountCreatePage = lazy(() => import("./components/pages/SupplierOutletAccountCreatePage.jsx"));
-const SettingsCatalogPage = lazy(() => import("./components/pages/SettingsCatalogPage.jsx"));
-const OutletSettingsPage = lazy(() => import("./components/pages/OutletSettingsPage.jsx"));
+const ProcurementSettingsPage = lazy(() => import("./components/pages/ProcurementSettingsPage.jsx"));
 const OutletCreatePage = lazy(() => import("./components/pages/OutletCreatePage.jsx"));
 const OutletDetailPage = lazy(() => import("./components/pages/OutletDetailPage.jsx"));
 const OutletEditPage = lazy(() => import("./components/pages/OutletEditPage.jsx"));
-const LocationSettingsPage = lazy(() => import("./components/pages/LocationSettingsPage.jsx"));
 const LocationCreatePage = lazy(() => import("./components/pages/LocationCreatePage.jsx"));
 const LocationDetailPage = lazy(() => import("./components/pages/LocationDetailPage.jsx"));
 const LocationEditPage = lazy(() => import("./components/pages/LocationEditPage.jsx"));
@@ -299,21 +297,19 @@ export default function AppRouter() {
         }
       />
       <Route
-        path="/settings/catalog"
+        path="/settings/procurement"
         element={
-          <ProtectedRoute feature="catalogsettings" action="read">
-            <SettingsCatalogPage />
+          <ProtectedRoute anyOf={[
+            { feature: "catalogsettings", action: "read" },
+            { feature: "outlets", action: "read" },
+            { feature: "locations", action: "read" },
+          ]}>
+            <ProcurementSettingsPage />
           </ProtectedRoute>
         }
       />
-      <Route
-        path="/settings/outlets"
-        element={
-          <ProtectedRoute feature="outlets" action="read">
-            <OutletSettingsPage />
-          </ProtectedRoute>
-        }
-      />
+      <Route path="/settings/catalog" element={<Navigate to="/settings/procurement?section=categories" replace />} />
+      <Route path="/settings/outlets" element={<Navigate to="/settings/procurement?section=outlets" replace />} />
       <Route
         path="/settings/outlets/new"
         element={
@@ -338,14 +334,7 @@ export default function AppRouter() {
           </ProtectedRoute>
         }
       />
-      <Route
-        path="/settings/locations"
-        element={
-          <ProtectedRoute feature="locations" action="read">
-            <LocationSettingsPage />
-          </ProtectedRoute>
-        }
-      />
+      <Route path="/settings/locations" element={<Navigate to="/settings/procurement?section=locations" replace />} />
       <Route
         path="/settings/locations/new"
         element={

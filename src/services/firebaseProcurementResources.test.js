@@ -90,8 +90,15 @@ describe("protected procurement resource archival", () => {
 });
 
 describe("stock template labels", () => {
+  const bundled = () => ({ hotelUid: "hotel-a", locationId: "store", templateId: "weekly",
+    location: { id: "store", name: "Cold room", archived: false },
+    template: { id: "weekly", name: "Weekly", revision: 3, archived: false, items: [{ catalogProductId: "milk" }] },
+    items: [{ catalogProductId: "milk", catalogProductName: "Milk", baseUnit: "l", available: true }] });
   it("requests only the selected hotel's template display projection", async () => {
-    const data = { hotelUid: "hotel-a", locationId: "store", templateId: "weekly", items: [{ catalogProductId: "milk", catalogProductName: "Milk", baseUnit: "l", available: true }] };
+    const data = { hotelUid: "hotel-a", locationId: "store", templateId: "weekly",
+      location: { id: "store", name: "Cold room", archived: false },
+      template: { id: "weekly", name: "Weekly", revision: 3, archived: false, items: [{ catalogProductId: "milk" }] },
+      items: [{ catalogProductId: "milk", catalogProductName: "Milk", baseUnit: "l", available: true }] };
     mocks.call.mockResolvedValue(data);
     expect(await getHotelStockTemplateDisplay("hotel-a", "store", "weekly")).toEqual(data);
     expect(mocks.call).toHaveBeenCalledWith("getHotelStockTemplateDisplay", { hotelUid: "hotel-a", locationId: "store", templateId: "weekly" });
@@ -101,5 +108,37 @@ describe("stock template labels", () => {
   it("rejects cross-hotel template display responses", async () => {
     mocks.call.mockResolvedValue({ hotelUid: "hotel-b", locationId: "store", templateId: "weekly", items: [] });
     await expect(getHotelStockTemplateDisplay("hotel-a", "store", "weekly")).rejects.toThrow("scope is invalid");
+  });
+  it.each([
+    (data) => { data.template.revision = "3"; },
+    (data) => { data.location.id = "other"; },
+    (data) => { data.template.items = [{ catalogProductId: "other" }]; },
+    (data) => { data.items[0].catalogProductName = { name: "Milk" }; },
+    (data) => { data.items[0].baseUnit = "litres"; },
+    (data) => { data.items[0].available = "true"; },
+    (data) => { data.template.items.push(data.template.items[0]); data.items.push(data.items[0]); },
+  ])("rejects incoherent revisions, duplicate/unaligned rows and malformed names or units", async (change) => {
+    const data = bundled(); change(data); mocks.call.mockResolvedValue(data);
+    await expect(getHotelStockTemplateDisplay("hotel-a", "store", "weekly")).rejects.toThrow();
+  });
+  it("shares only same-authority concurrent projections and has no settled template cache", async () => {
+    mocks.call.mockResolvedValue(bundled());
+    await Promise.all([
+      getHotelStockTemplateDisplay("hotel-a", "store", "weekly", { scopeKey: "access-a" }),
+      getHotelStockTemplateDisplay("hotel-a", "store", "weekly", { scopeKey: "access-a" }),
+      getHotelStockTemplateDisplay("hotel-a", "store", "weekly", { scopeKey: "access-b" }),
+    ]);
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    await getHotelStockTemplateDisplay("hotel-a", "store", "weekly", { scopeKey: "access-a" });
+    expect(mocks.call).toHaveBeenCalledTimes(3);
+  });
+  it("rejects an old projection if Auth is replaced by a new object with the same UID", async () => {
+    let resolve;
+    mocks.call.mockReturnValue(new Promise((done) => { resolve = done; }));
+    const pending = getHotelStockTemplateDisplay("hotel-a", "store", "weekly");
+    await Promise.resolve();
+    mocks.auth.currentUser = { uid: "hotel-admin" };
+    resolve(bundled());
+    await expect(pending).rejects.toThrow("access changed");
   });
 });

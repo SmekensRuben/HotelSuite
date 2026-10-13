@@ -14,15 +14,13 @@ import { Combobox } from "../ui/combobox";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { usePermission } from "../../hooks/usePermission";
-import { useScopedAsync } from "../../hooks/useScopedAsync";
-import { getCatalogProducts } from "../../services/firebaseProducts";
-import { collectPaginatedProducts } from "../../services/paginatedExport";
+import { useVerifiedRefresh } from "../../hooks/useVerifiedRefresh";
+import { usePagedCatalogChoices } from "../../hooks/usePagedCatalogChoices";
+import { ArticleRowsSkeleton, LoadingStatus } from "../ui/ResourceLoading";
 import { PRODUCT_BASE_UNITS } from "../../utils/productPurchaseOptions";
 import { productUnitLabel } from "../../utils/productUnitDisplay";
 import {
   addLocationStockTemplateItem,
-  getLocationById,
-  getLocationStockTemplateById,
   getHotelStockTemplateDisplay,
   getPendingStockTemplateCommand,
   removeLocationStockTemplateItem,
@@ -31,55 +29,40 @@ import {
 
 const itemKey = (item) =>
   item.catalogProductId
-    ? `catalog:${item.catalogProductId}`
-    : `supplier:${item.supplierProductId}:${item.outletId}`;
+    ? JSON.stringify(["catalog", item.catalogProductId])
+    : JSON.stringify(["supplier", item.supplierProductId, item.outletId]);
 export default function LocationStockTemplateDetailPage() {
   const { locationId, templateId } = useParams(),
-    { hotelUid } = useHotelContext(),
+    context = useHotelContext(),
+    { hotelUid } = context,
     navigate = useNavigate();
-  const canUpdate = usePermission("locations", "update"),
+  const canRead = usePermission("locations", "read"),
+    canUpdate = usePermission("locations", "update"),
     canReadCatalog = usePermission("catalogproducts", "read");
-  const actorUid = auth.currentUser?.uid || "";
-  const scopeKey = `${actorUid}:${hotelUid}:${locationId}:${templateId}`;
+  const actor = auth.currentUser, actorUid = actor?.uid || "";
+  const actorIdentity = useRef({ actor: null, revision: 0 });
+  if (actorIdentity.current.actor !== actor) actorIdentity.current = { actor, revision: actorIdentity.current.revision + 1 };
+  const scopeKey = JSON.stringify([actorIdentity.current.revision, actorUid, hotelUid, locationId, templateId,
+    canRead, canUpdate, canReadCatalog, context.permissions, context.authorizationSource,
+    context.permissionsLoading, context.subscriptionLoading, context.subscriptionActive, context.subscription]);
   const active = useRef({ key: scopeKey });
   if (active.current.key !== scopeKey) active.current = { key: scopeKey };
   const [selected, setSelected] = useState(null),
     [saving, setSaving] = useState(false),
     [savingLabel, setSavingLabel] = useState(""),
     [error, setError] = useState("");
-  const load = useCallback(async () => {
-    const [template, location] = await Promise.all([
-      getLocationStockTemplateById(hotelUid, locationId, templateId),
-      getLocationById(hotelUid, locationId),
-    ]);
-    return { template, location };
-  }, [hotelUid, locationId, templateId]);
-  const query = useScopedAsync({
+  const load = useCallback(
+    () => getHotelStockTemplateDisplay(hotelUid, locationId, templateId, { scopeKey }),
+    [hotelUid, locationId, templateId, scopeKey],
+  );
+  const query = useVerifiedRefresh({
     scopeKey,
-    enabled: Boolean(hotelUid && locationId && templateId),
+    enabled: Boolean(actorUid && hotelUid && locationId && templateId && canRead
+      && context.permissionsLoading !== true && context.subscriptionLoading !== true),
     load,
   });
-  const loadDisplay = useCallback(
-    () => getHotelStockTemplateDisplay(hotelUid, locationId, templateId),
-    [hotelUid, locationId, templateId],
-  );
-  const display = useScopedAsync({
-    scopeKey,
-    enabled: Boolean(hotelUid && locationId && templateId),
-    load: loadDisplay,
-  });
-  const loadProducts = useCallback(
-    () =>
-      collectPaginatedProducts((options) =>
-        getCatalogProducts(hotelUid, options),
-      ),
-    [hotelUid],
-  );
-  const products = useScopedAsync({
-    scopeKey: `${scopeKey}:${canReadCatalog}`,
-    enabled: Boolean(hotelUid && canReadCatalog),
-    load: loadProducts,
-  });
+  const products = usePagedCatalogChoices({ hotelUid, scopeKey, enabled: Boolean(actorUid && hotelUid && canReadCatalog && canRead
+    && context.permissionsLoading !== true && context.subscriptionLoading !== true) });
   useEffect(() => {
     active.current = { key: scopeKey };
     setSelected(null);
@@ -96,13 +79,13 @@ export default function LocationStockTemplateDetailPage() {
   const displayByKey = useMemo(
     () =>
       Object.fromEntries(
-        (display.data?.items || []).map((item) => [itemKey(item), item]),
+        (query.data?.items || []).map((item) => [itemKey(item), item]),
       ),
-    [display.data],
+    [query.data],
   );
   const eligible = useMemo(
     () =>
-      (products.data || []).filter(
+      (products.products || []).filter(
         (product) =>
           product.inventoryTracked === true &&
           PRODUCT_BASE_UNITS.includes(product.baseUnit) &&
@@ -111,7 +94,7 @@ export default function LocationStockTemplateDetailPage() {
           !product.archivedAt &&
           !items.some((item) => item.catalogProductId === product.id),
       ),
-    [products.data, items],
+    [products.products, items],
   );
   let hasSavedCommand = false;
   try {
@@ -129,13 +112,13 @@ export default function LocationStockTemplateDetailPage() {
     !location ||
     template?.archived === true ||
     location?.archived === true;
-  const disabled = cannotEdit || saving || hasSavedCommand;
+  const disabled = cannotEdit || saving || hasSavedCommand || query.loading;
   const mutate = async (operation, label = "Updating template…") => {
     if (
       disabled ||
       !template ||
       active.current.busy ||
-      auth.currentUser?.uid !== actorUid
+      auth.currentUser !== actor
     ) return;
     try {
       if (getPendingStockTemplateCommand(hotelUid, locationId, templateId)) {
@@ -149,7 +132,7 @@ export default function LocationStockTemplateDetailPage() {
     const requested = active.current;
     requested.busy = true;
     const isCurrent = () =>
-      active.current === requested && auth.currentUser?.uid === actorUid;
+      active.current === requested && auth.currentUser === actor;
     setSaving(true);
     setSavingLabel(label);
     setError("");
@@ -157,7 +140,7 @@ export default function LocationStockTemplateDetailPage() {
       await operation();
       if (isCurrent()) {
         setSelected(null);
-        await Promise.all([query.retry(), display.retry()]);
+        await query.retry();
       }
     } catch (failure) {
       if (isCurrent())
@@ -223,21 +206,24 @@ export default function LocationStockTemplateDetailPage() {
             hotelUid={hotelUid}
             locationId={locationId}
             templateId={templateId}
-            disabled={cannotEdit}
+            disabled={cannotEdit || query.loading}
             onComplete={() => {
-              if (auth.currentUser?.uid !== actorUid) return;
+              if (auth.currentUser !== actor) return;
               setError("");
               setSelected(null);
-              return Promise.all([query.retry(), display.retry()]);
+              return query.retry();
             }}
           />
         )}
-        {query.loading && (
-          <p className="text-sm text-gray-600">Loading stock template...</p>
-        )}
+        {query.loading && !query.data && <Card className="space-y-4">
+          <ArticleRowsSkeleton />
+        </Card>}
+        {query.refreshing && <LoadingStatus>Verifying the updated template…</LoadingStatus>}
+        {!canRead && <Card>Location read permission is required to view this template.</Card>}
         {query.error && (
           <div role="alert" className="text-sm text-red-700">
             <p>{query.error.message || "Unable to load stock template."}</p>
+            <p>Current article names and revision could not be verified. Editing remains unavailable until the template is reloaded.</p>
             <button type="button" onClick={query.retry} className="underline">
               Retry template
             </button>
@@ -276,29 +262,6 @@ export default function LocationStockTemplateDetailPage() {
                     {items.length} / 250
                   </span>
                 </div>
-                {display.loading && (
-                  <p className="text-sm text-gray-600">
-                    Loading article names...
-                  </p>
-                )}
-                {display.error && (
-                  <div
-                    role="alert"
-                    className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800"
-                  >
-                    <p>
-                      Article names could not be loaded. The saved template rows
-                      have been preserved.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={display.retry}
-                      className="underline"
-                    >
-                      Retry article names
-                    </button>
-                  </div>
-                )}
                 {items.length === 0 && (
                   <p className="text-sm text-gray-600">
                     No stock template items yet.
@@ -310,13 +273,8 @@ export default function LocationStockTemplateDetailPage() {
                     const label =
                       source?.catalogProductName ||
                       source?.supplierProductName ||
-                      (display.loading
-                        ? "Loading article name..."
-                        : "Article name unavailable");
-                    const unresolved =
-                      !display.loading &&
-                      !display.error &&
-                      (!source || source.available === false);
+                      "Article name unavailable";
+                    const unresolved = !source || source.available === false;
                     return (
                       <li
                         key={`${itemKey(item)}:${index}`}
@@ -411,12 +369,17 @@ export default function LocationStockTemplateDetailPage() {
                 ) : (
                   <>
                     <div>
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                       <label
                         htmlFor="template-catalog-product"
-                        className="mb-2 block text-sm font-medium text-gray-700"
+                        className="block text-sm font-medium text-gray-700"
                       >
                         Catalog product
                       </label>
+                      {products.hasMore && <button type="button" onMouseDown={(event) => event.preventDefault()}
+                        onClick={products.loadMore} disabled={disabled || products.loading}
+                        className="text-sm font-medium text-brand-800 underline disabled:opacity-50">Browse more articles</button>}
+                      </div>
                       <Combobox
                         id="template-catalog-product"
                         value={selected}
@@ -428,15 +391,18 @@ export default function LocationStockTemplateDetailPage() {
                         getOptionValue={(product) => product.id}
                         placeholder="Search inventory-tracked articles"
                         disabled={
-                          disabled ||
-                          products.loading ||
-                          Boolean(products.error)
+                          disabled
                         }
                         loading={products.loading}
-                        emptyMessage="No more inventory-tracked articles available."
+                        onQueryChange={(value) => { products.search(value); setSelected(null); }}
+                        filterOptions={false}
+                        maxVisibleOptions={500}
+                        emptyMessage="No eligible articles in this page. Refine the search or browse the next page."
                         className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
                       />
                     </div>
+                    <p className="text-xs text-gray-500">Start typing to find an article, or browse more choices.</p>
+                    {products.bounded && <p role="status" className="text-xs text-gray-500">Showing up to 500 articles. Refine the search to find further matches.</p>}
                     {products.error && (
                       <div role="alert" className="text-sm text-red-700">
                         <p>

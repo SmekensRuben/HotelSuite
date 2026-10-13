@@ -115,6 +115,9 @@ test("template display resolves same-hotel names for a locations-only reader wit
   db.records.set(`hotels/${hotelUid}/locations/store/stockTemplates/t`, { name: "Weekly", items: [
     { catalogProductId: "juice" }, { catalogProductId: "missing" }, { supplierProductId: "juice-case", outletId: "bar" }] });
   const response = await getHotelStockTemplateDisplayHandler(request({ hotelUid, locationId: "store", templateId: "t" }), services(db));
+  assert.deepEqual(response.location, { id: "store", name: "Store", archived: false });
+  assert.deepEqual(response.template, { id: "t", name: "Weekly", revision: 0, archived: false,
+    items: [{ catalogProductId: "juice" }, { catalogProductId: "missing" }, { supplierProductId: "juice-case", outletId: "bar" }] });
   assert.deepEqual(response.items, [
     { catalogProductId: "juice", catalogProductName: "Orange juice", baseUnit: "l", available: true },
     { catalogProductId: "missing", catalogProductName: null, baseUnit: null, available: false },
@@ -123,6 +126,31 @@ test("template display resolves same-hotel names for a locations-only reader wit
   await assert.rejects(getHotelStockTemplateDisplayHandler(request({ hotelUid: "hotel-b", locationId: "store", templateId: "t" }), services(db)), { code: "permission-denied" });
   db.records.set(`hotels/${hotelUid}/locations/store/stockTemplates/t`, { name: "Too large", items: Array.from({ length: 251 }, (_, index) => ({ catalogProductId: `id${index}` })) });
   await assert.rejects(getHotelStockTemplateDisplayHandler(request({ hotelUid, locationId: "store", templateId: "t" }), services(db)), { code: "invalid-argument" });
+});
+
+test("template projection keeps canonical context, revision and item order without exposing unrelated metadata", async () => {
+  const db = fixture();
+  db.records.set(`hotels/${hotelUid}/locations/store`, { id: "wrong-location", name: "Cold room", secret: "DO-NOT-PROJECT" });
+  db.records.set(`hotels/${hotelUid}/locations/store/stockTemplates/t`, { id: "wrong-template", name: "Frozen ordering", revision: 7,
+    notes: "DO-NOT-PROJECT", archived: true, items: [{ catalogProductId: "missing" }, { catalogProductId: "juice" }] });
+  const result = await getHotelStockTemplateDisplayHandler(request({ hotelUid, locationId: "store", templateId: "t" }), services(db));
+  assert.deepEqual(result.template, { id: "t", name: "Frozen ordering", revision: 7, archived: true,
+    items: [{ catalogProductId: "missing" }, { catalogProductId: "juice" }] });
+  assert.deepEqual(result.location, { id: "store", name: "Cold room", archived: false });
+  assert.deepEqual(result.items.map((item) => item.catalogProductId), ["missing", "juice"]);
+  assert.equal(JSON.stringify(result).includes("DO-NOT-PROJECT"), false);
+  db.records.get(`hotels/${hotelUid}/locations/store/stockTemplates/t`).revision = "7";
+  await assert.rejects(getHotelStockTemplateDisplayHandler(request({ hotelUid, locationId: "store", templateId: "t" }), services(db)), { code: "failed-precondition" });
+});
+
+test("template projection rechecks current Authentication on transaction retry", async () => {
+  const db = fixture(), run = db.runTransaction.bind(db);
+  let disabled = false, checks = 0;
+  db.runTransaction = async (handler) => { await run(handler); disabled = true; return run(handler); };
+  await assert.rejects(getHotelStockTemplateDisplayHandler(request({ hotelUid, locationId: "store", templateId: "t" }), {
+    firestore: db, auth: { getUser: async () => { checks += 1; return { emailVerified: true, disabled }; } },
+  }), { code: "permission-denied" });
+  assert.equal(checks, 2);
 });
 
 test("generic imports cannot restore archived locations or forge resource command evidence", () => {

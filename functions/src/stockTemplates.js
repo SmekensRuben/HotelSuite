@@ -103,7 +103,11 @@ async function getHotelStockTemplateDisplayHandler(request, services = {}) {
     const [location, template] = await tx.getAll(db.doc(`hotels/${hotelUid}/locations/${locationId}`),
       db.doc(`hotels/${hotelUid}/locations/${locationId}/stockTemplates/${templateId}`));
     if (!location.exists || !template.exists) throw new HttpsError("not-found", "Stock template not found in this hotel.");
-    const items = itemsInput(template.data().items);
+    const source = template.data(), items = itemsInput(source.items);
+    const storedRevision = source.revision ?? 0;
+    if (!Number.isSafeInteger(storedRevision) || storedRevision < 0) {
+      throw new HttpsError("failed-precondition", "The template revision needs review.");
+    }
     const paths = [...new Set(items.flatMap((item) => item.catalogProductId ? [`hotels/${hotelUid}/catalogproducts/${item.catalogProductId}`]
       : [`hotels/${hotelUid}/supplierproducts/${item.supplierProductId}`, `hotels/${hotelUid}/outlets/${item.outletId}`]))];
     const snapshots = paths.length ? await tx.getAll(...paths.map((path) => db.doc(path))) : [];
@@ -125,7 +129,13 @@ async function getHotelStockTemplateDisplayHandler(request, services = {}) {
     const label = (value) => typeof value === "string" && value.trim() ? value.trim().slice(0, 200) : null;
     const countReady = (product) => product?.exists && product.data().inventoryTracked === true && !isArchived(product.data())
       && Object.hasOwn(units, product.data().baseUnit) && Boolean(label(product.data().name));
-    return { hotelUid, locationId, templateId, items: items.map((item) => {
+    // Project only the selected location/template context. A locations-only
+    // reader receives no directory, supplier pricing or unrelated metadata.
+    return { hotelUid, locationId, templateId,
+      location: { id: locationId, name: label(location.data().name), archived: Boolean(isArchived(location.data())) },
+      template: { id: templateId, name: label(source.name), revision: storedRevision,
+        archived: Boolean(isArchived(source)), items },
+      items: items.map((item) => {
       if (item.catalogProductId) {
         const product = byPath.get(`hotels/${hotelUid}/catalogproducts/${item.catalogProductId}`);
         const name = label(product.data()?.name), baseUnit = product.data()?.baseUnit;

@@ -38,12 +38,14 @@ const mocks = vi.hoisted(() => ({
   createOutlet: vi.fn(),
   setApprovers: vi.fn(),
   actorUid: "actor",
+  actors: new Map(),
   pendingTemplate: vi.fn(),
   retryTemplate: vi.fn(),
 }));
 vi.mock("react-router-dom", () => ({
   useNavigate: () => mocks.navigate,
   useParams: () => mocks.params,
+  Link: ({ to, children, ...props }) => <a href={to} {...props}>{children}</a>,
 }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key) => key }),
@@ -56,7 +58,10 @@ vi.mock("../../hooks/usePermission", () => ({
     mocks.permissions.has(`${feature}.${action}`),
 }));
 vi.mock("../../firebaseConfig", () => ({
-  auth: { get currentUser() { return { uid: mocks.actorUid }; } },
+  auth: { get currentUser() {
+    if (!mocks.actors.has(mocks.actorUid)) mocks.actors.set(mocks.actorUid, { uid: mocks.actorUid });
+    return mocks.actors.get(mocks.actorUid);
+  } },
   signOut: vi.fn(),
 }));
 vi.mock("../layout/HeaderBar", () => ({ default: () => null }));
@@ -124,6 +129,7 @@ beforeEach(() => {
   });
   mocks.template.mockResolvedValue(template);
   mocks.display.mockResolvedValue({
+    template, location: { id: "store", name: "Cold room", revision: 2 },
     hotelUid: "hotel-a",
     locationId: "store",
     templateId: "weekly",
@@ -163,12 +169,96 @@ afterEach(() => {
 });
 
 describe("template article names and choices", () => {
+  it("uses one coherent template projection and leaves catalog pages idle until the picker opens", async () => {
+    mocks.permissions.add("catalogproducts.read");
+    render(<LocationStockTemplateDetailPage />);
+    await screen.findByText("Orange juice");
+    expect(mocks.display).toHaveBeenCalledTimes(1);
+    expect(mocks.location).not.toHaveBeenCalled();
+    expect(mocks.template).not.toHaveBeenCalled();
+    expect(mocks.catalog).not.toHaveBeenCalled();
+    fireEvent.focus(screen.getByRole("combobox", { name: "Catalog product" }));
+    await waitFor(() => expect(mocks.catalog).toHaveBeenCalledTimes(1));
+    expect(mocks.catalog).toHaveBeenCalledWith("hotel-a", { pageSize: 25, searchTerm: "", scopeKey: expect.any(String) });
+  });
+  it("announces one skeleton while names and template revision are loading, without fictitious missing rows", async () => {
+    const waiting = deferred();
+    mocks.display.mockReturnValue(waiting.promise);
+    render(<LocationStockTemplateDetailPage />);
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing included articles");
+    expect(screen.queryByText("Loading article names...")).not.toBeInTheDocument();
+    expect(screen.queryByText("Article name unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove", exact: true })).not.toBeInTheDocument();
+    await act(async () => waiting.resolve({ template, location: { id: "store", name: "Cold room" },
+      items: [{ catalogProductId: "orange-id", catalogProductName: "Orange juice", baseUnit: "l", available: true }] }));
+    expect(await screen.findByText("Orange juice")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+  it("retains verified rows during mutation readback, then clears and blocks editing if verification fails", async () => {
+    const readback = deferred();
+    const view = render(<LocationStockTemplateDetailPage />);
+    await screen.findByText("Orange juice");
+    mocks.display.mockReturnValueOnce(readback.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Remove", exact: true }));
+    await screen.findByText("Verifying the updated template…");
+    expect(screen.getByText("Orange juice")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove", exact: true })).toBeDisabled();
+    await act(async () => readback.reject(new Error("Access no longer valid")));
+    expect(screen.getByRole("alert")).toHaveTextContent("Current article names and revision could not be verified");
+    expect(screen.queryByText("Orange juice")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove", exact: true })).not.toBeInTheDocument();
+    mocks.display.mockResolvedValue({ template, location: { id: "store", name: "Cold room" },
+      items: [{ catalogProductId: "orange-id", catalogProductName: "Verified again", baseUnit: "l", available: true }] });
+    fireEvent.click(screen.getByRole("button", { name: "Retry template" }));
+    await screen.findByText("Verified again");
+    expect(mocks.remove).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+  it("clears rows immediately for same-UID Auth replacement and ignores its old delayed response", async () => {
+    const old = deferred(), replacement = deferred();
+    mocks.display.mockReturnValueOnce(old.promise).mockReturnValueOnce(replacement.promise);
+    const view = render(<LocationStockTemplateDetailPage />);
+    mocks.actors.set("actor", { uid: "actor" });
+    view.rerender(<LocationStockTemplateDetailPage />);
+    await waitFor(() => expect(mocks.display).toHaveBeenCalledTimes(2));
+    await act(async () => old.resolve({ template, location: { id: "store", name: "Cold room" },
+      items: [{ catalogProductId: "orange-id", catalogProductName: "Old actor", baseUnit: "l", available: true }] }));
+    expect(screen.queryByText("Old actor")).not.toBeInTheDocument();
+    await act(async () => replacement.resolve({ template, location: { id: "store", name: "Cold room" },
+      items: [{ catalogProductId: "orange-id", catalogProductName: "New actor", baseUnit: "l", available: true }] }));
+    expect(await screen.findByText("New actor")).toBeInTheDocument();
+    mocks.permissions.delete("locations.read");
+    view.rerender(<LocationStockTemplateDetailPage />);
+    expect(screen.queryByText("New actor")).not.toBeInTheDocument();
+    expect(screen.getByText(/Location read permission is required/)).toBeInTheDocument();
+  });
+  it("browses one bounded page at a time, debounces typing and resets its previous cursor", async () => {
+    mocks.permissions.add("catalogproducts.read");
+    mocks.catalog.mockResolvedValueOnce({ products: [{ id: "milk", name: "Milk", baseUnit: "l", inventoryTracked: true }], hasMore: true, cursor: { offset: 25 } })
+      .mockResolvedValueOnce({ products: [{ id: "eggs", name: "Eggs", baseUnit: "each", inventoryTracked: true }], hasMore: false, cursor: null })
+      .mockResolvedValue({ products: [{ id: "tea", name: "Tea", baseUnit: "kg", inventoryTracked: true }], hasMore: false, cursor: null });
+    render(<LocationStockTemplateDetailPage />);
+    const picker = await screen.findByRole("combobox", { name: "Catalog product" });
+    fireEvent.focus(picker);
+    await screen.findByRole("option", { name: "Milk (l (litres))" });
+    fireEvent.click(screen.getByRole("button", { name: "Browse more articles" }));
+    await screen.findByRole("option", { name: "Eggs (each (items))" });
+    expect(mocks.catalog.mock.calls[1][1]).toMatchObject({ pageSize: 25, cursor: { offset: 25 }, searchTerm: "" });
+    fireEvent.change(picker, { target: { value: "t" } });
+    fireEvent.change(picker, { target: { value: "te" } });
+    fireEvent.change(picker, { target: { value: "tea" } });
+    expect(mocks.catalog).toHaveBeenCalledTimes(2);
+    await screen.findByRole("option", { name: "Tea (kg (kilograms))" });
+    expect(mocks.catalog).toHaveBeenCalledTimes(3);
+    expect(mocks.catalog.mock.calls[2][1]).toMatchObject({ pageSize: 25, searchTerm: "tea" });
+    expect(mocks.catalog.mock.calls[2][1]).not.toHaveProperty("cursor");
+  });
   it("resolves names for a location reader without catalog or supplier read access", async () => {
     render(<LocationStockTemplateDetailPage />);
     expect(await screen.findByText("Orange juice")).toBeInTheDocument();
     expect(screen.queryByText("orange-id")).not.toBeInTheDocument();
     expect(mocks.catalog).not.toHaveBeenCalled();
-    expect(mocks.display).toHaveBeenCalledWith("hotel-a", "store", "weekly");
+    expect(mocks.display).toHaveBeenCalledWith("hotel-a", "store", "weekly", { scopeKey: expect.any(String) });
     expect(
       screen.getByText(/Catalog read permission is required/),
     ).toBeInTheDocument();
@@ -178,11 +268,12 @@ describe("template article names and choices", () => {
     mocks.catalog.mockRejectedValue(new Error("Choices offline"));
     render(<LocationStockTemplateDetailPage />);
     expect(await screen.findByText("Orange juice")).toBeInTheDocument();
+    fireEvent.focus(screen.getByRole("combobox", { name: "Catalog product" }));
     expect(await screen.findByText("Choices offline")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add product" })).toBeDisabled();
   });
   it("marks missing references explicitly, preserving rows rather than displaying an ID as a name", async () => {
-    mocks.display.mockResolvedValue({
+    mocks.display.mockResolvedValue({ template, location: { id: "store", name: "Cold room" },
       items: [
         {
           catalogProductId: "orange-id",
@@ -245,7 +336,7 @@ describe("template article names and choices", () => {
     expect(
       screen.queryByRole("option", { name: /Orange juice/ }),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("option", { name: "Milk (l (litres))" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Milk (l (litres))" }));
     fireEvent.click(screen.getByRole("button", { name: "Add product" }));
     await waitFor(() =>
       expect(mocks.add).toHaveBeenCalledWith(
@@ -258,11 +349,8 @@ describe("template article names and choices", () => {
     );
   });
   it("leaves historical rows readable and disables editing for archived locations", async () => {
-    mocks.location.mockResolvedValue({
-      id: "store",
-      name: "Cold room",
-      archived: true,
-    });
+    mocks.display.mockResolvedValue({ template, location: { id: "store", name: "Cold room", archived: true },
+      items: [{ catalogProductId: "orange-id", catalogProductName: "Orange juice", baseUnit: "l", available: true }] });
     render(<LocationStockTemplateDetailPage />);
     await screen.findByText("Orange juice");
     expect(
@@ -277,7 +365,7 @@ describe("template article names and choices", () => {
     mocks.display.mockImplementation((hotel) =>
       hotel === "hotel-a"
         ? old.promise
-        : Promise.resolve({
+        : Promise.resolve({ template, location: { id: "store", name: "Cold room" },
             items: [
               {
                 catalogProductId: "orange-id",
@@ -293,7 +381,7 @@ describe("template article names and choices", () => {
     view.rerender(<LocationStockTemplateDetailPage />);
     await screen.findByText("Hotel B juice");
     await act(async () =>
-      old.resolve({
+      old.resolve({ template, location: { id: "store", name: "Cold room" },
         items: [
           {
             catalogProductId: "orange-id",
@@ -329,7 +417,7 @@ describe("stock template command progress and reconciliation", () => {
     const picker = await screen.findByRole("combobox", { name: "Catalog product" });
     await waitFor(() => expect(picker).toBeEnabled());
     fireEvent.focus(picker);
-    fireEvent.click(screen.getByRole("option", { name: "Milk (l (litres))" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Milk (l (litres))" }));
     return picker;
   };
 

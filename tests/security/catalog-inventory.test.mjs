@@ -18,6 +18,7 @@ const { mutateHotelStockTemplateHandler } = require("../../functions/src/stockTe
 const { createHotelStockCountHandler, mutateHotelStockCountHandler, listHotelStockCountSourcesHandler } = require("../../functions/src/stockCounts");
 const { recordHotelOrderReceiptHandler, reverseHotelOrderReceiptHandler } = require("../../functions/src/orderReceiving");
 const { getHotelInventoryPeriodHandler } = require("../../functions/src/inventoryReports");
+const { getHotelInventoryCostProposalHandler } = require("../../functions/src/inventoryCostProposals");
 const { requireHotelImportTarget } = require("../../functions/src/fileImportTypes");
 const db = admin.firestore(), auth = admin.auth();
 const staff = { uid: "catalog-inventory-staff", token: { email_verified: true, email: "staff@example.test" } };
@@ -86,6 +87,53 @@ beforeEach(async () => {
 after(async () => environment.cleanup());
 
 describe("catalog products and periodic inventory acceptance with real ordinary-hotel identity", () => {
+  it("normal counters receive a read-only weighted proposal from finished quantities and accepted frozen receipt values", async () => {
+    const openingId = await count(10, "2026-10-10", 2);
+    await frozenOrder({ netPrice: 3, quantity: 20, terms: { catalogUnitsPerPurchaseUnit: 1, netUnitCost: 3 } });
+    await receipt({ lines: [{ supplierProductId: "water-offer", orderLineId: "water-line", acceptedQuantity: 20, rejectedQuantity: 0 }] });
+    const target = await createHotelStockCountHandler(request({ hotelUid: "hotel-a", name: "New physical count", type: "Weekly", requestId: next(), businessDate: "2026-10-12",
+      locations: [{ locationId: "store", stockTemplateId: "weekly" }] }), services);
+    await db.doc(`hotels/hotel-a/members/${staff.uid}`).update({ permissions: ["stockcounts.read", "stockcounts.update", "inventorymovements.create"] });
+    const refs = [db.doc(`hotels/hotel-a/stockCounts/${openingId}`), db.doc(`hotels/hotel-a/stockCounts/${target.stockCountId}`), db.doc("hotels/hotel-a/inventoryLocationStates/store")];
+    const before = await db.getAll(...refs);
+    const input = { hotelUid: "hotel-a", purpose: "stockcount", stockCountId: target.stockCountId, locationId: "store", catalogProductId: "water" };
+    const result = await getHotelInventoryCostProposalHandler(request(input), services);
+    assert.equal(result.available, true, JSON.stringify(result));
+    assert.equal(result.costProposalPolicyVersion, 1);
+    assert.equal(result.currency, "EUR"); assert.equal(result.baseUnit, "each");
+    assert.ok(Math.abs(result.netUnitCost - 80 / 30) <= 0.000001);
+    assert.equal(result.source.weightedSourceQuantity, 30);
+    assert.equal(result.source.weightedSourceNetValue, 80);
+    const movement = await getHotelInventoryCostProposalHandler(request({ hotelUid: "hotel-a", purpose: "movement", locationId: "store", catalogProductId: "water", businessDate: "2026-10-12" }), services);
+    assert.equal(movement.netUnitCost, result.netUnitCost);
+    const after = await db.getAll(...refs);
+    assert.deepEqual(after.map((doc) => doc.data()), before.map((doc) => doc.data()));
+    assert.deepEqual(after.map((doc) => doc.updateTime.toMillis()), before.map((doc) => doc.updateTime.toMillis()));
+    await assertFails(getDoc(doc(client(), "hotels/hotel-a/catalogproducts/water")));
+    await assertFails(getDoc(doc(client(), "hotels/hotel-a/inventoryLocationStates/store")));
+    await rejected(getHotelInventoryCostProposalHandler(request({ ...input, hotelUid: "hotel-b" }), services), "permission-denied");
+    const anchorRef = db.doc(`hotels/hotel-a/inventoryCheckpoints/${result.source.anchorCheckpointId}`);
+    const checkpoint = (await anchorRef.get()).data();
+    await anchorRef.update({ items: checkpoint.items.map((item) => ({ ...item, unitCost: 99 })) });
+    const inconsistent = await getHotelInventoryCostProposalHandler(request(input), services);
+    assert.equal(inconsistent.available, false); assert.equal(inconsistent.netUnitCost, null);
+  });
+  it("cost proposals enforce the monetary read boundary, current action rights, subscription and revoked Auth", async () => {
+    const input = { hotelUid: "hotel-a", purpose: "movement", locationId: "store", catalogProductId: "water", businessDate: "2026-10-12" };
+    await db.doc(`hotels/hotel-a/members/${staff.uid}`).update({ permissions: ["inventorymovements.create"] });
+    await rejected(getHotelInventoryCostProposalHandler(request(input), services), "permission-denied");
+    await db.doc(`hotels/hotel-a/members/${staff.uid}`).update({ permissions: ["stockcounts.read"] });
+    await rejected(getHotelInventoryCostProposalHandler(request(input), services), "permission-denied");
+    await db.doc(`hotels/hotel-a/members/${staff.uid}`).update({ permissions: ["stockcounts.read", "inventorymovements.create"] });
+    const unknown = await getHotelInventoryCostProposalHandler(request(input), services);
+    assert.equal(unknown.available, false); assert.equal(unknown.netUnitCost, null);
+    await rejected(getHotelInventoryCostProposalHandler(request(input, platform), services), "permission-denied");
+    await db.doc("hotelSubscriptions/hotel-a").update({ status: "canceled" });
+    await rejected(getHotelInventoryCostProposalHandler(request(input), services), "permission-denied");
+    await db.doc("hotelSubscriptions/hotel-a").update({ status: "active" });
+    await auth.updateUser(staff.uid, { disabled: true });
+    await rejected(getHotelInventoryCostProposalHandler(request(input), services), "permission-denied");
+  });
   it("normal user mutates stable supplier identities while SKU edits leave cart/template/history links intact", async () => {
     const created = await offerCommand();
     await db.doc("hotels/hotel-a/shoppingCarts/historical").set({ items: [{ supplierProductId: created.productId }] });

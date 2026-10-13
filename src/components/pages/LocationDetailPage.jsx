@@ -16,6 +16,7 @@ import {
 } from "../../services/firebaseSettings";
 import DataListTable from "../shared/DataListTable";
 import { usePermission } from "../../hooks/usePermission";
+import { ArticleRowsSkeleton } from "../ui/ResourceLoading";
 
 export default function LocationDetailPage() {
   const navigate = useNavigate();
@@ -155,7 +156,7 @@ export default function LocationDetailPage() {
           </div>
         </div>
         {loading ? (
-          <p className="text-gray-600">Loading location...</p>
+          <Card><ArticleRowsSkeleton rows={3} label="Preparing location and stock templates…" /></Card>
         ) : !currentLocation ? (
           <Card>
             <p className="text-gray-600">Location not found.</p>

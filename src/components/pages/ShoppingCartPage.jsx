@@ -21,6 +21,7 @@ import {
 } from "../../services/firebaseShoppingCarts";
 
 import { knownPrice } from "../../utils/productPurchaseOptions";
+import { formatOrderPriceBasis, normalizeOrderPriceBasis } from "../../utils/orderPricing";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -35,10 +36,16 @@ function ScopedShoppingCartPage() {
   const { hotelUid } = useHotelContext();
   const [shoppingCart, setShoppingCart] = useState(null);
   const mounted = useRef(true);
+  const actor = useRef(auth.currentUser).current;
+  const mutationLock = useRef(false), minimumCartRevision = useRef(0);
   const loadSequence = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; loadSequence.current += 1; }; }, []);
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
+  const [pendingCommand, setPendingCommand] = useState(false);
+  const [cartNeedsRefresh, setCartNeedsRefresh] = useState(false);
+  const [pendingOutlet, setPendingOutlet] = useState(null);
+  const [cartNotice, setCartNotice] = useState("");
   const [showCreateOrderModal, setShowCreateOrderModal] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState("");
   const [creatingOrder, setCreatingOrder] = useState(false);
@@ -75,15 +82,22 @@ function ScopedShoppingCartPage() {
     window.location.href = "/login";
   };
 
-  const refreshCart = async () => {
-    if (!hotelUid || !cartId) return;
-    setLoading(true);
+  const isCurrent = () => mounted.current && auth.currentUser === actor;
+  const cartBlocked = mutating || creatingOrder || pendingCommand || cartNeedsRefresh;
+  const refreshCart = async ({ background = false, expectedOutlet = null } = {}) => {
+    if (!hotelUid || !cartId || !isCurrent()) return false;
+    if (!background) setLoading(true);
     const sequence = ++loadSequence.current;
     try {
-      const cart = await getShoppingCart(hotelUid, cartId);
-      if (mounted.current && sequence === loadSequence.current) setShoppingCart(cart);
-    } catch (error) { if (mounted.current && sequence === loadSequence.current) setErrorMessage(error?.message || "Could not load the cart."); }
-    finally { if (mounted.current && sequence === loadSequence.current) setLoading(false); }
+      const cart = await getShoppingCart(hotelUid, cartId, { minimumRevision: minimumCartRevision.current });
+      if (!cart || !Number.isSafeInteger(cart.revision ?? 0) || (cart.revision ?? 0) < minimumCartRevision.current) throw new Error("The cart has not caught up with the saved request. Refresh before continuing.");
+      if (!isCurrent() || sequence !== loadSequence.current) return false;
+      const selectedRow = expectedOutlet && cart.items?.find((item) => item.supplierProductId === expectedOutlet.productId && (item.purchaseOptionId || "default") === expectedOutlet.purchaseOptionId);
+      setCartNotice(expectedOutlet && selectedRow?.outletId !== expectedOutlet.outlet.id ? "The cart changed again before it refreshed. The current saved outlet is shown; review it before creating orders." : "");
+      setShoppingCart(cart); setCartNeedsRefresh(false); setPendingOutlet(null); setErrorMessage("");
+      return true;
+    } catch (error) { if (isCurrent() && sequence === loadSequence.current) { setCartNeedsRefresh(true); setErrorMessage(error?.message || "Could not load the cart."); } return false; }
+    finally { if (isCurrent() && sequence === loadSequence.current) setLoading(false); }
   };
 
   useEffect(() => {
@@ -94,30 +108,50 @@ function ScopedShoppingCartPage() {
     const loadOutlets = async () => {
       if (!hotelUid) return;
       const fetchedOutlets = await getOutlets(hotelUid);
-      if (mounted.current) setOutlets(fetchedOutlets || []);
+      if (isCurrent()) setOutlets(fetchedOutlets || []);
     };
 
-    loadOutlets().catch((error) => { if (mounted.current) setErrorMessage(error?.message || "Could not load hotel outlets."); });
+    loadOutlets().catch((error) => { if (isCurrent()) setErrorMessage(error?.message || "Could not load hotel outlets."); });
   }, [hotelUid]);
 
-  const performMutation = async (operation) => {
-    if (mutating) return false;
-    setMutating(true); setErrorMessage("");
-    try { await operation(); if (!mounted.current) return false; await refreshCart(); return mounted.current; }
-    catch (error) { if (mounted.current) setErrorMessage(error?.message || "Could not update this cart. Refresh stale data or retry the saved request."); return false; }
-    finally { if (mounted.current) setMutating(false); }
+  const performMutation = async (operation, outletDraft = null) => {
+    if (cartBlocked || mutationLock.current || !isCurrent()) return false;
+    mutationLock.current = true;
+    setMutating(true); setErrorMessage(""); setCartNotice("");
+    if (outletDraft) setPendingOutlet({ ...outletDraft, phase: "saving" });
+    try {
+      const result = await operation();
+      if (!isCurrent()) return false;
+      setCartNeedsRefresh(true);
+      if (!Number.isSafeInteger(result?.revision) || result.revision < 0) throw new Error("The saved cart revision could not be confirmed. Refresh before continuing.");
+      minimumCartRevision.current = Math.max(minimumCartRevision.current, result.revision);
+      if (outletDraft) setPendingOutlet({ ...outletDraft, phase: "refreshing" });
+      const refreshed = await refreshCart({ background: true, expectedOutlet: outletDraft });
+      if (!refreshed && isCurrent() && outletDraft) setPendingOutlet({ ...outletDraft, phase: "unverified" });
+      return refreshed;
+    }
+    catch (error) {
+      if (isCurrent()) {
+        setErrorMessage(error?.message || "Could not update this cart. Refresh stale data or retry the saved request.");
+        if (error?.details?.cartRequestUncommitted === true) setPendingOutlet(null);
+        else { setCartNeedsRefresh(true); if (outletDraft) setPendingOutlet({ ...outletDraft, phase: "unverified" }); }
+      }
+      return false;
+    }
+    finally { mutationLock.current = false; if (isCurrent()) setMutating(false); }
   };
 
   const items = Array.isArray(shoppingCart?.items) ? shoppingCart.items : [];
   const cartTotals = items.reduce((totals, item) => {
     const price = knownPrice(item.pricePerPurchaseUnit);
     const currency = item.currency;
-    if (price === null || !currency) return totals;
-    const key = `${currency} (${item.priceBasis || "unknown"} price basis)`;
-    totals[key] = (totals[key] || 0) + price * Number(item.qtyPurchaseUnits || 0);
+    const quantity = knownPrice(item.qtyPurchaseUnits);
+    if (price === null || quantity === null || typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency)) return totals;
+    const basis = normalizeOrderPriceBasis(item.priceBasis), key = `${currency}:${basis}`;
+    totals[key] = { currency, basis, total: (totals[key]?.total || 0) + price * quantity };
     return totals;
   }, {});
-  const hasUnknownPricing = items.some((item) => knownPrice(item.pricePerPurchaseUnit) === null || !item.currency);
+  const hasUnknownPricing = items.some((item) => knownPrice(item.pricePerPurchaseUnit) === null || knownPrice(item.qtyPurchaseUnits) === null || typeof item.currency !== "string" || !/^[A-Z]{3}$/.test(item.currency));
   const hasMissingOutlets = items.some((item) => !String(item.outletId || "").trim());
 
   const rows = items.map((item, index) => {
@@ -180,10 +214,11 @@ function ScopedShoppingCartPage() {
       sortable: false,
       render: (row) => (
         <div className="min-w-[12rem]">
-          <Combobox aria-label={`Outlet for ${row.supplierProductName}`} options={outlets} value={outlets.find((outlet) => outlet.id === row.outletId) || null} onChange={async (outlet) => {
+          <Combobox aria-label={`Outlet for ${row.supplierProductName}`} options={outlets} value={pendingOutlet?.rowId === row.id ? pendingOutlet.outlet : outlets.find((outlet) => outlet.id === row.outletId) || null} onChange={async (outlet) => {
             if (!outlet) return;
-            await performMutation(() => updateShoppingCartItemOutlet(hotelUid, cartId, row.supplierProductId, outlet.id, row.purchaseOptionId, shoppingCart.revision ?? 0));
-          }} displayValue={(outlet) => outlet.name || "Unnamed outlet"} getOptionValue={(outlet) => outlet.id} placeholder="Search outlets" disabled={mutating || creatingOrder} className="ht-field" />
+            await performMutation(() => updateShoppingCartItemOutlet(hotelUid, cartId, row.supplierProductId, outlet.id, row.purchaseOptionId, shoppingCart.revision ?? 0), { rowId: row.id, productId: row.supplierProductId, purchaseOptionId: row.purchaseOptionId, outlet });
+          }} displayValue={(outlet) => outlet.name || "Unnamed outlet"} getOptionValue={(outlet) => outlet.id} placeholder="Search outlets" disabled={cartBlocked} className="ht-field" />
+          {pendingOutlet?.rowId === row.id && <p role="status" className="mt-1 text-xs text-slate-600">{pendingOutlet.phase === "saving" ? "Saving selected outlet…" : pendingOutlet.phase === "refreshing" ? "Awaiting updated cart…" : "Selection not confirmed. Refresh or reconcile the saved request."}</p>}
         </div>
       ),
     },
@@ -195,7 +230,7 @@ function ScopedShoppingCartPage() {
         <input
           type="number"
           min="1"
-          disabled={mutating}
+          disabled={cartBlocked}
           value={row.qtyPurchaseUnits}
           onChange={async (event) => {
             const value = event.target.value;
@@ -215,6 +250,7 @@ function ScopedShoppingCartPage() {
       render: (row) => (
         <button
           type="button"
+          disabled={cartBlocked}
           onClick={() => {
             setActiveNoteRow(row);
             setNoteDraft(row.note || "");
@@ -239,7 +275,7 @@ function ScopedShoppingCartPage() {
             await performMutation(() => removeShoppingCartItem(hotelUid, cartId, row.supplierProductId, row.purchaseOptionId, shoppingCart.revision ?? 0));
           }}
           className="inline-flex items-center justify-center text-red-600 hover:text-red-800"
-          disabled={mutating}
+          disabled={cartBlocked}
           title="Remove"
           aria-label="Remove"
         >
@@ -253,13 +289,14 @@ function ScopedShoppingCartPage() {
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <ProcurementPage className="space-y-6">
-        <PendingCartCommand hotelUid={hotelUid} cartId={cartId} onComplete={async () => { setErrorMessage(""); await refreshCart(); }} />
+        <PendingCartCommand hotelUid={hotelUid} cartId={cartId} inFlight={mutating || creatingOrder} onPendingChange={setPendingCommand} onComplete={async (result) => { if (!isCurrent()) return; minimumCartRevision.current = Math.max(minimumCartRevision.current, result.revision); setCartNeedsRefresh(true); if (!(await refreshCart({ background: true }))) throw new Error("The reconciled request needs a verified cart refresh before you can continue."); }} />
         {errorMessage && <p role="alert" className="text-red-700">{errorMessage}</p>}
+        {cartNotice && <p role="status" className="text-sm text-amber-800">{cartNotice}</p>}
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><p className="text-xs uppercase tracking-wider text-slate-500">Purchasing & inventory</p><h1 className="text-2xl font-semibold">Shopping cart</h1><p className="mt-1 text-sm text-slate-600">Assign each package to an outlet and review quantities before creating draft orders.</p></div>
             <div className="flex flex-wrap items-center gap-2 ml-auto">
-              <button type="button" disabled={loading || mutating} onClick={refreshCart} className="rounded border border-gray-300 px-3 py-2 text-sm font-semibold disabled:opacity-50">Refresh cart</button>
+              <button type="button" disabled={loading || mutating || creatingOrder} onClick={() => refreshCart({ background: true })} className="rounded border border-gray-300 px-3 py-2 text-sm font-semibold disabled:opacity-50">Refresh cart</button>
               <button
                 type="button"
                 onClick={() => navigate("/orders/new")}
@@ -283,13 +320,17 @@ function ScopedShoppingCartPage() {
         ) : (
           <>
             <DataListTable columns={columns} rows={rows} emptyMessage="The shopping cart is empty." />
-            <div className="ml-auto flex max-w-md flex-col items-end gap-3 rounded-2xl border border-slate-200 bg-white p-5">
-              {Object.entries(cartTotals).map(([label, total]) => <p key={label} className="text-lg font-semibold">Quoted cart total: {total.toFixed(2)} {label}</p>)}
+            <section aria-labelledby="cart-summary-heading" className="ml-auto w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+              <div className="flex items-center justify-between gap-3"><h2 id="cart-summary-heading" className="font-semibold">Cart summary</h2><span className="text-xs text-slate-500">{items.length} {items.length === 1 ? "line" : "lines"}</span></div>
+              <dl className="mt-3 divide-y divide-slate-100">{Object.entries(cartTotals).map(([key, entry]) => <div key={key} className="flex items-start justify-between gap-4 py-2"><dt className="min-w-0 text-xs text-slate-600"><span className="block font-medium text-slate-800">{entry.currency}</span>{formatOrderPriceBasis(entry.basis)}</dt><dd className="shrink-0 text-sm font-semibold tabular-nums">{entry.total.toFixed(2)}</dd></div>)}</dl>
+              <p className="mt-2 text-xs leading-5 text-slate-500">Quoted amounts. Currencies and price bases stay separate; no VAT conversion is applied.</p>
+              <div className="mt-3 space-y-2 text-sm">
               {hasUnknownPricing && <p className="text-sm text-red-700">Some prices or currencies are unavailable. Review these offers before creating orders.</p>}
               {hasMissingOutlets && (
                 <p className="text-sm text-red-600">Select an outlet for every package before creating orders.</p>
               )}
-              {errorMessage && <p className="text-sm text-red-600">{errorMessage}</p>}
+              {cartNeedsRefresh && <p role="status" className="text-amber-800">Refresh the cart to confirm its current contents before creating orders.</p>}
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -297,12 +338,12 @@ function ScopedShoppingCartPage() {
                   setDeliveryDate(getTomorrowIsoDate());
                   setShowCreateOrderModal(true);
                 }}
-                disabled={mutating || hasMissingOutlets || hasUnknownPricing}
-                className="bg-brand-800 text-white px-4 py-2 rounded font-semibold hover:bg-brand-950 disabled:opacity-50"
+                disabled={cartBlocked || hasMissingOutlets || hasUnknownPricing}
+                className="mt-4 w-full bg-brand-800 text-white px-4 py-2 rounded text-sm font-semibold hover:bg-brand-950 disabled:opacity-50"
               >
                 Create Order
               </button>
-            </div>
+            </section>
           </>
         )}
       </ProcurementPage>
@@ -327,15 +368,16 @@ function ScopedShoppingCartPage() {
           </button>
           <button
             type="button"
-            disabled={!deliveryDate || creatingOrder || mutating || hasMissingOutlets || hasUnknownPricing}
+            disabled={!deliveryDate || cartBlocked || hasMissingOutlets || hasUnknownPricing}
             onClick={async () => {
-              if (!deliveryDate || hasMissingOutlets || hasUnknownPricing) return;
+              if (!deliveryDate || cartBlocked || mutationLock.current || hasMissingOutlets || hasUnknownPricing || !isCurrent()) return;
+              mutationLock.current = true;
               setCreatingOrder(true);
               setErrorMessage("");
               try {
                 const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
                 const result = await createOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, actor, shoppingCart?.revision || 0);
-                if (!mounted.current) return;
+                if (!isCurrent()) return;
                 const adjustments = Array.isArray(result?.deliveryDateAdjustments)
                   ? result.deliveryDateAdjustments
                   : [];
@@ -349,9 +391,9 @@ function ScopedShoppingCartPage() {
                   navigate("/orders");
                 }
               } catch (error) {
-                if (mounted.current) setErrorMessage(error?.message || "Could not create orders");
+                if (isCurrent()) setErrorMessage(error?.message || "Could not create orders");
               } finally {
-                if (mounted.current) setCreatingOrder(false);
+                mutationLock.current = false; if (isCurrent()) setCreatingOrder(false);
               }
             }}
             className="px-4 py-2 rounded bg-brand-800 text-white hover:bg-brand-950 disabled:opacity-50"
@@ -394,6 +436,7 @@ function ScopedShoppingCartPage() {
           </button>
           <button
             type="button"
+            disabled={cartBlocked}
             onClick={async () => {
               if (!activeNoteRow) return;
               const success = await performMutation(() => updateShoppingCartItemNote(
@@ -456,7 +499,10 @@ function ScopedShoppingCartPage() {
 }
 
 export default function ShoppingCartPage() {
-  const { hotelUid } = useHotelContext();
+  const context = useHotelContext();
   const { cartId } = useParams();
-  return <ScopedShoppingCartPage key={`${hotelUid}:${cartId}`} />;
+  const session = useRef({ actor: auth.currentUser, sequence: 0 });
+  if (session.current.actor !== auth.currentUser) session.current = { actor: auth.currentUser, sequence: session.current.sequence + 1 };
+  const access = JSON.stringify([context.permissions || [], context.subscriptionActive, context.subscription]);
+  return <ScopedShoppingCartPage key={`${context.hotelUid}:${cartId}:${auth.currentUser?.uid || ""}:${session.current.sequence}:${access}`} />;
 }

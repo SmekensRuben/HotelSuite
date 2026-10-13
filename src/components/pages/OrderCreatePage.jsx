@@ -40,9 +40,16 @@ function ScopedOrderCreatePage() {
   const [selectedStatus, setSelectedStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
+  const [preparingCart, setPreparingCart] = useState(true);
+  const [cartNeedsRefresh, setCartNeedsRefresh] = useState(false);
+  const [pendingCommand, setPendingCommand] = useState(false);
+  const [supplierError, setSupplierError] = useState("");
   const [error, setError] = useState("");
   const [selectedOptions, setSelectedOptions] = useState({});
   const mounted = useRef(true);
+  const actor = useRef(auth.currentUser).current;
+  const cartLock = useRef(false);
+  const minimumCartRevision = useRef(0);
   const generation = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; generation.current += 1; }; }, []);
   const [pageIndex, setPageIndex] = useState(0);
@@ -61,6 +68,8 @@ function ScopedOrderCreatePage() {
   );
 
   const cartCount = Array.isArray(shoppingCart?.items) ? shoppingCart.items.length : 0;
+  const isCurrent = () => mounted.current && auth.currentUser === actor;
+  const cartBlocked = !shoppingCart?.id || preparingCart || cartNeedsRefresh || pendingCommand || Boolean(savingId);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -91,7 +100,7 @@ function ScopedOrderCreatePage() {
       active: activeFilter,
     });
 
-    if (!mounted.current || currentGeneration !== generation.current) return;
+    if (!isCurrent() || currentGeneration !== generation.current) return;
     setProducts(result.products || []);
     setHasMorePages(result.hasMore);
     setPageIndex(nextPageIndex);
@@ -108,24 +117,26 @@ function ScopedOrderCreatePage() {
       return next;
     });
 
-    } catch (failure) { if (mounted.current && currentGeneration === generation.current) setError(failure?.message || "Could not load supplier products."); }
-    finally { if (mounted.current && currentGeneration === generation.current) setLoading(false); }
+    } catch (failure) { if (isCurrent() && currentGeneration === generation.current) setError(failure?.message || "Could not load supplier products."); }
+    finally { if (isCurrent() && currentGeneration === generation.current) setLoading(false); }
+  };
+
+  const prepareCart = async () => {
+    if (!hotelUid || cartLock.current || !isCurrent()) return;
+    cartLock.current = true; setPreparingCart(true); setError("");
+    try {
+      const cart = shoppingCart?.id ? await getShoppingCart(hotelUid, shoppingCart.id, { minimumRevision: minimumCartRevision.current }) : await getOrCreateShoppingCart(hotelUid);
+      if (!cart) throw new Error("The shopping cart could not be found. Reload this page before continuing.");
+      if (isCurrent()) { setShoppingCart(cart); setCartNeedsRefresh(false); }
+    } catch (failure) { if (isCurrent()) setError(failure?.message || "Could not prepare the cart."); }
+    finally { cartLock.current = false; if (isCurrent()) setPreparingCart(false); }
   };
 
   useEffect(() => {
-    const init = async () => {
-      if (!hotelUid) return;
-      const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-      const [cart, loadedSuppliers] = await Promise.all([
-        getOrCreateShoppingCart(hotelUid, actor),
-        getSuppliers(hotelUid),
-      ]);
-      if (!mounted.current) return;
-      setShoppingCart(cart);
-      setSuppliers(Array.isArray(loadedSuppliers) ? loadedSuppliers : []);
-    };
-
-    init().catch((failure) => { if (mounted.current) setError(failure?.message || "Could not load the cart."); });
+    prepareCart();
+    if (!hotelUid) return;
+    getSuppliers(hotelUid).then((loadedSuppliers) => { if (isCurrent()) setSuppliers(Array.isArray(loadedSuppliers) ? loadedSuppliers : []); })
+      .catch((failure) => { if (isCurrent()) setSupplierError(failure?.message || "Supplier filters could not be loaded."); });
   }, [hotelUid]);
 
   useEffect(() => {
@@ -160,15 +171,21 @@ function ScopedOrderCreatePage() {
   }), [products, selectedOptions]);
 
   const handleAddProduct = async (product) => {
-    if (!shoppingCart?.id || !hotelUid || !product.orderable) return;
+    if (cartBlocked || cartLock.current || !hotelUid || !product.orderable || !isCurrent()) return;
+    cartLock.current = true;
     const qty = Math.max(1, Number(qtyByProductId[product.id] || 1));
     setSavingId(product.id); setError("");
     try {
-      await addSupplierProductToShoppingCart(hotelUid, shoppingCart.id, product, qty, product.purchaseOptionId, shoppingCart.revision ?? 0);
-      const refreshed = await getOrCreateShoppingCart(hotelUid);
-      if (mounted.current) setShoppingCart(refreshed);
-    } catch (failure) { if (mounted.current) setError(failure?.message || "Could not add this package to the cart."); }
-    finally { if (mounted.current) setSavingId(""); }
+      const result = await addSupplierProductToShoppingCart(hotelUid, shoppingCart.id, product, qty, product.purchaseOptionId, shoppingCart.revision ?? 0);
+      if (!isCurrent()) return;
+      if (!Number.isSafeInteger(result?.revision) || result.revision < 0) throw new Error("The saved cart revision could not be confirmed. Refresh before continuing.");
+      minimumCartRevision.current = Math.max(minimumCartRevision.current, result.revision);
+      setCartNeedsRefresh(true);
+      const refreshed = await getShoppingCart(hotelUid, shoppingCart.id, { minimumRevision: result.revision });
+      if (!refreshed || !Number.isSafeInteger(refreshed.revision ?? 0) || (refreshed.revision ?? 0) < minimumCartRevision.current) throw new Error("The updated cart could not be verified. Refresh before adding another package.");
+      if (isCurrent()) { setShoppingCart(refreshed); setCartNeedsRefresh(false); }
+    } catch (failure) { if (isCurrent()) setError(failure?.message || "Could not add this package to the cart."); }
+    finally { cartLock.current = false; if (isCurrent()) setSavingId(""); }
   };
 
   const columns = [
@@ -230,7 +247,7 @@ function ScopedOrderCreatePage() {
             event.stopPropagation();
             handleAddProduct(row);
           }}
-          disabled={Boolean(savingId) || !row.orderable}
+          disabled={cartBlocked || !row.orderable}
           className="bg-brand-800 text-white rounded px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
         >
           {savingId === row.id ? "Adding..." : "Add"}
@@ -243,8 +260,11 @@ function ScopedOrderCreatePage() {
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <ProcurementPage className="space-y-6">
-        <PendingCartCommand hotelUid={hotelUid} cartId={shoppingCart?.id || "active"} onComplete={async (result) => { const cart = await getShoppingCart(hotelUid, result.cartId); if (mounted.current) { setShoppingCart(cart); setError(""); } }} />
+        <PendingCartCommand hotelUid={hotelUid} cartId={shoppingCart?.id || "active"} inFlight={preparingCart || Boolean(savingId)} onPendingChange={setPendingCommand} onComplete={async (result) => { if (!isCurrent()) return; minimumCartRevision.current = Math.max(minimumCartRevision.current, result.revision); setCartNeedsRefresh(true); const cart = await getShoppingCart(hotelUid, result.cartId, { minimumRevision: minimumCartRevision.current }); if (!cart) throw new Error("The reconciled cart could not be found. Refresh before continuing."); if (isCurrent()) { setShoppingCart(cart); setCartNeedsRefresh(false); setError(""); } }} />
         {error && <p role="alert" className="text-red-700">{error}</p>}
+        {preparingCart && <p role="status" className="text-sm text-slate-600">Preparing your shopping cart… Products can be added as soon as it is ready.</p>}
+        {!preparingCart && (!shoppingCart?.id || cartNeedsRefresh) && !pendingCommand && <button type="button" onClick={prepareCart} className="ht-button-secondary">{cartNeedsRefresh ? "Refresh cart" : "Retry cart preparation"}</button>}
+        {supplierError && <p role="status" className="text-sm text-amber-800">Supplier filter unavailable: {supplierError} You can still choose products.</p>}
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><p className="text-xs uppercase tracking-wider text-slate-500">Purchasing & inventory</p><h1 className="text-2xl font-semibold">New order</h1><p className="mt-1 text-sm text-slate-600">Choose supplier packages, then review your cart before placing an order.</p></div>
@@ -259,6 +279,7 @@ function ScopedOrderCreatePage() {
               </button>
               <button
                 type="button"
+                disabled={preparingCart || !shoppingCart?.id || Boolean(savingId) || cartNeedsRefresh}
                 onClick={() => shoppingCart?.id && navigate(`/orders/cart/${shoppingCart.id}`)}
                 className="relative inline-flex items-center gap-2 bg-brand-800 text-white rounded px-3 py-2 text-sm font-semibold hover:bg-brand-950"
               >
@@ -331,6 +352,9 @@ function ScopedOrderCreatePage() {
 }
 
 export default function OrderCreatePage() {
-  const { hotelUid } = useHotelContext();
-  return <ScopedOrderCreatePage key={hotelUid} />;
+  const context = useHotelContext();
+  const session = useRef({ actor: auth.currentUser, sequence: 0 });
+  if (session.current.actor !== auth.currentUser) session.current = { actor: auth.currentUser, sequence: session.current.sequence + 1 };
+  const access = JSON.stringify([context.permissions || [], context.subscriptionActive, context.subscription]);
+  return <ScopedOrderCreatePage key={`${context.hotelUid}:${auth.currentUser?.uid || ""}:${session.current.sequence}:${access}`} />;
 }

@@ -67,6 +67,7 @@ for (const name of ["createHotelStockCount", "mutateHotelStockCount", "listHotel
 exports.mutateHotelStockTemplate = require("./src/stockTemplates").mutateHotelStockTemplate;
 exports.getHotelStockTemplateDisplay = require("./src/stockTemplates").getHotelStockTemplateDisplay;
 exports.getHotelStockCountPackageOptions = require("./src/stockCountPackages").getHotelStockCountPackageOptions;
+exports.getHotelInventoryCostProposal = require("./src/inventoryCostProposals").getHotelInventoryCostProposal;
 exports.getHotelSupplierPriceInsights = require("./src/supplierPriceInsights").getHotelSupplierPriceInsights;
 const inventoryAdjustments = require("./src/inventoryAdjustments");
 for (const name of ["recordHotelInventoryAdjustment", "reverseHotelInventoryAdjustment", "listHotelInventoryAdjustments", "listHotelInventoryAdjustmentChoices"]) exports[name] = inventoryAdjustments[name];

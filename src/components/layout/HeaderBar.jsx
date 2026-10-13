@@ -233,22 +233,10 @@ export default function HeaderBar({ today, onLogout }) {
           visible: canViewPropertySettings,
         },
         {
-          to: "/settings/catalog",
-          label: "Catalog Settings",
+          to: "/settings/procurement",
+          label: "Purchasing & Inventory Settings",
           icon: Settings2,
-          visible: canViewCatalogSettings,
-        },
-        {
-          to: "/settings/outlets",
-          label: "Outlet Settings",
-          icon: Settings2,
-          visible: canViewOutlets,
-        },
-        {
-          to: "/settings/locations",
-          label: "Location Settings",
-          icon: Settings2,
-          visible: canViewLocations,
+          visible: canViewCatalogSettings || canViewOutlets || canViewLocations,
         },
         {
           to: "/settings/file-import",
