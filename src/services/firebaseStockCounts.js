@@ -1,5 +1,7 @@
 import { collection, db, doc, getDoc, getDocs, functions, httpsCallable, auth } from "../firebaseConfig";
 
+import { poolProcurementRead } from "./procurementReadPool";
+
 export const STOCK_COUNT_TYPES = ["Ad Hoc", "Daily", "Weekly", "Month-End"];
 export const STOCK_COUNT_STATUSES = ["Started", "In Progress", "Finished"];
 
@@ -301,4 +303,35 @@ export async function finishStockCount(hotelUid, stockCountId, _updatedBy, expec
 }
 export async function updateStockCountLocationStatus(hotelUid, stockCountId, locationId, status, _updatedBy, expectedRevision) {
   return mutateStockCount(hotelUid, stockCountId, { action: "set-location-status", locationId, status }, expectedRevision);
+}
+
+
+// Name/physical-package projection for an actual frozen count row. It exposes
+// neither supplier price contracts nor account details to ordinary counters.
+export async function getStockCountPackageOptions(hotelUid, stockCountId, locationId, catalogProductId,
+  { afterSupplierProductId = null, baseUnit } = {}) {
+  const identifiers = [hotelUid, stockCountId, locationId, catalogProductId];
+  if (identifiers.some((value) => typeof value !== "string" || !value || value.includes("/"))) throw new Error("A hotel, stock count, location and catalog product are required.");
+  if (afterSupplierProductId !== null && (typeof afterSupplierProductId !== "string" || !afterSupplierProductId || afterSupplierProductId.includes("/"))) throw new Error("Package pagination is invalid.");
+  const input = { hotelUid, stockCountId, locationId, catalogProductId, afterSupplierProductId };
+  return poolProcurementRead(hotelUid, "stock-count-packages", async () => {
+    const result = await httpsCallable(functions, "getHotelStockCountPackageOptions")(input), data = result.data;
+    const units = new Set(["g", "kg", "ml", "l", "each"]);
+    const label = (value, maximum) => typeof value === "string" && value.length > 0 && value.length <= maximum;
+    const identifier = (value) => label(value, 128) && !value.includes("/");
+    if (!data || data.hotelUid !== hotelUid || data.stockCountId !== stockCountId || data.locationId !== locationId
+      || data.catalogProductId !== catalogProductId || data.inventoryPolicyVersion !== 1 || !units.has(data.catalogBaseUnit)
+      || baseUnit !== undefined && data.catalogBaseUnit !== baseUnit
+      || !Array.isArray(data.options) || data.options.length > 525 || !Array.isArray(data.unavailable) || data.unavailable.length > 25
+      || data.nextCursor !== null && (!identifier(data.nextCursor) || data.nextCursor === afterSupplierProductId)
+      || new Set(data.options.map((option) => option?.id)).size !== data.options.length
+      || data.options.some((option) => !option || !identifier(option.supplierProductId) || !identifier(option.purchaseOptionId)
+        || option.id !== JSON.stringify([option.supplierProductId, option.purchaseOptionId]) || option.baseUnit !== data.catalogBaseUnit
+        || !label(option.supplierProductName, 200) || !label(option.supplierName, 200) || !label(option.purchaseUnit, 100)
+        || typeof option.catalogUnitsPerPackage !== "number" || !Number.isFinite(option.catalogUnitsPerPackage)
+        || option.catalogUnitsPerPackage <= 0 || option.catalogUnitsPerPackage > 1000000)
+      || data.unavailable.some((entry) => !entry || entry.supplierProductId !== null && !identifier(entry.supplierProductId)
+        || !label(entry.reason, 100))) throw new Error("Package choices returned an invalid scope, unit or pagination. Reload before counting.");
+    return data;
+  }, JSON.stringify([input, baseUnit]));
 }

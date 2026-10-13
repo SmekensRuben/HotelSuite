@@ -96,3 +96,25 @@ it("replays original count creation after remount and keeps corrupted storage un
   await expect(createStockCount("hotel-a", input)).rejects.toThrow("no replacement");
   expect(sessionStorage.getItem(key)).toBe("broken");
 });
+
+// These projection assertions exercise the scope guard, not the pure arithmetic.
+describe("frozen count package projection adapter", () => {
+  const page = () => ({ hotelUid: "hotel-a", stockCountId: "stock-a", locationId: "store", catalogProductId: "milk", inventoryPolicyVersion: 1,
+    catalogBaseUnit: "l", nextCursor: null, unavailable: [], options: [{ id: '["case","default"]', supplierProductId: "case", purchaseOptionId: "default",
+      supplierProductName: "Milk six-pack", supplierName: "Vendor", purchaseUnit: "Case", baseUnit: "l", catalogUnitsPerPackage: 6 }] });
+  it("requests only the actual selected hotel/count/location/article and never copies unit or price authority into the request", async () => {
+    const { getStockCountPackageOptions } = await import("./firebaseStockCounts"); mocks.call.mockResolvedValue(page());
+    await expect(getStockCountPackageOptions("hotel-a", "stock-a", "store", "milk", { baseUnit: "l" })).resolves.toEqual(page());
+    expect(mocks.call).toHaveBeenCalledWith("getHotelStockCountPackageOptions", { hotelUid: "hotel-a", stockCountId: "stock-a", locationId: "store", catalogProductId: "milk", afterSupplierProductId: null });
+    expect(mocks.getDoc).not.toHaveBeenCalled(); expect(mocks.getDocs).not.toHaveBeenCalled();
+  });
+  it("rejects wrong tenant, count, unit, missing pagination and malformed package projections", async () => {
+    const { getStockCountPackageOptions } = await import("./firebaseStockCounts");
+    for (const patch of [{ hotelUid: "foreign" }, { stockCountId: "other" }, { catalogBaseUnit: "ml" }, { nextCursor: undefined },
+      { options: [{ ...page().options[0], catalogUnitsPerPackage: "6" }] }, { options: [{ ...page().options[0], baseUnit: "kg" }] },
+      { options: [page().options[0], page().options[0]] }]) {
+      mocks.call.mockResolvedValue({ ...page(), ...patch });
+      await expect(getStockCountPackageOptions("hotel-a", "stock-a", "store", "milk", { baseUnit: "l" })).rejects.toThrow("invalid scope, unit or pagination");
+    }
+  });
+});

@@ -276,19 +276,21 @@ describe("catalog physical counts and periodic inventory", () => {
   it("shows period quantity evidence and unknown cost, without requiring private catalog permissions", async () => {
     mocks.permissions = ["stockcounts.read"];
     render(<InventoryPeriodsPage />);
+    fireEvent.change(screen.getByLabelText("Analysis policy"), { target: { value: "1" } });
     await chooseCombo("Physical location", "Store");
     await chooseCombo("Opening count", /Opening ·/);
     await chooseCombo("Closing count", /Closing ·/);
     fireEvent.click(screen.getByRole("button", { name: "Compare counts" }));
     await screen.findByText("Opening cost is unknown.");
     expect(screen.getByText("50")).toBeInTheDocument(); expect(screen.getAllByText("Unavailable")).toHaveLength(2);
-    expect(mocks.period).toHaveBeenCalledWith("hotel-a", "store", "opening", "closing");
+    expect(mocks.period).toHaveBeenCalledWith("hotel-a", "store", "opening", "closing", 1);
     expect(mocks.products).not.toHaveBeenCalled(); expect(mocks.catalog).not.toHaveBeenCalled();
   });
   it("keeps saved comparison distinct from incomplete current evidence after late receipts", async () => {
     const saved = await mocks.period();
     mocks.period.mockResolvedValue({ ...saved, currentlyComplete: false, postClosureIssues: [{ code: "late-posting-after-closing", detail: "Late milk receipt" }], items: saved.items.map((item) => ({ ...item, periodUnitCost: 2, inferredUsageValue: 100 })) });
     render(<InventoryPeriodsPage />);
+    fireEvent.change(screen.getByLabelText("Analysis policy"), { target: { value: "1" } });
     await chooseCombo("Physical location", "Store");
     await chooseCombo("Opening count", /Opening ·/);
     await chooseCombo("Closing count", /Closing ·/);

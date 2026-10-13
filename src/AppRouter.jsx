@@ -68,6 +68,7 @@ const FileImportTypeDetailPage = lazy(() => import("./components/pages/FileImpor
 const FileImportTypeEditPage = lazy(() => import("./components/pages/FileImportTypeEditPage.jsx"));
 const StockCountsPage = lazy(() => import("./components/pages/StockCountsPage.jsx"));
 const InventoryPeriodsPage = lazy(() => import("./components/pages/InventoryPeriodsPage.jsx"));
+const InventoryMovementsPage = lazy(() => import("./components/pages/InventoryMovementsPage.jsx"));
 const StockCountCreatePage = lazy(() => import("./components/pages/StockCountCreatePage.jsx"));
 const StockCountDetailPage = lazy(() => import("./components/pages/StockCountDetailPage.jsx"));
 const StockCountLocationPage = lazy(() => import("./components/pages/StockCountLocationPage.jsx"));
@@ -260,6 +261,10 @@ export default function AppRouter() {
       <Route
         path="/catalog/inventory"
         element={<ProtectedRoute feature="stockcounts" action="read"><InventoryPeriodsPage /></ProtectedRoute>}
+      />
+      <Route
+        path="/catalog/inventory-movements"
+        element={<ProtectedRoute feature="inventorymovements" action="read"><InventoryMovementsPage /></ProtectedRoute>}
       />
       <Route
         path="/catalog/stock-counts"

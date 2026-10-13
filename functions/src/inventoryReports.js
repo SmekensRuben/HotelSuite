@@ -6,6 +6,7 @@ const { gated, enforceRequestRollout } = require("./saasRollout");
 const { digest } = require("./validation");
 const { checkpointId } = require("./inventoryMovements");
 const policy = require("./inventoryPolicy");
+const reportPolicy = require("./inventoryPeriodPolicy");
 const MAX_MOVEMENTS = 1000;
 function inputObject(value, fields) {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !fields.includes(key))) throw new HttpsError("invalid-argument", "Unsupported inventory report input.");
@@ -53,12 +54,14 @@ async function listHotelInventoryCheckpointsHandler(request, services = {}) {
   }, { readOnly: true });
 }
 async function getHotelInventoryPeriodHandler(request, services = {}) {
-  const input = inputObject(request.data, ["hotelUid", "locationId", "openingStockCountId", "closingStockCountId"]);
+  const input = inputObject(request.data, ["hotelUid", "locationId", "openingStockCountId", "closingStockCountId", "reportPolicyVersion"]);
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid"), locationId = requireDocumentId(input.locationId, "locationId");
   const openingId = requireDocumentId(input.openingStockCountId, "openingStockCountId"), closingId = requireDocumentId(input.closingStockCountId, "closingStockCountId");
   if (openingId === closingId) throw new HttpsError("invalid-argument", "Choose two different finished stock counts.");
+  const version = input.reportPolicyVersion ?? 1;
+  if (![1, 2].includes(version)) throw new HttpsError("invalid-argument", "Choose a supported explicit inventory report policy version.");
   const db = services.firestore || admin.firestore();
-  const reportRef = db.doc(`hotels/${hotelUid}/inventoryPeriodReports/p-${digest(locationId, openingId, closingId, 1).slice(0, 48)}`);
+  const reportRef = db.doc(`hotels/${hotelUid}/inventoryPeriodReports/p-${digest(locationId, openingId, closingId, version).slice(0, 48)}`);
   return db.runTransaction(async (tx) => {
     await authorize(db, tx, request, hotelUid, services);
     const [openingDoc, closingDoc, openingCount, closingCount, prior] = await Promise.all([
@@ -79,7 +82,7 @@ async function getHotelInventoryPeriodHandler(request, services = {}) {
     let result;
     if (prior.exists) {
       result = prior.data();
-      if (result.inventoryPolicyVersion !== 1 || result.hotelUid !== hotelUid || result.locationId !== locationId
+      if (result.inventoryPolicyVersion !== 1 || (result.reportPolicyVersion ?? 1) !== version || result.hotelUid !== hotelUid || result.locationId !== locationId
         || result.opening?.stockCountId !== openingId || result.closing?.stockCountId !== closingId || result.currency !== opening.currency
         || !Array.isArray(result.items) || !result.coverage) throw new HttpsError("failed-precondition", "The saved inventory report needs reconciliation.");
     }
@@ -92,12 +95,21 @@ async function getHotelInventoryPeriodHandler(request, services = {}) {
       if (intermediateCheckpoints.docs.length > MAX_MOVEMENTS || closing.sequence - opening.sequence > MAX_MOVEMENTS + 1) throw new HttpsError("resource-exhausted", "This period exceeds the supported posting reconciliation window.");
       const sequences = [...movementSnapshot.docs, ...intermediateCheckpoints.docs].map((doc) => doc.data().sequence).sort((a, b) => a - b);
       if (sequences.length !== closing.sequence - opening.sequence - 1 || sequences.some((value, index) => value !== opening.sequence + index + 1)) throw new HttpsError("failed-precondition", "Inventory posting sequence has missing or duplicate evidence. Reconcile before using this report.");
-      const calculated = policy.period(opening, closing, movementSnapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id })));
-      result = { id: reportRef.id, inventoryPolicyVersion: 1, hotelUid, locationId, currency: opening.currency,
+      const sources = movementSnapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+      if (version === 1 && sources.some((item) => !["receipt", "reversal"].includes(item.kind))) {
+        throw new HttpsError("failed-precondition", "This interval contains manual adjustments. Choose report policy v2; existing saved v1 reports remain unchanged.");
+      }
+      if (version === 2) await require("./inventoryAdjustments").validateManualPeriodEvidence(db, tx, hotelUid, sources);
+      const calculated = version === 2 ? reportPolicy.period(opening, closing, sources) : policy.period(opening, closing, sources);
+      result = { id: reportRef.id, inventoryPolicyVersion: 1, ...(version === 2 ? { reportPolicyVersion: 2 } : {}), hotelUid, locationId, currency: opening.currency,
         opening: checkpointView(openingDoc), closing: checkpointView(closingDoc), ...calculated,
-        recordedReceiptCount: movementSnapshot.docs.length, computedAtMillis: services.now?.() ?? Date.now(),
+        recordedReceiptCount: sources.filter((item) => ["receipt", "reversal"].includes(item.kind)).length,
+        ...(version === 2 ? { recordedManualAdjustmentCount: sources.filter((item) => !["receipt", "reversal"].includes(item.kind)).length } : {}),
+        computedAtMillis: services.now?.() ?? Date.now(),
         movementIds: movementSnapshot.docs.map((doc) => doc.id), intermediateCheckpointIds: intermediateCheckpoints.docs.map((doc) => doc.id),
-        costBasis: "Period estimate from explicit opening costs and frozen net order prices; not invoice cost or live on-hand stock." };
+        costBasis: version === 2
+          ? "Residual value from explicit opening and closing net count estimates, frozen net receipt values and optional operator-entered net adjustment values; not invoice cost, a credit note, guaranteed sales consumption or live on-hand stock."
+          : "Period estimate from explicit opening costs and frozen net order prices; not invoice cost or live on-hand stock." };
       if (Buffer.byteLength(JSON.stringify(result), "utf8") > 750000) throw new HttpsError("resource-exhausted", "The period report exceeds the supported snapshot size.");
       tx.create(reportRef, result);
     }

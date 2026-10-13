@@ -18,6 +18,6 @@ export default function ModuleRolePicker({ modules = [], value = {}, onChange, d
         </div> : <p className="mt-2 text-xs text-slate-500">Use advanced permissions for this module. Role presets will be introduced when its module is developed.</p>}
       </div>;
     })}
-    <p className="text-xs leading-5 text-slate-500">Combine roles when needed. Approvers also need an outlet assignment. Module Manager does not automatically approve orders. Receiving roles must be assigned explicitly: Receiver records deliveries; Receiving Supervisor can also reverse receipts and finalize receiving. Stock Controller manages stock counts.</p>
+    <p className="text-xs leading-5 text-slate-500">Combine roles when needed. Approvers also need an outlet assignment. Module Manager does not automatically approve orders. Receiving roles must be assigned explicitly: Receiver records deliveries; Receiving Supervisor can also reverse receipts and finalize receiving. Stock Controller manages counts and records inventory movements. Inventory Supervisor can also reverse manual movements. Existing users receive new rights only after their access is explicitly reviewed and saved.</p>
   </fieldset>;
 }

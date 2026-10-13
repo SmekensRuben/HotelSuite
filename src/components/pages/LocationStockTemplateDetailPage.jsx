@@ -24,6 +24,7 @@ import {
   getLocationById,
   getLocationStockTemplateById,
   getHotelStockTemplateDisplay,
+  getPendingStockTemplateCommand,
   removeLocationStockTemplateItem,
   updateLocationStockTemplateItems,
 } from "../../services/firebaseSettings";
@@ -38,11 +39,13 @@ export default function LocationStockTemplateDetailPage() {
     navigate = useNavigate();
   const canUpdate = usePermission("locations", "update"),
     canReadCatalog = usePermission("catalogproducts", "read");
-  const scopeKey = `${hotelUid}:${locationId}:${templateId}`;
+  const actorUid = auth.currentUser?.uid || "";
+  const scopeKey = `${actorUid}:${hotelUid}:${locationId}:${templateId}`;
   const active = useRef({ key: scopeKey });
   if (active.current.key !== scopeKey) active.current = { key: scopeKey };
   const [selected, setSelected] = useState(null),
     [saving, setSaving] = useState(false),
+    [savingLabel, setSavingLabel] = useState(""),
     [error, setError] = useState("");
   const load = useCallback(async () => {
     const [template, location] = await Promise.all([
@@ -81,6 +84,7 @@ export default function LocationStockTemplateDetailPage() {
     active.current = { key: scopeKey };
     setSelected(null);
     setSaving(false);
+    setSavingLabel("");
     setError("");
     return () => {
       active.current = { key: null };
@@ -109,29 +113,58 @@ export default function LocationStockTemplateDetailPage() {
       ),
     [products.data, items],
   );
-  const disabled =
+  let hasSavedCommand = false;
+  try {
+    hasSavedCommand = Boolean(
+      getPendingStockTemplateCommand(hotelUid, locationId, templateId),
+    );
+  } catch {
+    // Recovery shows the storage error; no replacement may overwrite this intent.
+    hasSavedCommand = true;
+  }
+  const cannotEdit =
+    !actorUid ||
     !canUpdate ||
     !template ||
     !location ||
-    saving ||
     template?.archived === true ||
     location?.archived === true;
-  const mutate = async (operation) => {
-    if (disabled || !template) return;
+  const disabled = cannotEdit || saving || hasSavedCommand;
+  const mutate = async (operation, label = "Updating template…") => {
+    if (
+      disabled ||
+      !template ||
+      active.current.busy ||
+      auth.currentUser?.uid !== actorUid
+    ) return;
+    try {
+      if (getPendingStockTemplateCommand(hotelUid, locationId, templateId)) {
+        setError("Retry the original saved request before making another change.");
+        return;
+      }
+    } catch (failure) {
+      setError(failure.message || "The saved template command needs review.");
+      return;
+    }
     const requested = active.current;
+    requested.busy = true;
+    const isCurrent = () =>
+      active.current === requested && auth.currentUser?.uid === actorUid;
     setSaving(true);
+    setSavingLabel(label);
     setError("");
     try {
       await operation();
-      if (active.current === requested) {
+      if (isCurrent()) {
         setSelected(null);
         await Promise.all([query.retry(), display.retry()]);
       }
     } catch (failure) {
-      if (active.current === requested)
+      if (isCurrent())
         setError(failure.message || "Unable to update the template.");
     } finally {
-      if (active.current === requested) setSaving(false);
+      requested.busy = false;
+      if (isCurrent()) setSaving(false);
     }
   };
   const move = (index, direction) => {
@@ -139,14 +172,16 @@ export default function LocationStockTemplateDetailPage() {
       target = index + direction;
     if (target < 0 || target >= next.length) return;
     [next[index], next[target]] = [next[target], next[index]];
-    return mutate(() =>
-      updateLocationStockTemplateItems(
-        hotelUid,
-        locationId,
-        templateId,
-        next,
-        template.revision ?? 0,
-      ),
+    return mutate(
+      () =>
+        updateLocationStockTemplateItems(
+          hotelUid,
+          locationId,
+          templateId,
+          next,
+          template.revision ?? 0,
+        ),
+      "Updating article order…",
     );
   };
   return (
@@ -177,14 +212,26 @@ export default function LocationStockTemplateDetailPage() {
             Back to location
           </button>
         </div>
-        <PendingStockCommand
-          kind="template"
-          hotelUid={hotelUid}
-          locationId={locationId}
-          templateId={templateId}
-          disabled={disabled}
-          onComplete={() => Promise.all([query.retry(), display.retry()])}
-        />
+        {saving ? (
+          <p role="status" aria-live="polite" className="text-sm text-gray-600">
+            {savingLabel}
+          </p>
+        ) : (
+          <PendingStockCommand
+            key={scopeKey}
+            kind="template"
+            hotelUid={hotelUid}
+            locationId={locationId}
+            templateId={templateId}
+            disabled={cannotEdit}
+            onComplete={() => {
+              if (auth.currentUser?.uid !== actorUid) return;
+              setError("");
+              setSelected(null);
+              return Promise.all([query.retry(), display.retry()]);
+            }}
+          />
+        )}
         {query.loading && (
           <p className="text-sm text-gray-600">Loading stock template...</p>
         )}
@@ -336,6 +383,7 @@ export default function LocationStockTemplateDetailPage() {
                                   undefined,
                                   template.revision ?? 0,
                                 ),
+                                "Removing article…",
                               )
                             }
                             className="rounded-md px-2 py-1.5 text-xs font-medium text-red-700 disabled:opacity-40"
@@ -423,6 +471,7 @@ export default function LocationStockTemplateDetailPage() {
                             { catalogProductId: selected.id },
                             template.revision ?? 0,
                           ),
+                          "Adding article…",
                         )
                       }
                     >

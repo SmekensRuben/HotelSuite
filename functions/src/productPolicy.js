@@ -2,6 +2,7 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const { requireDocumentId } = require("./subscriptions");
 const { text } = require("./validation");
 const units = require("./unitCatalog.json");
+const { validDate } = require("./importMonitoringPolicy");
 
 const PRODUCT_POLICY_VERSION = 1;
 const SCALE = 1000000n;
@@ -96,6 +97,11 @@ function priceContract(input) {
   if (input.priceBasis === "gross" && vatRate === null) fail("Gross prices require an explicit VAT rate, as a fraction from 0 to 1.");
   return { priceBasis: input.priceBasis, vatRate };
 }
+function optionalPriceDate(value, field) {
+  if (value === null || value === undefined || value === "") return null;
+  if (!validDate(value)) fail(`${field} must be a valid YYYY-MM-DD date or blank.`);
+  return value;
+}
 function netPrice(price, basis, vatRate) {
   price = optionalNumber(price, "Price", { maximum: MAX_PRICE });
   if (price === null || basis === "unknown") return null;
@@ -130,7 +136,7 @@ function normalizeOption(input) {
     pricePerPurchaseUnit: optionalNumber(input.pricePerPurchaseUnit, "Purchase price", { maximum: MAX_PRICE }) };
 }
 function normalizeSupplierProduct(input) {
-  supportedFields(input, ["supplierId", "supplierSku", "supplierProductName", "supplierName", "currency", "pricingModel", "pricePerBaseUnit", "pricePerPurchaseUnit", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "catalogProductId", "imageUrl", "active", "priceBasis", "vatRate", "purchaseOptions"], "supplier product");
+  supportedFields(input, ["supplierId", "supplierSku", "supplierProductName", "supplierName", "currency", "pricingModel", "pricePerBaseUnit", "pricePerPurchaseUnit", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "catalogProductId", "imageUrl", "active", "priceBasis", "vatRate", "purchaseOptions", "priceValidFrom", "priceValidUntil"], "supplier product");
   if (!/^[A-Z]{3}$/.test(input.currency ?? "")) fail("Currency must be an explicit three-letter uppercase code.");
   if (!["Per Purchase Unit", "Per Base Unit"].includes(input.pricingModel)) fail("Choose Per Purchase Unit or Per Base Unit pricing.");
   const result = { supplierId: requireDocumentId(input.supplierId, "supplierId"),
@@ -142,7 +148,9 @@ function normalizeSupplierProduct(input) {
     pricePerPurchaseUnit: optionalNumber(input.pricePerPurchaseUnit, "Purchase price", { maximum: MAX_PRICE }),
     catalogProductId: input.catalogProductId === null || input.catalogProductId === undefined || input.catalogProductId === "" ? null : requireDocumentId(input.catalogProductId, "catalogProductId"),
     imageUrl: text(input.imageUrl ?? "", "Image URL", 1000), active: boolean(input.active, "active"), ...priceContract(input),
+    priceValidFrom: optionalPriceDate(input.priceValidFrom, "Price valid from"), priceValidUntil: optionalPriceDate(input.priceValidUntil, "Price valid until"),
     productPolicyVersion: PRODUCT_POLICY_VERSION };
+  if (result.priceValidFrom && result.priceValidUntil && result.priceValidFrom > result.priceValidUntil) fail("Price valid from must not be after price valid until.");
   if (result.pricingModel === "Per Base Unit") result.pricePerPurchaseUnit = result.pricePerBaseUnit === null ? null : derivedPrice(result.pricePerBaseUnit, result.baseUnitsPerPurchaseUnit);
   else {
     result.pricePerBaseUnit = null;

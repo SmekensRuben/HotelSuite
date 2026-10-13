@@ -18,6 +18,7 @@ function initialForm(product = {}) {
     supplierProductName: product.supplierProductName || "", currency: product.currency || "EUR",
     pricingModel: product.pricingModel || "Per Purchase Unit", priceBasis: product.priceBasis || "unknown",
     vatPercent: product.vatRate == null ? "" : String(product.vatRate * 100),
+    priceValidFrom: product.priceValidFrom || "", priceValidUntil: product.priceValidUntil || "",
     pricePerBaseUnit: stringNumber(product.pricePerBaseUnit), pricePerPurchaseUnit: stringNumber(product.pricePerPurchaseUnit),
     purchaseUnit: product.purchaseUnit || "", baseUnit: product.baseUnit || "",
     baseUnitsPerPurchaseUnit: stringNumber(product.baseUnitsPerPurchaseUnit),
@@ -58,6 +59,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
     if (legacyVariants && !legacyReviewed) { setError("Review the old variants and replace them with explicit purchase options before saving."); return; }
     if (!sources.data?.suppliers.some((supplier) => supplier.id === form.supplierId)) { setError("Select an existing supplier from this hotel."); return; }
     if (form.priceBasis === "gross" && form.vatPercent === "") { setError("Enter the VAT rate for a gross price contract."); return; }
+    if (form.priceValidFrom && form.priceValidUntil && form.priceValidFrom > form.priceValidUntil) { setError("Price valid from must not be after price valid until."); return; }
     const linked = sources.data?.catalog.find((product) => product.id === form.catalogProductId);
     if (form.catalogProductId && !linked) { setError("The catalog link is unavailable. Load or select an existing hotel catalog product."); return; }
     const dimensions = { g: "weight", kg: "weight", ml: "volume", l: "volume", each: "count" };
@@ -66,6 +68,7 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
       supplierId: form.supplierId, supplierSku: form.supplierSku.trim(), supplierProductName: form.supplierProductName.trim(),
       currency: form.currency.trim().toUpperCase(), pricingModel: form.pricingModel,
       priceBasis: form.priceBasis, vatRate: form.priceBasis === "gross" && form.vatPercent !== "" ? Number(form.vatPercent) / 100 : null,
+      priceValidFrom: form.priceValidFrom || null, priceValidUntil: form.priceValidUntil || null,
       pricePerBaseUnit: form.pricingModel === "Per Base Unit" ? nullableNumber(form.pricePerBaseUnit) : null,
       pricePerPurchaseUnit: computedDefaultPrice, purchaseUnit: form.purchaseUnit.trim(), baseUnit: form.baseUnit,
       baseUnitsPerPurchaseUnit: Number(form.baseUnitsPerPurchaseUnit), catalogProductId: form.catalogProductId || null,
@@ -106,6 +109,9 @@ export default function SupplierProductFormFields({ initialData, onSubmit, savin
         <option value="unknown">Unknown — inventory cost unavailable</option><option value="net">Net (excluding VAT)</option><option value="gross">Gross (including VAT)</option>
       </select></Field>
       {form.priceBasis === "gross" && <Field title="VAT rate (%) *"><input required type="number" min="0" max="100" step="0.01" value={form.vatPercent} onChange={(event) => change("vatPercent", event.target.value)} className={inputClass} /></Field>}
+      <Field title="Contract price valid from (optional)"><input type="date" value={form.priceValidFrom} max={form.priceValidUntil || undefined} onChange={(event) => change("priceValidFrom", event.target.value)} className={inputClass} /></Field>
+      <Field title="Contract price valid until (optional)"><input type="date" value={form.priceValidUntil} min={form.priceValidFrom || undefined} onChange={(event) => change("priceValidUntil", event.target.value)} className={inputClass} /></Field>
+      <p className="sm:col-span-2 text-xs text-gray-500">Enter dates only when provided by the supplier's price contract. Blank bounds remain unknown. Dates apply to all purchase options and qualify current price comparisons; they do not rewrite existing orders or receipts.</p>
       <Field title="Default pricing model"><select value={form.pricingModel} onChange={(event) => change("pricingModel", event.target.value)} className={inputClass}><option>Per Purchase Unit</option><option>Per Base Unit</option></select></Field>
       <Field title="Default purchase unit *"><input required value={form.purchaseUnit} onChange={(event) => change("purchaseUnit", event.target.value)} placeholder="e.g. case of 24 bottles" className={inputClass} /></Field>
       <Field title={`Default package content (${form.baseUnit || "base units"}) *`}><input required type="number" min="0.000001" max="1000000" step="0.000001" value={form.baseUnitsPerPurchaseUnit} onChange={(event) => change("baseUnitsPerPurchaseUnit", event.target.value)} className={inputClass} /></Field>

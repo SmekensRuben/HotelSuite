@@ -182,3 +182,67 @@ test("cross-command request IDs cannot replay a different product collection or 
   await assert.rejects(importProducts(db, [{ expectedRevision: 0, product: offer() }], { requestId: "catalog-create" }), (error) => error.code === "already-exists");
 });
 
+test("supplier price snapshots are immutable transaction evidence on create and real content change only", async () => {
+  const db = fixture(), first = await createOffer(db);
+  const history = () => [...db.records.entries()].filter(([path]) => path.includes("/supplierPriceHistory/"));
+  const initial = history(), initialContent = JSON.stringify(initial);
+  assert.equal(history().length, 1);
+  assert.equal(history()[0][1].observation, "initial-create");
+  assert.equal(history()[0][1].terms.catalogBaseUnit, "l");
+  await createOffer(db);
+  assert.deepEqual(history(), initial, "operation replay cannot add or replace snapshots");
+  assert.equal(JSON.stringify(history()), initialContent);
+  await mutateHotelSupplierProductHandler(request({ hotelUid, requestId: "rename-only", action: "update", productId: first.productId,
+    expectedRevision: 1, product: offer({ supplierProductName: "New name" }) }), { firestore: db, auth });
+  assert.equal(history().length, 1);
+  const change = { hotelUid, requestId: "changed-price", action: "update", productId: first.productId, expectedRevision: 2, product: offer({ pricePerPurchaseUnit: 15 }) };
+  await mutateHotelSupplierProductHandler(request(change), { firestore: db, auth });
+  await mutateHotelSupplierProductHandler(request(change), { firestore: db, auth });
+  assert.equal(history().length, 2);
+  assert.deepEqual(history()[0], initial[0]);
+  assert.equal(history()[0][1], initial[0][1], "an existing immutable entry was not replaced");
+  assert.equal(JSON.stringify(history()[0]), JSON.stringify(initial[0]));
+  const changed = history()[1][1];
+  assert.equal(changed.previousTerms.options[0].pricePerPurchaseUnit, 12);
+  assert.equal(changed.terms.options[0].pricePerPurchaseUnit, 15);
+  assert.equal(changed.previousObservationDate, null);
+  assert.equal(changed.contractualValidUntil, null);
+  await mutateHotelSupplierProductHandler(request({ hotelUid, requestId: "archive-price", action: "archive", productId: first.productId, expectedRevision: 3 }), { firestore: db, auth });
+  assert.equal(history().length, 2);
+});
+
+test("legacy terms get no manufactured pre-feature events; first actual change records observed prior terms with unknown prior date", async () => {
+  const db = fixture(); db.records.set(`hotels/${hotelUid}/supplierproducts/legacy`, offer({ revision: 0 }));
+  await mutateHotelSupplierProductHandler(request({ hotelUid, requestId: "legacy-renamed", action: "update", productId: "legacy", expectedRevision: 0,
+    product: offer({ supplierProductName: "Renamed" }) }), { firestore: db, auth });
+  assert.equal([...db.records.keys()].filter((path) => path.includes("/supplierPriceHistory/")).length, 1, "reviewing a legacy policy establishes new observed terms, never a backdated event");
+  const entry = [...db.records.entries()].find(([path]) => path.includes("/supplierPriceHistory/"))[1];
+  assert.equal(entry.previousTerms.productPolicyVersion, null);
+  assert.equal(entry.previousObservationDate, null);
+  assert.equal(entry.observation, "terms-changed");
+});
+
+test("atomic import snapshots each new/changed supplier offer once and failed batches leave no price evidence", async () => {
+  const db = fixture(), rows = [{ expectedRevision: 0, product: offer() }, { expectedRevision: 0, product: offer({ supplierId: "other", supplierSku: "OTHER" }) }];
+  const first = await importProducts(db, rows);
+  await importProducts(db, rows);
+  assert.equal([...db.records.keys()].filter((path) => path.includes("/supplierPriceHistory/")).length, 2);
+  const before = JSON.stringify([...db.records]);
+  await assert.rejects(importProducts(db, [{ productId: first.products[0].productId, expectedRevision: 1, product: offer({ pricePerPurchaseUnit: 10 }) },
+    { expectedRevision: 0, product: offer({ supplierSku: "INVALID", pricePerPurchaseUnit: "invalid" }) }], { requestId: "failed-price-import", onExisting: "overwrite" }));
+  assert.equal(JSON.stringify([...db.records]), before);
+});
+test("older update/import payloads preserve known contract bounds while explicit clearing creates a new price-content event", async () => {
+  const db = fixture(), first = await createOffer(db, { product: offer({ priceValidFrom: "2026-10-01", priceValidUntil: "2026-10-31" }) });
+  const saved = () => db.records.get(`hotels/${hotelUid}/supplierproducts/${first.productId}`);
+  const events = () => [...db.records.keys()].filter((path) => path.includes("/supplierPriceHistory/"));
+  await mutateHotelSupplierProductHandler(request({ hotelUid, requestId: "older-client-name", action: "update", productId: first.productId, expectedRevision: 1,
+    product: offer({ supplierProductName: "Old client renamed" }) }), { firestore: db, auth });
+  assert.equal(saved().priceValidUntil, "2026-10-31"); assert.equal(events().length, 1);
+  await importProducts(db, [{ productId: first.productId, expectedRevision: 2, product: offer() }], { requestId: "older-csv", onExisting: "overwrite" });
+  assert.equal(saved().priceValidFrom, "2026-10-01"); assert.equal(saved().priceValidUntil, "2026-10-31"); assert.equal(events().length, 1);
+  await mutateHotelSupplierProductHandler(request({ hotelUid, requestId: "clear-contract-bound", action: "update", productId: first.productId, expectedRevision: 3,
+    product: offer({ priceValidUntil: null }) }), { firestore: db, auth });
+  assert.equal(saved().priceValidFrom, "2026-10-01"); assert.equal(saved().priceValidUntil, null); assert.equal(events().length, 2);
+});
+

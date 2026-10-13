@@ -37,6 +37,9 @@ const mocks = vi.hoisted(() => ({
   users: vi.fn(),
   createOutlet: vi.fn(),
   setApprovers: vi.fn(),
+  actorUid: "actor",
+  pendingTemplate: vi.fn(),
+  retryTemplate: vi.fn(),
 }));
 vi.mock("react-router-dom", () => ({
   useNavigate: () => mocks.navigate,
@@ -53,11 +56,14 @@ vi.mock("../../hooks/usePermission", () => ({
     mocks.permissions.has(`${feature}.${action}`),
 }));
 vi.mock("../../firebaseConfig", () => ({
-  auth: { currentUser: { uid: "actor" } },
+  auth: { get currentUser() { return { uid: mocks.actorUid }; } },
   signOut: vi.fn(),
 }));
 vi.mock("../layout/HeaderBar", () => ({ default: () => null }));
-vi.mock("../inventory/PendingStockCommand", () => ({ default: () => null }));
+vi.mock("../../services/firebaseStockCounts", () => ({
+  getPendingCountCreation: () => null,
+  retryPendingCountCreation: vi.fn(),
+}));
 vi.mock("../../services/firebaseProducts", () => ({
   getCatalogProducts: mocks.catalog,
 }));
@@ -80,13 +86,16 @@ vi.mock("../../services/firebaseSettings", () => ({
   retryPendingProcurementResourceCommand: mocks.retry,
   createOutlet: mocks.createOutlet,
   setOutletApprovers: mocks.setApprovers,
+  getPendingStockTemplateCommand: mocks.pendingTemplate,
+  retryPendingStockTemplateCommand: mocks.retryTemplate,
 }));
 const deferred = () => {
-  let resolve;
-  const promise = new Promise((done) => {
+  let resolve, reject;
+  const promise = new Promise((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 };
 const template = {
   id: "weekly",
@@ -97,6 +106,7 @@ const template = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.hotel = "hotel-a";
+  mocks.actorUid = "actor";
   mocks.permissions = new Set([
     "locations.read",
     "locations.update",
@@ -138,6 +148,9 @@ beforeEach(() => {
   mocks.outlet.mockResolvedValue({ id: "bar", name: "Bar", revision: 4 });
   mocks.approvers.mockResolvedValue([]);
   mocks.pending.mockReturnValue(null);
+  mocks.pendingTemplate.mockReset().mockReturnValue(null);
+  mocks.retryTemplate.mockReset().mockResolvedValue({ revision: 4 });
+  mocks.add.mockReset().mockResolvedValue({ revision: 4 });
   mocks.archiveLocation.mockResolvedValue({ archived: true });
   mocks.archiveOutlet.mockResolvedValue({ archived: true });
   mocks.users.mockResolvedValue([]);
@@ -291,6 +304,155 @@ describe("template article names and choices", () => {
       }),
     );
     expect(screen.queryByText("Obsolete juice")).not.toBeInTheDocument();
+  });
+});
+
+describe("stock template command progress and reconciliation", () => {
+  const savedIntent = () => ({
+    hotelUid: "hotel-a",
+    locationId: "store",
+    templateId: "weekly",
+    action: "add-item",
+    item: { catalogProductId: "milk" },
+    expectedRevision: 3,
+    requestId: "9d2d757b-8908-4505-800f-5ef0e7a01234",
+  });
+  const allowMilkChoice = () => {
+    mocks.permissions.add("catalogproducts.read");
+    mocks.catalog.mockResolvedValue({
+      products: [{ id: "milk", name: "Milk", baseUnit: "l", inventoryTracked: true }],
+      hasMore: false,
+      cursor: null,
+    });
+  };
+  const chooseMilk = async () => {
+    const picker = await screen.findByRole("combobox", { name: "Catalog product" });
+    await waitFor(() => expect(picker).toBeEnabled());
+    fireEvent.focus(picker);
+    fireEvent.click(screen.getByRole("option", { name: "Milk (l (litres))" }));
+    return picker;
+  };
+
+  it("shows accessible progress without a reconciliation warning for a normal in-flight add", async () => {
+    allowMilkChoice();
+    const flight = deferred();
+    mocks.add.mockImplementation(() => {
+      mocks.pendingTemplate.mockReturnValue(savedIntent());
+      window.dispatchEvent(new Event("stock-template-command-changed"));
+      return flight.promise;
+    });
+    render(<LocationStockTemplateDetailPage />);
+    await chooseMilk();
+    fireEvent.click(screen.getByRole("button", { name: "Add product" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Adding article…");
+    expect(screen.queryByText(/needs reconciliation/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry saved request" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add product" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Add product" }));
+    expect(mocks.add).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      mocks.pendingTemplate.mockReturnValue(null);
+      window.dispatchEvent(new Event("stock-template-command-changed"));
+      flight.resolve({ revision: 4 });
+    });
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    expect(screen.queryByText(/needs reconciliation/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mocks.add).toHaveBeenCalledWith("hotel-a", "store", "weekly", { catalogProductId: "milk" }, 3);
+  });
+
+  it("preserves an uncertain rejected request and requires replay of its original intent", async () => {
+    allowMilkChoice();
+    const flight = deferred(), original = savedIntent();
+    mocks.add.mockImplementation(() => {
+      mocks.pendingTemplate.mockReturnValue(original);
+      window.dispatchEvent(new Event("stock-template-command-changed"));
+      return flight.promise;
+    });
+    render(<LocationStockTemplateDetailPage />);
+    await chooseMilk();
+    fireEvent.click(screen.getByRole("button", { name: "Add product" }));
+    await act(async () => flight.reject(new Error("The response was lost.")));
+    expect(await screen.findByText(/A saved template command needs reconciliation/)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("The response was lost.");
+    expect(screen.getByRole("button", { name: "Add product" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove", exact: true })).toBeDisabled();
+    expect(mocks.pendingTemplate()).toEqual(original);
+    mocks.retryTemplate.mockImplementation(async () => {
+      expect(mocks.pendingTemplate()).toEqual(original);
+      mocks.pendingTemplate.mockReturnValue(null);
+      window.dispatchEvent(new Event("stock-template-command-changed"));
+      return { revision: 4 };
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry saved request" }));
+    await waitFor(() => expect(mocks.retryTemplate).toHaveBeenCalledWith("hotel-a", "store", "weekly"));
+    await waitFor(() => expect(screen.queryByText(/needs reconciliation/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("The response was lost.")).not.toBeInTheDocument());
+    expect(mocks.add).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns for a recovered intent after remount and blocks replacement edits", async () => {
+    allowMilkChoice();
+    const original = savedIntent();
+    mocks.pendingTemplate.mockReturnValue(original);
+    const first = render(<LocationStockTemplateDetailPage />);
+    await screen.findByText(/needs reconciliation/);
+    first.unmount();
+    render(<LocationStockTemplateDetailPage />);
+    expect(await screen.findByText(/needs reconciliation/)).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await screen.findByText("Orange juice");
+    expect(screen.getByRole("button", { name: "Add product" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retry saved request" })).toBeEnabled();
+    expect(mocks.pendingTemplate()).toEqual(original);
+    expect(mocks.add).not.toHaveBeenCalled();
+  });
+
+  it("keeps unreadable recovery storage explicit and blocks replacement edits", async () => {
+    allowMilkChoice();
+    mocks.pendingTemplate.mockImplementation(() => {
+      throw new Error("The saved command cannot be read; its outcome needs review.");
+    });
+    render(<LocationStockTemplateDetailPage />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The saved command cannot be read");
+    await screen.findByText("Orange juice");
+    expect(screen.getByRole("button", { name: "Add product" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Retry saved request" })).not.toBeInTheDocument();
+    expect(mocks.add).not.toHaveBeenCalled();
+  });
+
+  it("does not hide a rejected error when the server proved the request uncommitted", async () => {
+    allowMilkChoice();
+    mocks.add.mockRejectedValue(new Error("This product is no longer available."));
+    render(<LocationStockTemplateDetailPage />);
+    await chooseMilk();
+    fireEvent.click(screen.getByRole("button", { name: "Add product" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("This product is no longer available.");
+    expect(screen.queryByText(/needs reconciliation/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add product" })).toBeEnabled();
+  });
+
+  it("ignores the old actor's rejected response after switching authenticated users", async () => {
+    allowMilkChoice();
+    const flight = deferred(), original = savedIntent();
+    mocks.add.mockImplementation(() => {
+      mocks.pendingTemplate.mockImplementation(() => mocks.actorUid === "actor" ? original : null);
+      window.dispatchEvent(new Event("stock-template-command-changed"));
+      return flight.promise;
+    });
+    const view = render(<LocationStockTemplateDetailPage />);
+    await chooseMilk();
+    fireEvent.click(screen.getByRole("button", { name: "Add product" }));
+    mocks.actorUid = "other-actor";
+    view.rerender(<LocationStockTemplateDetailPage />);
+    const picker = await chooseMilk();
+    await act(async () => flight.reject(new Error("Obsolete actor response.")));
+    expect(screen.queryByText("Obsolete actor response.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/needs reconciliation/)).not.toBeInTheDocument();
+    expect(picker).toHaveValue("Milk (l (litres))");
+    expect(screen.getByRole("button", { name: "Add product" })).toBeEnabled();
+    mocks.actorUid = "actor";
+    expect(mocks.pendingTemplate()).toEqual(original);
   });
 });
 

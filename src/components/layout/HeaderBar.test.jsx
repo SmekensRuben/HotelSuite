@@ -38,4 +38,13 @@ describe("HeaderBar Front Office permissions", () => {
     renderHeader();
     expect(screen.getByText("Front Office")).toBeInTheDocument();
   });
+  it("shows movement navigation only for its separate read permission", () => {
+    permissions = ["stockcounts.read"];
+    const page = renderHeader();
+    expect(screen.queryByRole("link", { name: "Inventory movements" })).not.toBeInTheDocument();
+    page.unmount();
+    permissions = ["inventorymovements.read"];
+    renderHeader();
+    expect(screen.getByRole("link", { name: "Inventory movements" })).toHaveAttribute("href", "/catalog/inventory-movements");
+  });
 });

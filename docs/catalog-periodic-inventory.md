@@ -8,6 +8,11 @@ integrations or a continuously calculated on-hand inventory. No physical stock
 is increased by ordering goods. The Inventory periods page reports evidence
 between two completed physical counts, not guaranteed sales consumption.
 
+The counting and supplier-price extensions keep product/checkpoint policy v1.
+Manual adjustment policy v1 adds immutable physical transfers, waste, breakage
+and supplier returns. Explicit report policy v2 classifies those movements in a
+separate saved analysis; existing receipt-only v1 analyses remain unchanged.
+
 Catalog products are stable physical article identities. Each tracked article
 has one supported base unit: g, kg, ml, l or each. Two supplier offers may share
 an article only when they represent interchangeable goods. Different qualities,
@@ -64,7 +69,11 @@ retroactively recalculated. Missing historical currency is shown as unknown.
 3. Create a physical count and choose its business date. Quantity inputs are in
    catalog base units (six decimals), so one bottle can be entered as one each
    instead of a rounded fraction of a supplier case. Enter the physical base
-   quantity directly; package-entry helpers can be added later. Explicit zero and uncounted are
+   quantity directly or apply a validated package/loose-content total. The helper
+   uses current reviewed package contents with the frozen count unit, loads only
+   the selected article's choices and never imports prices into the count. Apply
+   changes the quantity explicitly; Save Counts persists it. Barcode recognition
+   remains a later stage. Explicit zero and uncounted are
    different. Every included item must be counted before a location can finish,
    including unfinished historical counts. Completed counts stay immutable.
 4. Place orders using a selected supplier package. Cart and order line identities
@@ -132,6 +141,65 @@ stockTemplateOperations, inventoryLocationStates, inventoryCheckpoints,
 inventoryMovements, inventoryReversals, inventoryPeriodReports,
 procurementResourceOperations and procurementResourceAudit. They are not
 descendants of the former recursive location write grant.
+
+## Supplier price insights and manual physical movements
+
+Catalog Product details show bounded supplier-package comparisons; Supplier
+Product details show immutable observed price-content revisions. These need
+Catalog Products, Supplier Products and Suppliers read access. Comparisons
+normalize VAT and physical units once, rank within the same explicit currency
+and keep unknown contracts unavailable. Complete pagination is required before
+calling a loaded price the lowest entered goods price. Goods prices exclude
+unentered delivery costs, deposits, rebates and minimum-order constraints.
+
+Optional `priceValidFrom` and `priceValidUntil` are manually entered date-only
+contract bounds, validated in order and preserved with pricing snapshots. Current
+comparison eligibility uses the hotel's valid time zone and date; expired or
+future known bounds do not rank as current prices. Missing bounds remain unknown.
+Observation time does not prove effective contractual validity. Existing order
+and receiving snapshots are not revalued or rewritten by these insights.
+
+The private history is `supplierPriceHistory/{supplierProductId}/entries`.
+Protected product commands append only when purchasing terms, content, catalog
+link or validity bounds change. Exact command replay and metadata-only edits do
+not append duplicate price events. Earlier legacy terms are observed by the
+first changed transaction with their prior effective date explicitly unknown.
+
+Purchasing & Inventory → Inventory movements (`/catalog/inventory-movements`)
+uses `inventorymovements.read/create/reverse`. Stock Controller may record new
+events after its access is reviewed and saved; Inventory Supervisor supplies the
+separate explicit reversal grant. Existing users are not migrated automatically.
+The `inventorymovements.*` wildcard does not grant reversal.
+
+Record a positive catalog quantity, explicit hotel business date, reference and
+reason. Internal transfers atomically post a negative source leg and positive
+destination leg. Waste, breakage and physical returns are separate categories.
+These records do not calculate live on-hand stock or prove transfer availability.
+Optional manually entered net costs retain their explicit hotel currency; unknown
+values stay unavailable. A physical supplier return records goods leaving a
+location; it does not reverse receipt evidence or create an invoice credit.
+
+Immutable command/evidence collections are `inventoryAdjustments`,
+`inventoryAdjustmentOperations` and `inventoryAdjustmentReversals`. Supervisor
+corrections post exact compensating legs from the original snapshots, including
+archived destinations. Actor-bound saved requests and acknowledged actor/request
+IDs protect retries, account changes and uncertain responses. Normal submission
+shows progress; ambiguous results preserve the original request for recovery.
+
+Explicit period v2 uses a different saved-report ID and quantity equation:
+opening + net receipts + transfers in - transfers out - waste - breakage -
+physical returns - closing. Monetary residual needs complete explicit opening,
+movement and closing source values in one currency; it never invents a weighted
+cost. Both transfer legs and reversals require complete frozen source evidence.
+All existing posting sequences, cutoff, late-source and missing-evidence checks
+remain active. Saved v1 results remain unchanged, while a new v1 calculation
+containing manual evidence fails explicitly and requires selecting v2.
+
+All new private namespaces are client-denied and blocked from generic imports.
+The pre-existing v5 default-deny boundary already protects them. This compatible
+extension does not require a fresh SaaS version activation solely because another
+PR was merged. See `procurement-extensions-plan.md` for acceptance and remaining
+production checks.
 
 ## Resource archival, display names and loading
 

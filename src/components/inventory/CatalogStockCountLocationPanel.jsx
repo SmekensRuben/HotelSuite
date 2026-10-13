@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import StockCountPackageEntry from "./StockCountPackageEntry";
 import { Card } from "../layout/Card";
 import { auth } from "../../firebaseConfig";
 import { usePermission } from "../../hooks/usePermission";
@@ -94,7 +95,7 @@ export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, l
   };
   return <Card className="space-y-5">
     <div><h2 className="text-xl font-semibold">Catalog count · {location.locationName}</h2>
-      <p className="mt-1 text-sm text-gray-600">Count the physical quantity in the catalog unit shown on each row. Supplier package units are converted on receiving; for a catalog product measured in litres, count 2 litres rather than 2,000 millilitres. Blank means uncounted; enter 0 when none is present.</p>
+      <p className="mt-1 text-sm text-gray-600">Count directly in the catalog unit or use validated packages and loose contents. Supplier package units are converted on receiving; for a catalog product measured in litres, count 2 litres rather than 2,000 millilitres. Blank means uncounted; enter 0 when none is present.</p>
       <p className="text-sm text-gray-600">Optional net unit cost ({stockCount.currency || "currency unknown"}) is an operator estimate per base unit. Unknown cost stays unavailable. This count is a dated snapshot, not live stock. Apply one physical delivery cutoff: receipts posted while counting may require a recount and will be flagged in period reports.</p>
       <p className="font-medium">{counted} / {rows.length} counted · {stockCount.businessDate || "Business date unavailable"}</p></div>
     {rows.length === 0 && <p role="alert">No valid catalog count items are available. Review the location template.</p>}
@@ -103,9 +104,11 @@ export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, l
       const value = quantity !== "" && cost !== "" && !invalid ? Number(quantity) * Number(cost) : null;
       return <article key={id} className="grid items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]">
         <div><h3 className="font-semibold">{item.catalogProductName || item.name || "Unnamed catalog product"}</h3><p className="text-sm text-gray-500">Count unit: {item.baseUnit ? productUnitLabel(item.baseUnit) : "Unknown"}</p></div>
-        <label className="text-sm">Count ({item.baseUnit})<input aria-label={`Count ${item.catalogProductName || item.name || id}`} type="number" min="0" max="1000000" step="0.000001" value={quantity} disabled={!canUpdate || finished || saving} onChange={(event) => setQuantities((current) => ({ ...current, [id]: event.target.value }))} className="mt-1 w-full rounded border px-3 py-2" /></label>
-        <label className="text-sm">Estimated net cost / {item.baseUnit}<input aria-label={`Unit cost ${item.catalogProductName || item.name || id}`} type="number" min="0" max="1000000" step="0.000001" placeholder="Unknown" value={cost} disabled={!canUpdate || finished || saving} onChange={(event) => setCosts((current) => ({ ...current, [id]: event.target.value }))} className="mt-1 w-full rounded border px-3 py-2" /></label>
+        <label className="text-sm">Count ({item.baseUnit})<input aria-label={`Count ${item.catalogProductName || item.name || id}`} type="number" inputMode="decimal" min="0" max="1000000" step="0.000001" value={quantity} disabled={!canUpdate || finished || saving} onChange={(event) => setQuantities((current) => ({ ...current, [id]: event.target.value }))} className="mt-1 min-h-[44px] w-full rounded border px-3 py-2" /></label>
+        <label className="text-sm">Estimated net cost / {item.baseUnit}<input aria-label={`Unit cost ${item.catalogProductName || item.name || id}`} type="number" inputMode="decimal" min="0" max="1000000" step="0.000001" placeholder="Unknown" value={cost} disabled={!canUpdate || finished || saving} onChange={(event) => setCosts((current) => ({ ...current, [id]: event.target.value }))} className="mt-1 min-h-[44px] w-full rounded border px-3 py-2" /></label>
         <div><p className="text-sm text-gray-500">Estimated counted value</p><p>{formatInventoryValue(value, stockCount.currency)}</p></div>
+        {!finished && canUpdate && ((location.stockTemplate?.items || []).some((row) => row.catalogProductId === id) || (location.countedItems || []).some((row) => row.catalogProductId === id)) && <StockCountPackageEntry hotelUid={hotelUid} stockCountId={stockCount.id} locationId={location.locationId} item={item} disabled={saving} onApply={(text) => setQuantities((current) => ({ ...current, [id]: text }))} />}
+        {!finished && canUpdate && !(location.stockTemplate?.items || []).some((row) => row.catalogProductId === id) && !(location.countedItems || []).some((row) => row.catalogProductId === id) && <p className="text-sm text-slate-500 sm:col-span-2 lg:col-span-4">Save this additional article before loading its validated package choices. Direct catalog-unit counting is available now.</p>}
       </article>;
     })}</div>
     {canReadCatalog && !finished && <div className="rounded-xl border border-dashed border-slate-300 p-4">
@@ -125,7 +128,7 @@ export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, l
     </div>}
     {invalid && <p role="alert">Quantities and costs must be non-negative numbers with at most six decimal places and no greater than 1,000,000.</p>}
     {error && <p role="alert" className="text-red-700">{error}</p>}
-    <div className="flex justify-end gap-3"><button className="rounded border px-4 py-2" disabled={!canUpdate || finished || saving || invalid} onClick={() => submit(false)}>Save Counts</button><button className="rounded bg-brand-800 px-4 py-2 text-white disabled:opacity-50" disabled={!canUpdate || finished || saving || invalid || !complete} onClick={() => submit(true)}>Finish Location</button></div>
+    <div className="flex flex-wrap justify-end gap-3"><button className="rounded border px-4 py-2" disabled={!canUpdate || finished || saving || invalid} onClick={() => submit(false)}>Save Counts</button><button className="rounded bg-brand-800 px-4 py-2 text-white disabled:opacity-50" disabled={!canUpdate || finished || saving || invalid || !complete} onClick={() => submit(true)}>Finish Location</button></div>
     {!complete && !finished && <p className="text-sm text-gray-500">Every included product needs an explicit quantity before this location can be finished.</p>}
   </Card>;
 }

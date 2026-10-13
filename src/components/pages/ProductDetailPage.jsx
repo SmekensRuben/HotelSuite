@@ -15,6 +15,7 @@ import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 import { usePermission } from "../../hooks/usePermission";
 import { productUnitLabel } from "../../utils/productUnitDisplay";
+import { SupplierPriceComparison } from "../catalog/SupplierPriceInsights";
 
 function formatDate(value) {
   if (!value) return "-";
@@ -224,6 +225,7 @@ function ScopedProductDetailPage({ hotelUid, productId }) {
                 </div>
               </Card>
             </div>
+            <SupplierPriceComparison hotelUid={hotelUid} catalogProductId={productId} />
           </>
         )}
       </ProcurementPage>

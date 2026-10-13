@@ -40,6 +40,7 @@ export default function HeaderBar({ today, onLogout }) {
   const canViewOrders = usePermission("orders", "read");
   const canViewContracts = usePermission("contracts", "read");
   const canViewStockCounts = usePermission("stockcounts", "read");
+  const canViewInventoryMovements = usePermission("inventorymovements", "read");
   const canViewPropertySettings = usePermission("propertysettings", "read");
   const canViewCatalogSettings = usePermission("catalogsettings", "read");
   const canViewOutlets = usePermission("outlets", "read");
@@ -142,6 +143,12 @@ export default function HeaderBar({ today, onLogout }) {
           label: "Inventory periods",
           icon: ClipboardList,
           visible: canViewStockCounts,
+        },
+        {
+          to: "/catalog/inventory-movements",
+          label: "Inventory movements",
+          icon: Truck,
+          visible: canViewInventoryMovements,
         },
       ]),
     },
