@@ -38,12 +38,14 @@ const mocks = vi.hoisted(() => ({
   createOutlet: vi.fn(),
   setApprovers: vi.fn(),
   actorUid: "actor",
+  actors: new Map(),
   pendingTemplate: vi.fn(),
   retryTemplate: vi.fn(),
 }));
 vi.mock("react-router-dom", () => ({
   useNavigate: () => mocks.navigate,
   useParams: () => mocks.params,
+  Link: ({ to, children, ...props }) => <a href={to} {...props}>{children}</a>,
 }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key) => key }),
@@ -56,7 +58,10 @@ vi.mock("../../hooks/usePermission", () => ({
     mocks.permissions.has(`${feature}.${action}`),
 }));
 vi.mock("../../firebaseConfig", () => ({
-  auth: { get currentUser() { return { uid: mocks.actorUid }; } },
+  auth: { get currentUser() {
+    if (!mocks.actors.has(mocks.actorUid)) mocks.actors.set(mocks.actorUid, { uid: mocks.actorUid });
+    return mocks.actors.get(mocks.actorUid);
+  } },
   signOut: vi.fn(),
 }));
 vi.mock("../layout/HeaderBar", () => ({ default: () => null }));

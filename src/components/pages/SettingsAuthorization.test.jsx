@@ -22,6 +22,7 @@ vi.mock("../layout/HeaderBar", () => ({ default: () => null }));
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.permissions.clear();
+  mocks.permissions.add("catalogsettings.read");
   mocks.hotelUid = "hotel-a";
   mocks.getCatalogTaxonomy.mockResolvedValue({ categories: [], subcategories: [] });
   mocks.getContractTaxonomy.mockResolvedValue({ categories: [], subcategories: [] });

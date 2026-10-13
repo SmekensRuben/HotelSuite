@@ -1,9 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import HeaderBar from "../layout/HeaderBar";
-import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
-import { auth, signOut } from "../../firebaseConfig";
-import { useHotelContext } from "../../contexts/HotelContext";
+import { useProcurementSettingsScope } from "../../hooks/useProcurementSettingsScope";
 import {
   getCatalogTaxonomy,
   createCatalogCategory,
@@ -25,7 +22,13 @@ function sortByName(items) {
 }
 
 export default function SettingsCatalogPage() {
-  const { hotelUid } = useHotelContext();
+  const scope = useProcurementSettingsScope();
+  const canRead = usePermission("catalogsettings", "read");
+  return canRead ? <CatalogTaxonomySection key={scope.scopeKey} scope={scope} /> : null;
+}
+
+function CatalogTaxonomySection({ scope }) {
+  const { hotelUid, current } = scope;
   const canCreateSettings = usePermission("catalogsettings", "create");
   const canUpdateSettings = usePermission("catalogsettings", "update");
   const canDeleteSettings = usePermission("catalogsettings", "delete");
@@ -47,16 +50,6 @@ export default function SettingsCatalogPage() {
   const [error, setError] = useState("");
   const requestVersion = useRef(0);
   const [loadAttempt, setLoadAttempt] = useState(0);
-
-  const todayLabel = useMemo(
-    () =>
-      new Date().toLocaleDateString(undefined, {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }),
-    [],
-  );
 
   const sortedCategories = useMemo(() => sortByName(categories), [categories]);
 
@@ -89,12 +82,6 @@ export default function SettingsCatalogPage() {
     return groupedMap;
   }, [sortedCategories, subcategories]);
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    sessionStorage.clear();
-    window.location.href = "/login";
-  };
-
   useEffect(() => {
     setCategoryName("");
     setSubcategoryName("");
@@ -118,16 +105,16 @@ export default function SettingsCatalogPage() {
     if (!hotelUid) return;
     getCatalogTaxonomy(hotelUid)
       .then((taxonomy) => {
-        if (version !== requestVersion.current) return;
+        if (version !== requestVersion.current || !current()) return;
         setCategories(taxonomy.categories);
         setSubcategories(taxonomy.subcategories);
       })
       .catch(() => {
-        if (version === requestVersion.current)
+        if (version === requestVersion.current && current())
           setError("Settings could not be loaded.");
       })
       .finally(() => {
-        if (version === requestVersion.current) setLoading(false);
+        if (version === requestVersion.current && current()) setLoading(false);
       });
     return () => {
       ++requestVersion.current;
@@ -135,6 +122,7 @@ export default function SettingsCatalogPage() {
   }, [hotelUid, loadAttempt]);
 
   const saveTaxonomy = async (mutation, successMessage) => {
+    if (!current()) return false;
     const version = requestVersion.current;
     setSavingCategory(true);
     setSavingSubcategory(true);
@@ -144,23 +132,23 @@ export default function SettingsCatalogPage() {
     try {
       await mutation();
       saved = true;
-      if (version !== requestVersion.current) return false;
+      if (version !== requestVersion.current || !current()) return false;
       const taxonomy = await getCatalogTaxonomy(hotelUid);
-      if (version !== requestVersion.current) return false;
+      if (version !== requestVersion.current || !current()) return false;
       setCategories(taxonomy.categories);
       setSubcategories(taxonomy.subcategories);
       setMessage(successMessage);
       return true;
     } catch (error) {
-      if (version === requestVersion.current)
+      if (version === requestVersion.current && current())
         setError(
           saved
             ? "Changes saved, but settings could not be refreshed. Reload settings."
             : error.message || "Settings could not be saved.",
         );
-      return version === requestVersion.current && saved;
+      return version === requestVersion.current && current() && saved;
     } finally {
-      if (version === requestVersion.current) {
+      if (version === requestVersion.current && current()) {
         setSavingCategory(false);
         setSavingSubcategory(false);
       }
@@ -327,31 +315,12 @@ export default function SettingsCatalogPage() {
   const actionClass =
     "rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium hover:bg-gray-50 disabled:opacity-50";
   return (
-    <div className="min-h-screen bg-canvas text-gray-900">
-      <HeaderBar today={todayLabel} onLogout={handleLogout} />
-      <ProcurementPage className="space-y-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-              Purchasing &amp; Inventory · Settings
-            </p>
-            <h1 className="mt-1 text-3xl font-semibold">Catalog Settings</h1>
-            <p className="mt-2 max-w-xl text-sm text-gray-600">
-              Organize articles into categories and subcategories. Physical
-              storage and purchasing outlets have their own settings.
-            </p>
-          </div>
-          <nav
-            aria-label="Related catalog settings"
-            className="flex flex-wrap gap-2 text-sm"
-          >
-            <a href="/settings/locations" className={actionClass}>
-              Locations &amp; stock templates
-            </a>
-            <a href="/settings/outlets" className={actionClass}>
-              Outlets &amp; approvers
-            </a>
-          </nav>
+    <section aria-label="Catalog categories" className="space-y-5">
+        <div>
+          <h2 className="text-xl font-semibold">Categories &amp; subcategories</h2>
+          <p className="mt-1 max-w-2xl text-sm text-gray-600">
+            Organize catalog articles for browsing, ordering and stock templates.
+          </p>
         </div>
         {error && (
           <p
@@ -379,7 +348,7 @@ export default function SettingsCatalogPage() {
         <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
           <Card className="space-y-5">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-xl font-semibold">Categories</h2>
+              <h3 className="text-lg font-semibold">Categories</h3>
               <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600">
                 {sortedCategories.length}
               </span>
@@ -497,7 +466,7 @@ export default function SettingsCatalogPage() {
           </Card>
           <Card className="space-y-5">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-xl font-semibold">Subcategories</h2>
+              <h3 className="text-lg font-semibold">Subcategories</h3>
               <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600">
                 {subcategories.length}
               </span>
@@ -660,7 +629,6 @@ export default function SettingsCatalogPage() {
             )}
           </Card>
         </div>
-      </ProcurementPage>
-    </div>
+    </section>
   );
 }
