@@ -25,6 +25,22 @@ beforeEach(() => {
   mocks.reverse.mockReset().mockResolvedValue({ eventId: "reverse" }); mocks.close.mockReset().mockResolvedValue({ eventId: "closed" });
   mocks.changed.mockReset().mockResolvedValue();
 });
+it("unreviewed supplier changes block accepted goods while preserving rejected-only receiving", async () => {
+  mocks.read.mockResolvedValue(data({ supplierReceiptBlockReason: "Review supplier changes before accepting goods." }));
+  render(<OrderReceivingPanel hotelUid="hotel-a" orderId="order" />); await fill();
+  fireEvent.click(screen.getByRole("button", { name: "Record goods receipt" })); expect(mocks.receive).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("Accepted Coffee"), { target: { value: "0" } });
+  fireEvent.change(screen.getByLabelText("Rejected Coffee"), { target: { value: "1" } });
+  fireEvent.change(screen.getByLabelText("Discrepancy reason Coffee"), { target: { value: "Rejected unapproved price change" } });
+  fireEvent.click(screen.getByRole("button", { name: "Record goods receipt" })); await screen.findByText("Goods receipt recorded.");
+  expect(mocks.receive.mock.calls[0][0].lines[0]).toMatchObject({ acceptedQuantity: 0, rejectedQuantity: 1 });
+});
+it("a changed order revision reloads receiving instead of submitting a stale supplier decision", async () => {
+  mocks.read.mockResolvedValueOnce(data()).mockResolvedValueOnce(data({ orderRevision: 8, supplierReceiptBlockReason: "Supplier rejected this order." }));
+  const view = render(<OrderReceivingPanel hotelUid="hotel-a" orderId="order" orderRevision={7} />);
+  await screen.findByText("Receiving status: partial"); view.rerender(<OrderReceivingPanel hotelUid="hotel-a" orderId="order" orderRevision={8} />);
+  await screen.findByText(/Supplier rejected this order/); expect(mocks.read).toHaveBeenCalledTimes(2);
+});
 it("uses the reviewed order revision and frozen purchase quantities, then refreshes", async () => {
   render(<OrderReceivingPanel hotelUid="hotel-a" orderId="order" onChanged={mocks.changed} />);
   await fill(); fireEvent.click(screen.getByRole("button", { name: "Record goods receipt" }));

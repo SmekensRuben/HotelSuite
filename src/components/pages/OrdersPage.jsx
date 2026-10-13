@@ -13,6 +13,7 @@ import { getOrders, listOrderStatuses } from "../../services/firebaseOrders";
 import { getSuppliers } from "../../services/firebaseSuppliers";
 import { getHotelUserDisplayName } from "../../services/firebaseUserManagement";
 import { formatOrderMoney, formatOrderPriceBasis } from "../../utils/orderPricing";
+import { supplierConfirmationStatus } from "../../utils/supplierConfirmationDisplay";
 
 const EMPTY_ORDERS = Object.freeze([]);
 
@@ -85,6 +86,7 @@ function ScopedOrdersPage({ hotelUid }) {
   const canCreateOrders = usePermission("orders", "create");
 
   const [selectedStatus, setSelectedStatus] = useState("");
+  const [attentionOnly, setAttentionOnly] = useState(false);
   const [createdFrom, setCreatedFrom] = useState("");
   const [createdUntil, setCreatedUntil] = useState("");
   const [deliveryFrom, setDeliveryFrom] = useState("");
@@ -130,6 +132,7 @@ function ScopedOrdersPage({ hotelUid }) {
     return orders
       .filter((order) => {
         if (selectedStatus && order.status !== selectedStatus) return false;
+        if (attentionOnly && !supplierConfirmationStatus(order).attention) return false;
         if (selectedSupplier && order.supplierId !== selectedSupplier) return false;
         if (selectedCreatedBy && order.createdBy !== selectedCreatedBy) return false;
 
@@ -155,10 +158,12 @@ function ScopedOrdersPage({ hotelUid }) {
         itemCount: Array.isArray(order.products) ? order.products.length : 0,
         totalLabel: formatOrderMoney(order.totalAmount, order.currency),
         priceBasisLabel: formatOrderPriceBasis(order.priceBasis),
+        supplierResponseLabel: supplierConfirmationStatus(order).label,
       }));
   }, [
     orders,
     selectedStatus,
+    attentionOnly,
     selectedSupplier,
     selectedCreatedBy,
     createdFrom,
@@ -171,6 +176,7 @@ function ScopedOrdersPage({ hotelUid }) {
 
   const columns = [
     { key: "status", label: "Status" },
+    { key: "supplierResponseLabel", label: "Supplier response" },
     { key: "supplier", label: "Supplier" },
     { key: "outlet", label: "Outlet" },
     { key: "deliveryDate", label: "Delivery Date" },
@@ -189,7 +195,7 @@ function ScopedOrdersPage({ hotelUid }) {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-semibold">Orders</h1>
-            <p className="text-sm text-gray-500 mt-1">Review purchase orders, delivery dates and receiving status.</p>
+            <p className="text-sm text-gray-500 mt-1">Follow sending, supplier acceptance and receiving as separate steps.</p>
           </div>
           <button
             type="button"
@@ -268,6 +274,9 @@ function ScopedOrdersPage({ hotelUid }) {
               />
             </div>
           </div>
+          <label className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-sm text-slate-700"><input type="checkbox" checked={attentionOnly} onChange={(event) => setAttentionOnly(event.target.checked)} />
+            Only orders needing supplier attention <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900">{orders.filter((order) => supplierConfirmationStatus(order).attention).length}</span>
+          </label>
         </Card>
 
         {loading ? (

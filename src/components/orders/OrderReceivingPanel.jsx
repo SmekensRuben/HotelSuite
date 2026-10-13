@@ -25,7 +25,7 @@ export default function OrderReceivingPanel(props) {
   const actorUid = auth.currentUser?.uid || "";
   return <ScopedReceiving key={`${props.hotelUid}:${props.orderId}:${actorUid}`} {...props} actorUid={actorUid} />;
 }
-function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = false }) {
+function ScopedReceiving({ hotelUid, orderId, actorUid, orderRevision, onChanged, disabled = false }) {
   const canReceive = usePermission("orders", "receive"), canFinalize = usePermission("orders", "finalize");
   const key = `receiving-request:${actorUid}:${hotelUid}:${orderId}`;
   const [pending, setPending] = useState(() => readPending(key, hotelUid, orderId));
@@ -36,8 +36,12 @@ function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = fa
   const [older, setOlder] = useState([]), [cursor, setCursor] = useState(null), [moreBusy, setMoreBusy] = useState(false), [moreError, setMoreError] = useState(null);
   const mounted = useRef(false), paging = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; paging.current++; }; }, []);
-  const load = useCallback(() => getHotelOrderReceiving({ hotelUid, orderId }), [hotelUid, orderId]);
-  const query = useScopedAsync({ scopeKey: `${hotelUid}:${orderId}`, load });
+  const load = useCallback(async () => {
+    const result = await getHotelOrderReceiving({ hotelUid, orderId });
+    if (Number.isSafeInteger(orderRevision) && result.orderRevision < orderRevision) throw new Error("Receiving is older than this order. Refresh before recording goods.");
+    return result;
+  }, [hotelUid, orderId, orderRevision]);
+  const query = useScopedAsync({ scopeKey: `${hotelUid}:${orderId}:${orderRevision ?? "legacy"}`, load });
   const data = query.data;
   useEffect(() => {
     if (data) {
@@ -111,9 +115,10 @@ function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = fa
       {!data.releaseReady && <p role="alert" className="text-sm text-amber-900">Receiving changes await the verified platform activation.</p>}
       {!available && <p role="status" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">{data.reason}</p>}
       {available && <>
+        {data.supplierReceiptBlockReason && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{data.supplierReceiptBlockReason} Rejected-only deliveries, receipt reversals and explicit supervisor closure remain available.</p>}
         <p className="text-sm font-medium">Receiving status: {data.receivingState}</p>
         <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-2">Product / unit</th><th className="p-2">Ordered</th><th className="p-2">Accepted</th><th className="p-2">Rejected</th><th className="p-2">Outstanding</th><th className="p-2">Overdelivery</th></tr></thead>
-          <tbody>{data.lines.map((line) => <tr key={lineKey(line)} className="border-b"><th scope="row" className="p-2 font-medium">{line.productName}<span className="mt-1 block text-xs text-slate-500">{line.purchaseUnit}</span></th>
+          <tbody>{data.lines.map((line) => <tr key={lineKey(line)} className="border-b"><th scope="row" className="p-2 font-medium">{line.productName}<span className="mt-1 block text-xs text-slate-500">{line.purchaseUnit}</span>{typeof line.supplierConfirmedQuantity === "number" && <span className="mt-1 block text-xs text-slate-500">Supplier confirmed: {line.supplierConfirmedQuantity} · still promised: {line.supplierOutstandingQuantity}</span>}</th>
             {["orderedQuantity", "acceptedQuantity", "rejectedQuantity", "outstandingQuantity", "excessQuantity"].map((column) => <td key={column} className="p-2 tabular-nums">{line[column]}</td>)}</tr>)}</tbody></table></div>
         {closed && <p className="rounded-xl bg-slate-50 p-4 text-sm">Receiving is finalized. {data.finalizationReason && `Reason: ${data.finalizationReason}`}</p>}
         {canReceive && !closed && <form className="space-y-4 rounded-xl border border-slate-200 p-4" onSubmit={(event) => {
@@ -124,12 +129,15 @@ function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = fa
             rejectedQuantity: Number(form.lines[lineKey(line)]?.rejectedQuantity || 0), reason: form.lines[lineKey(line)]?.reason || "" }))
             .filter((line) => line.acceptedQuantity !== 0 || line.rejectedQuantity !== 0);
           if (!form.deliveryReference.trim() || !lines.length) { setMessage({ error: true, text: "Enter a delivery reference and at least one accepted or rejected quantity." }); return; }
+          if (data.supplierReceiptBlockReason && lines.some((line) => line.acceptedQuantity > 0)) { setMessage({ error: true, text: data.supplierReceiptBlockReason }); return; }
           const date = new Date(`${form.receivedOn}T00:00:00Z`);
           if (!/^\d{4}-\d{2}-\d{2}$/.test(form.receivedOn) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== form.receivedOn) {
             setMessage({ error: true, text: "Choose a valid receipt business date." }); return;
           }
           if (lines.some((line) => [line.acceptedQuantity, line.rejectedQuantity].some((value) => !Number.isFinite(value) || value < 0 || value > 100000 || Math.abs(value * 1000 - Math.round(value * 1000)) > 1e-7)
-            || (line.rejectedQuantity > 0 || line.acceptedQuantity > data.lines.find((source) => lineKey(source) === lineKey(line)).outstandingQuantity) && !line.reason.trim())) {
+            || (line.rejectedQuantity > 0 || line.acceptedQuantity > data.lines.find((source) => lineKey(source) === lineKey(line)).outstandingQuantity
+              || typeof data.lines.find((source) => lineKey(source) === lineKey(line)).supplierOutstandingQuantity === "number"
+                && line.acceptedQuantity > data.lines.find((source) => lineKey(source) === lineKey(line)).supplierOutstandingQuantity) && !line.reason.trim())) {
             setMessage({ error: true, text: "Review quantities and explain rejected goods or accepted overdelivery." }); return;
           }
           if (lines.some((line) => line.acceptedQuantity > 0) && !form.inventoryLocationId) {
@@ -148,10 +156,11 @@ function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = fa
             {data.inventoryLocationsTruncated && <p className="text-sm text-amber-900">Showing the first 100 locations. Ask a hotel administrator to review the destination if it is not listed.</p>}
             {data.inventoryCoverageReasons?.length > 0 && <p className="text-sm text-amber-900">Some frozen product conversions or price contracts need review. Receiving remains traceable; affected inventory quantities or values will be unavailable in period comparisons.</p>}
             <p className="text-xs text-slate-500">Accepted goods create receipt evidence for this location. This does not represent live on-hand stock.</p>
-            <button type="button" className="ht-button-secondary" onClick={() => setForm((previous) => ({ ...previous, lines: Object.fromEntries(data.lines.map((line) => [lineKey(line), { ...previous.lines[lineKey(line)], acceptedQuantity: String(line.outstandingQuantity) }])) }))}>Fill outstanding quantities</button>
+            <button type="button" className="ht-button-secondary" onClick={() => setForm((previous) => ({ ...previous, lines: Object.fromEntries(data.lines.map((line) => [lineKey(line), { ...previous.lines[lineKey(line)], acceptedQuantity: String(line.supplierOutstandingQuantity ?? line.outstandingQuantity) }])) }))}>Fill outstanding quantities</button>
             {data.lines.map((line) => {
               const values = form.lines[lineKey(line)] || {};
-              const needsReason = Number(values.rejectedQuantity || 0) > 0 || Number(values.acceptedQuantity || 0) > line.outstandingQuantity;
+              const needsReason = Number(values.rejectedQuantity || 0) > 0 || Number(values.acceptedQuantity || 0) > line.outstandingQuantity
+                || typeof line.supplierOutstandingQuantity === "number" && Number(values.acceptedQuantity || 0) > line.supplierOutstandingQuantity;
               return <div key={lineKey(line)} className="rounded-xl bg-slate-50 p-3"><p className="text-sm font-semibold">{line.productName} · {line.purchaseUnit}</p>
                 <div className="mt-2 grid gap-3 sm:grid-cols-2"><label className="text-sm">Accepted {line.productName}<input type="number" min="0" max="100000" step="0.001" placeholder="0" className={field} value={values.acceptedQuantity || ""} onChange={(event) => setLine(lineKey(line), "acceptedQuantity", event.target.value)} /></label>
                   <label className="text-sm">Rejected {line.productName}<input type="number" min="0" max="100000" step="0.001" placeholder="0" className={field} value={values.rejectedQuantity || ""} onChange={(event) => setLine(lineKey(line), "rejectedQuantity", event.target.value)} /></label></div>
@@ -182,6 +191,7 @@ function ScopedReceiving({ hotelUid, orderId, actorUid, onChanged, disabled = fa
             ? `Inventory posting ${event.inventoryMovement.sequence} · location ${event.inventoryMovement.locationId}`
             : "No inventory movement recorded; rejected-only or historical receiving evidence."}</p>}
           {(event.note || event.reason) && <p className="mt-2 whitespace-pre-wrap">{event.note || event.reason}</p>}
+          {event.supplierResponseId && <p className="mt-2 text-xs text-slate-500">Receipt pricing is frozen from the supplier response and hotel review recorded before this delivery.</p>}
           {canFinalize && event.kind === "receipt" && !event.reversed && !closed && available && <button type="button" disabled={blocked} className="ht-button-secondary mt-3" onClick={() => { setReverseId(event.id); setReverseReason(""); }}>Reverse receipt {event.deliveryReference}</button>}
         </li>)}</ol>
         {moreError && <div role="alert" className="mt-3 text-sm"><p>{moreError.message}</p><button type="button" className="ht-button-secondary mt-2" onClick={loadMore}>Retry history page</button></div>}

@@ -17,6 +17,23 @@ const deferred = () => { let resolve; const promise = new Promise((done) => { re
 
 describe("scoped order loading", () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.permissions = ["orders.read", "suppliers.read"]; mocks.suppliers.mockResolvedValue([]); mocks.display.mockResolvedValue("Hotel employee"); });
+  it("shows sending separately from supplier acceptance and filters an actionable supplier attention queue", async () => {
+    mocks.permissions = ["orders.read"];
+    const accepted = { policyVersion: 1, responseId: "accepted", reviewId: null, responseType: "accepted", respondedOn: "2026-10-13", eventCount: 1, reviewState: "not-required", requiresAttention: false };
+    const pending = { ...accepted, responseId: "change", responseType: "changes-proposed", reviewState: "pending", requiresAttention: true };
+    mocks.orders.mockResolvedValue([
+      { id: "unconfirmed", status: "Ordered", dispatchStatus: "sent", supplierName: "Awaiting vendor", deliveryDate: "2026-10-14" },
+      { id: "accepted", status: "Ordered", supplierName: "Accepted vendor", deliveryDate: "2026-10-14", supplierConfirmation: accepted },
+      { id: "pending", status: "Ordered", supplierName: "Changed vendor", deliveryDate: "2026-10-14", supplierConfirmation: pending },
+      { id: "closed", status: "Finalized", supplierName: "Closed vendor", deliveryDate: "2026-10-14", supplierConfirmation: pending },
+    ]);
+    render(<OrdersPage />); await screen.findByText("No response recorded");
+    expect(screen.getByText("Supplier accepted")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Only orders needing supplier attention/ }));
+    expect(screen.getByText("Awaiting vendor")).toBeInTheDocument(); expect(screen.getByText("Changed vendor")).toBeInTheDocument();
+    expect(screen.queryByText("Accepted vendor")).not.toBeInTheDocument(); expect(screen.queryByText("Closed vendor")).not.toBeInTheDocument();
+    expect(mocks.orders).toHaveBeenCalledTimes(1); expect(mocks.suppliers).not.toHaveBeenCalled();
+  });
   it("shows frozen supplier names and supplier ID fallbacks for an orders-only reader without fetching suppliers", async () => {
     mocks.permissions = ["orders.read"];
     mocks.suppliers.mockRejectedValue(new Error("Forbidden supplier read"));
