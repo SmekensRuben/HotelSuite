@@ -12,6 +12,7 @@ const PlatformActivityPage = lazy(() => import("./components/platform/PlatformAc
 const PlatformIncidentsPage = lazy(() => import("./components/platform/PlatformIncidentsPage"));
 const PlatformUsersPage = lazy(() => import("./components/platform/PlatformUsersPage"));
 const PlatformSupportPage = lazy(() => import("./components/platform/PlatformSupportPage"));
+const PlatformAiPage = lazy(() => import("./components/platform/PlatformAiPage"));
 const NoHotelAccessPage = lazy(() => import("./components/pages/NoHotelAccessPage"));
 
 const LandingPage = lazy(() => import("./components/pages/LandingPage.jsx"));
@@ -118,6 +119,7 @@ export default function AppRouter() {
         <Route path="hotels/:hotelUid/support/:sessionId" element={<PlatformSupportPage />} />
         <Route path="subscriptions" element={<SubscriptionsPage platform />} />
         <Route path="imports" element={<PlatformImportsPage />} />
+        <Route path="ai" element={<PlatformAiPage />} />
         <Route path="incidents" element={<PlatformIncidentsPage />} />
         <Route path="activity" element={<PlatformActivityPage />} />
         <Route path="users" element={<PlatformUsersPage />} />
