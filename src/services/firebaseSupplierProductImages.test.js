@@ -47,3 +47,8 @@ it("rejects late reads/uploads after actual Auth replacement even with the same 
   const pending = uploadSupplierProductImage("hotel-a", product, file()); await vi.waitFor(() => expect(mocks.fetch).toHaveBeenCalledTimes(1));
   mocks.auth.currentUser = { uid: "manager", getIdToken: vi.fn() }; resolve(response(saved)); await expect(pending).rejects.toThrow(/access changed/);
 });
+it("retains valid legacy product identities in encoded image requests", async () => {
+  const legacy = { ...product, id: "coffee.offer v1" }; mocks.fetch.mockResolvedValueOnce(response({ ...saved, productId: legacy.id }));
+  await uploadSupplierProductImage("hotel-a", legacy, file());
+  expect(new URL(mocks.fetch.mock.calls[0][0]).searchParams.get("productId")).toBe(legacy.id);
+});

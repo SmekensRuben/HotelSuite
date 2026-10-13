@@ -43,9 +43,9 @@ A future import/connector must use the same protected upload contract when it su
 
 ## Verification
 
-- Frontend: 138 files / 1,242 tests passed. Final media/form presentation refinements: 36 focused tests passed.
+- Frontend: 138 files / 1,242 tests passed. Final media/form presentation refinements: 36 focused tests passed; final legacy-ID and preview controls separately passed 14 media client tests.
 - Functions: 379 tests passed, including genuine raster rendering, processing races/limits, package GTIN policy and preservation/forgery checks.
-- Auth/Firestore/Storage security emulators: 228 tests passed. Image tests use real source files, current ordinary hotel users, an actual signed Auth-emulator token at the HTTP handler, private objects and cross-hotel/browser denials.
+- Auth/Firestore/Storage security emulators: 228 tests passed; the final image-only run passed 11 cases including dotted/spaced legacy IDs. Image tests use real source files, current ordinary hotel users, an actual signed Auth-emulator token at the HTTP handler, private objects and cross-hotel/browser denials.
 - Two-hotel export/restore passed with exact source/thumbnail/display bytes, hashes and object generations, authorized private image reads, and intact financial/inventory/command evidence.
 - Lint, incremental type checking and dependency policy passed. Sharp's initial vulnerable candidate was upgraded before acceptance; current audits report zero runtime vulnerabilities. Test/App Hosting builds use fictional `demo-hotel-suite-a00` configuration, without production writes. Existing large-bundle advisories remain.
 - Independent domain, frontend, processing, security and deployment reviews were performed by specialized agents. All blocking findings were addressed.

@@ -3,7 +3,9 @@ import { invalidateProcurementReads, poolProcurementRead, procurementReadScope }
 
 export const MAX_SUPPLIER_IMAGE_BYTES = 5 * 1024 * 1024;
 export const SUPPLIER_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
-const id = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+const id = (value) => typeof value === "string" && Boolean(value) && value.length <= 128 && value.trim() === value
+  && ![".", ".."].includes(value) && !/[\\/\u0000-\u001f]/.test(value);
+const asset = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const terminal = new Set(["invalid-argument", "permission-denied", "unauthenticated", "not-found", "already-exists", "aborted", "failed-precondition"]);
 const pending = new WeakMap();
 export function validateSupplierImageFile(file) {
@@ -46,7 +48,7 @@ export async function uploadSupplierProductImage(hotelUid, product, file) {
   try {
     const result = await request("POST", command, actor, file);
     if (scope && !scope.current()) throw new Error("Hotel access changed. Reload this view.");
-    if (result?.hotelUid !== hotelUid || result.productId !== product.id || !id(result.assetId)
+    if (result?.hotelUid !== hotelUid || result.productId !== product.id || !asset(result.assetId)
       || result.imageRevision !== revision + 1 || !["pending", "ready", "failed"].includes(result.status)) throw new Error("The image upload acknowledgement could not be verified. Retry the same file or reload the product.");
     commands.delete(key);
     return result;
@@ -58,10 +60,10 @@ export async function uploadSupplierProductImage(hotelUid, product, file) {
 
 export function getSupplierProductImage(hotelUid, product, variant = "thumbnail") {
   const actor = auth.currentUser, assetId = product?.image?.assetId;
-  if (!actor?.uid || !id(hotelUid) || !id(product?.id) || !id(assetId) || !["thumbnail", "display"].includes(variant)) return Promise.reject(new Error("The managed product image is unavailable."));
+  if (!actor?.uid || !id(hotelUid) || !id(product?.id) || !asset(assetId) || !["thumbnail", "display"].includes(variant)) return Promise.reject(new Error("The managed product image is unavailable."));
   return poolProcurementRead(hotelUid, `supplier-image:${product.id}:${assetId}:${variant}`, async () => {
     const blob = await request("GET", { hotelUid, productId: product.id, assetId, variant }, actor);
-    if (!blob || blob.type !== "image/webp" || !blob.size || blob.size > MAX_SUPPLIER_IMAGE_BYTES) throw new Error("The product image response is invalid.");
+    if (!blob || blob.type !== "image/webp" || !blob.size || blob.size > 1024 * 1024) throw new Error("The product image response is invalid.");
     return blob;
   });
 }

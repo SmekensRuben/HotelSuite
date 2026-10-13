@@ -16,7 +16,7 @@ const prefix = "private/supplier-product-images";
 const statusFor = { unauthenticated: 401, "permission-denied": 403, "not-found": 404, "invalid-argument": 400, "failed-precondition": 409, "resource-exhausted": 429, "already-exists": 409, aborted: 409, unavailable: 503 };
 function strictId(value, field) {
   const id = requireDocumentId(value, field);
-  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new HttpsError("invalid-argument", field + " contains unsupported characters.");
+  if (/[\\\u0000-\u001f]/.test(id)) throw new HttpsError("invalid-argument", field + " contains unsupported characters.");
   return id;
 }
 function assetIdOf(value) {
@@ -246,12 +246,13 @@ async function supplierProductImageHandler(req, res, services = {}) {
   }
 }
 async function processSupplierProductImageHandler(event, services = {}) {
-  const object = event.data || {}, match = new RegExp(`^${prefix}/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)/([a-f0-9]{64})/source$`).exec(object.name || "");
+  const object = event.data || {}, match = new RegExp(`^${prefix}/([^/]{1,128})/([^/]{1,128})/([a-f0-9]{64})/source$`).exec(object.name || "");
   if (!match) return { ignored: true };
   const bucket = services.bucket || admin.storage().bucket();
   if (object.bucket !== bucket.name) return { ignored: true };
   const [hotelUid, productId, assetId] = match.slice(1);
   try {
+    if (strictId(hotelUid, "hotelUid") !== hotelUid || strictId(productId, "productId") !== productId) return { ignored: true };
     const result = await processImageAsset(hotelUid, productId, assetId, generationOf(object.generation), { ...services, bucket });
     if (result.busy || result.retryable) throw new HttpsError("unavailable", "Image processing will retry after its current bounded attempt.");
     return result;

@@ -76,6 +76,16 @@ beforeEach(async () => {
 after(async () => environment.cleanup());
 
 describe("private supplier-product image workflow with real hotel identities and decoded bytes", () => {
+  it("supports established dotted and spaced product IDs without replacing their identity", async () => {
+    const productId = "milk.offer v1";
+    await db.doc(`hotels/hotel-a/supplierproducts/${productId}`).set((await productRef().get()).data());
+    const uploaded = await upload({ productId }); assert.equal(uploaded.status, "ready");
+    const bytes = await read(uploaded.assetId, "reader", { productId }); assert.ok(bytes.bytes.length);
+    const path = sourcePath("hotel-a", productId, uploaded.assetId), [metadata] = await bucket.file(path).getMetadata();
+    const event = await processSupplierProductImageHandler({ data: { name: path, bucket: bucket.name, generation: metadata.generation } }, services);
+    assert.equal(event.status, "ready"); assert.equal(event.productId, productId);
+    assert.equal((await db.doc(`hotels/hotel-a/supplierproducts/${productId}`).get()).data().revision, 1);
+  });
   it("lets an ordinary module manager upload real PNG bytes and serves bounded, metadata-free WebP variants", async () => {
     assert.equal(managerAccess.permissions.includes("supplierproducts.update"), true);
     const before = (await productRef().get()).data(), histories = (await db.collection("hotels/hotel-a/supplierPriceHistory/milk-offer/entries").get()).docs.map((item) => item.data());
