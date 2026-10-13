@@ -5,6 +5,7 @@ const { text, email, revision } = require("./validation");
 const { writePlatformAudit } = require("./platformAudit");
 const { modulesAreValid } = require("./modulePolicy");
 const { runView, evaluateMonitor } = require("./importMonitoringPolicy");
+const property = require("./propertySettingsPolicy");
 
 const stamp = () => admin.firestore.FieldValue.serverTimestamp();
 const millis = (value) => value?.toMillis?.() ?? null;
@@ -82,14 +83,15 @@ async function getPlatformHotelHandler(request, services = {}) {
   const db = services.firestore || admin.firestore();
   const hotelUid = requireDocumentId(request.data?.hotelUid, "hotelUid");
   const hotel = await hotelExists(db, hotelUid);
-  const [subscription, members, administrators] = await Promise.all([
+  const [subscription, members, administrators, bootstrap] = await Promise.all([
     db.doc(`hotelSubscriptions/${hotelUid}`).get(),
     db.collection(`hotels/${hotelUid}/members`).count().get(),
     db.collection(`hotels/${hotelUid}/members`).where("hotelAdmin", "==", true).limit(21).get(),
+    db.doc(`hotels/${hotelUid}/settings/bootstrap`).get(),
   ]);
   const data = hotel.data();
   return { hotelUid, name: String(data.hotelName || data.name || hotelUid).slice(0, 200),
-    revision: data.platformRevision ?? 0, timeZone: data.platformDetails?.timeZone ?? null,
+    revision: data.platformRevision ?? 0, ...property.propertySettings(data, bootstrap),
     contactName: String(data.platformDetails?.contactName || "").slice(0, 120), contactEmail: String(data.platformDetails?.contactEmail || "").slice(0, 254),
     subscription: subscription.exists ? subscriptionOverview(subscription.data()) : null,
     memberCount: members.data().count, administrators: administrators.docs.slice(0, 20).map((member) => ({ uid: member.id,
@@ -99,6 +101,7 @@ async function getPlatformHotelHandler(request, services = {}) {
 async function updatePlatformHotelHandler(request, services = {}) {
   await requirePlatformAdministrator(request, services.auth);
   const input = request.data || {};
+  if (Object.keys(input).some((key) => !["hotelUid", "expectedRevision", "name", "contactName", "contactEmail", "timeZone", "currency", "settingsFingerprint", "confirmCurrencyChange"].includes(key))) throw new HttpsError("invalid-argument", "Unsupported hotel details field.");
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid");
   const expected = revision(input.expectedRevision);
   const name = text(input.name, "Hotel name", 200, true);
@@ -107,13 +110,24 @@ async function updatePlatformHotelHandler(request, services = {}) {
   const timeZone = text(input.timeZone, "Time zone", 80, true);
   try { new Intl.DateTimeFormat("en", { timeZone }).format(new Date()); }
   catch { throw new HttpsError("invalid-argument", "Choose a valid IANA time zone."); }
+  const currency = input.currency === undefined ? undefined : property.hotelCurrency(input.currency);
+  if (currency !== undefined && (typeof input.settingsFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(input.settingsFingerprint))) throw new HttpsError("invalid-argument", "Refresh the hotel settings before choosing its currency.");
   const db = services.firestore || admin.firestore();
   const ref = db.doc(`hotels/${hotelUid}`), key = db.collection("platformAudit").doc().id;
   return db.runTransaction(async (tx) => {
-    const hotel = await tx.get(ref);
+    await requirePlatformAdministrator({ ...request }, services.auth);
+    const bootstrapRef = db.doc(`hotels/${hotelUid}/settings/bootstrap`);
+    const [hotel, bootstrap] = await tx.getAll(ref, bootstrapRef);
     if (!hotel.exists) throw new HttpsError("not-found", "Hotel not found.");
     if ((hotel.data().platformRevision || 0) !== expected) throw new HttpsError("aborted", "Hotel details changed. Reload before saving.");
-    tx.update(ref, { name, hotelName: name, platformDetails: { timeZone, contactName, contactEmail }, platformRevision: expected + 1, platformUpdatedAt: stamp() });
+    if (currency !== undefined && property.settingsFingerprint(hotel.data(), bootstrap) !== input.settingsFingerprint) throw new HttpsError("aborted", "Operational hotel settings changed. Refresh and review them before saving.");
+    const previousCurrencies = [hotel.data().currency, bootstrap.data()?.currency].filter((value) => typeof value === "string" && /^[A-Z]{3}$/.test(value));
+    if (currency !== undefined && previousCurrencies.some((value) => value !== currency) && input.confirmCurrencyChange !== true) {
+      throw new HttpsError("failed-precondition", "Acknowledge the currency change. Existing orders, counts and reports will retain their recorded currencies; no conversion is performed.");
+    }
+    tx.update(ref, { name, hotelName: name, timeZone, ...(currency === undefined ? {} : { currency }),
+      platformDetails: { ...hotel.data().platformDetails, timeZone, contactName, contactEmail }, platformRevision: expected + 1, platformUpdatedAt: stamp() });
+    tx.set(bootstrapRef, { hotelName: name, ...(currency === undefined ? {} : { currency }) }, { merge: true });
     writePlatformAudit(tx, db, { key, hotelUid, actorUid: request.auth.uid, action: "hotel-details-updated", revision: expected + 1 });
     return { hotelUid, revision: expected + 1 };
   });
