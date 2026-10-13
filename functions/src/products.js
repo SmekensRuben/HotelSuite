@@ -229,5 +229,5 @@ const options = { region: "us-central1", cors: true, timeoutSeconds: 120 };
 const mutateHotelCatalogProduct = onCall(options, gated(mutateHotelCatalogProductHandler));
 const mutateHotelSupplierProduct = onCall(options, gated(mutateHotelSupplierProductHandler));
 const importHotelProducts = onCall(options, gated(importHotelProductsHandler));
-module.exports = { MAX_IMPORT_PRODUCTS, mutateHotelCatalogProductHandler, mutateHotelSupplierProductHandler,
+module.exports = { supplierProductInternals: { prepareProduct, writeProduct, currentRevision }, MAX_IMPORT_PRODUCTS, mutateHotelCatalogProductHandler, mutateHotelSupplierProductHandler,
   importHotelProductsHandler, mutateHotelCatalogProduct, mutateHotelSupplierProduct, importHotelProducts };

@@ -31,6 +31,7 @@ const SUPPLIER_PRODUCTS_INDEX_UID = "supplierproducts";
 const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
 const RESEND_FROM = defineSecret("RESEND_FROM");
 const RESEND_WEBHOOK_SECRET = defineSecret("RESEND_WEBHOOK_SECRET");
+const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
 const APP_BASE_URL = defineString("APP_BASE_URL");
 
 function getAppBaseUrl() {
@@ -59,6 +60,7 @@ module.exports = {
   RESEND_API_KEY,
   RESEND_FROM,
   RESEND_WEBHOOK_SECRET,
+  OPENAI_API_KEY,
   APP_BASE_URL,
   getAppBaseUrl,
 };

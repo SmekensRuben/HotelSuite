@@ -1,0 +1,554 @@
+const { onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { createHash, randomUUID } = require("node:crypto");
+const { admin, logger, OPENAI_API_KEY } = require("./config");
+const { requireHotelPermission } = require("./authorization");
+const { requireSaasRollout } = require("./saasRollout");
+const { requireDocumentId } = require("./subscriptions");
+const { digest } = require("./validation");
+const { AI_POLICY_VERSION, PRICE_VERSION, MAX_SOURCE_BYTES, SOURCE_RETENTION_MS, loadSupplierAiConfiguration,
+  inputReservationTokens, costMicros, normalizedProviderUsage, boundedResponseText } = require("./supplierAiPolicy");
+const { createSupplierAiRequest, createSupplierAiProvider } = require("./supplierAiProvider");
+const prefix = "private/supplier-ai-imports", LEASE_MS = 600000;
+const HTTP_STATUS = { unauthenticated: 401, "permission-denied": 403, "not-found": 404, "invalid-argument": 400,
+  "failed-precondition": 409, "resource-exhausted": 429, "already-exists": 409, aborted: 409, unavailable: 503 };
+const TERMINAL = new Set(["review", "failed", "response_unknown", "committed"]);
+const stamp = () => admin.firestore.FieldValue.serverTimestamp();
+const hashOf = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const billingMonthOf = (services) => new Date(services.now?.() ?? Date.now()).toISOString().slice(0, 7);
+function strictId(value, field) {
+  const id = requireDocumentId(value, field);
+  if (/[\\\u0000-\u001f]/.test(id)) throw new HttpsError("invalid-argument", `${field} contains unsupported characters.`);
+  return id;
+}
+function validGeneration(value) {
+  if (typeof value !== "string" || !/^\d{1,30}$/.test(value)) throw new HttpsError("failed-precondition", "The import source generation is unavailable.");
+  return value;
+}
+function references(db, hotelUid, jobId, month, requestId) {
+  return { job: db.doc(`hotels/${hotelUid}/supplierAiImportJobs/${jobId}`), month: db.doc(`hotels/${hotelUid}/aiUsageMonths/${month}`),
+    state: db.doc(`hotels/${hotelUid}/aiImportAdministration/state`),
+    ...(requestId ? { request: db.doc(`hotels/${hotelUid}/supplierAiImportRequests/${requestId}`) } : {}) };
+}
+function actorRequest(job) { return { auth: { uid: job.ownerUid, token: { email_verified: true, auth_time: job.authTime } } }; }
+async function authorize(db, request, hotelUid, action, transaction, services = {}) {
+  await requireSaasRollout(db, transaction);
+  await requireHotelPermission(db, { auth: request.auth }, hotelUid, "supplierproducts", action, transaction, services.auth);
+  if (action === "create") await requireHotelPermission(db, { auth: request.auth }, hotelUid, "supplierproducts", "read", transaction, services.auth);
+}
+function normalizeMonth(snapshot, month) {
+  const data = snapshot.exists ? snapshot.data() : {};
+  const result = { month, policyVersion: AI_POLICY_VERSION, importsStarted: 0, importsReviewReady: 0, importsFailed: 0,
+    activeJobs: 0, attemptedCalls: 0, succeededCalls: 0, unknownCalls: 0, countingCalls: 0, knownCostMicros: 0,
+    reservedCostMicros: 0, inputTokens: 0, outputTokens: 0, days: {}, ...data };
+  if (snapshot.exists && Object.keys(result).some((key) => !["updatedAt", "importsCommitted"].includes(key) && data[key] === undefined)) throw new HttpsError("failed-precondition", "AI usage accounting is incomplete and needs operator review.");
+  for (const [field, value] of Object.entries(result)) {
+    if (["month", "policyVersion", "days", "updatedAt"].includes(field)) continue;
+    if (!Number.isSafeInteger(value) || value < 0) throw new HttpsError("failed-precondition", "AI usage accounting needs operator review.");
+  }
+  if (result.month !== month || result.policyVersion !== AI_POLICY_VERSION || !result.days || typeof result.days !== "object" || Array.isArray(result.days)
+    || Object.entries(result.days).some(([day, n]) => !/^\d{4}-\d\d-\d\d$/.test(day) || !Number.isSafeInteger(n) || n < 0)) throw new HttpsError("failed-precondition", "AI usage accounting needs operator review.");
+  return result;
+}
+function activeState(snapshot) {
+  if (!snapshot.exists) return { activeJobs: 0, policyVersion: AI_POLICY_VERSION };
+  if (!Number.isSafeInteger(snapshot.data().activeJobs) || snapshot.data().activeJobs < 0 || snapshot.data().policyVersion !== AI_POLICY_VERSION) throw new HttpsError("failed-precondition", "AI concurrent accounting needs operator review.");
+  return snapshot.data();
+}
+function publicJob(job) {
+  return { hotelUid: job.hotelUid, jobId: job.jobId, supplierId: job.supplierId, ownerUid: job.ownerUid, status: job.status,
+    source: { fileName: job.fileName, size: job.size, mimeType: job.mimeType }, expiresAtMillis: job.expiresAtMillis,
+    counts: job.counts || null, totalRows: job.totalRows ?? null, warnings: job.warnings || [],
+    usage: { attempts: job.attemptedCalls || 0, succeededCalls: job.succeededCalls || 0, unknownCalls: job.unknownCalls || 0,
+      countingCalls: job.countingCalls || 0, actualCostUsd: job.unknownCalls || job.reservedCostMicros > 0 ? null : (job.knownCostMicros || 0) / 1000000,
+      knownCostUsd: (job.knownCostMicros || 0) / 1000000, reservedCostUsd: (job.reservedCostMicros || 0) / 1000000,
+      limitUsd: job.configuration.maxCostPerImportUsd, inputTokens: job.unknownCalls ? null : job.inputTokens || 0,
+      outputTokens: job.unknownCalls ? null : job.outputTokens || 0, priceVersion: PRICE_VERSION },
+    ...(job.errorCode ? { error: { code: job.errorCode, message: job.errorMessage } } : {}) };
+}
+async function savePrivate(bucket, path, bytes, contentType) {
+  const file = bucket.file(path), sha256 = hashOf(bytes);
+  try { await file.save(bytes, { resumable: false, preconditionOpts: { ifGenerationMatch: 0 }, metadata: {
+    contentType, cacheControl: "private, no-store", metadata: { sha256, policyVersion: String(AI_POLICY_VERSION) } } }); }
+  catch (error) { if (Number(error.code) !== 412) throw error; }
+  const [metadata] = await file.getMetadata();
+  if (metadata.metadata?.sha256 !== sha256 || Number(metadata.size) !== bytes.length || metadata.contentType !== contentType
+    || metadata.metadata?.firebaseStorageDownloadTokens || metadata.contentEncoding && metadata.contentEncoding !== "identity") throw new HttpsError("already-exists", "This import object belongs to different content.");
+  return { path, generation: validGeneration(metadata.generation), sha256, size: bytes.length, contentType };
+}
+async function readPrivate(bucket, object, maximumBytes) {
+  if (!object || !object.path.startsWith(prefix + "/") || !Number.isSafeInteger(object.size) || object.size < 1 || object.size > maximumBytes) throw new HttpsError("failed-precondition", "The import object is invalid.");
+  const file = bucket.file(object.path, { generation: validGeneration(object.generation) }), [metadata] = await file.getMetadata();
+  if (metadata.generation !== object.generation || metadata.metadata?.sha256 !== object.sha256 || Number(metadata.size) !== object.size
+    || metadata.contentType !== object.contentType || metadata.metadata?.firebaseStorageDownloadTokens
+    || metadata.contentEncoding && metadata.contentEncoding !== "identity") throw new HttpsError("failed-precondition", "The import object does not match its snapshot.");
+  const [bytes] = await file.download({ decompress: false });
+  if (bytes.length !== object.size || hashOf(bytes) !== object.sha256) throw new HttpsError("failed-precondition", "The import source changed.");
+  return bytes;
+}
+async function configurationFor(db, job, transaction) {
+  const current = await loadSupplierAiConfiguration(db, transaction);
+  if (!current.enabled) throw new HttpsError("failed-precondition", "AI supplier import is disabled by the platform operator.");
+  // An existing job cannot gain a larger budget or more powerful settings after it starts.
+  return { ...current, maxCostPerImportUsd: Math.min(current.maxCostPerImportUsd, job.configuration.maxCostPerImportUsd),
+    maxMonthlyCostPerHotelUsd: Math.min(current.maxMonthlyCostPerHotelUsd, job.configuration.maxMonthlyCostPerHotelUsd),
+    maxInputTokens: Math.min(current.maxInputTokens, job.configuration.maxInputTokens), maxOutputTokens: Math.min(current.maxOutputTokens, job.configuration.maxOutputTokens),
+    maxCallsPerImport: Math.min(current.maxCallsPerImport, job.configuration.maxCallsPerImport), reasoningEffort: job.configuration.reasoningEffort };
+}
+async function uploadSupplierAiImport(request, data, bytes, services = {}) {
+  if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > MAX_SOURCE_BYTES) throw new HttpsError("invalid-argument", "Upload a non-empty file no larger than 10 MiB.");
+  const hotelUid = strictId(data.hotelUid, "hotelUid"), supplierId = strictId(data.supplierId, "supplierId"), requestId = strictId(data.requestId, "requestId");
+  if (typeof data.fileName !== "string" || data.fileName.length > 180 || /[/\\\u0000-\u001f]/.test(data.fileName)
+    || !/\.(csv|xlsx|pdf|docx|eml|txt)$/i.test(data.fileName)) throw new HttpsError("invalid-argument", "Select a CSV, XLSX, PDF, DOCX, EML or TXT file.");
+  const mimeType = typeof data.mimeType === "string" && data.mimeType.length <= 150 ? data.mimeType : "";
+  const db = services.firestore || admin.firestore(), bucket = services.bucket || admin.storage().bucket();
+  const now = services.now?.() ?? Date.now(), month = new Date(now).toISOString().slice(0, 7), day = new Date(now).toISOString().slice(0, 10);
+  const sha256 = hashOf(bytes), fingerprint = digest(supplierId, data.fileName, mimeType, sha256), jobId = digest(hotelUid, requestId, request.auth?.uid, fingerprint);
+  const refs = references(db, hotelUid, jobId, month, requestId);
+  await authorize(db, request, hotelUid, "create", undefined, services);
+  const pending = await db.runTransaction(async (tx) => {
+    await authorize(db, request, hotelUid, "create", tx, services);
+    const [stored, job, supplier, usage, state] = await Promise.all([tx.get(refs.request), tx.get(refs.job), tx.get(db.doc(`hotels/${hotelUid}/suppliers/${supplierId}`)), tx.get(refs.month), tx.get(refs.state)]);
+    const active = activeState(state);
+    if (stored.exists) {
+      if (stored.data().ownerUid !== request.auth.uid || stored.data().fingerprint !== fingerprint) throw new HttpsError("already-exists", "This request ID belongs to a different import.");
+      if (stored.data().expiresAtMillis <= now) throw new HttpsError("failed-precondition", "This upload expired. Start a new import.");
+      if (job.exists) return { job: job.data() };
+      if (stored.data().quotaReleased) {
+        const oldMonthRef = db.doc(`hotels/${hotelUid}/aiUsageMonths/${stored.data().month}`);
+        const oldMonth = stored.data().month === month ? usage : await tx.get(oldMonthRef);
+        const config = await loadSupplierAiConfiguration(db, tx), next = normalizeMonth(oldMonth, stored.data().month);
+        if (!config.enabled || active.activeJobs >= config.maxConcurrentJobsPerHotel) throw new HttpsError("resource-exhausted", "AI import is disabled or this hotel has reached its concurrent limit.");
+        tx.update(refs.request, { quotaReleased: false, pendingUntil: admin.firestore.Timestamp.fromMillis(now + LEASE_MS) });
+        tx.set(oldMonthRef, { ...next, activeJobs: next.activeJobs + 1, updatedAt: stamp() });
+        tx.set(refs.state, { ...active, activeJobs: active.activeJobs + 1, updatedAt: stamp() });
+      }
+      return { receipt: stored.data() };
+    }
+    const configuration = await loadSupplierAiConfiguration(db, tx);
+    if (!configuration.enabled) throw new HttpsError("failed-precondition", "AI supplier import is disabled by the platform operator.");
+    if (!supplier.exists || supplier.data().archived === true) throw new HttpsError("failed-precondition", "Choose an active supplier in this hotel.");
+    const next = normalizeMonth(usage, month);
+    if (active.activeJobs >= configuration.maxConcurrentJobsPerHotel || (next.days[day] || 0) >= configuration.maxImportsPerHotelPerDay
+      || next.knownCostMicros + next.reservedCostMicros >= configuration.maxMonthlyCostPerHotelUsd * 1000000) throw new HttpsError("resource-exhausted", "This hotel has reached its AI import budget or concurrent/daily limit.");
+    const authTime = request.auth.token.auth_time;
+    if (!Number.isFinite(authTime)) throw new HttpsError("unauthenticated", "A current signed-in session is required.");
+    const receipt = { hotelUid, jobId, requestId, supplierId, ownerUid: request.auth.uid, authTime, fingerprint,
+      fileName: data.fileName, mimeType, size: bytes.length, sha256, month, configuration, configVersion: configuration.revision,
+      configPolicyVersion: AI_POLICY_VERSION, expiresAtMillis: now + SOURCE_RETENTION_MS, expiresAt: admin.firestore.Timestamp.fromMillis(now + SOURCE_RETENTION_MS), createdAt: stamp() };
+    receipt.cleanupPending = true; receipt.quotaReleased = false; receipt.pendingUntil = admin.firestore.Timestamp.fromMillis(now + LEASE_MS);
+    tx.create(refs.request, receipt);
+    tx.set(refs.month, { ...next, activeJobs: next.activeJobs + 1, importsStarted: next.importsStarted + 1,
+      days: { ...next.days, [day]: (next.days[day] || 0) + 1 }, updatedAt: stamp() });
+    tx.set(refs.state, { ...active, activeJobs: active.activeJobs + 1, updatedAt: stamp() });
+    return { receipt };
+  });
+  if (pending.job) return publicJob(await settleExpiredAttempt(db, pending.job, services));
+  const receipt = pending.receipt;
+  let source;
+  try { source = await savePrivate(bucket, `${prefix}/${hotelUid}/${jobId}/source`, bytes, "application/octet-stream"); }
+  catch (error) {
+    const releaseRefs = references(db, hotelUid, jobId, receipt.month, requestId);
+    await db.runTransaction(async (tx) => {
+      const [stored, job, usage, state] = await Promise.all([tx.get(releaseRefs.request), tx.get(releaseRefs.job), tx.get(releaseRefs.month), tx.get(releaseRefs.state)]);
+      if (!job.exists && stored.exists && !stored.data().quotaReleased) {
+        const next = normalizeMonth(usage, receipt.month);
+        tx.update(releaseRefs.request, { quotaReleased: true });
+        tx.set(releaseRefs.month, { ...next, activeJobs: Math.max(0, next.activeJobs - 1), updatedAt: stamp() });
+        const active = activeState(state);
+        tx.set(releaseRefs.state, { ...active, activeJobs: Math.max(0, active.activeJobs - 1), updatedAt: stamp() });
+      }
+    });
+    throw error;
+  }
+  return db.runTransaction(async (tx) => {
+    await authorize(db, request, hotelUid, "create", tx, services);
+    const configuration = await configurationFor(db, receipt, tx), quotaRefs = references(db, hotelUid, jobId, receipt.month, requestId);
+    const [stored, previous, supplier, month, state] = await Promise.all([tx.get(refs.request), tx.get(refs.job), tx.get(db.doc(`hotels/${hotelUid}/suppliers/${supplierId}`)), tx.get(quotaRefs.month), tx.get(quotaRefs.state)]);
+    if (previous.exists) return publicJob(previous.data());
+    if (!stored.exists || stored.data().fingerprint !== fingerprint || !supplier.exists || supplier.data().archived === true) throw new HttpsError("aborted", "The import source or supplier changed.");
+    const monthly = normalizeMonth(month, receipt.month), active = activeState(state);
+    if (stored.data().quotaReleased) {
+      // Failed concurrent uploads or maintenance may release a receipt while another
+      // identical source write is in flight. Finalization reacquires quota atomically.
+      if (active.activeJobs >= configuration.maxConcurrentJobsPerHotel) throw new HttpsError("resource-exhausted", "This hotel has reached its concurrent AI import limit.");
+      tx.set(quotaRefs.month, { ...monthly, activeJobs: monthly.activeJobs + 1, updatedAt: stamp() });
+      tx.set(quotaRefs.state, { ...active, activeJobs: active.activeJobs + 1, updatedAt: stamp() });
+    } else if (monthly.activeJobs < 1 || active.activeJobs < 1) throw new HttpsError("failed-precondition", "The import quota reservation needs operator review.");
+    const job = { ...receipt, actorUid: receipt.ownerUid, status: "queued", source, policyVersion: AI_POLICY_VERSION,
+      completedChunks: 0, attemptedCalls: 0, succeededCalls: 0, unknownCalls: 0, countingCalls: 0,
+      knownCostMicros: 0, reservedCostMicros: 0, inputTokens: 0, outputTokens: 0, quotaReleased: false, updatedAt: stamp() };
+    job.recoverAfter = admin.firestore.Timestamp.fromMillis((services.now?.() ?? Date.now()) + LEASE_MS);
+    tx.create(refs.job, job);
+    tx.update(refs.request, { pendingUntil: admin.firestore.FieldValue.delete(), quotaReleased: false });
+    tx.create(db.doc(`hotels/${hotelUid}/supplierAiImportWork/${jobId}`), { hotelUid, jobId, createdAt: stamp() });
+    return publicJob(job);
+  });
+}
+async function finishJob(db, job, status, error, patch = {}) {
+  const refs = references(db, job.hotelUid, job.jobId, job.month);
+  return db.runTransaction(async (tx) => {
+    const [current, month, state] = await Promise.all([tx.get(refs.job), tx.get(refs.month), tx.get(refs.state)]);
+    if (!current.exists || job.leaseId && current.data().leaseId !== job.leaseId || TERMINAL.has(current.data().status)) return current.exists ? current.data() : null;
+    const data = current.data(), usage = normalizeMonth(month, job.month);
+    const update = { status, leaseUntil: 0, leaseId: admin.firestore.FieldValue.delete(), recoverAfter: admin.firestore.FieldValue.delete(), quotaReleased: true, updatedAt: stamp(), ...patch,
+      ...(error ? { errorCode: error.code, errorMessage: error.message } : {}) };
+    tx.update(refs.job, update);
+    if (!data.quotaReleased) {
+      tx.set(refs.month, { ...usage, activeJobs: Math.max(0, usage.activeJobs - 1),
+      importsReviewReady: usage.importsReviewReady + (status === "review" ? 1 : 0), importsFailed: usage.importsFailed + (status !== "review" ? 1 : 0), updatedAt: stamp() });
+      const active = activeState(state);
+      tx.set(refs.state, { ...active, activeJobs: Math.max(0, active.activeJobs - 1), updatedAt: stamp() });
+    }
+    return { ...data, ...update };
+  });
+}
+async function settleExpiredAttempt(db, job, services = {}) {
+  if (!["processing", "queued"].includes(job.status) || (job.leaseUntil || job.recoverAfter?.toMillis?.() || Infinity) > (services.now?.() ?? Date.now())) return job;
+  const refs = references(db, job.hotelUid, job.jobId, job.month);
+  return db.runTransaction(async (tx) => {
+    const [current, monthly, state] = await Promise.all([tx.get(refs.job), tx.get(refs.month), tx.get(refs.state)]);
+    if (!current.exists || !["processing", "queued"].includes(current.data().status)
+      || (current.data().leaseUntil || current.data().recoverAfter?.toMillis?.() || Infinity) > (services.now?.() ?? Date.now())) return current.data();
+    const data = current.data();
+    const attemptRef = data.currentAttemptId ? db.doc(`${refs.job.path}/attempts/${data.currentAttemptId}`) : null, attempt = attemptRef ? await tx.get(attemptRef) : null;
+    const unknown = attempt?.exists && attempt.data().status === "attempted";
+    const usage = normalizeMonth(monthly, data.month);
+    const billingMonth = unknown ? attempt.data().billingMonth : data.month;
+    const billingRef = db.doc(`hotels/${job.hotelUid}/aiUsageMonths/${billingMonth}`);
+    const billingUsage = billingMonth === data.month ? usage : normalizeMonth(await tx.get(billingRef), billingMonth);
+    const errorCode = unknown ? "response-unknown" : "worker-interrupted";
+    const errorMessage = unknown ? "The AI request may have been charged. The reservation is retained; no automatic retry will occur." : "The import worker stopped before completing the proposal. Start a new import; confirmed costs remain recorded.";
+    if (unknown) tx.update(attemptRef, { status: "response_unknown", errorCode: "worker-interrupted", updatedAt: stamp() });
+    tx.update(refs.job, { status: unknown ? "response_unknown" : "failed", unknownCalls: data.unknownCalls + (unknown ? 1 : 0), quotaReleased: true,
+      errorCode, errorMessage, leaseUntil: 0, recoverAfter: admin.firestore.FieldValue.delete(), updatedAt: stamp() });
+    tx.set(refs.month, { ...usage, unknownCalls: usage.unknownCalls + (unknown && billingMonth === data.month ? 1 : 0), importsFailed: usage.importsFailed + 1,
+      activeJobs: usage.activeJobs - (data.quotaReleased ? 0 : 1), updatedAt: stamp() });
+    if (unknown && billingMonth !== data.month) tx.set(billingRef, { ...billingUsage, unknownCalls: billingUsage.unknownCalls + 1, updatedAt: stamp() });
+    const active = activeState(state);
+    tx.set(refs.state, { ...active, activeJobs: Math.max(0, active.activeJobs - (data.quotaReleased ? 0 : 1)), updatedAt: stamp() });
+    return { ...data, status: unknown ? "response_unknown" : "failed", unknownCalls: data.unknownCalls + (unknown ? 1 : 0), quotaReleased: true,
+      errorCode, errorMessage };
+  });
+}
+async function readSupplierAiImport(request, data, services = {}) {
+  const hotelUid = strictId(data.hotelUid, "hotelUid"), db = services.firestore || admin.firestore();
+  await authorize(db, request, hotelUid, "read", undefined, services);
+  if (data.jobId == null) {
+    await authorize(db, request, hotelUid, "create", undefined, services);
+    const config = await loadSupplierAiConfiguration(db);
+    return { available: config.enabled, model: config.model, fallbackEnabled: false, reason: config.enabled ? null : "disabled",
+      limits: { maxFileBytes: MAX_SOURCE_BYTES, maxPages: 50, maxProducts: 1000, maxCostPerImportUsd: config.maxCostPerImportUsd, maxImportsPerHotelPerDay: config.maxImportsPerHotelPerDay } };
+  }
+  const ref = db.doc(`hotels/${hotelUid}/supplierAiImportJobs/${strictId(data.jobId, "jobId")}`), stored = await ref.get();
+  if (!stored.exists) throw new HttpsError("not-found", "This AI import was not found in the selected hotel.");
+  if (stored.data().ownerUid !== request.auth.uid) throw new HttpsError("permission-denied", "Only the user who started this import can review its source and proposal.");
+  if (stored.data().expiresAtMillis <= (services.now?.() ?? Date.now())) throw new HttpsError("failed-precondition", "This import expired and its source is no longer available. Start a new import.");
+  const job = await settleExpiredAttempt(db, stored.data(), services);
+  await authorize(db, request, hotelUid, "read", undefined, services);
+  return publicJob(job);
+}
+async function countChunk(db, job, body, provider, services) {
+  const billingMonth = billingMonthOf(services), refs = references(db, job.hotelUid, job.jobId, billingMonth), countId = `count-${randomUUID()}`;
+  await db.runTransaction(async (tx) => {
+    await authorize(db, actorRequest(job), job.hotelUid, "create", tx, services);
+    await configurationFor(db, job, tx);
+    const [current, monthly] = await Promise.all([tx.get(refs.job), tx.get(refs.month)]);
+    if (current.data()?.leaseId !== job.leaseId) throw new HttpsError("aborted", "The AI import worker changed.");
+    const usage = normalizeMonth(monthly, billingMonth);
+    tx.create(db.doc(`${refs.job.path}/attempts/${countId}`), { kind: "token_count", status: "attempted", model: body.model,
+      priceVersion: PRICE_VERSION, billingMonth, inputTokens: null, outputTokens: null, costMicros: null, reservedCostMicros: 0, createdAt: stamp() });
+    tx.update(refs.job, { countingCalls: current.data().countingCalls + 1, leaseUntil: (services.now?.() ?? Date.now()) + LEASE_MS });
+    tx.set(refs.month, { ...usage, countingCalls: usage.countingCalls + 1, updatedAt: stamp() });
+  });
+  let inputTokens;
+  try { inputTokens = await provider.countInput(body); }
+  catch (error) {
+    await db.doc(`${refs.job.path}/attempts/${countId}`).set({ status: "failed", updatedAt: stamp() }, { merge: true });
+    throw error;
+  }
+  await db.doc(`${refs.job.path}/attempts/${countId}`).set({ status: "succeeded", inputTokens, updatedAt: stamp() }, { merge: true });
+  return inputTokens;
+}
+async function executeChunk(db, bucket, job, source, index, provider, services) {
+  let refs = references(db, job.hotelUid, job.jobId, job.month);
+  const attemptId = `chunk-${String(index).padStart(4, "0")}`;
+  const attemptRef = db.doc(`${refs.job.path}/attempts/${attemptId}`), existing = await attemptRef.get();
+  if (existing.exists) {
+    if (existing.data().status !== "succeeded") throw new HttpsError("failed-precondition", "A prior AI request remains unconfirmed. No automatic retry is allowed.");
+    return JSON.parse((await readPrivate(bucket, existing.data().result, 4 * 1024 * 1024)).toString("utf8"));
+  }
+  const configuration = await configurationFor(db, job), schema = services.schema || require("./supplierAiProposal").AI_SUPPLIER_SCHEMA;
+  const body = createSupplierAiRequest(source, configuration, schema), requestDigest = hashOf(Buffer.from(JSON.stringify(body)));
+  const countedTokens = await countChunk(db, job, body, provider, services), reservedInput = inputReservationTokens(countedTokens);
+  const billingMonth = billingMonthOf(services);
+  refs = references(db, job.hotelUid, job.jobId, billingMonth);
+  const reservation = costMicros(reservedInput, configuration.maxOutputTokens);
+  const reserved = await db.runTransaction(async (tx) => {
+    await authorize(db, actorRequest(job), job.hotelUid, "create", tx, services);
+    const currentConfiguration = await configurationFor(db, job, tx);
+    const [current, monthly, previous, supplier] = await Promise.all([tx.get(refs.job), tx.get(refs.month), tx.get(attemptRef), tx.get(db.doc(`hotels/${job.hotelUid}/suppliers/${job.supplierId}`))]);
+    const data = current.data(), usage = normalizeMonth(monthly, billingMonth);
+    if (!data || data.leaseId !== job.leaseId || data.status !== "processing" || previous.exists) throw new HttpsError("aborted", "The AI import attempt changed.");
+    if (!supplier.exists || supplier.data().archived === true) throw new HttpsError("failed-precondition", "The selected supplier is no longer active.");
+    if (countedTokens > currentConfiguration.maxInputTokens || body.max_output_tokens > currentConfiguration.maxOutputTokens
+      || data.attemptedCalls >= currentConfiguration.maxCallsPerImport || reservedInput + body.max_output_tokens > 272000
+      || data.knownCostMicros + data.reservedCostMicros + reservation > currentConfiguration.maxCostPerImportUsd * 1000000
+      || usage.knownCostMicros + usage.reservedCostMicros + reservation > currentConfiguration.maxMonthlyCostPerHotelUsd * 1000000) throw new HttpsError("resource-exhausted", "The complete import cannot continue within its input, call or cost limit. No partial proposal was accepted.");
+    tx.create(attemptRef, { kind: "response", status: "attempted", chunkIndex: index, requestDigest, model: body.model,
+      priceVersion: PRICE_VERSION, billingMonth, inputTokens: null, outputTokens: null, costMicros: null, countedInputTokens: countedTokens,
+      reservedInputTokens: reservedInput, maximumOutputTokens: body.max_output_tokens, reservedCostMicros: reservation, createdAt: stamp() });
+    tx.update(refs.job, { attemptedCalls: data.attemptedCalls + 1, reservedCostMicros: data.reservedCostMicros + reservation,
+      currentAttemptId: attemptId, leaseUntil: (services.now?.() ?? Date.now()) + LEASE_MS, updatedAt: stamp() });
+    tx.set(refs.month, { ...usage, attemptedCalls: usage.attemptedCalls + 1, reservedCostMicros: usage.reservedCostMicros + reservation, updatedAt: stamp() });
+    return true;
+  });
+  if (!reserved) throw new HttpsError("aborted", "The import reservation failed.");
+  let response;
+  try { response = await provider.respond(body); }
+  catch {
+    await markUnknown(db, job, attemptId);
+    throw new HttpsError("failed-precondition", "The AI response could not be confirmed. Reserved cost is retained; no automatic retry is allowed.");
+  }
+  const usage = normalizedProviderUsage(response);
+  if (!usage) {
+    await markUnknown(db, job, attemptId);
+    throw new HttpsError("failed-precondition", "The AI provider accounting could not be verified. Reserved cost is retained; no automatic retry is allowed.");
+  }
+  const accountingBoundExceeded = usage.inputTokens > reservedInput || usage.outputTokens > body.max_output_tokens || usage.costMicros > reservation;
+  // Settle known usage even when the proposal is refused, truncated or semantically invalid.
+  await db.runTransaction(async (tx) => {
+    const [current, monthly, attempt] = await Promise.all([tx.get(refs.job), tx.get(refs.month), tx.get(attemptRef)]);
+    if (current.data()?.leaseId !== job.leaseId || attempt.data()?.status !== "attempted") throw new HttpsError("aborted", "The AI billing receipt changed.");
+    const data = current.data(), aggregate = normalizeMonth(monthly, billingMonth);
+    tx.update(attemptRef, { status: "charged", ...usage, accountingBoundExceeded, reservedCostMicros: 0, providerResponseId: typeof response.id === "string" ? response.id.slice(0, 120) : null, updatedAt: stamp() });
+    tx.update(refs.job, { knownCostMicros: data.knownCostMicros + usage.costMicros, reservedCostMicros: data.reservedCostMicros - reservation,
+      inputTokens: data.inputTokens + usage.inputTokens, outputTokens: data.outputTokens + usage.outputTokens, currentAttemptId: admin.firestore.FieldValue.delete() });
+    tx.set(refs.month, { ...aggregate, knownCostMicros: aggregate.knownCostMicros + usage.costMicros, reservedCostMicros: aggregate.reservedCostMicros - reservation,
+      inputTokens: aggregate.inputTokens + usage.inputTokens, outputTokens: aggregate.outputTokens + usage.outputTokens, updatedAt: stamp() });
+  });
+  if (accountingBoundExceeded) throw new HttpsError("failed-precondition", "Verified AI usage exceeded the preflight reservation. The recorded cost includes that usage. Processing stopped; the platform operator must investigate before another attempt.");
+  const raw = boundedResponseText(response);
+  const validate = services.validateRows || require("./supplierAiProposal").validateRawSupplierAiRows;
+  const rows = validate(raw, { sourceUnits: [...source.units, ...(source.contextUnits || []).map((unit) => ({ ...unit, contextOnly: true }))] });
+  await authorize(db, actorRequest(job), job.hotelUid, "create", undefined, services);
+  const result = await savePrivate(bucket, `${prefix}/${job.hotelUid}/${job.jobId}/${attemptId}.json`, Buffer.from(JSON.stringify(rows)), "application/json");
+  await db.runTransaction(async (tx) => {
+    await authorize(db, actorRequest(job), job.hotelUid, "create", tx, services);
+    const [current, monthly, attempt] = await Promise.all([tx.get(refs.job), tx.get(refs.month), tx.get(attemptRef)]);
+    if (current.data()?.leaseId !== job.leaseId || attempt.data()?.status !== "charged") throw new HttpsError("aborted", "The AI result receipt changed.");
+    const aggregate = normalizeMonth(monthly, billingMonth);
+    tx.update(attemptRef, { status: "succeeded", result, updatedAt: stamp() });
+    tx.update(refs.job, { completedChunks: index + 1, succeededCalls: current.data().succeededCalls + 1, updatedAt: stamp() });
+    tx.set(refs.month, { ...aggregate, succeededCalls: aggregate.succeededCalls + 1, updatedAt: stamp() });
+  });
+  return rows;
+}
+async function markUnknown(db, job, attemptId) {
+  const refs = references(db, job.hotelUid, job.jobId, job.month), attemptRef = db.doc(`${refs.job.path}/attempts/${attemptId}`);
+  return db.runTransaction(async (tx) => {
+    const [current, monthly, attempt, state] = await Promise.all([tx.get(refs.job), tx.get(refs.month), tx.get(attemptRef), tx.get(refs.state)]);
+    if (!current.exists || attempt.data()?.status !== "attempted") return;
+    const data = current.data(), usage = normalizeMonth(monthly, job.month);
+    const billingMonth = attempt.data().billingMonth, billingRef = db.doc(`hotels/${job.hotelUid}/aiUsageMonths/${billingMonth}`);
+    const billingUsage = billingMonth === job.month ? usage : normalizeMonth(await tx.get(billingRef), billingMonth);
+    tx.update(attemptRef, { status: "response_unknown", updatedAt: stamp() });
+    tx.update(refs.job, { status: "response_unknown", unknownCalls: data.unknownCalls + 1, quotaReleased: true, leaseUntil: 0, recoverAfter: admin.firestore.FieldValue.delete(),
+      errorCode: "response-unknown", errorMessage: "The AI response or its billed usage could not be confirmed. The reserved amount is retained. No automatic retry will occur.", updatedAt: stamp() });
+    tx.set(refs.month, { ...usage, unknownCalls: usage.unknownCalls + (billingMonth === job.month ? 1 : 0), activeJobs: usage.activeJobs - (data.quotaReleased ? 0 : 1), importsFailed: usage.importsFailed + 1, updatedAt: stamp() });
+    if (billingMonth !== job.month) tx.set(billingRef, { ...billingUsage, unknownCalls: billingUsage.unknownCalls + 1, updatedAt: stamp() });
+    const active = activeState(state);
+    tx.set(refs.state, { ...active, activeJobs: Math.max(0, active.activeJobs - (data.quotaReleased ? 0 : 1)), updatedAt: stamp() });
+  });
+}
+async function runSupplierAiImportJob(hotelUid, jobId, services = {}) {
+  hotelUid = strictId(hotelUid, "hotelUid"); jobId = strictId(jobId, "jobId");
+  const db = services.firestore || admin.firestore(), bucket = services.bucket || admin.storage().bucket(), jobRef = db.doc(`hotels/${hotelUid}/supplierAiImportJobs/${jobId}`);
+  const stored = await jobRef.get();
+  if (!stored.exists) return { ignored: true };
+  await settleExpiredAttempt(db, stored.data(), services);
+  let job;
+  try {
+    job = await db.runTransaction(async (tx) => {
+      const current = await tx.get(jobRef);
+      if (!current.exists || TERMINAL.has(current.data().status)) return null;
+      const data = current.data(), now = services.now?.() ?? Date.now();
+      if (data.hotelUid !== hotelUid || data.jobId !== jobId || data.policyVersion !== AI_POLICY_VERSION) throw new HttpsError("failed-precondition", "This AI import needs operator review.");
+      if (data.expiresAtMillis <= now) throw new HttpsError("failed-precondition", "The AI import expired. Start a new import.");
+      if (data.leaseUntil > now) return null;
+      await authorize(db, actorRequest(data), hotelUid, "create", tx, services);
+      await configurationFor(db, data, tx);
+      const leaseId = randomUUID();
+      tx.update(jobRef, { status: "processing", leaseId, leaseUntil: now + LEASE_MS, recoverAfter: admin.firestore.Timestamp.fromMillis(now + LEASE_MS), updatedAt: stamp() });
+      return { ...data, status: "processing", leaseId };
+    });
+    if (!job) return { ignored: true };
+    const extract = services.extractSource || require("./supplierAiExtraction").extractSupplierAiSource;
+    const split = services.splitSource || require("./supplierAiExtraction").splitSupplierAiSource;
+    await authorize(db, actorRequest(job), hotelUid, "create", undefined, services);
+    if (job.source?.path !== `${prefix}/${hotelUid}/${jobId}/source`) throw new HttpsError("failed-precondition", "The source is outside this import.");
+    const bytes = await readPrivate(bucket, job.source, MAX_SOURCE_BYTES);
+    const source = await extract({ bytes, fileName: job.fileName, mimeType: job.mimeType });
+    await authorize(db, actorRequest(job), hotelUid, "create", undefined, services);
+    const chunks = await split(source, { maxUnits: 100, maxPdfPages: 5 });
+    if (!Array.isArray(chunks) || !chunks.length || chunks.length > job.configuration.maxCallsPerImport) throw new HttpsError("resource-exhausted", "This source needs too many AI calls. Split the file before importing.");
+    const provider = services.provider || createSupplierAiProvider({ apiKey: OPENAI_API_KEY.value() });
+    const rows = []; const started = services.now?.() ?? Date.now();
+    for (let index = 0; index < chunks.length; index++) {
+      if ((services.now?.() ?? Date.now()) - started > 360000 && index >= (job.completedChunks || 0)) {
+        await db.runTransaction(async (tx) => {
+          const current = await tx.get(jobRef);
+          if (current.data()?.leaseId !== job.leaseId) throw new HttpsError("aborted", "The import worker changed.");
+          tx.update(jobRef, { status: "queued", leaseUntil: 0, leaseId: admin.firestore.FieldValue.delete(), recoverAfter: admin.firestore.Timestamp.fromMillis((services.now?.() ?? Date.now()) + LEASE_MS), updatedAt: stamp() });
+          tx.create(db.doc(`hotels/${hotelUid}/supplierAiImportWork/${jobId}-${randomUUID()}`), { hotelUid, jobId, createdAt: stamp() });
+        });
+        return { queued: true };
+      }
+      rows.push(...await executeChunk(db, bucket, job, chunks[index], index, provider, services));
+      if (rows.length > 1000) throw new HttpsError("resource-exhausted", "The source contains more than 1,000 proposed products. No partial proposal was accepted.");
+    }
+    await authorize(db, actorRequest(job), hotelUid, "create", undefined, services);
+    if (!rows.length) throw new HttpsError("failed-precondition", "No supplier product rows were identified. Check the source or use template import.");
+    const referenced = new Set(rows.flatMap((row) => (row.sourceAnchors || []).map((anchor) => anchor.sourceId)));
+    const possibleOmissions = source.units.filter((unit) => !unit.contextOnly && unit.kind !== "pdf-page"
+      && unit.method !== "vision" && !/header/i.test(unit.sourceId) && !referenced.has(unit.sourceId));
+    const warnings = [...(source.warnings || []), ...(possibleOmissions.length ? [{ code: "POSSIBLE_OMITTED_SOURCE_ROWS",
+      message: `${possibleOmissions.length} source rows were not referenced by any proposed product. Check the source for omitted products, headers or summaries.`,
+      sourceIds: possibleOmissions.slice(0, 20).map((unit) => unit.sourceId), count: possibleOmissions.length }] : [])];
+    const reconcile = services.reconcileRows || require("./supplierAiProposal").reconcileSupplierAiRows;
+    const result = await reconcile({ db, hotelUid, supplierId: job.supplierId, jobId, rows, sourceUnits: source.units, leaseId: job.leaseId });
+    await authorize(db, actorRequest(job), hotelUid, "create", undefined, services);
+    const finished = await finishJob(db, job, "review", null, { counts: result.counts, totalRows: result.totalRows, warnings });
+    return publicJob(finished);
+  } catch (error) {
+    const latest = await jobRef.get();
+    if (!latest.exists || latest.data().status === "response_unknown") return latest.exists ? publicJob(latest.data()) : { ignored: true };
+    if (latest.data().currentAttemptId) {
+      await markUnknown(db, latest.data(), latest.data().currentAttemptId);
+      return publicJob((await jobRef.get()).data());
+    }
+    // Retain settled costs and any successfully completed chunk receipts; never regenerate them implicitly.
+    const extractionFailure = error.name === "SupplierAiExtractionError";
+    const code = extractionFailure ? /LIMIT|LARGE|EXPANSION|TIMEOUT/.test(error.code) ? "resource-exhausted" : "invalid-argument"
+      : ["permission-denied", "resource-exhausted", "failed-precondition", "invalid-argument"].includes(error.code) ? error.code : "processing-failed";
+    const message = code === "processing-failed" ? "The supplier import could not be prepared. No automatic paid retry was made." : error.message;
+    const failed = await finishJob(db, job || latest.data(), "failed", { code, message });
+    return failed ? publicJob(failed) : { ignored: true };
+  }
+}
+async function supplierProductAiImportHandler(req, res, services = {}) {
+  res.set("Cache-Control", "private, no-store"); res.set("X-Content-Type-Options", "nosniff");
+  if (!["GET", "POST"].includes(req.method)) return res.status(405).json({ error: { code: "invalid-argument", message: "Use GET or POST." } });
+  try {
+    const header = req.headers.authorization;
+    if (typeof header !== "string" || !/^Bearer \S+$/.test(header)) throw new HttpsError("unauthenticated", "Sign in to use supplier import.");
+    let token;
+    try { token = await (services.auth || admin.auth()).verifyIdToken(header.slice(7), true); } catch { throw new HttpsError("unauthenticated", "Your session expired. Sign in again."); }
+    const request = { auth: { uid: token.uid, token } };
+    if (req.method === "POST") {
+      if (req.headers["content-type"] !== "application/octet-stream") throw new HttpsError("invalid-argument", "Use a binary file upload.");
+      return res.status(202).json(await uploadSupplierAiImport(request, req.query, req.rawBody, services));
+    }
+    return res.status(200).json(await readSupplierAiImport(request, req.query, services));
+  } catch (error) {
+    const status = HTTP_STATUS[error.code] || 500;
+    return res.status(status).json({ error: { code: status === 500 ? "internal" : error.code, message: status === 500 ? "The supplier import could not be processed. Try again later." : error.message } });
+  }
+}
+async function processSupplierAiImportJobHandler(event, services = {}) {
+  const data = event.data?.data?.();
+  if (!data || data.hotelUid !== event.params?.hotelUid || typeof data.jobId !== "string") return { ignored: true };
+  return runSupplierAiImportJob(data.hotelUid, data.jobId, services);
+}
+async function cleanupSupplierAiSourcesHandler(_event, services = {}) {
+  const db = services.firestore || admin.firestore(), bucket = services.bucket || admin.storage().bucket(), now = services.now?.() ?? Date.now();
+  // Bounded hotel pages with a durable cursor prevent cleaned receipts from starving later tenants.
+  // Every receipt/job query uses an ordinary collection and a single indexed range field.
+  const cursorRef = db.doc("platformConfiguration/aiSupplierImportMaintenance"), cursor = await cursorRef.get();
+  let hotelQuery = db.collection("hotels").orderBy(admin.firestore.FieldPath.documentId());
+  if (cursor.data()?.afterHotelUid) hotelQuery = hotelQuery.startAfter(cursor.data().afterHotelUid);
+  const hotels = await hotelQuery.limit(25).get();
+  let deleted = 0, checked = 0, recovered = 0;
+  for (const hotel of hotels.docs) {
+    const hotelUid = strictId(hotel.id, "hotelUid"), expiry = admin.firestore.Timestamp.fromMillis(now);
+    const stalled = await db.collection(`hotels/${hotelUid}/supplierAiImportJobs`).where("recoverAfter", "<=", expiry).limit(10).get();
+    for (const job of stalled.docs) {
+      if (job.data().hotelUid !== hotelUid || job.ref.path !== `hotels/${hotelUid}/supplierAiImportJobs/${job.data().jobId}`) continue;
+      await settleExpiredAttempt(db, job.data(), services); recovered++;
+    }
+    const pending = await db.collection(`hotels/${hotelUid}/supplierAiImportRequests`).where("pendingUntil", "<=", expiry).limit(10).get();
+    for (const receipt of pending.docs) {
+      const data = receipt.data(), refs = references(db, hotelUid, strictId(data.jobId, "jobId"), data.month, receipt.id);
+      if (data.hotelUid !== hotelUid || data.requestId !== receipt.id) continue;
+      await db.runTransaction(async (tx) => {
+        const [current, job, month, state] = await Promise.all([tx.get(receipt.ref), tx.get(refs.job), tx.get(refs.month), tx.get(refs.state)]);
+        if (!current.exists || !current.data().pendingUntil || current.data().pendingUntil.toMillis() > now) return;
+        if (!job.exists && !current.data().quotaReleased) {
+          const usage = normalizeMonth(month, data.month), active = activeState(state);
+          tx.set(refs.month, { ...usage, activeJobs: Math.max(0, usage.activeJobs - 1), updatedAt: stamp() });
+          tx.set(refs.state, { ...active, activeJobs: Math.max(0, active.activeJobs - 1), updatedAt: stamp() });
+        }
+        tx.update(receipt.ref, { pendingUntil: admin.firestore.FieldValue.delete(), ...(!job.exists ? { quotaReleased: true } : {}) });
+      }); recovered++;
+    }
+    if (checked >= 20) continue;
+    const expired = await db.collection(`hotels/${hotelUid}/supplierAiImportRequests`).where("expiresAt", "<=", expiry).limit(Math.min(2, 20 - checked)).get();
+    for (const receipt of expired.docs) {
+    checked++;
+    const data = receipt.data(), hotelUid = strictId(data.hotelUid, "hotelUid"), jobId = strictId(data.jobId, "jobId");
+    if (receipt.ref.path !== `hotels/${hotelUid}/supplierAiImportRequests/${data.requestId}` || data.expiresAtMillis > now) continue;
+    const sourcePrefix = `${prefix}/${hotelUid}/${jobId}/`, [files] = await bucket.getFiles({ prefix: sourcePrefix, maxResults: 40, autoPaginate: false });
+    let blocked = false;
+    for (const file of files) {
+      const [metadata] = await file.getMetadata();
+      if (metadata.metadata?.policyVersion !== String(AI_POLICY_VERSION) || metadata.metadata?.firebaseStorageDownloadTokens) { blocked = true; continue; }
+      await file.delete({ ifGenerationMatch: validGeneration(metadata.generation), ignoreNotFound: true }); deleted++;
+    }
+    if (blocked || files.length >= 40) {
+      await receipt.ref.set({ cleanupIssue: "unexpected-source-object", expiresAt: admin.firestore.Timestamp.fromMillis(now + 86400000) }, { merge: true });
+      logger.error("Supplier AI source cleanup needs operator review.", { hotelUid, jobId, code: "unexpected-source-object" });
+      continue;
+    }
+    const jobRef = db.doc(`hotels/${hotelUid}/supplierAiImportJobs/${jobId}`);
+    let rows;
+    do {
+      rows = await db.collection(`${jobRef.path}/rows`).limit(200).get();
+      if (rows.docs.length) {
+        const batch = db.batch();
+        for (const row of rows.docs) batch.delete(row.ref);
+        await batch.commit();
+      }
+    } while (rows.docs.length === 200);
+    await db.runTransaction(async (tx) => {
+      const stateRef = db.doc(`hotels/${hotelUid}/aiImportAdministration/state`);
+      const [stored, job, month, state] = await Promise.all([tx.get(receipt.ref), tx.get(jobRef), tx.get(db.doc(`hotels/${hotelUid}/aiUsageMonths/${data.month}`)), tx.get(stateRef)]);
+      if (!stored.exists || stored.data().cleanupPending !== true) return;
+      const usage = normalizeMonth(month, data.month);
+      const release = job.exists ? !job.data().quotaReleased : !stored.data().quotaReleased;
+      if (release) {
+        tx.set(db.doc(`hotels/${hotelUid}/aiUsageMonths/${data.month}`), { ...usage, activeJobs: Math.max(0, usage.activeJobs - 1), importsFailed: usage.importsFailed + 1, updatedAt: stamp() });
+        const active = activeState(state);
+        tx.set(stateRef, { ...active, activeJobs: Math.max(0, active.activeJobs - 1), updatedAt: stamp() });
+      }
+      if (job.exists) tx.update(jobRef, { source: admin.firestore.FieldValue.delete(), fileName: "Expired source",
+        warnings: admin.firestore.FieldValue.delete(), quotaReleased: true, sourceDeletedAt: stamp(), updatedAt: stamp(),
+        ...(!TERMINAL.has(job.data().status) ? { status: "failed", errorCode: "expired", errorMessage: "The import source expired. Start a new import." } : {}) });
+      tx.update(receipt.ref, { cleanupPending: false, quotaReleased: true, expiresAt: admin.firestore.FieldValue.delete(),
+        fileName: admin.firestore.FieldValue.delete(), sourceDeletedAt: stamp() });
+    });
+    // Do not remove the receipt: it fences replay even after the retained source has expired.
+    }
+  }
+  await cursorRef.set({ afterHotelUid: hotels.docs.length === 25 ? hotels.docs.at(-1).id : null, updatedAt: stamp() });
+  return { checked, deleted, recovered, hotels: hotels.docs.length };
+}
+const supplierProductAiImport = onRequest({ region: "us-central1", cors: true, memory: "512MiB", timeoutSeconds: 120, concurrency: 2, maxInstances: 3 }, supplierProductAiImportHandler);
+const processSupplierProductAiImport = onDocumentCreated({ document: "hotels/{hotelUid}/supplierAiImportWork/{workId}", region: "us-central1", memory: "1GiB", timeoutSeconds: 540,
+  concurrency: 1, maxInstances: 3, retry: false, secrets: [OPENAI_API_KEY] }, (event) => processSupplierAiImportJobHandler(event).catch((error) => {
+  logger.error("Supplier AI import worker failed safely.", { code: typeof error.code === "string" ? error.code : "internal" });
+}));
+const cleanupSupplierAiSources = onSchedule({ schedule: "every 15 minutes", region: "us-central1", timeoutSeconds: 540, memory: "512MiB", maxInstances: 1 }, cleanupSupplierAiSourcesHandler);
+module.exports = { supplierProductAiImport, processSupplierProductAiImport, cleanupSupplierAiSources, supplierProductAiImportHandler,
+  processSupplierAiImportJobHandler, cleanupSupplierAiSourcesHandler, uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob,
+  publicJob, normalizeMonth, settleExpiredAttempt, savePrivate, readPrivate };

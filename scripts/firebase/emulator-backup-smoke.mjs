@@ -53,6 +53,8 @@ const sharp = requireFunctions("sharp");
 const { recordHotelInventoryAdjustmentHandler, reverseHotelInventoryAdjustmentHandler } = require("../../functions/src/inventoryAdjustments");
 const { recordHotelSupplierConfirmationHandler, reviewHotelSupplierConfirmationHandler, getHotelSupplierConfirmationsHandler } = require("../../functions/src/supplierConfirmations");
 const { recordHotelOrderReceiptHandler: recordConfirmedReceipt } = require("../../functions/src/orderReceiving");
+const { DEFAULT_AI_CONFIGURATION } = require("../../functions/src/supplierAiPolicy");
+const { uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob } = require("../../functions/src/supplierAiImports");
 const inventoryFixtures = [
   { hotelUid: "restore-hotel-a", currency: "EUR", actorUid: "restore-a", platform: false },
   { hotelUid: "restore-hotel-b", currency: "GBP", actorUid: "restore-b-counter", platform: false },
@@ -64,6 +66,41 @@ data: { hotelUid: fixture.hotelUid, locationId: "store", openingStockCountId: "o
 const inventoryServices = { firestore: database, auth, now: () => revisionTime.toMillis() };
 const procurementServices = { firestore: database, auth, now: () => Date.parse("2026-10-12T10:00:00Z") };
 const imageServices = { firestore: database, auth, bucket };
+const aiServices = { firestore: database, auth, bucket };
+const aiUpload = { hotelUid: "restore-hotel-a", supplierId: "restore-dairy", requestId: "restore-ai-unknown", fileName: "offers.csv", mimeType: "text/csv" };
+const aiBytes = Buffer.from("SKU,Name,Price\nRESTORE-MILK6,Fictional milk,15\n");
+const aiRequest = (authTime) => ({ auth: { uid: "restore-a", token: { email_verified: true, auth_time: authTime } } });
+const jsonData = (value) => JSON.parse(JSON.stringify(value));
+async function seedUnknownAiImport() {
+  const authTime = Math.floor(Date.now() / 1000); let paid = 0;
+  const services = { ...aiServices, provider: { countInput: async () => 500, respond: async () => { paid++; throw new Error("Fictional lost paid response"); } } };
+  const job = await uploadSupplierAiImport(aiRequest(authTime), aiUpload, aiBytes, services);
+  await runSupplierAiImportJob(aiUpload.hotelUid, job.jobId, services); assert.equal(paid, 1);
+  const root = `hotels/${aiUpload.hotelUid}`, jobPath = `${root}/supplierAiImportJobs/${job.jobId}`;
+  const stored = (await database.doc(jobPath).get()).data(), attempts = await database.collection(`${jobPath}/attempts`).get();
+  const paths = [jobPath, `${root}/supplierAiImportRequests/${aiUpload.requestId}`, `${root}/aiUsageMonths/${stored.month}`, `${root}/aiImportAdministration/state`, ...attempts.docs.map((row) => row.ref.path)];
+  const records = Object.fromEntries(await Promise.all(paths.map(async (path) => [path, jsonData((await database.doc(path).get()).data())])));
+  const [metadata] = await bucket.file(stored.source.path).getMetadata();
+  assert.equal(stored.status, "response_unknown"); assert.ok(stored.reservedCostMicros > 0);
+  return { jobId: job.jobId, authTime, records, source: { path: stored.source.path, generation: metadata.generation, sha256: bytesHash(aiBytes) } };
+}
+async function verifyUnknownAiImport(proof) {
+  for (const [path, data] of Object.entries(proof.records)) assert.deepEqual(jsonData((await database.doc(path).get()).data()), data, `AI accounting restore differs: ${path}`);
+  const [metadata] = await bucket.file(proof.source.path).getMetadata();
+  assert.equal(metadata.generation, proof.source.generation); assert.equal(bytesHash((await bucket.file(proof.source.path).download())[0]), proof.source.sha256);
+  let calls = 0; const forbidden = { ...aiServices, provider: { countInput: async () => { calls++; throw new Error("Restore must never initiate provider work"); }, respond: async () => { calls++; throw new Error("Restore must never rebill"); } } };
+  // Auth restoration may advance the valid-after watermark. Simulate a fresh
+  // sign-in instead of weakening current-account authorization for old tokens.
+  const user = await auth.getUser("restore-a");
+  const freshAuthTime = Math.ceil(Math.max(Date.now(), Date.parse(user.tokensValidAfterTime) || 0) / 1000);
+  if (proof.authTime * 1000 < Date.parse(user.tokensValidAfterTime)) await assert.rejects(readSupplierAiImport(aiRequest(proof.authTime), { hotelUid: aiUpload.hotelUid, jobId: proof.jobId }, forbidden), (error) => error.code === "permission-denied");
+  const status = await readSupplierAiImport(aiRequest(freshAuthTime), { hotelUid: aiUpload.hotelUid, jobId: proof.jobId }, forbidden);
+  assert.equal(status.status, "response_unknown"); assert.equal(status.usage.actualCostUsd, null); assert.ok(status.usage.reservedCostUsd > 0);
+  await runSupplierAiImportJob(aiUpload.hotelUid, proof.jobId, forbidden);
+  const replay = await uploadSupplierAiImport(aiRequest(freshAuthTime), aiUpload, aiBytes, forbidden);
+  assert.equal(replay.jobId, proof.jobId); assert.equal(replay.status, "response_unknown"); assert.equal(calls, 0);
+  for (const [path, data] of Object.entries(proof.records)) assert.deepEqual(jsonData((await database.doc(path).get()).data()), data, `Restore replay changed AI receipt: ${path}`);
+}
 let imageRulesEnvironment;
 // A temporary test proof survives the two emulator processes; it is not hotel
 // data, and contains only fictional fixture payloads and timestamp evidence.
@@ -87,6 +124,7 @@ const periodV2Request = (fixture, locationId) => procurementRequest(fixture, { l
   openingStockCountId: "adjustment-opening", closingStockCountId: "adjustment-closing", reportPolicyVersion: 2 });
 const documents = {
   "platformConfiguration/saasProcurement": { enabled: true, rulesVersion: createRequire(import.meta.url)("../../functions/src/platformReleasePolicy.json").saasRulesVersion },
+  "platformConfiguration/aiSupplierProductImport": { ...DEFAULT_AI_CONFIGURATION, enabled: true },
   "hotels/restore-hotel-a": { name: "Fictional hotel A", timeZone: "Europe/Brussels" },
   "hotels/restore-hotel-b": { name: "Fictional hotel B", timeZone: "Europe/London" },
   "users/restore-platform": { firstName: "Fictional operator", hotelUid: [], accessRevision: 0 },
@@ -415,6 +453,7 @@ try {
       await seedSupplierConfirmation(fixture);
       proof[fixture.hotelUid] = Object.fromEntries(Object.entries(await procurementEvidence(fixture)).map(([path, row]) => [path, row.data]));
     }
+    proof.unknownAiImport = await seedUnknownAiImport();
     await writeFile(procurementProofPath, JSON.stringify(proof), { mode: 0o600 });
     console.log("Seeded fictional two-hotel data, supplier responses and approved-price receipts, protected supplier price changes, paired manual transfer/reversal/waste/return evidence, immutable v1/v2 reports, Auth users/claims, private Storage bytes and real managed product-image sources/derivatives with pinned generations.");
   } else if (process.argv[2] === "verify") {
@@ -460,6 +499,7 @@ try {
       assert.deepEqual(countsAfter, countsBefore, "Report retries must not create additional inventory evidence.");
     }
     const proof = JSON.parse(await readFile(procurementProofPath, "utf8"));
+    await verifyUnknownAiImport(proof.unknownAiImport);
     for (const fixture of inventoryFixtures) await verifyManagedImage(fixture, proof.managedImages[fixture.hotelUid]);
     for (const fixture of inventoryFixtures) await verifyProcurementReplay(fixture, proof[fixture.hotelUid]);
     await assert.rejects(recordHotelInventoryAdjustmentHandler({ auth: { uid: "restore-a", token: { email_verified: true } },
@@ -490,7 +530,7 @@ try {
       assert.equal(metadata.contentType, "application/pdf");
       assert.equal(metadata.metadata.fixture, "restore-only");
     }
-    console.log("Verified two-hotel data, unchanged v1 period replay (50 inferred usage; weighted cost 290/130), supplier response/review/approved-price receipt restore and exact replay, supplier price-history restore, exact paired manual movement/reversal replay and immutable v2 reports with explicit unknown costs, frozen timestamps/updateTimes, entitlements, roles, platform history, Auth, private Storage bytes/metadata and exact managed product-image hashes/generations with authorized reads and browser/cross-hotel denials.");
+    console.log("Verified two-hotel data, unchanged v1 period replay (50 inferred usage; weighted cost 290/130), supplier response/review/approved-price receipt restore and exact replay, supplier price-history restore, exact paired manual movement/reversal replay and immutable v2 reports with explicit unknown costs, frozen timestamps/updateTimes, entitlements, roles, platform history, Auth, private Storage bytes/metadata and exact managed product-image hashes/generations with authorized reads and browser/cross-hotel denials. Restored unknown AI billing reservations, immutable attempts and pinned source generations remain unchanged; stale sessions are denied and fresh status/upload/worker replay makes zero provider calls.");
   } else throw new Error("Expected seed or verify mode.");
 } finally {
   if (imageRulesEnvironment) await imageRulesEnvironment.cleanup();

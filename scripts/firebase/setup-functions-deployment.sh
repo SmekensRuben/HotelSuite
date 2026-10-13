@@ -165,7 +165,7 @@ for region in us-central1 us-west1 europe-west1; do
 done
 
 missing=()
-for secret in MEILI_HOST MEILI_INDEX MEILI_API_KEY RESEND_API_KEY RESEND_FROM RESEND_WEBHOOK_SECRET; do
+for secret in MEILI_HOST MEILI_INDEX MEILI_API_KEY RESEND_API_KEY RESEND_FROM RESEND_WEBHOOK_SECRET OPENAI_API_KEY; do
   if ! state=$(gcloud secrets versions describe latest --secret="$secret" --project="$project_id" --format='value(state)' 2>/dev/null) || [[ "$state" != ENABLED ]]; then
     missing+=("$secret")
     continue

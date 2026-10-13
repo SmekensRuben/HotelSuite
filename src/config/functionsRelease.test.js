@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { requireFunctionsConfiguration, requireFunctionsRelease, FUNCTIONS_PROVIDER, FUNCTIONS_DEPLOY_ACCOUNT } from "../../scripts/firebase/functions-release-policy.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -116,6 +116,34 @@ printf '%s\\n' "$*" >> "$GCLOUD_CALLS"
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("Project number mismatch");
       expect(result.stderr).not.toContain("UNEXPECTED MUTATION");
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+});
+
+describe("AI runtime secret metadata preflight", () => {
+  it.each(["missing", "wrong-account", "conditional", "granted"])("requires one exact secret-scoped runtime grant: %s", (mode) => {
+    const directory = mkdtempSync(join(tmpdir(), "hotelsuite-ai-runtime-"));
+    try {
+      mkdirSync(join(directory, "scripts/firebase"), { recursive: true }); mkdirSync(join(directory, "functions"));
+      writeFileSync(join(directory, "scripts/firebase/functions-release-policy.mjs"), readFileSync("scripts/firebase/functions-release-policy.mjs"));
+      const policy = mode === "missing" ? { bindings: [] } : { bindings: [{ role: "roles/secretmanager.secretAccessor",
+        members: [`serviceAccount:${mode === "wrong-account" ? "different" : "358734544002-compute@developer.gserviceaccount.com"}`],
+        ...(mode === "conditional" ? { condition: { expression: "true" } } : {}) }] };
+      writeFileSync(join(directory, "gcloud"), `#!/bin/bash
+printf '%s\\n' "$*" >> "$GCLOUD_CALLS"
+case "$*" in
+  "secrets versions describe "*) echo ENABLED ;;
+  "secrets get-iam-policy OPENAI_API_KEY "*) echo '${JSON.stringify(policy)}' ;;
+  *) exit 99 ;;
+esac
+`, { mode: 0o700 });
+      const result = spawnSync("bash", [join(process.cwd(), "scripts/firebase/check-functions-runtime.sh")], {
+        cwd: directory, encoding: "utf8", env: { ...env(), PATH: `${directory}:${process.env.PATH}`, GCLOUD_CALLS: join(directory, "calls") } });
+      expect(result.status).toBe(mode === "granted" ? 0 : 1);
+      const calls = readFileSync(join(directory, "calls"), "utf8");
+      expect(calls).toContain("versions describe latest --secret=OPENAI_API_KEY");
+      expect(calls).not.toContain("versions access"); expect(calls).not.toContain("add-iam-policy-binding");
+      if (mode !== "granted") expect(result.stderr).toContain("Configure this once on this secret");
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 });

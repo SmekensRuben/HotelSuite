@@ -10,6 +10,7 @@ import {
   Users,
   LogOut,
   ArrowRight,
+  Sparkles,
 } from "lucide-react";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
@@ -20,6 +21,7 @@ const links = [
   ["/platform/hotels", "Hotels", Building2],
   ["/platform/subscriptions", "Subscriptions", FileText],
   ["/platform/imports", "Imports & integrations", Activity],
+  ["/platform/ai", "AI settings & usage", Sparkles],
   ["/platform/incidents", "Notifications", Bell],
   ["/platform/activity", "Activity & audit", ScrollText],
   ["/platform/users", "Users", Users],
