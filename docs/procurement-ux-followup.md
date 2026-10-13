@@ -1,5 +1,7 @@
 # Procurement usability follow-up
 
+This record covers the initial cart/settings changes in the first four commits of PR #235. The later weighted-cost and loading additions are recorded in [procurement-cost-loading-plan.md](procurement-cost-loading-plan.md).
+
 Base: `f36b6ea006cef5298320b496e02b735c772cef6b` (main after PR #234).
 Branch: `codex/procurement-orders-settings-20261013`.
 
