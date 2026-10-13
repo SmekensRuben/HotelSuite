@@ -88,7 +88,7 @@ const roomingLists = require("./src/roomingLists");
 for (const name of ["getRoomingList", "createRoomingList", "mutateRoomingList", "reviewRoomingList", "setRoomingListAccess"]) exports[name] = roomingLists[name];
 
 // Platform metadata and diagnostics do not require an operational hotel assignment.
-for (const module of ["platformConsole", "platformMonitoring", "platformSupport", "platformUsers"]) {
+for (const module of ["platformConsole", "platformMonitoring", "platformSupport", "platformUsers", "supplierAiPlatform"]) {
   const boundaries = require(`./src/${module}`);
   for (const [name, value] of Object.entries(boundaries)) {
     if (value?.__endpoint) exports[name] = value;
@@ -98,3 +98,10 @@ exports.syncPlatformImportTelemetry = require("./src/importTelemetry").syncPlatf
 
 // Explicit, platform-only fictional data for the reserved test hotel.
 exports.manageHotelDemoData = require("./src/demoData").manageHotelDemoData;
+
+// Private supplier-import jobs and explicit human review use separate boundaries.
+for (const module of ["supplierAiImports", "supplierAiProposal"]) {
+  for (const [name, value] of Object.entries(require(`./src/${module}`))) {
+    if (value?.__endpoint) exports[name] = value;
+  }
+}
