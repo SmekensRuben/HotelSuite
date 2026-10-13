@@ -13,6 +13,7 @@ import {
 } from "../firebaseConfig";
 import { runTransaction } from "firebase/firestore";
 import { invalidateProcurementReads, poolProcurementRead, requireServerSnapshot } from "./procurementReadPool";
+import { PRODUCT_BASE_UNITS } from "../utils/productPurchaseOptions";
 
 // Each settings domain has its own authority; never read the retired shared document.
 export async function getHotelBootstrap(hotelUid) {
@@ -450,14 +451,34 @@ async function archiveProcurementResource(hotelUid, resourceCollection, resource
 export const archiveLocation = (hotelUid, locationId, expectedRevision = 0) => archiveProcurementResource(hotelUid, "locations", locationId, expectedRevision);
 export const archiveOutlet = (hotelUid, outletId, expectedRevision = 0) => archiveProcurementResource(hotelUid, "outlets", outletId, expectedRevision);
 
-export async function getHotelStockTemplateDisplay(hotelUid, locationId, templateId) {
+export async function getHotelStockTemplateDisplay(hotelUid, locationId, templateId, options = {}) {
   requireId(hotelUid, "Hotel ID"); requireId(locationId, "Location ID"); requireId(templateId, "Template ID");
   return poolProcurementRead(hotelUid, `template-display:${locationId}:${templateId}`, async () => {
     const { data } = await httpsCallable(functions, "getHotelStockTemplateDisplay")({ hotelUid, locationId, templateId });
     if (data?.hotelUid !== hotelUid || data.locationId !== locationId || data.templateId !== templateId
-      || !Array.isArray(data.items) || data.items.length > 250) throw new Error("Stock template display response scope is invalid.");
+      || !Array.isArray(data.items) || data.items.length > 250
+      || data.location?.id !== locationId || data.template?.id !== templateId
+      || !Number.isSafeInteger(data.template.revision) || data.template.revision < 0
+      || !Array.isArray(data.template.items) || data.template.items.length !== data.items.length
+      || typeof data.location.archived !== "boolean" || typeof data.template.archived !== "boolean") {
+      throw new Error("Stock template display response scope is invalid.");
+    }
+    const label = (value) => value === null || (typeof value === "string" && value.trim() && value.length <= 200);
+    const identity = (item) => {
+      if (item?.catalogProductId != null) return `catalog:${requireId(item.catalogProductId)}`;
+      return JSON.stringify(["supplier", requireId(item?.supplierProductId), requireId(item?.outletId)]);
+    };
+    if (!label(data.location.name) || !label(data.template.name)
+      || new Set(data.template.items.map(identity)).size !== data.items.length
+      || data.items.some((item, index) => identity(item) !== identity(data.template.items[index])
+        || typeof item.available !== "boolean"
+        || (item.catalogProductId ? !label(item.catalogProductName) || (item.baseUnit !== null && !PRODUCT_BASE_UNITS.includes(item.baseUnit))
+          : !label(item.supplierProductName) || !label(item.outletName))
+        || (item.available && (item.catalogProductId ? !item.catalogProductName || !item.baseUnit : !item.supplierProductName || !item.outletName)))) {
+      throw new Error("Stock template names or ordered rows could not be verified.");
+    }
     return data;
-  });
+  }, options.scopeKey);
 }
 
 export async function getLocationStockTemplates(hotelUid, locationId) {

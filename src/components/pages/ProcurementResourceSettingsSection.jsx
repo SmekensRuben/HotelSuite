@@ -5,6 +5,7 @@ import DataListTable from "../shared/DataListTable";
 import { Card } from "../layout/Card";
 import { usePermission } from "../../hooks/usePermission";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { ArticleRowsSkeleton } from "../ui/ResourceLoading";
 
 /** One active settings section; resource reads retain their own permission boundary. */
 export default function ProcurementResourceSettingsSection({ scope, feature, singular, title, description, loadRecords }) {
@@ -46,7 +47,7 @@ export default function ProcurementResourceSettingsSection({ scope, feature, sin
           <input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} />Show archived
         </label>
       </div>
-      {query.loading ? <p role="status" className="py-4 text-sm text-gray-600">Loading {feature}...</p>
+      {query.loading ? <ArticleRowsSkeleton rows={3} label={`Preparing ${feature}…`} />
         : query.error ? <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           <p>{query.error.message || `Unable to load ${feature}.`}</p>
           <button type="button" className="mt-2 underline" onClick={query.retry}>Retry {feature}</button>
