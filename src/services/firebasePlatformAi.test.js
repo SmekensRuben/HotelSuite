@@ -15,11 +15,11 @@ const usagePage = { month: "2026-10", hotels: [{ id: "hotel-a", name: "Hotel A",
 const actor = () => ({ uid: "operator", emailVerified: true, getIdTokenResult: vi.fn(async () => ({ claims: { platformAdmin: true } })) });
 beforeEach(() => { vi.clearAllMocks(); mocks.auth.currentUser = actor(); mocks.callable.mockReturnValue(mocks.invoke); mocks.invoke.mockResolvedValue({ data: settings }); });
 
-it("loads operator settings without a hotel or secret value and verifies fresh claims before and after I/O", async () => {
+it("loads operator settings without a hotel or secret value and checks current claims without forcing token events", async () => {
   expect(await getPlatformSupplierAiImportSettings()).toEqual(settings);
   expect(mocks.callable).toHaveBeenCalledWith({}, "getPlatformSupplierAiImportSettings");
   expect(mocks.invoke).toHaveBeenCalledWith({});
-  expect(mocks.auth.currentUser.getIdTokenResult.mock.calls).toEqual([[true], [true]]);
+  expect(mocks.auth.currentUser.getIdTokenResult.mock.calls).toEqual([[], []]);
   expect(JSON.stringify(settings)).not.toContain("secretValue");
 });
 

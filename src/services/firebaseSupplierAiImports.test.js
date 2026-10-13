@@ -34,11 +34,11 @@ it("does not silently accept a cross-hotel, cross-supplier or wrong-owner upload
     mocks.fetch.mockResolvedValueOnce(response({ ...saved, ...patch })); await expect(startSupplierAiImport("hotel-a", "supplier", file())).rejects.toThrow(/acknowledgement/);
   }
 });
-it("shares availability and job reads, and exposes disabled settings with fallback fixed off", async () => {
+it("shares availability and job reads without exposing provider or accounting configuration", async () => {
   mocks.fetch.mockResolvedValueOnce(response({ available: false, model: "gpt-6-luna", fallbackEnabled: false, reason: "disabled" }));
   const result = await Promise.all([getSupplierAiImportAvailability("hotel-a"), getSupplierAiImportAvailability("hotel-a")]); expect(result[0].available).toBe(false); expect(mocks.fetch).toHaveBeenCalledTimes(1);
   mocks.fetch.mockResolvedValue(response(saved)); await Promise.all([getSupplierAiImport("hotel-a", "job"), getSupplierAiImport("hotel-a", "job")]); expect(mocks.fetch).toHaveBeenCalledTimes(2);
-  mocks.fetch.mockResolvedValueOnce(response({ available: true, fallbackEnabled: true })); await expect(getSupplierAiImportAvailability("hotel-a")).rejects.toThrow(/settings/);
+  mocks.fetch.mockResolvedValueOnce(response({ available: true, reason: "unknown" })); await expect(getSupplierAiImportAvailability("hotel-a")).rejects.toThrow(/settings/);
 });
 it("rejects late reads and uploads after Auth replacement with the same UID or invalidated hotel access", async () => {
   const pending = deferred(); mocks.fetch.mockReturnValueOnce(pending.promise);
@@ -63,4 +63,34 @@ it("rejects unreviewed selections and incomplete acknowledgements without losing
   await expect(confirmSupplierAiImport("hotel-a", "job", [{ rowId: "row", reviewRevision: 1, acknowledged: false }])).rejects.toThrow(/reviewed/); expect(mocks.callable).not.toHaveBeenCalled();
   const selected = [{ rowId: "row", reviewRevision: 1, acknowledged: true }]; mocks.callable.mockResolvedValueOnce({ data: { hotelUid: "hotel-a", jobId: "job", complete: true, outcomes: [] } }); await expect(confirmSupplierAiImport("hotel-a", "job", selected)).rejects.toThrow(/incomplete/);
   mocks.callable.mockResolvedValueOnce({ data: { hotelUid: "hotel-a", jobId: "job", complete: true, outcomes: [{ rowId: "row", status: "blocked", error: { message: "Product changed" } }] } }); expect((await confirmSupplierAiImport("hotel-a", "job", selected)).outcomes[0].status).toBe("blocked"); expect(mocks.callable.mock.calls[0][1].requestId).toBe(mocks.callable.mock.calls[1][1].requestId);
+});
+
+it("projects customer job and availability data even when an older server sends financial details", async () => {
+  mocks.fetch.mockResolvedValueOnce(response({ available: true, reason: null, model: "gpt-6-luna", fallbackEnabled: true, configuration: { maxMonthlyCostPerHotelUsd: 10 }, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000, maxCostPerImportUsd: 0.25 } }));
+  expect(await getSupplierAiImportAvailability("hotel-a")).toEqual({ available: true, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 } });
+  mocks.fetch.mockResolvedValueOnce(response({ ...saved, model: "gpt-6-luna", usage: { actualCostUsd: 0.01, reservedCostUsd: 0.1 }, configuration: { maxCostPerImportUsd: 0.25 }, progress: { completedChunks: 2, totalChunks: 4 }, source: { fileName: "supplier.csv", size: 20, mimeType: "text/csv", privatePath: "private-source", costUsd: 4 }, error: { code: "resource-exhausted", message: "USD 0.25 budget exhausted", costUsd: 2 }, warnings: [{ code: "limit", message: "Token budget reached", costUsd: 2 }] }));
+  const received = await getSupplierAiImport("hotel-a", "job"), serialized = JSON.stringify(received);
+  expect(received.progress).toEqual({ completedChunks: 2, totalChunks: 4 });
+  for (const forbidden of ["gpt-6-luna", "usage", "configuration", "Cost", "costUsd", "USD", "Token", "budget", "private-source"]) expect(serialized).not.toContain(forbidden);
+  expect(received.source).toEqual({ fileName: "supplier.csv", size: 20, mimeType: "text/csv" });
+});
+it("rejects forged progress and shields internal HTTP/callable errors from hotel users", async () => {
+  mocks.fetch.mockResolvedValueOnce(response({ ...saved, progress: { completedChunks: 3, totalChunks: 2 } })); await expect(getSupplierAiImport("hotel-a", "job")).rejects.toThrow(/progress/);
+  for (const message of ["AI budget USD 0.25 exceeded", "model gpt-6-luna failed", "reserved amount 0.25", "Provider configuration rejected", "maxCostPerImportUsd exceeded"]) { mocks.fetch.mockResolvedValueOnce({ ok: false, json: async () => ({ error: { code: "resource-exhausted", message } }) }); await expect(getSupplierAiImport("hotel-a", "job")).rejects.toThrow("Contact your hotel administrator"); }
+  mocks.callable.mockRejectedValueOnce(Object.assign(new Error("OpenAI token cost $0.01"), { code: "functions/resource-exhausted" })); await expect(getSupplierAiImportReview("hotel-a", "job")).rejects.toThrow("Contact your hotel administrator");
+});
+
+it("keeps inconsistent older aggregate counts unavailable rather than presenting false totals", async () => {
+  mocks.fetch.mockResolvedValueOnce(response({ ...saved, totalRows: 2, counts: { new: 1, changed: 2, unchanged: 0, blocked: 0 } }));
+  expect((await getSupplierAiImport("hotel-a", "job")).counts).toBeNull();
+});
+
+it("retains the original upload command when an acknowledged payload has an invalid status or progress", async () => {
+  for (const patch of [{ status: "unrecognized" }, { progress: { completedChunks: 3, totalChunks: 1 } }]) {
+    sessionStorage.clear(); const selected = file(); mocks.fetch.mockResolvedValueOnce(response({ ...saved, ...patch }));
+    await expect(startSupplierAiImport("hotel-a", "supplier", selected)).rejects.toThrow(/status|progress/);
+    const original = mocks.fetch.mock.calls.at(-1)[0]; expect(Object.values(sessionStorage).join(" ")).toContain("requestId");
+    mocks.fetch.mockResolvedValueOnce(response(saved)); expect(await startSupplierAiImport("hotel-a", "supplier", new File(["SKU,Name\n001,Coffee"], "supplier.csv", { type: "text/csv" }))).toEqual(saved);
+    expect(mocks.fetch.mock.calls.at(-1)[0]).toBe(original); expect(Object.values(sessionStorage).join(" ")).not.toContain("requestId");
+  }
 });

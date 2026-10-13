@@ -9,7 +9,9 @@ const invalid = (subject) => { throw new Error(`The AI ${subject} response could
 
 async function verifyActor(actor) {
   if (!actor?.uid || actor.emailVerified !== true || auth.currentUser !== actor) throw accessError();
-  const token = await actor.getIdTokenResult(true);
+  // Let the SDK refresh expired tokens. Forcing each read emits token events
+  // that remount the guarded page; backend boundaries revalidate live authority.
+  const token = await actor.getIdTokenResult();
   if (auth.currentUser !== actor || token?.claims?.platformAdmin !== true || actor.emailVerified !== true) throw accessError();
 }
 
@@ -17,7 +19,7 @@ async function call(name, input = {}) {
   const actor = auth.currentUser;
   await verifyActor(actor);
   const response = await httpsCallable(functions, name)(input);
-  // A refreshed token and the actual Firebase User object fence a late response,
+  // Current token claims and the actual Firebase User object fence a late response,
   // including reauthentication with the same UID or a revoked operator claim.
   await verifyActor(actor);
   return response?.data;

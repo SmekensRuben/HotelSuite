@@ -1,9 +1,10 @@
 import React from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ actor: null, hotel: "hotel-a", permissions: [], availability: vi.fn(), start: vi.fn(), get: vi.fn(), review: vi.fn(), correction: vi.fn(), confirm: vi.fn(), catalog: vi.fn() }));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({ actor: null, hotel: "hotel-a", permissions: [], availability: vi.fn(), start: vi.fn(), get: vi.fn(), review: vi.fn(), correction: vi.fn(), confirm: vi.fn(), catalog: vi.fn(), suppliers: vi.fn() }));
 vi.mock("../../firebaseConfig", () => ({ auth: { get currentUser() { return mocks.actor; } } }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, permissions: mocks.permissions, subscriptionActive: true, subscription: { modules: ["procurement"], modulePolicyVersion: 1, status: "active", validUntil: null } }) }));
+vi.mock("../../services/firebaseSuppliers", () => ({ getSuppliers: mocks.suppliers }));
 vi.mock("../../services/firebaseProducts", () => ({ getCatalogProducts: mocks.catalog }));
 vi.mock("../../services/firebaseSupplierAiImports", () => ({ SUPPLIER_AI_IMPORT_ACCEPT: ".csv,.xlsx,.pdf,.docx,.eml,.txt", validateSupplierAiImportFile: (file) => { if (!file?.size || file.size > 10485760) throw new Error("Choose a file between 1 byte and 10 MiB."); if (!/\.(csv|xlsx|pdf|docx|eml|txt)$/i.test(file.name)) throw new Error("Unsupported file."); }, getSupplierAiImportAvailability: mocks.availability, startSupplierAiImport: mocks.start, getSupplierAiImport: mocks.get, getSupplierAiImportReview: mocks.review, saveSupplierAiImportReview: mocks.correction, confirmSupplierAiImport: mocks.confirm }));
 import SupplierAiImportDialog from "./SupplierAiImportDialog";
@@ -19,8 +20,10 @@ beforeEach(() => {
   mocks.permissions = ["supplierproducts.read", "supplierproducts.create", "supplierproducts.update", "suppliers.read", "catalogproducts.read"];
   mocks.availability.mockResolvedValue({ available: true, fallbackEnabled: false, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000, maxCostPerImportUsd: 0.25 } });
   mocks.start.mockResolvedValue(job); mocks.get.mockResolvedValue(job); mocks.review.mockResolvedValue({ hotelUid: "hotel-a", jobId: "job", rows: [row()], totalRows: 1, nextCursor: null });
+  mocks.suppliers.mockResolvedValue([{ id: "supplier", name: "Coffee Supplier" }]);
   mocks.catalog.mockResolvedValue({ products: [{ id: "ingredient", name: "Coffee beans", baseUnit: "kg" }], cursor: null, hasMore: false });
 });
+afterEach(() => { vi.useRealTimers(); });
 describe("reviewed supplier AI import", () => {
   it("has one close button, explicit review and source evidence without injected HTML", async () => {
     mocks.review.mockResolvedValue({ rows: [row("r1", { sourceAnchors: [{ anchor: "Page 1", quote: '<img src=x onerror="alert(1)">', verified: false }] })], totalRows: 1, nextCursor: null });
@@ -72,9 +75,9 @@ describe("reviewed supplier AI import", () => {
     mocks.actor = { uid: "manager" }; view.rerender(<SupplierAiImportDialog {...properties} />); await act(async () => pending.resolve(job)); expect(screen.queryByText("Product review")).not.toBeInTheDocument(); expect(mocks.review).not.toHaveBeenCalled();
     mocks.permissions = ["supplierproducts.read"]; view.rerender(<SupplierAiImportDialog {...properties} />); expect(screen.getByRole("alert")).toHaveTextContent("create permissions"); expect(screen.queryByLabelText("Supplier document")).not.toBeInTheDocument(); await act(async () => {});
   });
-  it("resumes only an opaque job reference, displays unavailable provider cost and never starts a new run", async () => {
+  it("resumes only an opaque job reference without displaying provider costs or starting a new run", async () => {
     sessionStorage.setItem("supplier-ai-import:hotel-a:manager", JSON.stringify({ jobId: "job" })); mocks.get.mockResolvedValue({ ...job, status: "response_unknown", usage: { attempts: 1, actualCostUsd: null, unknownCalls: 1, knownCostUsd: 0.001, reservedCostUsd: 0.25 } });
-    render(<SupplierAiImportDialog {...props()} />); expect(await screen.findByText("The provider response is uncertain. A further AI call will not start automatically.")).toBeInTheDocument(); expect(screen.getByText(/Estimated cost: Unavailable/)).toBeInTheDocument(); expect(screen.getByText(/Known cost: \$0.0010 · Reserved budget: \$0.2500/)).toBeInTheDocument(); expect(mocks.start).not.toHaveBeenCalled();
+    render(<SupplierAiImportDialog {...props()} />); expect(await screen.findByText("The import result could not be confirmed. Contact your hotel administrator before starting another import.")).toBeInTheDocument(); expect(screen.queryByText(/Estimated cost/)).not.toBeInTheDocument(); expect(screen.queryByText(/Known cost|Reserved budget/)).not.toBeInTheDocument(); expect(mocks.start).not.toHaveBeenCalled();
     expect(JSON.parse(sessionStorage.getItem("supplier-ai-import:hotel-a:manager"))).toEqual({ jobId: "job" });
   });
   it("refreshes stale review revisions and removes the old acknowledgement before confirmation", async () => {
@@ -112,4 +115,96 @@ describe("reviewed supplier AI import", () => {
     await prepare(); fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ })); fireEvent.click(screen.getByRole("button", { name: "Next rows" })); await screen.findByRole("article", { name: "Import row r2" }); fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ })); fireEvent.click(screen.getByRole("button", { name: "Confirm 2 reviewed rows" }));
     await waitFor(() => expect(mocks.confirm).toHaveBeenCalledWith("hotel-a", "job", [{ rowId: "r1", reviewRevision: 1, acknowledged: true }, { rowId: "r2", reviewRevision: 1, acknowledged: true }]));
   });
+});
+
+describe("background import dialog", () => {
+  it("never displays operator costs, provider models or accounting limits in the customer review", async () => {
+    mocks.start.mockResolvedValue({ ...job, model: "gpt-6-luna", configuration: { maxCostPerImportUsd: 0.25 }, usage: { attempts: 5, actualCostUsd: 0.1234, knownCostUsd: 0.1111, reservedCostUsd: 0.2222, inputTokens: 12345 } });
+    await prepare();
+    const text = screen.getByRole("dialog").textContent;
+    for (const forbidden of ["gpt-6-luna", "Estimated cost", "Known cost", "Reserved budget", "Maximum AI budget", "AI calls", "0.1234", "0.1111", "0.2222", "12345"]) expect(text).not.toContain(forbidden);
+    expect(text).toContain("12 EUR");
+  });
+  it("closes five seconds after the upload acknowledgement and keeps its tracked job", async () => {
+    const properties = { ...props(), backgroundManaged: true, onJobChange: vi.fn() }, queued = { ...job, status: "queued", progress: { completedChunks: 0, totalChunks: 3 } };
+    mocks.start.mockResolvedValue(queued); render(<SupplierAiImportDialog {...properties} />); await screen.findByLabelText("Supplier document"); upload(); vi.useFakeTimers(); await act(async () => fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" })));
+    expect(screen.getByText(/This dialog closes in 5 seconds/)).toBeInTheDocument(); expect(properties.onJobChange).toHaveBeenCalledWith(queued); expect(screen.getByText("0 of 3 document sections processed.")).toBeInTheDocument();
+    for (let index = 0; index < 4; index += 1) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(properties.onClose).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(properties.onClose).toHaveBeenCalledTimes(1); expect(mocks.get).not.toHaveBeenCalled();
+  });
+  it("does not start the countdown for an unconfirmed upload and allows keeping an acknowledged job open", async () => {
+    const acknowledgement = deferred(), properties = { ...props(), backgroundManaged: true, onJobChange: vi.fn() };
+    mocks.start.mockReturnValue(acknowledgement.promise); render(<SupplierAiImportDialog {...properties} />); await screen.findByLabelText("Supplier document"); upload(); fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" }));
+    vi.useFakeTimers(); await act(async () => { await vi.advanceTimersByTimeAsync(6000); }); expect(properties.onClose).not.toHaveBeenCalled(); expect(screen.queryByText(/This dialog closes in/)).not.toBeInTheDocument();
+    await act(async () => acknowledgement.resolve({ ...job, status: "processing" })); expect(screen.getByText(/This dialog closes in 5 seconds/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Keep open" })); await act(async () => { await vi.advanceTimersByTimeAsync(6000); }); expect(properties.onClose).not.toHaveBeenCalled();
+  });
+  it("cancels the countdown when background processing ends or a different job is opened", async () => {
+    const properties = { ...props(), backgroundManaged: true, onJobChange: vi.fn() }, queued = { ...job, status: "queued" };
+    mocks.start.mockResolvedValue(queued); const view = render(<SupplierAiImportDialog {...properties} />); await screen.findByLabelText("Supplier document"); upload(); fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" })); await screen.findByText(/This dialog closes in 5 seconds/);
+    vi.useFakeTimers(); view.rerender(<SupplierAiImportDialog {...properties} trackedJobId="job" trackedJob={{ ...job, status: "failed", error: { code: "processing-failed", message: "The document needs correction." } }} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); }); expect(properties.onClose).not.toHaveBeenCalled(); expect(screen.queryByText(/This dialog closes in/)).not.toBeInTheDocument();
+    view.rerender(<SupplierAiImportDialog {...properties} trackedJobId="other-job" trackedJob={{ ...queued, jobId: "other-job", source: { fileName: "other.csv" } }} />); expect(screen.getByText("other.csv")).toBeInTheDocument(); expect(mocks.get).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); }); expect(properties.onClose).not.toHaveBeenCalled();
+  });
+  it("opens a background draft ready for review without starting another upload or displaying imported-product success", async () => {
+    render(<SupplierAiImportDialog {...props()} backgroundManaged trackedJobId="job" trackedJob={job} onJobChange={vi.fn()} />);
+    await screen.findByRole("article", { name: "Import row r1" }); expect(screen.getByText("Review the proposed products before importing.")).toBeInTheDocument(); expect(mocks.start).not.toHaveBeenCalled(); expect(mocks.confirm).not.toHaveBeenCalled(); expect(mocks.get).not.toHaveBeenCalled();
+  });
+});
+
+describe("controlled import commands", () => {
+  it("opens a fresh upload form for another document while the first acknowledged job keeps processing", async () => {
+    const properties = { ...props(), backgroundManaged: true, onJobChange: vi.fn() }, first = { ...job, status: "processing" };
+    const view = render(<SupplierAiImportDialog {...properties} trackedJobId="job" trackedJob={first} />);
+    expect(await screen.findByText("Reading the document and preparing a review…")).toBeInTheDocument();
+    view.rerender(<SupplierAiImportDialog {...properties} open={false} trackedJobId="job" trackedJob={first} />);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await act(async () => { await new Promise(requestAnimationFrame); });
+    view.rerender(<SupplierAiImportDialog {...properties} trackedJobId={null} trackedJob={null} />);
+    await screen.findByLabelText("Supplier document"); expect(screen.queryByText("Reading the document and preparing a review…")).not.toBeInTheDocument(); expect(mocks.start).not.toHaveBeenCalled();
+    mocks.start.mockResolvedValue({ ...first, jobId: "second-job", source: { fileName: "second.csv" } }); upload(); fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" }));
+    expect(await screen.findByText("second.csv")).toBeInTheDocument(); expect(properties.onJobChange).toHaveBeenCalledWith(expect.objectContaining({ jobId: "second-job" }));
+  });
+  it("preserves a commit's acknowledgement before switching jobs and never leaks its results into the next draft", async () => {
+    const confirmation = deferred(), properties = { ...props(), backgroundManaged: true, onJobChange: vi.fn() };
+    mocks.confirm.mockReturnValue(confirmation.promise); const view = render(<SupplierAiImportDialog {...properties} trackedJobId="job" trackedJob={job} />);
+    await screen.findByRole("article", { name: "Import row r1" }); fireEvent.click(screen.getByRole("checkbox", { name: /I reviewed/ })); fireEvent.click(screen.getByRole("button", { name: "Confirm 1 reviewed rows" }));
+    view.rerender(<SupplierAiImportDialog {...properties} trackedJobId="second-job" trackedJob={{ ...job, jobId: "second-job", source: { fileName: "second.csv" } }} />);
+    expect(screen.getByText("supplier.csv")).toBeInTheDocument();
+    mocks.review.mockResolvedValue({ hotelUid: "hotel-a", jobId: "second-job", rows: [row("r2")], totalRows: 1 });
+    await act(async () => confirmation.resolve({ hotelUid: "hotel-a", jobId: "job", complete: true, outcomes: [{ rowId: "r1", status: "created", productId: "new" }] }));
+    await screen.findByText("second.csv"); await screen.findByRole("article", { name: "Import row r2" }); expect(screen.queryByLabelText("Import results")).not.toBeInTheDocument(); expect(screen.getByRole("checkbox", { name: /I reviewed/ })).not.toBeChecked();
+  });
+});
+
+describe("global import supplier directory", () => {
+  it("loads current hotel suppliers despite a stale empty page-loading snapshot", async () => {
+    const directory = deferred(); mocks.suppliers.mockReturnValue(directory.promise);
+    render(<SupplierAiImportDialog {...props()} suppliers={[]} suppliersLoading backgroundManaged onJobChange={vi.fn()} />);
+    await screen.findByLabelText("Supplier document"); upload(); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeDisabled();
+    await act(async () => directory.resolve([{ id: "supplier", name: "Fresh supplier name" }])); expect(screen.getByRole("combobox", { name: "AI import supplier" })).toHaveValue("Fresh supplier name"); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeEnabled(); expect(mocks.suppliers).toHaveBeenCalledWith("hotel-a");
+  });
+  it("can start another document from a recovered draft on any route without page-owned supplier props", async () => {
+    const properties = { ...props(), suppliers: [], initialSupplierId: "", backgroundManaged: true, onNewDocument: vi.fn(), onJobChange: vi.fn() };
+    const view = render(<SupplierAiImportDialog {...properties} trackedJobId="job" trackedJob={job} />); await screen.findByRole("article", { name: "Import row r1" });
+    fireEvent.click(screen.getByRole("button", { name: "Start another document" })); view.rerender(<SupplierAiImportDialog {...properties} trackedJobId={null} trackedJob={null} />);
+    await screen.findByLabelText("Supplier document"); await waitFor(() => expect(mocks.suppliers).toHaveBeenCalledWith("hotel-a"));
+    fireEvent.focus(screen.getByRole("combobox", { name: "AI import supplier" })); fireEvent.change(screen.getByRole("combobox", { name: "AI import supplier" }), { target: { value: "Coffee" } }); fireEvent.click(await screen.findByRole("option", { name: "Coffee Supplier" })); upload(); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeEnabled();
+  });
+  it("discards a supplier response after the actor changes and offers an explicit directory retry", async () => {
+    const directory = deferred(), properties = { ...props(), backgroundManaged: true }; mocks.suppliers.mockReturnValue(directory.promise);
+    const view = render(<SupplierAiImportDialog {...properties} />); await screen.findByLabelText("Supplier document"); mocks.actor = { uid: "manager" }; mocks.suppliers.mockRejectedValue(new Error("Directory unavailable")); view.rerender(<SupplierAiImportDialog {...properties} />);
+    await screen.findByText(/The supplier directory could not be loaded/); await act(async () => directory.resolve([{ id: "supplier", name: "Stale supplier" }])); expect(screen.getByRole("combobox", { name: "AI import supplier" })).not.toHaveValue("Stale supplier");
+    mocks.suppliers.mockResolvedValue([{ id: "supplier", name: "Fresh supplier" }]); fireEvent.click(screen.getByRole("button", { name: "Retry supplier directory" })); await waitFor(() => expect(screen.getByRole("combobox", { name: "AI import supplier" })).toHaveValue("Fresh supplier"));
+  });
+});
+
+it("keeps the accepted background state when a delayed status read returns an older queued snapshot", async () => {
+  const accepted = { ...job, status: "review" }, properties = { ...props(), backgroundManaged: true, onJobChange: vi.fn(() => accepted) };
+  mocks.get.mockResolvedValue({ ...job, status: "queued" }); render(<SupplierAiImportDialog {...properties} trackedJobId="job" trackedJob={accepted} />); await screen.findByRole("article", { name: "Import row r1" });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh import status" })); await waitFor(() => expect(properties.onJobChange).toHaveBeenCalled());
+  expect(screen.getByText("Review the proposed products before importing.")).toBeInTheDocument(); expect(screen.queryByText("Your document is queued.")).not.toBeInTheDocument();
 });
