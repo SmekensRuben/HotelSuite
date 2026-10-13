@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 const { admin } = require("../../functions/src/config");
 const { getHotelSetupReadinessHandler } = require("../../functions/src/hotelSetup");
 const { createHotelHandler } = require("../../functions/src/onboarding");
+const { digest } = require("../../functions/src/validation");
 const { SAAS_RULES_VERSION } = require("../../functions/src/saasRollout");
 const { recordHotelOrderReceipt, recordHotelOrderReceiptHandler, reverseHotelOrderReceiptHandler, finalizeHotelOrderReceivingHandler, getHotelOrderReceivingHandler } = require("../../functions/src/orderReceiving");
 let environment, db, auth, operator, primary, backup, sequence = 0;
@@ -249,13 +250,62 @@ describe("real hotel setup assessment", () => {
     assert.equal(JSON.stringify(result).includes("private-reset-link"), false);
     assert.equal(JSON.stringify(result).includes("secret@example.test"), false);
   });
-  it("creation records the chosen valid time zone and never assigns the operator", async () => {
-    const details = { hotelUid: "new-hotel", name: "New Hotel", timeZone: "Europe/Brussels", status: "active", modules: ["procurement"], requestId: "create-one" };
-    await createHotelHandler(req(operator, details), services());
-    assert.equal((await db.doc("hotels/new-hotel").get()).data().timeZone, "Europe/Brussels");
+  it("creation records the chosen time zone and matching canonical currencies without assigning the operator", async () => {
+    const details = { hotelUid: "new-hotel", name: "New Hotel", timeZone: "Europe/Brussels", currency: "EUR", status: "active", modules: ["procurement"], requestId: "create-one" };
+    const result = await createHotelHandler(req(operator, details), services());
+    const root = (await db.doc("hotels/new-hotel").get()).data();
+    assert.equal(root.timeZone, "Europe/Brussels"); assert.equal(root.currency, "EUR");
+    assert.equal((await db.doc("hotels/new-hotel/settings/bootstrap").get()).data().currency, root.currency);
+    assert.deepEqual(await createHotelHandler(req(operator, details), services()), result);
+    const readiness = await getHotelSetupReadinessHandler(req(operator, { hotelUid: "new-hotel" }), services());
+    assert.equal(readiness.checks.find((check) => check.id === "property").status, "ready");
     assert.equal((await db.doc(`hotels/new-hotel/members/${operator.uid}`).get()).exists, false);
     await assert.rejects(createHotelHandler(req(operator, { ...details, timeZone: "Invalid/Zone", requestId: "create-two" }), services()), { code: "invalid-argument" });
     await assert.rejects(createHotelHandler(req(operator, { ...details, timeZone: "UTC" }), services()), { code: "already-exists" });
+    await assert.rejects(createHotelHandler(req(operator, { ...details, currency: "USD" }), services()), { code: "already-exists" });
     await assertFails(setDoc(doc(environment.authenticatedContext(primary.uid, { email_verified: true }).firestore(), "hotels/hotel-a/setupReadiness/current"), { status: "ready" }));
+  });
+  it("accepts an explicitly selected currency and refuses invalid currencies or hotel-user creation", async () => {
+    const details = { hotelUid: "usd-hotel", name: "USD Hotel", timeZone: "America/New_York", currency: "USD", status: "active", modules: ["procurement"], requestId: "create-usd" };
+    await createHotelHandler(req(operator, details), services());
+    assert.equal((await db.doc("hotels/usd-hotel").get()).data().currency, "USD");
+    assert.equal((await db.doc("hotels/usd-hotel/settings/bootstrap").get()).data().currency, "USD");
+    for (const currency of ["", "eur", "ZZZ", null, "Euro"]) {
+      await assert.rejects(createHotelHandler(req(operator, { ...details, currency, hotelUid: "invalid-hotel", requestId: "create-invalid" }), services()), { code: "invalid-argument" });
+      assert.equal((await db.doc("hotels/invalid-hotel").get()).exists, false);
+    }
+    await assert.rejects(createHotelHandler(req(primary, { ...details, hotelUid: "staff-hotel", requestId: "create-staff" }), services()), { code: "permission-denied" });
+    await auth.setCustomUserClaims(operator.uid, {});
+    await assert.rejects(createHotelHandler(req(operator, details), services()), { code: "permission-denied" });
+  });
+  it("retains legacy omitted-currency retries without inventing an unknown hotel time zone", async () => {
+    const details = { hotelUid: "legacy-hotel", name: "Legacy Hotel", status: "active", modules: ["procurement"], requestId: "create-legacy" };
+    const result = await createHotelHandler(req(operator, details), services());
+    assert.deepEqual(await createHotelHandler(req(operator, details), services()), result);
+    const root = (await db.doc("hotels/legacy-hotel").get()).data();
+    assert.equal(root.currency, "EUR"); assert.equal(root.timeZone, undefined);
+    assert.equal((await db.doc("hotels/legacy-hotel/settings/bootstrap").get()).data().currency, "EUR");
+    assert.deepEqual((await db.doc("hotels/legacy-hotel/settings/propertySettings").get()).data(), {});
+    await assert.rejects(createHotelHandler(req(operator, { ...details, currency: "EUR" }), services()), { code: "already-exists" });
+  });
+  it("resumes receipts written by the prior create policy without silently rewriting their settings", async () => {
+    const details = { hotelUid: "prior-policy-hotel", name: "Prior Policy Hotel", timeZone: "Europe/Brussels", status: "active", modules: ["procurement"], requestId: "prior-create" };
+    const result = { hotelUid: details.hotelUid, name: details.name, status: details.status, validUntilMillis: null };
+    const before = { name: details.name, timeZone: details.timeZone };
+    await db.doc(`hotels/${details.hotelUid}`).set(before);
+    await db.doc(`platformOperations/${digest(operator.uid, details.requestId)}`).set({ type: "create-hotel", actorUid: operator.uid,
+      fingerprint: digest(details.hotelUid, details.name, details.status, 14, details.modules, null, details.timeZone), result });
+    assert.deepEqual(await createHotelHandler(req(operator, details), services()), result);
+    assert.deepEqual((await db.doc(`hotels/${details.hotelUid}`).get()).data(), before);
+  });
+  it("rechecks live platform authority inside creation transaction", async () => {
+    const input = { hotelUid: "revoked-hotel", name: "Revoked Hotel", timeZone: "Europe/Brussels", currency: "EUR", status: "active", requestId: "create-revoked" };
+    const revokedDuringTransaction = { doc: (...args) => db.doc(...args), runTransaction: async (operation) => {
+      await auth.setCustomUserClaims(operator.uid, {});
+      return db.runTransaction(operation);
+    } };
+    await assert.rejects(createHotelHandler(req(operator, input), { firestore: revokedDuringTransaction, auth }), { code: "permission-denied" });
+    assert.equal((await db.doc("hotels/revoked-hotel").get()).exists, false);
+    assert.equal((await db.doc("hotelSubscriptions/revoked-hotel").get()).exists, false);
   });
 });
