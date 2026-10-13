@@ -1,4 +1,5 @@
 import { auth, functions, httpsCallable } from "../firebaseConfig";
+import { requireServerSnapshot } from "./procurementReadPool";
 import {
   db,
   collection,
@@ -35,15 +36,17 @@ export async function getShoppingCarts(hotelUid) {
   });
 }
 
-export async function getShoppingCart(hotelUid, shoppingCartId) {
+export async function getShoppingCart(hotelUid, shoppingCartId, { minimumRevision = 0 } = {}) {
   if (!hotelUid || !shoppingCartId) return null;
-
+  const actor = auth.currentUser;
   const cartRef = doc(db, `hotels/${hotelUid}/shoppingCarts`, shoppingCartId);
-  const cartSnap = await getDoc(cartRef);
+  const cartSnap = requireServerSnapshot(await getDoc(cartRef));
+  if (auth.currentUser !== actor) throw new Error("Your sign-in changed. Reload this cart before continuing.");
 
   if (!cartSnap.exists()) return null;
 
   const data = cartSnap.data() || {};
+  if (!Number.isSafeInteger(data.revision ?? 0) || (data.revision ?? 0) < minimumRevision) throw new Error("The cart has not caught up with the saved request. Refresh the cart before continuing.");
   return {
     id: cartSnap.id,
     ...data,
@@ -72,6 +75,7 @@ export async function retryPendingCartCommand(hotelUid, cartId = "active") {
   return mutateCart(hotelUid, input);
 }
 async function mutateCart(hotelUid, input) {
+  const actor = auth.currentUser;
   const key = pendingCartKey(hotelUid, input.cartId || "active");
   const serialized = JSON.stringify(input);
   const saved = sessionStorage.getItem(key);
@@ -83,7 +87,9 @@ async function mutateCart(hotelUid, input) {
   }
   try {
     const { data } = await httpsCallable(functions, "mutateHotelShoppingCart")({ hotelUid, ...input, requestId: pending.requestId });
+    if (auth.currentUser !== actor) throw new Error("Your sign-in changed. The saved cart request must be reconciled by its original user.");
     if (typeof data?.cartId !== "string" || !data.cartId || (input.cartId && data.cartId !== input.cartId)) throw new Error("Cart response could not be validated. Retry the saved request.");
+    if (!Number.isSafeInteger(data.revision) || data.revision < 0) throw new Error("Cart revision could not be validated. Retry the saved request.");
     sessionStorage.removeItem(key); notifyCartCommand();
     return data;
   } catch (error) {
@@ -95,8 +101,8 @@ async function mutateCart(hotelUid, input) {
 
 export async function getOrCreateShoppingCart(hotelUid) {
   if (!hotelUid) return null;
-  const { cartId } = await mutateCart(hotelUid, { action: "get-or-create" });
-  return getShoppingCart(hotelUid, cartId);
+  const { cartId, revision } = await mutateCart(hotelUid, { action: "get-or-create" });
+  return getShoppingCart(hotelUid, cartId, { minimumRevision: revision });
 }
 export async function addSupplierProductToShoppingCart(hotelUid, cartId, product, qty = 1, purchaseOptionId = "default", expectedRevision = 0) {
   return mutateCart(hotelUid, { cartId, action: "add", productId: product.id, purchaseOptionId, value: qty, expectedRevision });

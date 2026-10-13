@@ -5,12 +5,12 @@ import SupplierProductFormFields from "./SupplierProductFormFields";
 import ProductFormFields from "./ProductFormFields";
 import OrderCreatePage from "./OrderCreatePage";
 
-const mocks = vi.hoisted(() => ({ hotel: "hotel-a", suppliers: vi.fn(), catalog: vi.fn(), products: vi.fn(), add: vi.fn(), cart: vi.fn(), navigate: vi.fn() }));
+const mocks = vi.hoisted(() => ({ hotel: "hotel-a", suppliers: vi.fn(), catalog: vi.fn(), products: vi.fn(), add: vi.fn(), cart: vi.fn(), readCart: vi.fn(), navigate: vi.fn() }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel }) }));
 vi.mock("../../services/firebaseSuppliers", () => ({ getSuppliers: mocks.suppliers }));
 vi.mock("../../services/firebaseProducts", () => ({ getCatalogProducts: mocks.catalog, getSupplierProducts: mocks.products, uploadCatalogProductImage: vi.fn() }));
 vi.mock("../../services/firebaseSettings", () => ({ getCatalogTaxonomy: async () => ({ categories: [], subcategories: [] }) }));
-vi.mock("../../services/firebaseShoppingCarts", () => ({ addSupplierProductToShoppingCart: mocks.add, getOrCreateShoppingCart: mocks.cart, getPendingCartCommand: () => null, retryPendingCartCommand: vi.fn(), getShoppingCart: mocks.cart }));
+vi.mock("../../services/firebaseShoppingCarts", () => ({ addSupplierProductToShoppingCart: mocks.add, getOrCreateShoppingCart: mocks.cart, getPendingCartCommand: () => null, retryPendingCartCommand: vi.fn(), getShoppingCart: mocks.readCart }));
 vi.mock("../../firebaseConfig", () => ({ auth: { currentUser: { uid: "user" } }, signOut: vi.fn() }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => mocks.navigate }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key) => key }) }));
@@ -24,7 +24,7 @@ describe("catalog units, supplier packages and ordering workflow", () => {
     vi.clearAllMocks(); mocks.hotel = "hotel-a";
     mocks.suppliers.mockResolvedValue([{ id: "supplier", name: "Supplier A" }]);
     mocks.catalog.mockResolvedValue([{ id: "milk", name: "Catalog milk", baseUnit: "ml", inventoryTracked: true }]);
-    mocks.cart.mockResolvedValue({ id: "cart", items: [] }); mocks.add.mockResolvedValue({});
+    mocks.cart.mockResolvedValue({ id: "cart", revision: 0, items: [] }); mocks.add.mockResolvedValue({ revision: 1 }); mocks.readCart.mockResolvedValue({ id: "cart", revision: 1, items: [] });
     mocks.products.mockResolvedValue({ products: [{ id: "offer", ...validOffer }], hasMore: false });
   });
   it("saves a catalog's explicit inventory flag and supported unit", async () => {
