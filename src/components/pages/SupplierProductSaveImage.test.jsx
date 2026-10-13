@@ -103,3 +103,13 @@ it("edits product terms once and uploads the replacement using the separate medi
   await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith("hotel-a", expect.objectContaining({ id: "saved-offer", imageRevision: 3 }), file));
   expect(mocks.update).toHaveBeenCalledTimes(1);
 });
+it("keeps the existing managed image when the user discards an invalid replacement", async () => {
+  render(<SupplierProductEditPage />); await screen.findByDisplayValue("Coffee"); await screen.findByDisplayValue("Supplier A");
+  selectImage("image/svg+xml"); expect(screen.getByRole("button", { name: "products.actions.saveChanges" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Keep current image" }));
+  fireEvent.click(screen.getByRole("button", { name: "products.actions.saveChanges" }));
+  await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1)); expect(mocks.upload).not.toHaveBeenCalled();
+  expect(mocks.update.mock.calls[0][2]).not.toHaveProperty("image");
+  expect(mocks.update.mock.calls[0][2]).not.toHaveProperty("imageRevision");
+  expect(mocks.navigate).toHaveBeenCalledWith("/catalog/supplier-products/saved-offer");
+});

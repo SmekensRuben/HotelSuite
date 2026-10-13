@@ -164,7 +164,7 @@ function ScopedSupplierProductFormFields({ initialData, onSubmit, savingLabel, s
         {canUpload ? <>
           <SupplierProductImagePicker file={imageFile} onChange={setImageFile} onError={setImageError} disabled={saving || disabled} label={initialData?.image?.assetId ? "Replace product image (optional)" : "Product image (optional)"} />
           <p className="text-xs text-stone-500">Choose the image now. Saving the product also uploads this file and prepares its thumbnails.</p>
-          {imageError && <div className="space-y-2"><p role="alert" className="text-sm text-red-700">{imageError.message}</p><button type="button" className="ht-button-secondary" onClick={() => setImageError(null)}>Continue without an image</button></div>}
+          {imageError && <div className="space-y-2"><p role="alert" className="text-sm text-red-700">{imageError.message}</p><button type="button" className="ht-button-secondary" onClick={() => setImageError(null)}>{initialData?.image?.assetId ? "Keep current image" : "Continue without an image"}</button></div>}
         </> : <p className="text-sm text-stone-600">Product image uploads require supplier-product update permission. You can save this product without an image.</p>}
       </div>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.active} onChange={(event) => change("active", event.target.checked)} /> Active</label>
