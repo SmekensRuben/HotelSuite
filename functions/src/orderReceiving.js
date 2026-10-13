@@ -7,7 +7,9 @@ const { gated, requireSaasRollout, SAAS_RULES_VERSION } = require("./saasRollout
 const policy = require("./orderReceivingPolicy");
 const { validTimeZone } = require("./hotelSetupPolicy");
 const { localDate } = require("./importMonitoringPolicy");
-const { multiplyQuantities, calculateNetValue } = require("./productPolicy");
+const { multiplyQuantities, calculateNetValue, derivedPrice } = require("./productPolicy");
+const { loadConfirmationState } = require("./supplierConfirmations");
+const { receivingTerms } = require("./supplierConfirmationPolicy");
 const { prepareReceiptMovement, prepareReversalMovement } = require("./inventoryMovements");
 const { isArchived } = require("./procurementResources");
 const stamp = () => admin.firestore.FieldValue.serverTimestamp();
@@ -22,8 +24,9 @@ async function changeReceiving(request, services, kind) {
   const db = services.firestore || admin.firestore(), input = request.data || {};
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid"), orderId = requireDocumentId(input.orderId, "orderId");
   const requestId = requireDocumentId(input.requestId, "requestId"), expected = revision(input.expectedRevision);
-  const allowed = ["hotelUid", "orderId", "requestId", "expectedRevision", ...(kind === "receipt" ? ["receivedOn", "deliveryReference", "note", "lines", "inventoryLocationId"] : kind === "reversal" ? ["receiptId", "reason"] : ["acceptShortfall", "reason"])];
+  const allowed = ["hotelUid", "orderId", "requestId", "expectedRevision", ...(kind === "receipt" ? ["receivedOn", "deliveryReference", "note", "lines", "inventoryLocationId", "supplierPricingPolicyVersion"] : kind === "reversal" ? ["receiptId", "reason"] : ["acceptShortfall", "reason"])];
   if (Object.keys(input).some((key) => !allowed.includes(key))) throw new HttpsError("invalid-argument", "Unsupported receiving field.");
+  if (kind === "receipt" && input.supplierPricingPolicyVersion !== undefined && input.supplierPricingPolicyVersion !== 1) throw new HttpsError("failed-precondition", "This supplier pricing policy is unsupported. Reload the application.");
   const details = kind === "receipt" ? policy.normalizeReceipt(input)
     : kind === "reversal" ? { receiptId: requireDocumentId(input.receiptId, "receiptId"), reason: text(input.reason, "Reversal reason", 1000, true) }
       : { acceptShortfall: input.acceptShortfall, reason: text(input.reason ?? "", "Finalization reason", 1000) };
@@ -51,14 +54,15 @@ async function changeReceiving(request, services, kind) {
       if (!source.receiving && !(await tx.get(orderRef.collection("receipts").limit(1))).empty) {
         throw new HttpsError("failed-precondition", "Receiving events exist without their aggregate. Reconcile this order before continuing.");
       }
-      let next, referenceRef, reversalRef, movement = null;
+      let next, referenceRef, reversalRef, supplierTerms, movement = null;
       if (kind === "receipt") {
         referenceRef = orderRef.collection("receiptReferences").doc(referenceKey(details.deliveryReference));
         if ((await tx.get(referenceRef)).exists) throw new HttpsError("already-exists", "This delivery reference has already been recorded. Review the receipt history.");
         next = policy.applyReceipt(previous, details);
         if (details.lines.some((line) => line.acceptedQuantity > 0)) {
+          supplierTerms = receivingTerms(await loadConfirmationState(db, tx, orderRef, source, hotelUid, orderId), details, previous.lines);
           if (!details.inventoryLocationId) throw new HttpsError("invalid-argument", "Select the physical location receiving these goods.");
-          const inventory = receiptInventoryLines(source.products, details.lines);
+          const inventory = receiptInventoryLines(source.products, details.lines, supplierTerms);
           movement = await prepareReceiptMovement(db, tx, { hotelUid, locationId: details.inventoryLocationId,
             movementId: eventId, orderId, receiptId: eventId, kind: "receipt", receivedOn: details.receivedOn,
             actorUid: request.auth.uid, ...inventory });
@@ -81,6 +85,7 @@ async function changeReceiving(request, services, kind) {
       const result = { hotelUid, orderId, eventId, status, revision: expected + 1, receivingState: next.state };
       const event = { policyVersion: policy.RECEIVING_POLICY_VERSION, kind, hotelUid, orderId, actorUid: request.auth.uid, actorName,
         fingerprint, ...details, result, revision: expected + 1, createdAt: stamp() };
+      if (supplierTerms) event.supplierConfirmationTerms = supplierTerms;
       if (kind !== "finalization") event.inventoryMovement = movement?.metadata ?? (movement ? {
         movementId: movement.movementId, locationId: movement.locationId, sequence: movement.sequence, inventoryPolicyVersion: 1 } : null);
       if (kind === "receipt") event.lines = details.lines.map((line) => ({ ...line,
@@ -138,7 +143,18 @@ async function getHotelOrderReceivingHandler(request, services = {}) {
       }
       catch (error) { if (!["failed-precondition", "invalid-argument"].includes(error.code)) throw error; availability = "review-required"; reason = "Historical receiving data has no verified baseline or needs reconciliation. Review the source record before making changes."; }
     }
+    let supplierReceiptBlockReason = null, supplierState = null;
+    if (aggregate && data.status !== "Finalized") {
+      try {
+        supplierState = await loadConfirmationState(db, tx, ref, data, hotelUid, orderId);
+        receivingTerms(supplierState, { lines: [{ acceptedQuantity: 1 }] });
+      } catch (error) {
+        if (!(error instanceof HttpsError)) throw error;
+        supplierReceiptBlockReason = error.message;
+      }
+    }
     return { hotelUid, orderId, policyVersion: policy.RECEIVING_POLICY_VERSION, orderRevision: orderRevision(data),
+      supplierReceiptBlockReason, supplierPricingPolicyVersion: 1,
       today: validTimeZone(hotel.data()?.timeZone) ? localDate(services.now?.() ?? Date.now(), hotel.data().timeZone) : null,
       status: data.status, availability, reason, receivingState: aggregate?.state ?? null,
       releaseReady: release.data()?.enabled === true && release.data().rulesVersion === SAAS_RULES_VERSION,
@@ -147,7 +163,12 @@ async function getHotelOrderReceivingHandler(request, services = {}) {
       inventoryLocationsTruncated: locations.docs.length > 100,
       inventoryCoverageReasons: [...new Set((data.products || []).map((product) => product.inventoryTerms?.reason
         ?? (product.inventoryTerms ? null : "historical-inventory-terms-unavailable")).filter(Boolean))],
-      lines: aggregate ? policy.summary(aggregate) : null, finalizationReason: aggregate?.finalizationReason ?? null,
+      lines: aggregate ? policy.summary(aggregate).map((line) => {
+        const confirmed = supplierState?.response?.lines.find((item) => policy.lineKey(item) === policy.lineKey(line));
+        const acceptedTerms = supplierState?.response?.responseType === "accepted" || supplierState?.review?.decision === "accept";
+        return { ...line, supplierConfirmedQuantity: acceptedTerms && confirmed ? confirmed.confirmedQuantity : null,
+          supplierOutstandingQuantity: acceptedTerms && confirmed ? Math.max(0, policy.milli(confirmed.confirmedQuantity, "Confirmed quantity") - policy.milli(line.acceptedQuantity, "Accepted quantity")) / 1000 : null };
+      }) : null, finalizationReason: aggregate?.finalizationReason ?? null,
       events: page.map((event) => { const row = event.data();
         if (!["receipt", "reversal", "finalization"].includes(row.kind) || typeof row.actorUid !== "string"
           || !Array.isArray(row.lines ?? []) || (row.lines || []).some((line) => !line || typeof line !== "object")) {
@@ -157,6 +178,7 @@ async function getHotelOrderReceivingHandler(request, services = {}) {
         receivedOn: row.receivedOn ?? null, deliveryReference: row.deliveryReference ?? null, note: row.note ?? null,
         reason: row.reason ?? null, receiptId: row.receiptId ?? null, reversed: reversals.has(event.id),
         inventoryMovement: row.inventoryMovement ?? null,
+        supplierResponseId: row.supplierConfirmationTerms?.responseId ?? null,
         revision: row.revision, createdAtMillis: row.createdAt?.toMillis?.() ?? null,
         lines: Array.isArray(row.lines) ? row.lines.map(({ supplierProductId, orderLineId, acceptedQuantity, rejectedQuantity, productName, purchaseUnit, reason }) =>
           ({ supplierProductId, ...(orderLineId ? { orderLineId } : {}), acceptedQuantity, rejectedQuantity, productName, purchaseUnit, reason })) : [] }; }),
@@ -164,7 +186,7 @@ async function getHotelOrderReceivingHandler(request, services = {}) {
   }, { readOnly: true });
 }
 const options = { region: "us-central1", cors: true };
-function receiptInventoryLines(products, incoming) {
+function receiptInventoryLines(products, incoming, supplierTerms = null) {
   const lines = [], coverageGaps = [];
   for (const receipt of incoming) {
     if (receipt.acceptedQuantity === 0) continue;
@@ -178,12 +200,22 @@ function receiptInventoryLines(products, incoming) {
       continue;
     }
     const quantity = multiplyQuantities(receipt.acceptedQuantity, terms.catalogUnitsPerPurchaseUnit);
-    let netValue = null;
-    try { netValue = calculateNetValue(receipt.acceptedQuantity, product.netPricePerPurchaseUnit); }
+    const approved = supplierTerms?.lines.find((line) => policy.lineKey(line) === policy.lineKey(receipt));
+    const changedPrice = approved && approved.priceMode !== "as-ordered";
+    const netPrice = changedPrice ? approved.currency === terms.currency ? approved.netPricePerPurchaseUnit : null : product.netPricePerPurchaseUnit;
+    let netValue = null, netUnitCost = terms.netUnitCost;
+    if (changedPrice) {
+      netUnitCost = null;
+      if (netPrice !== null) {
+        try { netUnitCost = derivedPrice(netPrice, terms.catalogUnitsPerPurchaseUnit, true); }
+        catch (error) { if (!(error instanceof HttpsError)) throw error; }
+      }
+    }
+    try { netValue = calculateNetValue(receipt.acceptedQuantity, netPrice); }
     catch (error) { if (!(error instanceof HttpsError)) throw error; }
     lines.push({ catalogProductId: terms.catalogProductId, catalogProductName: terms.catalogProductName,
-      baseUnit: terms.catalogBaseUnit, quantity, netUnitCost: terms.netUnitCost, netValue, currency: terms.currency,
-      ...(netValue == null ? { coverageReason: terms.reason || "Receipt value is unknown or outside supported precision." } : {}) });
+      baseUnit: terms.catalogBaseUnit, quantity, netUnitCost, netValue, currency: terms.currency,
+      ...(netValue == null ? { coverageReason: changedPrice ? "Reviewed supplier price has no available net value." : terms.reason || "Receipt value is unknown or outside supported precision." } : {}) });
   }
   return { lines, coverageGaps };
 }

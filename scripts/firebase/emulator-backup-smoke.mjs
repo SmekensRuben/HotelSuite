@@ -46,6 +46,8 @@ const { checkpointId, prepareCheckpoint, readLocationSequence } = require("../..
 const { getHotelInventoryPeriodHandler } = require("../../functions/src/inventoryReports");
 const { mutateHotelSupplierProductHandler } = require("../../functions/src/products");
 const { recordHotelInventoryAdjustmentHandler, reverseHotelInventoryAdjustmentHandler } = require("../../functions/src/inventoryAdjustments");
+const { recordHotelSupplierConfirmationHandler, reviewHotelSupplierConfirmationHandler, getHotelSupplierConfirmationsHandler } = require("../../functions/src/supplierConfirmations");
+const { recordHotelOrderReceiptHandler: recordConfirmedReceipt } = require("../../functions/src/orderReceiving");
 const inventoryFixtures = [
   { hotelUid: "restore-hotel-a", currency: "EUR", actorUid: "restore-a", platform: false },
   { hotelUid: "restore-hotel-b", currency: "GBP", actorUid: "restore-b-counter", platform: false },
@@ -152,7 +154,7 @@ for (const fixture of inventoryFixtures) {
     kind: "receipt", hotelUid, locationId: "store", orderId: "fixture-inventory-order", receiptId: "fixture-inventory-receipt",
     receivedOn: "2026-10-05", sequence: 2, actorUid, coverageGaps: [], backdatedAgainstCheckpoint: false, postedAt: revisionTime,
     lines: [{ catalogProductId: "milk", catalogProductName: "Fictional milk", baseUnit: "l", quantity: 30, netUnitCost: 3, netValue: 90, currency }] };
-  documents[`${root}/members/${actorUid}`].permissions.push("supplierproducts.create", "supplierproducts.update", "inventorymovements.read", "inventorymovements.create", "inventorymovements.reverse");
+  documents[`${root}/members/${actorUid}`].permissions.push("supplierproducts.create", "supplierproducts.update", "inventorymovements.read", "inventorymovements.create", "inventorymovements.reverse", "orders.read", "orders.recordconfirmation", "orders.reviewconfirmation", "orders.receive");
   documents[`${root}/suppliers/restore-dairy`] = { name: "Fictional dairy supplier", active: true };
   for (const location of ["movements-store", "movements-bar"]) documents[`${root}/locations/${location}`] = { name: `Fictional ${location}`, active: true };
 }
@@ -187,11 +189,42 @@ function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 }
+const confirmationOrderId = "supplier-confirmed-order";
+const confirmationCommand = (fixture) => ({ orderId: confirmationOrderId, expectedActorUid: fixture.actorUid, expectedRevision: 1, requestId: "restore-supplier-response",
+  response: { responseType: "changes-proposed", channel: "email", supplierReference: "RESTORE-SUPPLIER-REPLY", respondedOn: "2026-10-12", note: "", lines: [
+    { supplierProductId: "restore-priced-milk", orderLineId: "milk-case", confirmedQuantity: 2, deliveryDate: "2026-10-13", priceMode: "quoted", pricePerPurchaseUnit: 18, substitute: null, reason: "Supplier revised the net package price" }] } });
+const confirmationId = (fixture) => `sc-${digest(confirmationOrderId, fixture.actorUid, "restore-supplier-response").slice(0, 48)}`;
+const confirmationReview = (fixture) => ({ orderId: confirmationOrderId, expectedActorUid: fixture.actorUid, expectedRevision: 2, requestId: "restore-supplier-review",
+  review: { responseId: confirmationId(fixture), decision: "accept", reason: "Reviewed supplier's new package price" } });
+const confirmedReceipt = () => ({ orderId: confirmationOrderId, expectedRevision: 3, requestId: "restore-confirmed-receipt", supplierPricingPolicyVersion: 1,
+  receivedOn: "2026-10-12", deliveryReference: "RESTORE-CONFIRMED-DN", inventoryLocationId: "confirmed-store", lines: [{ supplierProductId: "restore-priced-milk", orderLineId: "milk-case", acceptedQuantity: 1, rejectedQuantity: 0 }] });
+async function supplierConfirmationReplay(fixture) {
+  const result = await recordHotelSupplierConfirmationHandler(procurementRequest(fixture, confirmationCommand(fixture)), procurementServices);
+  assert.equal(result.eventId, confirmationId(fixture));
+  await reviewHotelSupplierConfirmationHandler(procurementRequest(fixture, confirmationReview(fixture)), procurementServices);
+  const receipt = await recordConfirmedReceipt(procurementRequest(fixture, confirmedReceipt()), procurementServices);
+  const movement = (await database.doc(`hotels/${fixture.hotelUid}/inventoryMovements/${receipt.eventId}`).get()).data();
+  assert.equal(movement.lines[0].quantity, 6); assert.equal(movement.lines[0].netValue, 18); assert.equal(movement.lines[0].currency, fixture.currency);
+  const response = await getHotelSupplierConfirmationsHandler(procurementRequest(fixture, { orderId: confirmationOrderId }), procurementServices);
+  assert.equal(response.current.reviewState, "accepted"); assert.equal(response.events.length, 2);
+}
+async function seedSupplierConfirmation(fixture) {
+  const root = `hotels/${fixture.hotelUid}`;
+  await database.doc(`${root}/locations/confirmed-store`).set({ name: "Fictional supplier-confirmed receiving store" });
+  await database.doc(`${root}/orders/${confirmationOrderId}`).set({ status: "Ordered", dispatchStatus: "sent", dispatchRequestId: "restore-supplier-dispatch", revision: 1,
+    supplierId: "restore-dairy", currency: fixture.currency, deliveryDate: "2026-10-13", accountNumber: "RESTORE-ACCOUNT", priceBasis: "net", totalAmount: 24,
+    products: [{ supplierProductId: "restore-priced-milk", orderLineId: "milk-case", purchaseOptionId: "default", supplierProductName: "Fictional milk case", purchaseUnit: "Case of 6", qtyPurchaseUnits: 2,
+      pricePerPurchaseUnit: 12, netPricePerPurchaseUnit: 12, priceBasis: "net", vatRate: null, currency: fixture.currency,
+      inventoryTerms: { inventoryPolicyVersion: 1, available: true, inventoryTracked: true, catalogProductId: "milk", catalogProductName: "Fictional milk", catalogBaseUnit: "l", catalogUnitsPerPurchaseUnit: 6, netUnitCost: 2, currency: fixture.currency } }] });
+  await supplierConfirmationReplay(fixture);
+}
 async function procurementEvidence(fixture) {
   const root = `hotels/${fixture.hotelUid}`, collections = ["productOperations", "productAudit", "productSkuKeys", "inventoryAdjustments", "inventoryAdjustmentOperations",
-    "inventoryAdjustmentReversals", "inventoryMovements", "inventoryLocationStates", "inventoryCheckpoints", "inventoryPeriodReports", "supplierPriceHistory/restore-priced-milk/entries"];
+    "inventoryAdjustmentReversals", "inventoryMovements", "inventoryLocationStates", "inventoryCheckpoints", "inventoryPeriodReports", "supplierPriceHistory/restore-priced-milk/entries", "orderAudit",
+    ...["supplierConfirmations", "supplierConfirmationReferences", "receipts", "receiptReferences"].map((name) => `orders/${confirmationOrderId}/${name}`)];
   const rows = (await Promise.all(collections.map((name) => database.collection(`${root}/${name}`).get()))).flatMap((snapshot) => snapshot.docs);
   rows.push(await database.doc(`${root}/supplierproducts/restore-priced-milk`).get());
+  rows.push(await database.doc(`${root}/orders/${confirmationOrderId}`).get());
   return Object.fromEntries(rows.map((doc) => [doc.ref.path, { data: canonical(doc.data()), updateTime: canonical(doc.updateTime) }]).sort(([left], [right]) => left.localeCompare(right)));
 }
 async function verifyProcurementReplay(fixture, proof) {
@@ -217,6 +250,7 @@ async function verifyProcurementReplay(fixture, proof) {
     const result = await getHotelInventoryPeriodHandler(periodV2Request(fixture, locationId), procurementServices); verifyV2(result, fixture, locationId);
     assert.deepEqual(await getHotelInventoryPeriodHandler(periodV2Request(fixture, locationId), { ...procurementServices, now: () => procurementServices.now() + 60000 }), result);
   }
+  await supplierConfirmationReplay(fixture);
   assert.deepEqual(await procurementEvidence(fixture), before,
     "Exact restored command/report replay must not create extra history or legs, change frozen timestamps, or write any original updateTime.");
 }
@@ -296,10 +330,11 @@ try {
       }
       await finishAdjustmentCheckpoints(fixture, "closing");
       for (const locationId of ["movements-store", "movements-bar"]) verifyV2(await getHotelInventoryPeriodHandler(periodV2Request(fixture, locationId), procurementServices), fixture, locationId);
+      await seedSupplierConfirmation(fixture);
       proof[fixture.hotelUid] = Object.fromEntries(Object.entries(await procurementEvidence(fixture)).map(([path, row]) => [path, row.data]));
     }
     await writeFile(procurementProofPath, JSON.stringify(proof), { mode: 0o600 });
-    console.log("Seeded fictional two-hotel data, protected supplier price changes, paired manual transfer/reversal/waste/return evidence, immutable v1/v2 reports, Auth users/claims and private Storage bytes.");
+    console.log("Seeded fictional two-hotel data, supplier responses and approved-price receipts, protected supplier price changes, paired manual transfer/reversal/waste/return evidence, immutable v1/v2 reports, Auth users/claims and private Storage bytes.");
   } else if (process.argv[2] === "verify") {
     for (const [path, expected] of Object.entries(documents)) {
       const snapshot = await database.doc(path).get();
@@ -372,7 +407,7 @@ try {
       assert.equal(metadata.contentType, "application/pdf");
       assert.equal(metadata.metadata.fixture, "restore-only");
     }
-    console.log("Verified two-hotel data, unchanged v1 period replay (50 inferred usage; weighted cost 290/130), supplier price-history restore, exact paired manual movement/reversal replay and immutable v2 reports with explicit unknown costs, frozen timestamps/updateTimes, entitlements, roles, platform history, Auth and private Storage bytes/metadata.");
+    console.log("Verified two-hotel data, unchanged v1 period replay (50 inferred usage; weighted cost 290/130), supplier response/review/approved-price receipt restore and exact replay, supplier price-history restore, exact paired manual movement/reversal replay and immutable v2 reports with explicit unknown costs, frozen timestamps/updateTimes, entitlements, roles, platform history, Auth and private Storage bytes/metadata.");
   } else throw new Error("Expected seed or verify mode.");
 } finally {
   await deleteApp(app);

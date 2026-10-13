@@ -233,5 +233,5 @@ function inventoryTerms(product, catalog, option) {
 }
 
 module.exports = { PRODUCT_POLICY_VERSION, MAX_QUANTITY, MAX_PRICE, units, baseUnit, compatibleUnits,
-  decimal, convertQuantity, multiplyQuantities, calculateNetValue, netPrice, normalizeCatalogProduct, normalizeSupplierProduct,
+  decimal, derivedPrice, convertQuantity, multiplyQuantities, calculateNetValue, netPrice, normalizeCatalogProduct, normalizeSupplierProduct,
   resolvePurchaseOption, inventoryTerms };

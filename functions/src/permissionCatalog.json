@@ -28,7 +28,9 @@
     "delete",
     "approve",
     "receive",
-    "finalize"
+    "finalize",
+    "recordconfirmation",
+    "reviewconfirmation"
   ],
   "contracts": [
     "create",
