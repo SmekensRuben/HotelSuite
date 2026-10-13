@@ -6,6 +6,7 @@ const { text, revision, digest } = require("./validation");
 const { gated } = require("./saasRollout");
 const { resolvePurchaseOption, inventoryTerms } = require("./productPolicy");
 const { isArchived } = require("./procurementResources");
+const { saveSupplierOutletAccountHandler } = require("./supplierOutletAccounts");
 
 const stamp = () => admin.firestore.FieldValue.serverTimestamp();
 function dateOnly(value) {
@@ -272,28 +273,6 @@ async function setOutletApproversHandler(request, services = {}) {
     users.forEach((u) => tx.set(db.doc(`hotels/${hotelUid}/outlets/${outletId}/approvers/${u.uid}`), { email: u.email, displayName: u.displayName || u.email, updatedAt: stamp(), updatedBy: request.auth.uid }));
     tx.create(db.collection(`hotels/${hotelUid}/orderAudit`).doc(), { outletId, action: "set-approvers", userIds: ids, actorUid: request.auth.uid, createdAt: stamp() });
     return { count: ids.length };
-  });
-}
-
-async function saveSupplierOutletAccountHandler(request, services = {}) {
-  const db = services.firestore || admin.firestore();
-  const input = request.data || {};
-  const hotelUid = requireDocumentId(input.hotelUid, "hotelUid");
-  const supplierId = requireDocumentId(input.supplierId, "supplierId");
-  const outletId = requireDocumentId(input.outletId, "outletId");
-  const accountNumber = text(input.accountNumber, "Account number", 100, true);
-  const ref = db.doc(`hotels/${hotelUid}/supplierOutletAccounts/${digest(supplierId, outletId)}`);
-  return db.runTransaction(async (tx) => {
-    await requireHotelPermission(db, { ...request }, hotelUid, "suppliers", "update", tx);
-    const [supplier, outlet, existing] = await Promise.all([tx.get(db.doc(`hotels/${hotelUid}/suppliers/${supplierId}`)),
-      tx.get(db.doc(`hotels/${hotelUid}/outlets/${outletId}`)), tx.get(db.collection(`hotels/${hotelUid}/supplierOutletAccounts`).where("supplierId", "==", supplierId).where("outletId", "==", outletId).limit(2))]);
-    if (!supplier.exists || !outlet.exists) throw new HttpsError("not-found", "Choose a supplier and outlet belonging to this hotel.");
-    if (isArchived(outlet.data())) throw new HttpsError("failed-precondition", "Choose an active outlet for this account assignment.");
-    if (existing.size > 1) throw new HttpsError("failed-precondition", "Duplicate account assignments need review.");
-    const target = existing.docs[0]?.ref || ref;
-    tx.set(target, { supplierId, outletId, supplierName: supplier.data().name || supplierId,
-      outletName: outlet.data().name || outletId, accountNumber, updatedAt: stamp(), updatedBy: request.auth.uid }, { merge: true });
-    return { id: target.id };
   });
 }
 
