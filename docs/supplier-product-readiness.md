@@ -51,6 +51,10 @@ A future import/connector must use the same protected upload contract when it su
 - Independent domain, frontend, processing, security and deployment reviews were performed by specialized agents. All blocking findings were addressed.
 - Real changed React components/CSS with local synthetic services passed browser checks at 1,440 and 390 pixels: single export close control, grouped product form, managed image preview/upload, no document overflow and no page exceptions. The local emulators separately prove actual persistence/permissions. Exact-head GitHub CI is recorded in the pull request when completed.
 
+## CI timing regression
+
+The first published CI run exposed an existing stock-count interaction race: an initial click to add a catalog product could occur after DOM commit but before a passive hydration effect reset the editor. A deterministic ancestor-layout interaction reproduces the original closed-panel failure, checks loaded quantity/cost and exercises the original catalog pagination/add flow. Hydration now finishes in a layout effect before first interaction; the cyclic-cursor assertions are unchanged. This is a lifecycle fix, not a relaxed timeout or altered expected output.
+
 ## Release controls and remaining work
 
 No merge, deployment, customer data mutation, Rules edit or SaaS release-version change was performed. The automatic release explicitly activates retries only for the reviewed new image trigger, with the full deployment unforced. No per-hotel Cloud Shell activation or bucket-CORS change is needed for this private HTTP design. Confirm both Functions and App Hosting deployment for the merged release before production smoke checks.

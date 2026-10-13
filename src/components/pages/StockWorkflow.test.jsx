@@ -5,6 +5,7 @@ import StockCountLocationPage from "./StockCountLocationPage";
 import StockCountCreatePage from "./StockCountCreatePage";
 import StockCountDetailPage from "./StockCountDetailPage";
 import InventoryPeriodsPage from "./InventoryPeriodsPage";
+import CatalogStockCountLocationPanel from "../inventory/CatalogStockCountLocationPanel";
 
 const mocks = vi.hoisted(() => ({ hotel: "hotel-a", permissions: ["stockcounts.read", "stockcounts.update", "stockcounts.create"],
   getCount: vi.fn(), sources: vi.fn(), save: vi.fn(), finish: vi.fn(), finishParent: vi.fn(), create: vi.fn(), products: vi.fn(), catalog: vi.fn(), inventoryLocations: vi.fn(), checkpoints: vi.fn(), period: vi.fn(), outlets: vi.fn(), navigate: vi.fn() }));
@@ -196,6 +197,26 @@ const catalogCount = (label = "Milk", revision = 12) => ({ id: "stock-a", invent
   locations: [{ locationId: "store", locationName: "Store", status: "In Progress", stockTemplate: { id: "template", name: "Catalog", items: [
     { catalogProductId: "milk", catalogProductName: label, baseUnit: "l", unitCost: null }, { catalogProductId: "flour", catalogProductName: "Flour", baseUnit: "kg", unitCost: null } ] }, countedItems: [] }] });
 describe("catalog physical counts and periodic inventory", () => {
+  it("keeps the first additional-product interaction after the initial count DOM is committed", async () => {
+    mocks.permissions.push("catalogproducts.read");
+    const record = catalogCount();
+    record.locations[0].countedItems = [{ catalogProductId: "milk", quantity: 2, unitCost: 3, isCounted: true }];
+    mocks.catalog.mockResolvedValue({ products: [{ id: "juice", catalogProductName: "Orange juice", baseUnit: "l", inventoryTracked: true }], hasMore: false });
+    function FirstInteraction() {
+      React.useLayoutEffect(() => {
+        screen.getByRole("button", { name: "Add a product outside the template" }).click();
+      }, []);
+      return <CatalogStockCountLocationPanel hotelUid="hotel-a" stockCount={record} location={record.locations[0]} />;
+    }
+    render(<FirstInteraction />);
+    expect(await screen.findByRole("button", { name: "Hide additional products" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Count Milk")).toHaveValue(2);
+    expect(screen.getByLabelText("Unit cost Milk")).toHaveValue(3);
+    await chooseCombo("Additional catalog product", "Orange juice (l)");
+    fireEvent.click(screen.getByRole("button", { name: "Add catalog product" }));
+    expect(screen.getByLabelText("Count Orange juice")).toBeInTheDocument();
+    expect(mocks.catalog).toHaveBeenCalledTimes(1);
+  });
   it("does not fetch optional catalog choices until requested and exposes later tracked results", async () => {
     mocks.permissions.push("catalogproducts.read"); mocks.getCount.mockResolvedValue(catalogCount());
     mocks.catalog.mockImplementation(async (_hotel, options) => options.cursor
