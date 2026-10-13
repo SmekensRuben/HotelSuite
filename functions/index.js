@@ -49,6 +49,8 @@ exports.listHotelSubscriptions = listHotelSubscriptions;
 exports.searchHotelProducts = searchHotelProducts;
 const products = require("./src/products");
 for (const name of ["mutateHotelCatalogProduct", "mutateHotelSupplierProduct", "importHotelProducts"]) exports[name] = products[name];
+const supplierProductImages = require("./src/supplierProductImages");
+for (const name of ["supplierProductImage", "processSupplierProductImage"]) exports[name] = supplierProductImages[name];
 
 // Protected SaaS onboarding and procurement boundaries.
 const onboarding = require("./src/onboarding");

@@ -9,6 +9,8 @@ import PendingProductCommand from "../catalog/PendingProductCommand";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSupplierProduct, updateSupplierProduct } from "../../services/firebaseProducts";
+import { useSupplierProductAuthority } from "../../hooks/useSupplierProductAuthority";
+import { LoadingStatus } from "../ui/ResourceLoading";
 
 function ScopedSupplierProductEditPage() {
   const navigate = useNavigate();
@@ -20,6 +22,7 @@ function ScopedSupplierProductEditPage() {
   const [loadError, setLoadError] = useState("");
 
   const mounted = useRef(true);
+  const actorAtMount = useRef(auth.currentUser).current;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const today = useMemo(
@@ -50,15 +53,16 @@ function ScopedSupplierProductEditPage() {
   }, [hotelUid, productId]);
 
   const handleUpdate = async (payload) => {
+    if (!mounted.current || auth.currentUser !== actorAtMount) throw new Error("Hotel access changed. Reload before changing a product.");
     const updatedProductId = await updateSupplierProduct(hotelUid, productId, payload, undefined, { expectedRevision: product?.revision ?? 0 });
-    if (mounted.current) navigate(`/catalog/supplier-products/${updatedProductId}`);
+    if (mounted.current && auth.currentUser === actorAtMount) navigate(`/catalog/supplier-products/${updatedProductId}`);
   };
 
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <ProcurementPage width="form" className="space-y-6">
-        <PendingProductCommand hotelUid={hotelUid} collection="supplierproducts" productId={productId} onComplete={(result) => { if (mounted.current) navigate(`/catalog/supplier-products/${result.productId}`); }} />
+        <PendingProductCommand hotelUid={hotelUid} collection="supplierproducts" productId={productId} onComplete={(result) => { if (mounted.current && auth.currentUser === actorAtMount) navigate(`/catalog/supplier-products/${result.productId}`); }} />
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
@@ -83,7 +87,7 @@ function ScopedSupplierProductEditPage() {
         </div>
 
         {loadError ? <p role="alert" className="text-red-700">{loadError}</p> : loading ? (
-          <p className="text-gray-600">{t("products.loading")}</p>
+          <LoadingStatus>Preparing supplier product…</LoadingStatus>
         ) : !product ? (
           <Card>
             <p className="text-gray-600">{t("products.notFound")}</p>
@@ -110,5 +114,6 @@ function ScopedSupplierProductEditPage() {
 export default function SupplierProductEditPage() {
   const { hotelUid } = useHotelContext();
   const { productId } = useParams();
-  return <ScopedSupplierProductEditPage key={`${hotelUid}:${productId}`} />;
+  const authority = useSupplierProductAuthority();
+  return <ScopedSupplierProductEditPage key={`${hotelUid}:${productId}:${authority}`} />;
 }

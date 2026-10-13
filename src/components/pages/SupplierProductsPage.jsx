@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Plus, X } from "lucide-react";
+import { Plus } from "lucide-react";
 import PageShell from "../layout/PageShell";
 import AsyncError from "../shared/AsyncError";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
@@ -15,36 +15,13 @@ import { useHotelContext } from "../../contexts/HotelContext";
 import { getSupplierProducts, importSupplierProducts } from "../../services/firebaseProducts";
 import { getSuppliers } from "../../services/firebaseSuppliers";
 import { usePermission } from "../../hooks/usePermission";
+import { SUPPLIER_PRODUCT_EXPORT_HEADERS, SUPPLIER_PRODUCT_TEMPLATE_HEADERS, SUPPLIER_PRODUCT_TEMPLATE_ROW, supplierProductExportRow, parseSupplierProductRows } from "../../utils/supplierProductTransfer";
+import SupplierProductImage from "../catalog/SupplierProductImage";
+import { useSupplierProductAuthority } from "../../hooks/useSupplierProductAuthority";
+import { formatOrderPriceBasis } from "../../utils/orderPricing";
+import { ArticleRowsSkeleton } from "../ui/ResourceLoading";
 
 const PAGE_SIZE = 50;
-const EXCEL_HEADERS = [
-  "documentId",
-  "revision",
-  "priceBasis",
-  "vatRate",
-  "priceValidFrom",
-  "priceValidUntil",
-  "purchaseOptions",
-  "supplierId",
-  "supplierSku",
-  "supplierProductName",
-  "currency",
-  "pricingModel",
-  "pricePerBaseUnit",
-  "pricePerPurchaseUnit",
-  "purchaseUnit",
-  "baseUnit",
-  "baseUnitsPerPurchaseUnit",
-  "catalogProductId",
-  "imageUrl",
-  "active",
-  "hasVariants",
-  "variants",
-];
-
-const TEMPLATE_HEADERS = EXCEL_HEADERS.filter((header) => header !== "documentId");
-
-
 function resolveDisplayPrice(product) {
   const pricingModel = String(product?.pricingModel || "").trim();
   const rawPrice = pricingModel === "Per Base Unit" ? product?.pricePerBaseUnit : product?.pricePerPurchaseUnit;
@@ -61,39 +38,19 @@ function formatDisplayPrice(product) {
   return unit ? `${formattedPrice}/${unit}` : formattedPrice;
 }
 
-const EXPORT_TEMPLATE_ROW = {
-  supplierId: "",
-  supplierSku: "",
-  supplierProductName: "",
-  currency: "EUR",
-  pricingModel: "Per Purchase Unit",
-  priceBasis: "unknown",
-  vatRate: "",
-  priceValidFrom: "",
-  priceValidUntil: "",
-  purchaseOptions: "[]",
-  pricePerBaseUnit: "",
-  pricePerPurchaseUnit: "",
-  purchaseUnit: "",
-  baseUnit: "",
-  baseUnitsPerPurchaseUnit: "",
-  catalogProductId: "",
-  imageUrl: "",
-  active: "true",
-  hasVariants: "false",
-  variants: "",
-};
-
 export default function SupplierProductsPage() {
   const { hotelUid } = useHotelContext();
-  return <ScopedSupplierProductsPage key={hotelUid} hotelUid={hotelUid} />;
+  const authority = useSupplierProductAuthority();
+  return <ScopedSupplierProductsPage key={authority} hotelUid={hotelUid} />;
 }
 
 function ScopedSupplierProductsPage({ hotelUid }) {
+  const actorAtMount = useRef(auth.currentUser).current;
   const navigate = useNavigate();
   const { t } = useTranslation("common");
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const current = () => mounted.current && auth.currentUser === actorAtMount;
   const fileInputRef = useRef(null);
   const canCreateProducts = usePermission("supplierproducts", "create");
   const canReadSuppliers = usePermission("suppliers", "read");
@@ -107,6 +64,8 @@ function ScopedSupplierProductsPage({ hotelUid }) {
   const [pendingImportProducts, setPendingImportProducts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [exportError, setExportError] = useState(null);
+  const [importError, setImportError] = useState(null);
+  const [importStatus, setImportStatus] = useState("");
 
   const supplierIdFilter = canReadSuppliers ? selectedSupplierId : "";
   const queryKey = `${hotelUid}:${debouncedSearchTerm}:${supplierIdFilter}:${selectedStatus}`;
@@ -132,14 +91,16 @@ function ScopedSupplierProductsPage({ hotelUid }) {
 
   const loadSuppliers = useCallback(async () => (await getSuppliers(hotelUid)).map((supplier) => ({ id: String(supplier.id || "").trim(), name: String(supplier.name || "").trim() })).filter((supplier) => supplier.id).sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)), [hotelUid]);
   const supplierQuery = useScopedAsync({ scopeKey: `${hotelUid}:${canReadSuppliers}`, enabled: Boolean(hotelUid && canReadSuppliers), initialData: [], load: loadSuppliers });
-  const supplierFilters = (supplierQuery.data || []).map((supplier) => ({ ...supplier, name: supplier.name || supplier.id }));
+  const supplierFilters = (supplierQuery.data || []).map((supplier) => ({ ...supplier, name: supplier.name || "Unnamed supplier" }));
+  const supplierName = (product) => product.supplierName || supplierFilters.find((supplier) => supplier.id === product.supplierId)?.name || "Supplier name unavailable";
 
   const columns = [
+    { key: "image", label: "Image", sortable: false, render: (product) => <SupplierProductImage hotelUid={hotelUid} product={product} className="h-12 w-12 rounded-lg object-contain" /> },
     {
       key: "supplier",
       label: "Supplier Name",
-      render: (product) => product.supplierName || product.supplierId || "-",
-      sortValue: (product) => String(product.supplierName || product.supplierId || ""),
+      render: supplierName,
+      sortValue: supplierName,
     },
     { key: "supplierSku", label: "Supplier SKU" },
     { key: "supplierProductName", label: "Supplier Product Name" },
@@ -148,7 +109,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
       key: "price",
       label: "Price",
       sortValue: (product) => resolveDisplayPrice(product),
-      render: (product) => formatDisplayPrice(product),
+      render: (product) => <span>{formatDisplayPrice(product)}<span className="mt-1 block text-xs text-gray-500">{formatOrderPriceBasis(product.priceBasis)}</span></span>,
     },
     {
       key: "active",
@@ -169,148 +130,73 @@ function ScopedSupplierProductsPage({ hotelUid }) {
   ];
 
   const downloadExcel = async (rows, headers, filename) => {
-    if (!mounted.current) return;
+    if (!current()) return;
     const XLSX = await import("xlsx");
-    if (!mounted.current) return;
+    if (!current()) return;
     const worksheet = XLSX.utils.json_to_sheet(rows, { header: headers });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "SupplierProducts");
     XLSX.writeFile(workbook, filename);
   };
 
-  const normalizeExportRow = (row) => ({
-    documentId: row.documentId || row.id || "",
-    revision: row.revision ?? 0,
-    priceBasis: row.priceBasis || "unknown",
-    vatRate: row.vatRate ?? "",
-    priceValidFrom: row.priceValidFrom || "",
-    priceValidUntil: row.priceValidUntil || "",
-    purchaseOptions: JSON.stringify(row.purchaseOptions || []),
-    supplierId: row.supplierId || "",
-    supplierSku: row.supplierSku || "",
-    supplierProductName: row.supplierProductName || "",
-    currency: row.currency || "EUR",
-    pricingModel: row.pricingModel || "",
-    pricePerBaseUnit: row.pricePerBaseUnit ?? "",
-    pricePerPurchaseUnit: row.pricePerPurchaseUnit ?? "",
-    purchaseUnit: row.purchaseUnit || "",
-    baseUnit: row.baseUnit || "",
-    baseUnitsPerPurchaseUnit: row.baseUnitsPerPurchaseUnit ?? "",
-    catalogProductId: row.catalogProductId || "",
-    imageUrl: row.imageUrl || "",
-    active: row.active !== false ? "true" : "false",
-    hasVariants: row.hasVariants ? "true" : "false",
-    variants: Array.isArray(row.variants) ? JSON.stringify(row.variants) : "",
-  });
-
   const handleExportTemplate = async () => {
-    try { await downloadExcel([EXPORT_TEMPLATE_ROW], TEMPLATE_HEADERS, "supplier-products-template.xlsx");
-    if (mounted.current) setShowExportModal(false); } catch (error) { if (mounted.current) setExportError(error); }
+    try { await downloadExcel([SUPPLIER_PRODUCT_TEMPLATE_ROW], SUPPLIER_PRODUCT_TEMPLATE_HEADERS, "supplier-products-template.xlsx");
+    if (current()) setShowExportModal(false); } catch (error) { if (current()) setExportError(error); }
   };
 
   const handleExportFullList = async () => {
-    if (!mounted.current || !hotelUid) return;
+    if (!current() || !hotelUid) return;
     setBusy(true); setExportError(null);
     try {
       const allProducts = await collectPaginatedProducts((options) => {
-        if (!mounted.current) throw new Error("The catalog page is no longer active.");
+        if (!current()) throw new Error("The catalog page is no longer active.");
         return getSupplierProducts(hotelUid, options);
       });
-      if (!mounted.current) return;
-      const rows = allProducts.map((product) => normalizeExportRow({ documentId: product.id, ...product }));
-      await downloadExcel(rows, EXCEL_HEADERS, "supplier-products-full.xlsx");
-      if (mounted.current) setShowExportModal(false);
-    } catch (error) { if (mounted.current) setExportError(error); } finally { if (mounted.current) setBusy(false); }
+      if (!current()) return;
+      const rows = allProducts.map((product) => supplierProductExportRow(product));
+      await downloadExcel(rows, SUPPLIER_PRODUCT_EXPORT_HEADERS, "supplier-products-full.xlsx");
+      if (current()) setShowExportModal(false);
+    } catch (error) { if (current()) setExportError(error); } finally { if (current()) setBusy(false); }
   };
 
   const handleImportButton = () => {
-    if (!busy) fileInputRef.current?.click();
+    if (!busy && canCreateProducts) fileInputRef.current?.click();
   };
 
   const handleImportFileChange = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!mounted.current || !file) return;
+    if (!current() || !file || !canCreateProducts) return;
+    setImportError(null); setImportStatus("");
+    setBusy(true);
 
     try {
       const workbookData = await file.arrayBuffer();
-      if (!mounted.current) return;
+      if (!current()) return;
       const XLSX = await import("xlsx");
-      if (!mounted.current) return;
+      if (!current()) return;
       const workbook = XLSX.read(workbookData, { type: "array" });
       const firstSheet = workbook.SheetNames[0];
       const worksheet = firstSheet ? workbook.Sheets[firstSheet] : null;
       if (!worksheet) {
-        window.alert(t("products.import.invalidFile"));
-        return;
+        throw new Error("The workbook has no readable worksheet.");
       }
 
       const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "", raw: false });
-      const parseNumberOrUndefined = (value) => {
-        const normalized = String(value ?? "").trim().replace(",", ".");
-        if (!normalized) return undefined;
-        const parsed = Number(normalized);
-        if (!Number.isFinite(parsed)) throw new Error("Every numeric field must contain a valid finite number or be blank.");
-        return parsed;
-      };
-
-      const importedProducts = rows
-        .map((row) => {
-          const hasData = Object.values(row).some((value) => String(value ?? "").trim() !== "");
-          if (!hasData) return null;
-
-          let parsedVariants = [];
-          const variantsRaw = String(row.variants || "").trim();
-          if (variantsRaw) {
-            try {
-              const variantsJson = JSON.parse(variantsRaw);
-              parsedVariants = Array.isArray(variantsJson) ? variantsJson : [];
-            } catch { throw new Error("Invalid legacy variants JSON. Review and replace variants with explicit purchaseOptions."); }
-          }
-
-          return {
-            documentId: String(row.documentId || "").trim() || undefined,
-            revision: parseNumberOrUndefined(row.revision),
-            priceBasis: String(row.priceBasis || "unknown").trim(),
-            vatRate: parseNumberOrUndefined(row.vatRate) ?? null,
-            ...(Object.hasOwn(row, "priceValidFrom") ? { priceValidFrom: String(row.priceValidFrom || "").trim() || null } : {}),
-            ...(Object.hasOwn(row, "priceValidUntil") ? { priceValidUntil: String(row.priceValidUntil || "").trim() || null } : {}),
-            purchaseOptions: String(row.purchaseOptions || "").trim() ? JSON.parse(String(row.purchaseOptions)) : [],
-            supplierId: String(row.supplierId || "").trim(),
-            supplierSku: String(row.supplierSku || "").trim(),
-            supplierProductName: String(row.supplierProductName || "").trim(),
-            currency: String(row.currency || "").trim(),
-            pricingModel: String(row.pricingModel || "").trim(),
-            pricePerBaseUnit: parseNumberOrUndefined(row.pricePerBaseUnit) ?? null,
-            pricePerPurchaseUnit: parseNumberOrUndefined(row.pricePerPurchaseUnit) ?? null,
-            purchaseUnit: String(row.purchaseUnit || "").trim(),
-            baseUnit: String(row.baseUnit || "").trim(),
-            baseUnitsPerPurchaseUnit: parseNumberOrUndefined(row.baseUnitsPerPurchaseUnit),
-            catalogProductId: String(row.catalogProductId || "").trim(),
-            imageUrl: String(row.imageUrl || "").trim(),
-            active: String(row.active || "").trim().toLowerCase() !== "false",
-            hasVariants: String(row.hasVariants || "").trim().toLowerCase() === "true",
-            variants: parsedVariants,
-          };
-        })
-        .filter((product) => product && product.supplierId && product.supplierSku);
-
-      if (importedProducts.length === 0) {
-        window.alert(t("products.import.invalidFile"));
-        return;
-      }
+      const importedProducts = parseSupplierProductRows(rows);
 
       setPendingImportProducts(importedProducts);
       setShowImportModal(true);
     } catch (error) {
-      if (!mounted.current) return;
-      console.error("Failed to parse import file", error);
-      window.alert(error?.message || t("products.import.invalidFile"));
+      if (!current()) return;
+      setImportError(error);
+    } finally {
+      if (current()) setBusy(false);
     }
   };
 
   const submitImport = async (onExisting) => {
-    if (!mounted.current || !hotelUid || pendingImportProducts.length === 0) return;
+    if (!current() || !hotelUid || !canCreateProducts || pendingImportProducts.length === 0) return;
 
     const actor =
       sessionStorage.getItem("userEmail") ||
@@ -318,35 +204,31 @@ function ScopedSupplierProductsPage({ hotelUid }) {
       auth.currentUser?.email ||
       "unknown";
 
-    setBusy(true);
+    setBusy(true); setImportError(null); setImportStatus("");
     try {
       const result = await importSupplierProducts(hotelUid, pendingImportProducts, {
         onExisting,
         actor,
       });
-      if (!mounted.current) return;
+      if (!current()) return;
       setShowImportModal(false);
       setPendingImportProducts([]);
       setPageStartCursors({ 0: null });
       await loadProductsPage(0, null);
-      if (!mounted.current) return;
-      window.alert(
-        t("products.import.result", {
-          imported: result.imported,
-          skipped: result.skipped,
-        })
-      );
+      if (!current()) return;
+      setImportStatus(t("products.import.result", { imported: result.imported, skipped: result.skipped }));
     } catch (error) {
-      if (!mounted.current) return;
-      console.error("Failed to import products", error);
-      window.alert(String(error?.message || t("products.import.failed")));
+      if (!current()) return;
+      setImportError(error);
     } finally {
-      if (mounted.current) setBusy(false);
+      if (current()) setBusy(false);
     }
   };
 
   return (
     <PageShell variant="procurement">
+        {!showImportModal && <AsyncError error={importError} label="Could not import supplier products." />}
+        {importStatus && <p role="status" className="rounded-lg bg-green-50 p-3 text-sm text-green-800">{importStatus}</p>}
         <AsyncError error={query.error} onRetry={query.retry} label="Could not load products." />
         {canReadSuppliers && <AsyncError error={supplierQuery.error} onRetry={supplierQuery.retry} label="Could not load suppliers." />}
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -359,7 +241,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
             <button
               type="button"
               onClick={handleImportButton}
-              disabled={busy}
+              disabled={busy || !canCreateProducts}
               className="inline-flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {t("products.actions.import")}
@@ -433,7 +315,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
         </div>
 
         {loading ? (
-          <p className="text-gray-600">{t("products.loading")}</p>
+          <ArticleRowsSkeleton rows={5} label="Preparing supplier products…" />
         ) : query.error ? null : (
           <DataListTable
             columns={columns}
@@ -472,16 +354,9 @@ function ScopedSupplierProductsPage({ hotelUid }) {
         </div>
 
       <Modal open={showExportModal} onClose={() => setShowExportModal(false)} title={t("products.export.title")}>
-        <button
-          type="button"
-          onClick={() => setShowExportModal(false)}
-          className="absolute right-4 top-4 rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-          aria-label={t("products.actions.cancel")}
-        >
-          <X className="h-4 w-4" />
-        </button>
         <p className="mb-4 text-sm text-gray-700">{t("products.export.message")}</p>
-        <p className="mb-3 text-sm text-gray-600">The full export includes every product in this hotel, regardless of the current filters.</p>
+        <p className="mb-3 text-sm text-gray-600">The full export includes every product in this hotel, regardless of the current filters. Keep document IDs, revisions and purchase-option IDs when updating existing offers. Audit columns are read-only; managed uploads stay attached to the existing product.</p>
+        <p className="mb-3 text-xs text-gray-500">GTINs and supplier SKUs are exported as text. Keep them as text in your spreadsheet to preserve leading zeroes. Blank prices, currencies and contract dates stay unknown.</p>
         <AsyncError error={exportError} onRetry={handleExportFullList} label="Could not export products." />
         <div className="flex flex-col gap-2">
           <button
@@ -504,6 +379,8 @@ function ScopedSupplierProductsPage({ hotelUid }) {
 
       <Modal open={showImportModal} onClose={() => setShowImportModal(false)} title={t("products.import.title")}>
         <p className="mb-4 text-sm text-gray-700">{t("products.import.message")}</p>
+        <p className="mb-3 text-sm text-gray-600">{pendingImportProducts.length} products are ready for validation. Existing product revisions are checked before overwriting; supplier, catalog and package identities remain protected.</p>
+        <AsyncError error={importError} label="Could not import supplier products." />
         <div className="flex flex-col gap-2">
           <button
             type="button"

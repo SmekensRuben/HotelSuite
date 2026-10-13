@@ -9,6 +9,7 @@ import PendingProductCommand from "../catalog/PendingProductCommand";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { createSupplierProduct } from "../../services/firebaseProducts";
+import { useSupplierProductAuthority } from "../../hooks/useSupplierProductAuthority";
 
 function ScopedSupplierProductCreatePage() {
   const navigate = useNavigate();
@@ -16,6 +17,7 @@ function ScopedSupplierProductCreatePage() {
   const { hotelUid } = useHotelContext();
 
   const mounted = useRef(true);
+  const actorAtMount = useRef(auth.currentUser).current;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const today = useMemo(
@@ -35,15 +37,16 @@ function ScopedSupplierProductCreatePage() {
   };
 
   const handleCreate = async (payload) => {
+    if (!mounted.current || auth.currentUser !== actorAtMount) throw new Error("Hotel access changed. Reload before creating a product.");
     const productId = await createSupplierProduct(hotelUid, payload);
-    if (mounted.current) navigate(`/catalog/supplier-products/${productId}`);
+    if (mounted.current && auth.currentUser === actorAtMount) navigate(`/catalog/supplier-products/${productId}`);
   };
 
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <ProcurementPage width="form" className="space-y-6">
-        <PendingProductCommand hotelUid={hotelUid} collection="supplierproducts" productId={"create"} onComplete={(result) => { if (mounted.current) navigate(`/catalog/supplier-products/${result.productId}`); }} />
+        <PendingProductCommand hotelUid={hotelUid} collection="supplierproducts" productId={"create"} onComplete={(result) => { if (mounted.current && auth.currentUser === actorAtMount) navigate(`/catalog/supplier-products/${result.productId}`); }} />
         <div>
           <p className="text-sm text-gray-500 uppercase tracking-wide">{t("products.catalog")}</p>
           <h1 className="text-3xl font-semibold">New Supplier Product</h1>
@@ -65,5 +68,6 @@ function ScopedSupplierProductCreatePage() {
 
 export default function SupplierProductCreatePage() {
   const { hotelUid } = useHotelContext();
-  return <ScopedSupplierProductCreatePage key={hotelUid} />;
+  const authority = useSupplierProductAuthority();
+  return <ScopedSupplierProductCreatePage key={`${hotelUid}:${authority}`} />;
 }

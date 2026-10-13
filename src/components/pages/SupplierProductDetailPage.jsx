@@ -16,6 +16,11 @@ import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 import { usePermission } from "../../hooks/usePermission";
 import { packageConversionLabel, productUnitLabel } from "../../utils/productUnitDisplay";
 import { SupplierPriceHistory } from "../catalog/SupplierPriceInsights";
+import SupplierProductImage from "../catalog/SupplierProductImage";
+import SupplierProductImageUpload from "../catalog/SupplierProductImageUpload";
+import { useSupplierProductAuthority } from "../../hooks/useSupplierProductAuthority";
+import { formatOrderPriceBasis } from "../../utils/orderPricing";
+import { LoadingStatus } from "../ui/ResourceLoading";
 
 function formatDate(value) {
   if (!value) return "-";
@@ -36,14 +41,17 @@ function DetailField({ label, value }) {
 export default function SupplierProductDetailPage() {
   const { productId } = useParams();
   const { hotelUid } = useHotelContext();
-  return <ScopedSupplierProductDetailPage key={`${hotelUid}:${productId}`} hotelUid={hotelUid} productId={productId} />;
+  const authority = useSupplierProductAuthority();
+  return <ScopedSupplierProductDetailPage key={`${authority}:${productId}`} hotelUid={hotelUid} productId={productId} />;
 }
 
 function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
   const navigate = useNavigate();
   const { t } = useTranslation("common");
   const mounted = useRef(false);
+  const actorAtMount = useRef(auth.currentUser).current;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const current = () => mounted.current && auth.currentUser === actorAtMount;
   const canEditProducts = usePermission("supplierproducts", "update");
   const canDeleteProducts = usePermission("supplierproducts", "delete");
   const canReadCatalog = usePermission("catalogproducts", "read");
@@ -79,20 +87,20 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
 
 
   const handleDeleteProduct = async () => {
-    if (!mounted.current || !hotelUid || !productId || !canDeleteProducts || deleting) return;
+    if (!current() || !hotelUid || !productId || !canDeleteProducts || deleting) return;
     setDeleting(true); setDeleteError(null);
     try {
       await deleteSupplierProduct(hotelUid, productId, product?.revision ?? 0);
-      if (mounted.current) { setShowDeleteModal(false); navigate("/catalog/supplier-products"); }
-    } catch (error) { if (mounted.current) setDeleteError(error); }
-    finally { if (mounted.current) setDeleting(false); }
+      if (current()) { setShowDeleteModal(false); navigate("/catalog/supplier-products"); }
+    } catch (error) { if (current()) setDeleteError(error); }
+    finally { if (current()) setDeleting(false); }
   };
 
   return (
     <div className="min-h-screen bg-canvas text-gray-900">
       <HeaderBar today={today} onLogout={handleLogout} />
       <ProcurementPage className="space-y-6">
-        <PendingProductCommand hotelUid={hotelUid} collection="supplierproducts" productId={productId} onComplete={() => { if (mounted.current) navigate("/catalog/supplier-products"); }} />
+        <PendingProductCommand hotelUid={hotelUid} collection="supplierproducts" productId={productId} onComplete={() => { if (current()) navigate("/catalog/supplier-products"); }} />
         <AsyncError error={query.error} onRetry={query.retry} label="Could not load product." />
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -137,7 +145,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
         </div>
 
         {loading ? (
-          <p className="text-gray-600">{t("products.loading")}</p>
+          <LoadingStatus>Preparing supplier product details…</LoadingStatus>
         ) : query.error ? null : !product ? (
           <Card>
             <p className="text-gray-600">{t("products.notFound")}</p>
@@ -152,7 +160,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
                     <h2 className="text-3xl font-semibold mt-2">{product.supplierProductName || "-"}</h2>
                     <div className="mt-4 flex flex-wrap gap-2">
                       <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">SKU: {product.supplierSku || "-"}</span>
-                      <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">Supplier: {product.supplierName || product.supplierId || "-"}</span>
+                      <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">Supplier: {product.supplierName || "Supplier name unavailable"}</span>
                       <span
                         className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
                           product.active !== false && product.archived !== true ? "bg-emerald-400/20 text-emerald-200" : "bg-white/10 text-slate-200"
@@ -169,39 +177,31 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
                 <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_160px] items-start">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <DetailField label="Supplier SKU" value={product.supplierSku} />
-                    <DetailField label="Supplier" value={product.supplierName || product.supplierId} />
+                    <DetailField label="Supplier" value={product.supplierName || "Supplier name unavailable"} />
                     <DetailField label="Pricing Model" value={product.pricingModel || "Per Purchase Unit"} />
                     <DetailField label="Currency" value={product.currency || "Unknown"} />
-                  <DetailField label="Price basis" value={product.priceBasis || "Unknown"} />
+                  <DetailField label="Price basis" value={formatOrderPriceBasis(product.priceBasis)} />
                   <DetailField label="VAT rate" value={product.vatRate == null ? "Unknown / not applicable" : `${product.vatRate * 100}%`} />
                   <DetailField label="Contract price valid from" value={product.priceValidFrom || "Unknown"} />
                   <DetailField label="Contract price valid until" value={product.priceValidUntil || "Unknown"} />
+                  <DetailField label="Default package GTIN" value={product.gtin || "Not supplied"} />
                   </div>
 
                   <div>
                     <p className="text-xs uppercase tracking-wide text-gray-500 mb-2">Image</p>
-                    {product.imageUrl ? (
-                      <img
-                        src={product.imageUrl}
-                        alt={product.supplierProductName || "Supplier product"}
-                        className="w-full max-w-[220px] aspect-[4/3] object-contain rounded-lg border border-gray-200 bg-white p-1 mx-auto"
-                      />
-                    ) : (
-                      <div className="w-full max-w-[140px] aspect-[4/3] rounded-lg border border-dashed border-gray-300 bg-gray-50 text-gray-500 text-xs flex items-center justify-center px-3 text-center mx-auto">
-                        No image
-                      </div>
-                    )}
+                    <SupplierProductImage hotelUid={hotelUid} product={product} variant="display" className="w-full max-w-[220px] aspect-[4/3] object-contain rounded-lg border border-gray-200 bg-white p-1 mx-auto" />
                   </div>
                 </div>
               </div>
             </Card>
 
             <div className="grid gap-4 lg:grid-cols-2">
+              {canEditProducts && product.archived !== true && <Card className="lg:col-span-2"><h2 className="text-lg font-semibold mb-3">Product image</h2><SupplierProductImageUpload hotelUid={hotelUid} product={product} onChanged={query.retry} /></Card>}
               <Card className="border-0 shadow-md shadow-slate-200/70">
                 <h2 className="text-lg font-semibold mb-3">Pricing</h2>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <DetailField label="Currency" value={product.currency || "Unknown"} />
-                  <DetailField label="Price basis" value={product.priceBasis || "Unknown"} />
+                  <DetailField label="Price basis" value={formatOrderPriceBasis(product.priceBasis)} />
                   <DetailField label="VAT rate" value={product.vatRate == null ? "Unknown / not applicable" : `${product.vatRate * 100}%`} />
                   <DetailField label="Pricing Model" value={product.pricingModel || "Per Purchase Unit"} />
                   <DetailField label="Supplier content unit" value={productUnitLabel(product.baseUnit)} />
@@ -237,7 +237,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
               </Card>
 
               {product.hasVariants && !product.purchaseOptions?.length && <Card className="lg:col-span-2"><p className="text-amber-800">Legacy variants require review in Edit before this offer can be ordered.</p></Card>}
-              {product.purchaseOptions?.length > 0 && <Card className="lg:col-span-2"><h2 className="font-semibold mb-3">Additional purchase options</h2><div className="grid gap-3 md:grid-cols-2">{product.purchaseOptions.map((option) => <div key={option.id} className="space-y-3 rounded border p-3"><DetailField label="Package" value={option.purchaseUnit} /><DetailField label={`Content (${product.baseUnit})`} value={option.baseUnitsPerPurchaseUnit} /><DetailField label={`Price (${product.currency || "unknown currency"})`} value={option.pricePerPurchaseUnit == null ? "Unknown" : option.pricePerPurchaseUnit} />{catalogProduct && <p className="text-sm text-gray-600">{packageConversionLabel(option.baseUnitsPerPurchaseUnit, product.baseUnit, catalogProduct.baseUnit)}</p>}</div>)}</div></Card>}
+              {product.purchaseOptions?.length > 0 && <Card className="lg:col-span-2"><h2 className="font-semibold mb-3">Additional purchase options</h2><div className="grid gap-3 md:grid-cols-2">{product.purchaseOptions.map((option) => <div key={option.id} className="space-y-3 rounded border p-3"><DetailField label="Package" value={option.purchaseUnit} /><DetailField label="Package GTIN" value={option.gtin || "Not supplied"} /><DetailField label={`Content (${product.baseUnit})`} value={option.baseUnitsPerPurchaseUnit} /><DetailField label={`Price (${product.currency || "unknown currency"})`} value={option.pricePerPurchaseUnit == null ? "Unknown" : option.pricePerPurchaseUnit} />{catalogProduct && <p className="text-sm text-gray-600">{packageConversionLabel(option.baseUnitsPerPurchaseUnit, product.baseUnit, catalogProduct.baseUnit)}</p>}</div>)}</div></Card>}
 
               <Card className="lg:col-span-2 border-0 shadow-md shadow-slate-200/70">
                 <h2 className="text-lg font-semibold mb-3">Audit</h2>

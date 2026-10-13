@@ -24,7 +24,7 @@ import {
   httpsCallable
 } from "../firebaseConfig";
 import { getSuppliers } from "./firebaseSuppliers";
-import { invalidateProcurementReads, poolProcurementRead, requireServerSnapshot } from "./procurementReadPool";
+import { invalidateProcurementReads, poolProcurementRead, procurementReadScope, requireServerSnapshot } from "./procurementReadPool";
 
 export function clearProductsIndexedCache(hotelUid) {
   invalidateProcurementReads(hotelUid);
@@ -449,7 +449,7 @@ async function searchCatalogProductsWithFirestore(hotelUid, criteria, pageSize, 
   };
 }
 
-const PRODUCT_METADATA = new Set(["documentId", "id", "revision", "productPolicyVersion", "createdAt", "updatedAt", "createdBy", "updatedBy", "priceUpdatedOn", "supplierName", "archivedAt", "archivedBy"]);
+const PRODUCT_METADATA = new Set(["documentId", "id", "revision", "productPolicyVersion", "createdAt", "updatedAt", "createdBy", "updatedBy", "priceUpdatedOn", "supplierName", "archivedAt", "archivedBy", "image", "imageRevision"]);
 function productPayload(product = {}) {
   return Object.fromEntries(Object.entries(product).filter(([key, value]) => !PRODUCT_METADATA.has(key) && value !== undefined));
 }
@@ -462,6 +462,16 @@ function commandStorageKey(hotelUid, resource) {
 
 function notifyProductCommand() {
   if (typeof window !== "undefined") window.dispatchEvent(new Event("product-command-changed"));
+}
+
+function productOperationScope(hotelUid, resource) {
+  const actor = auth.currentUser, scope = procurementReadScope(hotelUid, resource);
+  if (!actor?.uid || !scope) throw new Error("A signed-in hotel user is required.");
+  const current = () => auth.currentUser === actor && scope.current();
+  return {
+    current,
+    assertCurrent: () => { if (!current()) throw new Error("Hotel access changed during this product request. Reload and retry the saved request with the original account before changing it."); },
+  };
 }
 
 export function getPendingProductCommand(hotelUid, entityCollection, productId = "create") {
@@ -478,6 +488,7 @@ export async function retryPendingProductCommand(hotelUid, entityCollection, pro
 }
 
 async function productCommand(hotelUid, endpoint, input, resource) {
+  const operation = productOperationScope(hotelUid, resource);
   const key = commandStorageKey(hotelUid, resource);
   const serializedInput = JSON.stringify(input);
   const existing = sessionStorage.getItem(key);
@@ -490,14 +501,16 @@ async function productCommand(hotelUid, endpoint, input, resource) {
     sessionStorage.setItem(key, JSON.stringify(pending));
   }
   try {
+    operation.assertCurrent();
     const { data } = await httpsCallable(functions, endpoint)({ hotelUid, ...input, requestId: pending.requestId });
+    operation.assertCurrent();
     if (data?.hotelUid !== hotelUid || typeof data.productId !== "string" || !data.productId || !Number.isSafeInteger(data.revision) || data.revision < 0) throw new Error("Product response could not be validated. Retry the saved request.");
     sessionStorage.removeItem(key);
     notifyProductCommand();
     clearEntityProductsCache(hotelUid);
     return data;
   } catch (error) {
-    if (error?.details?.productRequestUncommitted === true) sessionStorage.removeItem(key);
+    if (operation.current() && error?.details?.productRequestUncommitted === true) sessionStorage.removeItem(key);
     clearEntityProductsCache(hotelUid);
     notifyProductCommand();
     throw error;
@@ -506,6 +519,7 @@ async function productCommand(hotelUid, endpoint, input, resource) {
 
 async function importEntityProducts(hotelUid, products, options, entityCollection) {
   if (!Array.isArray(products) || products.length === 0 || products.length > 500) throw new Error("Import between 1 and 500 products per file.");
+  const operation = productOperationScope(hotelUid, `import:${entityCollection}`);
   const key = commandStorageKey(hotelUid, `import:${entityCollection}`);
   const onExisting = options.onExisting === "overwrite" ? "overwrite" : "skip";
   const source = JSON.stringify({ products, onExisting });
@@ -518,6 +532,7 @@ async function importEntityProducts(hotelUid, products, options, entityCollectio
       throw new Error("Retry the previous import file and strategy to reconcile its result first. Already imported rows cannot be changed during a retry.");
     }
     const suppliers = entityCollection === "supplierproducts" ? await getSuppliers(hotelUid) : [];
+    operation.assertCurrent();
     for (let batchIndex = plan.offset; batchIndex < plan.batches.length; batchIndex += 1) {
       for (let row = 0; row < plan.batches[batchIndex].products.length; row += 1) {
         const sourceProduct = products[batchIndex * 25 + row];
@@ -532,6 +547,7 @@ async function importEntityProducts(hotelUid, products, options, entityCollectio
         }
         if ((sourceProduct.documentId || sourceProduct.id || entry.productId) !== entry.productId) throw new Error("Keep the saved product IDs when correcting an import.");
         const current = await getEntityProduct(hotelUid, entry.productId, entityCollection);
+        operation.assertCurrent();
         entry.product = product;
         entry.expectedRevision = sourceProduct.revision ?? current?.revision ?? 0;
       }
@@ -539,12 +555,15 @@ async function importEntityProducts(hotelUid, products, options, entityCollectio
     }
     plan.source = source;
     plan.failedUncommitted = false;
+    operation.assertCurrent();
     sessionStorage.setItem(key, JSON.stringify(plan));
   }
   if (!plan) {
     let suppliers = [];
     if (entityCollection === "supplierproducts") suppliers = await getSuppliers(hotelUid);
+    operation.assertCurrent();
     const existingSupplierProducts = entityCollection === "supplierproducts" ? await getSupplierProducts(hotelUid) : [];
+    operation.assertCurrent();
     const entries = [];
     for (const sourceProduct of products) {
       const product = productPayload(sourceProduct);
@@ -561,6 +580,7 @@ async function importEntityProducts(hotelUid, products, options, entityCollectio
       if (matchingOffers.length > 1) throw new Error("More than one existing offer has this supplier and SKU; resolve the ambiguity before importing.");
       const productId = sourceProduct.documentId || sourceProduct.id || matchingOffers[0]?.id || crypto.randomUUID();
       const current = (sourceProduct.documentId || sourceProduct.id) ? await getEntityProduct(hotelUid, productId, entityCollection) : matchingOffers[0] || null;
+      operation.assertCurrent();
       const expectedRevision = sourceProduct.revision ?? current?.revision ?? 0;
       entries.push({ productId, expectedRevision, product });
     }
@@ -568,13 +588,16 @@ async function importEntityProducts(hotelUid, products, options, entityCollectio
     for (let offset = 0; offset < entries.length; offset += 25) {
       plan.batches.push({ products: entries.slice(offset, offset + 25), requestId: crypto.randomUUID() });
     }
+    operation.assertCurrent();
     sessionStorage.setItem(key, JSON.stringify(plan));
   }
   try {
     while (plan.offset < plan.batches.length) {
+      operation.assertCurrent();
       plan.failedUncommitted = false;
       sessionStorage.setItem(key, JSON.stringify(plan));
       const { data } = await httpsCallable(functions, "importHotelProducts")({ hotelUid, collection: entityCollection, onExisting, ...plan.batches[plan.offset] });
+      operation.assertCurrent();
       if (data?.hotelUid !== hotelUid || !Number.isSafeInteger(data.imported) || data.imported < 0 || !Number.isSafeInteger(data.skipped) || data.skipped < 0 || data.imported + data.skipped !== plan.batches[plan.offset].products.length) throw new Error("Import response could not be validated. Retry the saved file.");
       plan.imported += data.imported;
       plan.skipped += data.skipped;
@@ -582,14 +605,15 @@ async function importEntityProducts(hotelUid, products, options, entityCollectio
       sessionStorage.setItem(key, JSON.stringify(plan));
     }
   } catch (error) {
-    clearEntityProductsCache(hotelUid, entityCollection);
-    if (error?.details?.productRequestUncommitted === true) {
+    if (operation.current() && error?.details?.productRequestUncommitted === true) {
       plan.failedUncommitted = true;
       sessionStorage.setItem(key, JSON.stringify(plan));
       error.message = `${error.message} Confirmed earlier batches: ${plan.imported} imported, ${plan.skipped} skipped. Retry this file, correcting only the remaining rows if needed.`;
     }
+    clearEntityProductsCache(hotelUid, entityCollection);
     throw error;
   }
+  operation.assertCurrent();
   sessionStorage.removeItem(key);
   clearEntityProductsCache(hotelUid, entityCollection);
   return { imported: plan.imported, skipped: plan.skipped };

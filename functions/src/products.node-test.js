@@ -246,3 +246,61 @@ test("older update/import payloads preserve known contract bounds while explicit
   assert.equal(saved().priceValidFrom, "2026-10-01"); assert.equal(saved().priceValidUntil, null); assert.equal(events().length, 2);
 });
 
+test("older saves and imports preserve optional package GTINs by stable option ID without rewriting historical terms", async () => {
+  const options = [{ id: "single", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 2, gtin: "6291041500213" },
+    { id: "double", purchaseUnit: "Two bottles", baseUnitsPerPurchaseUnit: 2, pricePerPurchaseUnit: 4, gtin: "036000291452" }];
+  const db = fixture(), first = await createOffer(db, { product: offer({ gtin: "16291041500210", purchaseOptions: options }) });
+  const path = `hotels/${hotelUid}/supplierproducts/${first.productId}`;
+  const saved = () => db.records.get(path);
+  const history = () => [...db.records.entries()].filter(([key]) => key.includes("/supplierPriceHistory/"));
+  const historicalTerms = { supplierProductId: first.productId, catalogProductId: "milk", purchaseOptionId: "single", purchaseUnit: "Bottle",
+    catalogUnitsPerPurchaseUnit: 1, currency: "EUR", pricePerPurchaseUnit: 2, netUnitCost: 2 };
+  db.records.set(`hotels/${hotelUid}/orders/ordered-before-metadata`, { lines: [historicalTerms] });
+  db.records.set(`hotels/${hotelUid}/inventoryMovements/received-before-metadata`, historicalTerms);
+  const baselineHistory = history();
+  const olderOptions = options.toReversed().map(({ gtin, ...option }) => option);
+  await mutateHotelSupplierProductHandler(request({ hotelUid, requestId: "older-metadata-edit", action: "update", productId: first.productId,
+    expectedRevision: 1, product: offer({ supplierProductName: "Renamed offer", purchaseOptions: olderOptions }) }), { firestore: db, auth });
+  assert.equal(saved().gtin, "16291041500210");
+  assert.equal(saved().purchaseOptions.find((option) => option.id === "single").gtin, "6291041500213");
+  assert.equal(saved().purchaseOptions.find((option) => option.id === "double").gtin, "036000291452");
+  await importProducts(db, [{ productId: first.productId, expectedRevision: 2, product: offer({ purchaseOptions: olderOptions }) }], {
+    requestId: "older-metadata-import", onExisting: "overwrite",
+  });
+  assert.equal(saved().gtin, "16291041500210");
+  assert.equal(saved().purchaseOptions.find((option) => option.id === "single").gtin, "6291041500213");
+  assert.deepEqual(history(), baselineHistory, "metadata omission/order/name changes must not manufacture price history");
+  assert.deepEqual(db.records.get(`hotels/${hotelUid}/orders/ordered-before-metadata`).lines, [historicalTerms]);
+  assert.deepEqual(db.records.get(`hotels/${hotelUid}/inventoryMovements/received-before-metadata`), historicalTerms);
+  await mutateHotelSupplierProductHandler(request({ hotelUid, requestId: "explicit-gtin-clear", action: "update", productId: first.productId,
+    expectedRevision: 3, product: offer({ gtin: "", purchaseOptions: options.map((option) => ({ ...option, gtin: null })) }) }), { firestore: db, auth });
+  assert.equal(saved().gtin, null);
+  assert.equal(saved().purchaseOptions.every((option) => option.gtin === null), true);
+  assert.deepEqual(history(), baselineHistory, "metadata-only clearing must not manufacture price history");
+});
+
+test("replacement package IDs do not inherit GTIN metadata and invalid GTIN imports leave no partial products", async () => {
+  const db = fixture(), first = await createOffer(db, { product: offer({ gtin: "16291041500210",
+    purchaseOptions: [{ id: "old", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 2, gtin: "6291041500213" }] }) });
+  await mutateHotelSupplierProductHandler(request({ hotelUid, requestId: "replace-option-id", action: "update", productId: first.productId,
+    expectedRevision: 1, product: offer({ purchaseOptions: [{ id: "new", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 2 }] }) }), { firestore: db, auth });
+  assert.equal(db.records.get(`hotels/${hotelUid}/supplierproducts/${first.productId}`).purchaseOptions[0].gtin, null);
+  const before = JSON.stringify([...db.records]);
+  await assert.rejects(importProducts(db, [{ expectedRevision: 0, product: offer({ supplierSku: "VALID", gtin: "6291041500213" }) },
+    { expectedRevision: 0, product: offer({ supplierSku: "INVALID", gtin: "6291041500214" }) }], { requestId: "invalid-package-gtin-import" }),
+  (error) => error.code === "invalid-argument" && /invalid GS1 check digit/.test(error.message));
+  assert.equal(JSON.stringify([...db.records]), before);
+});
+
+test("routine price/product commands preserve server-managed media and cannot accept forged image references", async () => {
+  const db = fixture(), created = await createOffer(db), path = `hotels/${hotelUid}/supplierproducts/${created.productId}`;
+  const image = { assetId: "a".repeat(64), status: "ready", policyVersion: 1, thumbnail: { generation: "1", path: "private/protected-image" } };
+  db.records.set(path, { ...db.records.get(path), image, imageRevision: 3 });
+  await mutateHotelSupplierProductHandler(request({ hotelUid, requestId: "media-preserving-edit", action: "update", productId: created.productId, expectedRevision: 1,
+    product: offer({ supplierProductName: "Coffee renamed" }) }), { firestore: db, auth });
+  assert.deepEqual(db.records.get(path).image, image); assert.equal(db.records.get(path).imageRevision, 3);
+  await assert.rejects(mutateHotelSupplierProductHandler(request({ hotelUid, requestId: "forged-media-edit", action: "update", productId: created.productId, expectedRevision: 2,
+    product: offer({ image: { assetId: "foreign" }, imageRevision: 999 }) }), { firestore: db, auth }), (error) => error.code === "invalid-argument");
+  assert.deepEqual(db.records.get(path).image, image); assert.equal(db.records.get(path).imageRevision, 3);
+});
+
