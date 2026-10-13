@@ -37,6 +37,30 @@ const AI_SUPPLIER_SCHEMA = { type: "object", additionalProperties: false, requir
     } } },
 } };
 
+function sourceQuoteMatch(source, quote) {
+  if (typeof source.text !== "string" || !quote) return null;
+  const literalIndex = source.text.indexOf(quote);
+  if (literalIndex !== -1) return { quote: source.text.slice(literalIndex, literalIndex + quote.length), verificationMethod: "exact-text" };
+  // CSV/XLSX cells are deliberately JSON-encoded by our parser. Match decoded
+  // cell text, not the escaping of that transport representation. Only Unicode
+  // canonical equivalence and whitespace may change: never repair numbers,
+  // punctuation, case, units, ordering or a paraphrase on the model's behalf.
+  if (!/^(?:csv-(?:row-\d+|header)|xlsx-sheet-\d+-row-\d+)$/.test(source.sourceId)) return null;
+  let cells;
+  try { cells = JSON.parse(source.text); } catch { return null; }
+  if (!Array.isArray(cells) || cells.length > 128 || cells.some((cell) => cell !== null && !["string", "number", "boolean"].includes(typeof cell))) return null;
+  const normalize = (value) => value.normalize("NFC").replace(/\s+/gu, " ").trim();
+  const normalizedQuote = normalize(quote);
+  for (const cell of cells) {
+    const value = String(cell ?? ""), index = value.indexOf(quote);
+    if (index !== -1) return { quote: value.slice(index, index + quote.length), verificationMethod: "decoded-cell" };
+    const normalizedCell = normalize(value), normalizedIndex = normalizedCell.indexOf(normalizedQuote);
+    if (normalizedQuote && normalizedIndex !== -1) return { quote: normalizedCell.slice(normalizedIndex, normalizedIndex + normalizedQuote.length), verificationMethod: "normalized-whitespace" };
+  }
+  return null;
+}
+
+const evidenceIssue = (code, message) => ({ field: "sourceAnchors", code, message: `${message} Exclude this row, or correct the source and start a new import; editing product fields cannot verify this evidence.`, severity: "error" });
 function validateRawSupplierAiRows(payload, { sourceUnits = [] } = {}) {
   object(payload, "AI response", ["rows"]);
   if (!Array.isArray(payload.rows) || payload.rows.length > MAX_AI_ROWS) bad(`An AI response must contain at most ${MAX_AI_ROWS} rows.`);
@@ -52,21 +76,29 @@ function validateRawSupplierAiRows(payload, { sourceUnits = [] } = {}) {
       }
       result[field] = value;
     }
-    if (!Array.isArray(input.sourceAnchors) || input.sourceAnchors.length < 1 || input.sourceAnchors.length > 8) bad(`AI row ${index + 1} needs between one and eight source anchors.`);
+    if (!Array.isArray(input.sourceAnchors) || input.sourceAnchors.length > 8) bad(`AI row ${index + 1} supports at most eight source anchors.`);
+    result.sourceEvidenceIssues = [];
+    if (!input.sourceAnchors.length) result.sourceEvidenceIssues.push(evidenceIssue("evidence-missing-anchors", "The AI did not provide a product source reference."));
     result.sourceAnchors = input.sourceAnchors.map((anchor) => {
       object(anchor, "source anchor", ["sourceId", "quote"]);
-      const sourceId = text(anchor.sourceId, "Source ID", 160, true), quote = text(anchor.quote, "Source quote", 1000, true);
+      const sourceId = text(anchor.sourceId, "Source ID", 160, true), quote = text(anchor.quote, "Source quote", 1000);
       const source = sources.get(sourceId);
-      if (!source) bad(`AI row ${index + 1} refers to an unknown source anchor.`);
+      if (!source) {
+        result.sourceEvidenceIssues.push(evidenceIssue("evidence-unknown-source", "The AI reference does not identify a source row supplied to this import."));
+        return { sourceId, quote, anchor: sourceId, verified: false, evidenceKind: "unverified-reference", sourceExcerpt: null, excerptTruncated: false };
+      }
       const pdfPage = source.kind === "pdf-page" || source.method === "vision" || source.anchor?.type === "pdf-page";
-      const verified = !pdfPage && typeof source.text === "string" && source.text.includes(quote);
-      if (!verified && !pdfPage) bad(`AI row ${index + 1} contains a quote absent from its source.`);
-      return { sourceId, quote, anchor: typeof source.anchor === "string" ? source.anchor.slice(0, 250) : JSON.stringify(source.anchor ?? sourceId).slice(0, 250), verified,
-        evidenceKind: pdfPage ? "visual-page" : "extracted-text", sourceExcerpt: pdfPage ? null : source.text.slice(0, 1000),
-        excerptTruncated: !pdfPage && source.text.length > 1000 };
+      const matched = !pdfPage && sourceQuoteMatch(source, quote), verified = Boolean(matched);
+      if (!quote || (!verified && !pdfPage)) result.sourceEvidenceIssues.push(evidenceIssue("evidence-quote-absent", "The AI reference quote cannot be verified against its source row."));
+      return { sourceId, quote: matched ? matched.quote : quote,
+        anchor: typeof source.anchor === "string" ? source.anchor.slice(0, 250) : JSON.stringify(source.anchor ?? sourceId).slice(0, 250), verified,
+        verificationMethod: matched?.verificationMethod ?? null,
+        evidenceKind: pdfPage ? "visual-page" : verified ? "extracted-text" : "unverified-reference",
+        sourceExcerpt: pdfPage || typeof source.text !== "string" ? null : source.text.slice(0, 1000),
+        excerptTruncated: !pdfPage && typeof source.text === "string" && source.text.length > 1000 };
     });
-    if (!result.sourceAnchors.some((anchor) => sources.get(anchor.sourceId).contextOnly !== true)) {
-      bad(`AI row ${index + 1} refers only to repeated header context, rather than a product source.`);
+    if (result.sourceAnchors.length && !result.sourceAnchors.some((anchor) => sources.has(anchor.sourceId) && sources.get(anchor.sourceId).contextOnly !== true)) {
+      result.sourceEvidenceIssues.push(evidenceIssue("evidence-context-only", "The AI did not identify a product source row; repeated header context alone cannot establish a product."));
     }
     return result;
   });
@@ -122,7 +154,8 @@ function buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex, raw, 
       return { ...option, gtin: priorOptions.get(option.id)?.gtin ?? null };
     });
   }
-  const issues = validationIssues(candidate);
+  const sourceEvidenceIssues = raw.sourceEvidenceIssues || [];
+  const issues = [...validationIssues(candidate), ...sourceEvidenceIssues];
   if (duplicate) issues.push(issue("supplierSku", "duplicate-source-sku", "This import contains the same supplier SKU more than once. Correct distinct SKUs only when supported by the source, or remove duplicate rows from the source and re-import."));
   if (ambiguous) issues.push(issue("supplierSku", "ambiguous-existing-sku", "More than one existing offer has this exact supplier and SKU. Repair the duplicate identities before importing."));
   if (previous) {
@@ -144,7 +177,7 @@ function buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex, raw, 
     productId: productId || `p-${digest(hotelUid, jobId, rowIndex).slice(0, 40)}`,
     expectedRevision: supplierProductInternals.currentRevision(previous), reviewRevision,
     product: productView(normalized), previousProduct: before ? { ...before, productPolicyVersion: previous.productPolicyVersion ?? null } : null, inputPatch, userPatch,
-    issues, changes, sourceAnchors: raw.sourceAnchors || [], duplicate, ambiguous, committed: null };
+    issues, changes, sourceAnchors: raw.sourceAnchors || [], sourceEvidenceIssues, duplicate, ambiguous, committed: null };
 }
 
 async function matchesForSku(reader, db, hotelUid, supplierId, sku) {
@@ -172,31 +205,79 @@ async function validateReferences(reader, db, hotelUid, candidate) {
   return candidate;
 }
 
-async function reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, leaseId }) {
+const RECONCILIATION_CATEGORIES = ["new", "changed", "unchanged", "blocked"];
+const sourceFingerprint = (source) => digest(source?.path ?? null, source?.generation ?? null, source?.sha256 ?? null,
+  source?.size ?? null, source?.contentType ?? null);
+function requireReconciliationLease(snapshot, leaseId, supplierId) {
+  if (!snapshot.exists || snapshot.data().status !== "processing" || snapshot.data().leaseId !== leaseId || snapshot.data().supplierId !== supplierId) {
+    throw new HttpsError("aborted", "The AI import processing lease is no longer current.");
+  }
+  return snapshot.data();
+}
+function validateReconciliationState(state, fingerprint, totalRows, source) {
+  if (!state || state.fingerprint !== fingerprint || state.totalRows !== totalRows || state.sourceFingerprint !== sourceFingerprint(source)) {
+    throw new HttpsError("failed-precondition", "The source or proposals changed during AI import reconciliation. Start a new import.");
+  }
+  if (!Number.isSafeInteger(state.nextRowIndex) || state.nextRowIndex < 0 || state.nextRowIndex > totalRows || !state.counts
+    || RECONCILIATION_CATEGORIES.some((category) => !Number.isSafeInteger(state.counts[category]) || state.counts[category] < 0)
+    || Object.keys(state.counts).some((category) => !RECONCILIATION_CATEGORIES.includes(category))
+    || RECONCILIATION_CATEGORIES.reduce((count, category) => count + state.counts[category], 0) !== state.nextRowIndex) {
+    throw new HttpsError("failed-precondition", "The AI import reconciliation progress is invalid. Start a new import.");
+  }
+  return state;
+}
+async function reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, leaseId, maxRows = 100, shouldContinue = () => true }) {
   hotelUid = requireDocumentId(hotelUid, "hotelUid"); supplierId = requireDocumentId(supplierId, "supplierId"); jobId = requireDocumentId(jobId, "jobId");
   leaseId = requireDocumentId(leaseId, "Processing lease ID");
   if (!Array.isArray(rows) || rows.length > MAX_AI_ROWS) bad(`Review supports at most ${MAX_AI_ROWS} products.`);
+  if (!Number.isSafeInteger(maxRows) || maxRows < 1 || maxRows > 100 || typeof shouldContinue !== "function") bad("Reconcile between one and 100 rows per bounded worker pass.");
+  const fingerprint = digest(rows), jobRef = db.doc(jobPath(hotelUid, jobId));
+  let state = await db.runTransaction(async (tx) => {
+    const job = requireReconciliationLease(await tx.get(jobRef), leaseId, supplierId);
+    if (job.reconciliation) return validateReconciliationState(job.reconciliation, fingerprint, rows.length, job.source);
+    const initial = { fingerprint, sourceFingerprint: sourceFingerprint(job.source), totalRows: rows.length, nextRowIndex: 0,
+      counts: { new: 0, changed: 0, unchanged: 0, blocked: 0 } };
+    tx.set(jobRef, { ...job, reconciliation: initial, updatedAt: stamp() });
+    return initial;
+  });
   const frequencies = new Map();
   for (const row of rows) if (typeof row.supplierSku === "string" && row.supplierSku.trim()) frequencies.set(row.supplierSku.trim(), (frequencies.get(row.supplierSku.trim()) || 0) + 1);
-  const counts = { new: 0, changed: 0, unchanged: 0, blocked: 0 };
   // A job only becomes reviewable after every separate candidate has persisted.
-  // Bounded per-row transactions avoid both the 1 MiB document limit and a
-  // thousand-product transaction, while a worker lease fences publication.
-  for (let index = 0; index < rows.length; index++) {
-    const candidate = await db.runTransaction(async (tx) => {
-      const job = await tx.get(db.doc(jobPath(hotelUid, jobId)));
-      if (!job.exists || job.data().status !== "processing" || job.data().leaseId !== leaseId || job.data().supplierId !== supplierId) throw new HttpsError("aborted", "The AI import processing lease is no longer current.");
-      const matches = await matchesForSku((ref) => tx.get(ref), db, hotelUid, supplierId, rows[index].supplierSku);
-      const result = buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex: index, raw: rows[index],
-        previous: matches.length === 1 ? matches[0].data() : null, productId: matches.length === 1 ? matches[0].id : null,
-        duplicate: frequencies.get(rows[index].supplierSku?.trim()) > 1, ambiguous: matches.length > 1 });
-      await validateReferences((ref) => tx.get(ref), db, hotelUid, result);
-      tx.set(db.doc(`${jobPath(hotelUid, jobId)}/rows/${result.rowId}`), { ...result, createdAt: stamp(), updatedAt: stamp() });
-      return result;
+  // Every immutable candidate and its cursor/count receipt commit together.
+  // Later invocations resume from confirmed paid results instead of rewriting
+  // earlier rows or spending another provider call to rebuild them.
+  for (let processed = 0; processed < maxRows && state.nextRowIndex < rows.length; processed++) {
+    if (!shouldContinue()) break;
+    const index = state.nextRowIndex;
+    state = await db.runTransaction(async (tx) => {
+      const job = requireReconciliationLease(await tx.get(jobRef), leaseId, supplierId);
+      const current = validateReconciliationState(job.reconciliation, fingerprint, rows.length, job.source);
+      if (current.nextRowIndex > index) return current;
+      if (current.nextRowIndex !== index) throw new HttpsError("aborted", "The AI import reconciliation cursor changed.");
+      const rowRef = db.doc(`${jobRef.path}/rows/r-${String(index + 1).padStart(6, "0")}`), prior = await tx.get(rowRef);
+      const sourceRowFingerprint = digest(rows[index]);
+      let result;
+      if (prior.exists) {
+        result = prior.data();
+        if (result.reconciliationFingerprint !== fingerprint || result.sourceRowFingerprint !== sourceRowFingerprint
+          || result.rowIndex !== index || result.reviewRevision !== 1 || result.committed
+          || !RECONCILIATION_CATEGORIES.includes(result.category)) {
+          throw new HttpsError("failed-precondition", "An existing AI review row does not match this source reconciliation. Start a new import.");
+        }
+      } else {
+        const matches = await matchesForSku((ref) => tx.get(ref), db, hotelUid, supplierId, rows[index].supplierSku);
+        result = buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex: index, raw: rows[index],
+          previous: matches.length === 1 ? matches[0].data() : null, productId: matches.length === 1 ? matches[0].id : null,
+          duplicate: frequencies.get(rows[index].supplierSku?.trim()) > 1, ambiguous: matches.length > 1 });
+        await validateReferences((ref) => tx.get(ref), db, hotelUid, result);
+        tx.create(rowRef, { ...result, reconciliationFingerprint: fingerprint, sourceRowFingerprint, createdAt: stamp(), updatedAt: stamp() });
+      }
+      const next = { ...current, nextRowIndex: index + 1, counts: { ...current.counts, [result.category]: current.counts[result.category] + 1 } };
+      tx.set(jobRef, { ...job, reconciliation: next, updatedAt: stamp() });
+      return next;
     });
-    counts[candidate.category]++;
   }
-  return { counts, totalRows: rows.length };
+  return { counts: state.counts, totalRows: rows.length, complete: state.nextRowIndex === rows.length, nextRowIndex: state.nextRowIndex };
 }
 
 function requireReviewJob(snapshot, now = Date.now(), actorUid) {
@@ -284,7 +365,8 @@ async function correctHotelSupplierAiImportRowHandler(request, services = {}) {
       if (!current.exists) throw new HttpsError("aborted", "The existing supplier product was removed. Start a new import.");
       previous = current.data(); productId = row.productId;
     }
-    const raw = { ...Object.fromEntries(RAW_FIELDS.map((field) => [field, null])), ...row.inputPatch, sourceAnchors: row.sourceAnchors };
+    const raw = { ...Object.fromEntries(RAW_FIELDS.map((field) => [field, null])), ...row.inputPatch,
+      sourceAnchors: row.sourceAnchors, sourceEvidenceIssues: row.sourceEvidenceIssues || [] };
     const next = buildSupplierAiCandidate({ hotelUid, jobId, supplierId: job.supplierId, rowIndex: row.rowIndex, raw, previous, productId,
       userPatch, reviewRevision: expected + 1, duplicate: duplicateRows.docs.some((document) => document.id !== rowId), ambiguous: matches.length > 1 });
     await validateReferences((ref) => tx.get(ref), db, hotelUid, next);
@@ -332,7 +414,9 @@ async function commitHotelSupplierAiImportRowsHandler(request, services = {}) {
       const job = requireReviewJob(await tx.get(db.doc(jobPath(hotelUid, jobId))), services.now?.() ?? Date.now(), request.auth.uid);
       // Turning off billable AI processing does not prevent a human finishing a
       // valid existing draft. The current policy is still read and validated.
-      const config = await loadSupplierAiConfiguration(db, tx);
+      let config;
+      try { config = await loadSupplierAiConfiguration(db, tx); }
+      catch { throw new HttpsError("failed-precondition", "This import needs administrator assistance before it can be confirmed."); }
       const rowRef = db.doc(`${jobPath(hotelUid, jobId)}/rows/${selection.rowId}`), receiptRef = db.doc(`${operationRef.path}/rows/${selection.rowId}`);
       const snapshot = await tx.get(rowRef), receipt = await tx.get(receiptRef);
       if (!snapshot.exists) throw new HttpsError("not-found", "A selected review row no longer exists.");
@@ -345,6 +429,7 @@ async function commitHotelSupplierAiImportRowsHandler(request, services = {}) {
         if (row.reviewRevision !== selection.reviewRevision) throw new HttpsError("aborted", "The reviewed row changed. Review and acknowledge its latest values.");
         if (row.committed) result = row.committed;
         else {
+          if ((row.sourceEvidenceIssues || []).length) throw new HttpsError("failed-precondition", "This row has unverified source evidence. Exclude it, or correct the source and start a new import.");
           if (row.category === "blocked" || hasErrors(row.issues || [])) throw new HttpsError("failed-precondition", "Correct the blocking fields before confirming this row.");
           if (row.product.supplierId !== job.supplierId) throw new HttpsError("failed-precondition", "The candidate supplier identity does not match this import.");
           const action = row.previousProduct ? "update" : "create";

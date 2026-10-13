@@ -47,6 +47,10 @@ const services = { ...baseServices, provider };
 async function uploaded() { return uploadSupplierAiImport(request(), uploadData(), bytes, services); }
 async function ready() { const job = await uploaded(); const result = await runSupplierAiImportJob("hotel-a", job.jobId, services); assert.equal(result.status, "review", JSON.stringify(result)); return job; }
 const rejectPermission = (promise) => assert.rejects(promise, { code: "permission-denied" });
+function assertCustomerPrivacy(value) {
+  assert.doesNotMatch(JSON.stringify(value), /"(?:usage|configuration|model|fallbackModel|fallbackEnabled|inputTokens|outputTokens|reasoningTokens|priceVersion|actualCostUsd|knownCostUsd|reservedCostUsd|knownCostMicros|reservedCostMicros|limitUsd|maxCostPerImportUsd|maxMonthlyCostPerHotelUsd)"/);
+  if (value.error) assert.doesNotMatch(value.error.message, /cost|budget|reserv|paid|bill|usage|accounting|token|model|reasoning|provider|secret|configuration|fallback|USD|\$|gpt|openai/i);
+}
 before(async () => { environment = await initializeTestEnvironment({ projectId,
   firestore: { host: "127.0.0.1", port: Number(process.env.FIRESTORE_EMULATOR_HOST.split(":").at(-1)), rules: await readFile("firebase/firestore.rules", "utf8") },
   storage: { host: "127.0.0.1", port: Number(process.env.FIREBASE_STORAGE_EMULATOR_HOST.split(":").at(-1)), rules: await readFile("firebase/storage.rules", "utf8") } }); });
@@ -78,6 +82,12 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
     const snapshot = { currency: "EUR", quantity: 6, unitCost: 2, total: 12, revision: 4 };
     await db.doc("hotels/hotel-a/orders/finalized").set(snapshot);
     const job = await ready(); assert.equal(calls, 1);
+    const customerStatus = await readSupplierAiImport(request(), { hotelUid: "hotel-a", jobId: job.jobId }, services);
+    assertCustomerPrivacy(job); assertCustomerPrivacy(customerStatus);
+    assert.deepEqual(customerStatus.progress, { completedChunks: 1, totalChunks: 1 });
+    const month = new Date().toISOString().slice(0, 7), operatorReport = await usage(request({ month }, "operator"), services);
+    const recordedUsage = operatorReport.hotels.find((row) => row.id === "hotel-a").usage;
+    assert.ok(recordedUsage.knownCostUsd > 0); assert.equal(recordedUsage.actualCostUsd, recordedUsage.knownCostUsd);
     assert.equal((await db.doc("hotels/hotel-a/supplierproducts/milk").get()).data().pricePerPurchaseUnit, 12);
     const page = await review(request({ hotelUid: "hotel-a", jobId: job.jobId, limit: 25 }), services);
     assert.equal(page.rows.length, 1); assert.equal(page.rows[0].category, "changed");
@@ -119,10 +129,24 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
     await runSupplierAiImportJob("hotel-a", job.jobId, failed); await runSupplierAiImportJob("hotel-a", job.jobId, failed);
     assert.equal(paid, 1);
     const status = await readSupplierAiImport(request(), { hotelUid: "hotel-a", jobId: job.jobId }, services);
-    assert.equal(status.status, "response_unknown"); assert.equal(status.usage.actualCostUsd, null); assert.ok(status.usage.reservedCostUsd > 0);
+    assert.equal(status.status, "response_unknown"); assertCustomerPrivacy(status);
+    const stored = (await db.doc(`hotels/hotel-a/supplierAiImportJobs/${job.jobId}`).get()).data();
+    assert.ok(stored.reservedCostMicros > 0); assert.equal(stored.unknownCalls, 1);
+    const attempt = (await db.doc(`hotels/hotel-a/supplierAiImportJobs/${job.jobId}/attempts/chunk-0000`).get()).data();
+    assert.equal(attempt.costMicros, null); assert.equal(attempt.inputTokens, null); assert.equal(attempt.outputTokens, null);
     const month = new Date().toISOString().slice(0, 7), report = await usage(request({ month }, "operator"), services);
     assert.equal(report.hotels.find((row) => row.id === "hotel-a").usage.actualCostUsd, null);
+    assert.ok(report.hotels.find((row) => row.id === "hotel-a").usage.reservedCostUsd > 0);
+    await rejectPermission(usage(request({ month }), services));
     assert.equal((await db.doc("hotels/hotel-a/supplierproducts/milk").get()).data().pricePerPurchaseUnit, 12);
+  });
+  it("exposes only file limits in customer availability and keeps operator pricing configuration restricted", async () => {
+    const availability = await readSupplierAiImport(request(), { hotelUid: "hotel-a" }, services);
+    assert.deepEqual(availability, { available: true, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 } });
+    assertCustomerPrivacy(availability);
+    await rejectPermission(settings(request(), services));
+    const operator = await settings(request(null, "operator"), services);
+    assert.equal(operator.configuration.model, "gpt-6-luna"); assert.equal(operator.configuration.maxCostPerImportUsd, 0.25);
   });
   it("rechecks account revocation and permits a valid human commit after billable AI is disabled", async () => {
     const job = await ready(), page = await review(request({ hotelUid: "hotel-a", jobId: job.jobId }), services);

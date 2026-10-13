@@ -95,7 +95,12 @@ async function verifyUnknownAiImport(proof) {
   const freshAuthTime = Math.ceil(Math.max(Date.now(), Date.parse(user.tokensValidAfterTime) || 0) / 1000);
   if (proof.authTime * 1000 < Date.parse(user.tokensValidAfterTime)) await assert.rejects(readSupplierAiImport(aiRequest(proof.authTime), { hotelUid: aiUpload.hotelUid, jobId: proof.jobId }, forbidden), (error) => error.code === "permission-denied");
   const status = await readSupplierAiImport(aiRequest(freshAuthTime), { hotelUid: aiUpload.hotelUid, jobId: proof.jobId }, forbidden);
-  assert.equal(status.status, "response_unknown"); assert.equal(status.usage.actualCostUsd, null); assert.ok(status.usage.reservedCostUsd > 0);
+  assert.equal(status.status, "response_unknown");
+  assert.doesNotMatch(JSON.stringify(status), /"(?:usage|configuration|model|inputTokens|outputTokens|priceVersion|actualCostUsd|knownCostUsd|reservedCostUsd|maxCostPerImportUsd)"/);
+  const restored = (await database.doc(`hotels/${aiUpload.hotelUid}/supplierAiImportJobs/${proof.jobId}`).get()).data();
+  assert.ok(restored.reservedCostMicros > 0); assert.equal(restored.unknownCalls, 1);
+  const restoredAttempt = (await database.doc(`hotels/${aiUpload.hotelUid}/supplierAiImportJobs/${proof.jobId}/attempts/chunk-0000`).get()).data();
+  assert.equal(restoredAttempt.costMicros, null); assert.equal(restoredAttempt.inputTokens, null); assert.equal(restoredAttempt.outputTokens, null);
   await runSupplierAiImportJob(aiUpload.hotelUid, proof.jobId, forbidden);
   const replay = await uploadSupplierAiImport(aiRequest(freshAuthTime), aiUpload, aiBytes, forbidden);
   assert.equal(replay.jobId, proof.jobId); assert.equal(replay.status, "response_unknown"); assert.equal(calls, 0);

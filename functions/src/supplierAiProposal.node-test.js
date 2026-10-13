@@ -64,8 +64,9 @@ const services = (db, patch = {}) => ({ firestore: db, auth, ...patch });
 const rowDoc = (db, index = 1) => db.records.get(`${jobRoot}/rows/r-${String(index).padStart(6, "0")}`);
 async function reconcile(db, rows = [raw()]) {
   const checked = proposal.validateRawSupplierAiRows({ rows }, { sourceUnits });
-  const result = await proposal.reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows: checked, leaseId: "lease" });
-  db.records.set(jobRoot, { ...db.records.get(jobRoot), status: "review", ...result }); return result;
+  let result;
+  do { result = await proposal.reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows: checked, leaseId: "lease" }); } while (!result.complete);
+  db.records.set(jobRoot, { ...db.records.get(jobRoot), status: "review", counts: result.counts, totalRows: result.totalRows }); return result;
 }
 async function createExisting(db, patch = {}) {
   return mutateHotelSupplierProductHandler(request({ hotelUid, requestId: "existing", action: "create", expectedRevision: 0, product: offer(patch) }), services(db));
@@ -74,15 +75,48 @@ const confirm = (db, rows = [rowDoc(db)], patch = {}) => proposal.commitHotelSup
 const correct = (db, patch, row = rowDoc(db)) => proposal.correctHotelSupplierAiImportRowHandler(request({ hotelUid, jobId, rowId: row.rowId, expectedReviewRevision: row.reviewRevision, patch }), services(db));
 const history = (db) => [...db.records.entries()].filter(([path]) => path.includes("/supplierPriceHistory/"));
 
-test("strict nullable transport schema rejects forged fields, incorrect types, missing anchors and invented quotes", () => {
+test("strict nullable transport schema rejects forged fields, incorrect types and unbounded anchors", () => {
   assert.equal(proposal.AI_SUPPLIER_SCHEMA.additionalProperties, false);
   const accepted = proposal.validateRawSupplierAiRows({ rows: [raw()] }, { sourceUnits });
   assert.equal(accepted[0].sourceAnchors[0].verified, true);
   for (const row of [raw({ catalogProductId: "guessed" }), raw({ productId: "foreign" }), raw({ currency: undefined }), raw({ pricePerPurchaseUnit: "12" }),
-    raw({ sourceAnchors: [] }), raw({ sourceAnchors: [{ sourceId: "unknown", quote: "MILK6" }] }), raw({ sourceAnchors: [{ sourceId: "csv-row-2", quote: "invented" }] })]) {
+    raw({ sourceAnchors: null }), raw({ sourceAnchors: Array(9).fill({ sourceId: "csv-row-2", quote: "MILK6" }) }),
+    raw({ sourceAnchors: [{ sourceId: "csv-row-2", quote: "x".repeat(1001) }] }), raw({ sourceAnchors: [{ sourceId: "x".repeat(161), quote: "MILK6" }] })]) {
     assert.throws(() => proposal.validateRawSupplierAiRows({ rows: [row] }, { sourceUnits }), (error) => error.code === "invalid-argument");
   }
   assert.throws(() => proposal.validateRawSupplierAiRows({ rows: Array(1001).fill(raw()) }, { sourceUnits }), /1000/);
+});
+test("missing, invented and unknown evidence blocks only its row, preserving all other source proposals", () => {
+  const invalidRows = [raw({ sourceAnchors: [] }), raw({ sourceAnchors: [{ sourceId: "unknown", quote: "MILK6" }] }),
+    raw({ sourceAnchors: [{ sourceId: "csv-row-2", quote: "invented" }] }), raw({ sourceAnchors: [{ sourceId: "csv-row-2", quote: "" }] })];
+  for (const invalid of invalidRows) {
+    const rows = proposal.validateRawSupplierAiRows({ rows: [raw(), invalid] }, { sourceUnits });
+    assert.deepEqual(rows[0].sourceEvidenceIssues, []);
+    assert.ok(rows[1].sourceEvidenceIssues.length);
+    assert.ok(rows[1].sourceEvidenceIssues.every((entry) => entry.field === "sourceAnchors" && entry.severity === "error"));
+    assert.equal(proposal.buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex: 1, raw: rows[1] }).category, "blocked");
+    assert.ok(rows[1].sourceEvidenceIssues.every((entry) => entry.message.includes("editing product fields cannot verify")));
+  }
+  const unknown = proposal.validateRawSupplierAiRows({ rows: [invalidRows[1]] }, { sourceUnits })[0].sourceAnchors[0];
+  assert.equal(unknown.sourceExcerpt, null); assert.equal(unknown.verified, false); assert.equal(unknown.evidenceKind, "unverified-reference");
+});
+test("decoded CSV/XLSX cells verify exact escaped quotes and only canonical Unicode or whitespace differences", () => {
+  const values = ["001", 'Milk "fresh"\nwhole', "Cafe\u0301\u00a0\tbeans", "12,50 EUR", "6 x 1 l", "① special"];
+  for (const sourceId of ["csv-row-82", "xlsx-sheet-1-row-82"]) {
+    const unit = { sourceId, anchor: "Source row 82", text: JSON.stringify(values) };
+    for (const [quote, method] of [['Milk "fresh"\nwhole', "decoded-cell"], ['Milk "fresh" whole', "normalized-whitespace"], ["Café beans", "normalized-whitespace"]]) {
+      const checked = proposal.validateRawSupplierAiRows({ rows: [raw({ sourceAnchors: [{ sourceId: unit.sourceId, quote }] })] }, { sourceUnits: [unit] })[0];
+      assert.deepEqual(checked.sourceEvidenceIssues, []); assert.equal(checked.sourceAnchors[0].verified, true);
+      assert.equal(checked.sourceAnchors[0].verificationMethod, method); assert.equal(checked.sourceAnchors[0].sourceExcerpt, unit.text);
+    }
+    // No case folding, punctuation removal, numeric format conversion, NFKC,
+    // cell concatenation, order changes or guessed measurement equivalence.
+    for (const quote of ["milk fresh", "12.50 EUR", "12,50 USD", "1250 EUR", "1000 ml", "l 1 x 6", "1 special", "001 Milk"]) {
+      const checked = proposal.validateRawSupplierAiRows({ rows: [raw({ sourceAnchors: [{ sourceId: unit.sourceId, quote }] })] }, { sourceUnits: [unit] })[0];
+      assert.ok(checked.sourceEvidenceIssues.some((entry) => entry.code === "evidence-quote-absent"), quote);
+      assert.equal(checked.sourceAnchors[0].verified, false);
+    }
+  }
 });
 test("vision PDF anchors are page-bound and explicitly unverified rather than fabricated substring evidence", () => {
   const rows = proposal.validateRawSupplierAiRows({ rows: [raw({ sourceAnchors: [{ sourceId: "pdf-page-1", quote: "Visible milk offer" }] })] },
@@ -104,10 +138,62 @@ test("repeated header context can substantiate currency or basis but cannot manu
   const row = raw({ sourceAnchors: [{ sourceId: "csv-row-2", quote: "MILK6" }, { sourceId: "csv-header", quote: "EUR net" }] });
   assert.equal(proposal.validateRawSupplierAiRows({ rows: [row] }, { sourceUnits: [...sourceUnits, header] })[0].sourceAnchors.length, 2);
   const manufactured = raw({ sourceAnchors: [{ sourceId: "csv-header", quote: "EUR net" }] });
-  assert.throws(() => proposal.validateRawSupplierAiRows({ rows: [manufactured] }, { sourceUnits: [...sourceUnits, header] }), /only to repeated header context/);
+  const rejected = proposal.validateRawSupplierAiRows({ rows: [manufactured] }, { sourceUnits: [...sourceUnits, header] })[0];
+  assert.ok(rejected.sourceEvidenceIssues.some((entry) => entry.code === "evidence-context-only"));
+  assert.equal(proposal.buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex: 0, raw: rejected }).category, "blocked");
   // On the original first chunk, a possible header can actually be the first
   // product in a headerless file. The parser's warning remains reviewable.
   assert.equal(proposal.validateRawSupplierAiRows({ rows: [manufactured] }, { sourceUnits: [{ ...header, contextOnly: false }] }).length, 1);
+});
+test("81 proposed rows with one invented quote publish 80 reviewable offers and one durable blocked row", async () => {
+  const db = fixture();
+  const ExcelJS = require("exceljs"), { extractSupplierAiSource } = require("./supplierAiExtraction"), workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Supplier offers");
+  sheet.addRow(["SKU", "Name", "Purchase unit", "Content", "Currency", "Net price"]);
+  for (let index = 0; index < 81; index++) sheet.addRow([`MILK${index + 1}`, index === 0 ? 'Milk "fresh"\nwhole' : `Milk ${index + 1}`, "Case", "6 litres", "EUR", "12 net"]);
+  // A real generated workbook runs through the production bounded extractor.
+  // This is an independent fixture, not the customer's unavailable workbook.
+  const source = await extractSupplierAiSource({ bytes: Buffer.from(await workbook.xlsx.writeBuffer()), fileName: "supplier-offers.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const units = source.units.slice(1);
+  assert.equal(units.length, 81); assert.equal(units[80].sourceId, "xlsx-sheet-1-row-82");
+  const input = units.map((unit, index) => raw({ supplierSku: `MILK${index + 1}`, supplierProductName: `Milk ${index + 1}`,
+    sourceAnchors: [{ sourceId: unit.sourceId, quote: index === 80 ? "Invented product evidence" : index === 0 ? 'Milk "fresh" whole' : `MILK${index + 1}` }] }));
+  const rows = proposal.validateRawSupplierAiRows({ rows: input }, { sourceUnits: units });
+  assert.equal(units[0].text.includes(input[0].sourceAnchors[0].quote), false);
+  assert.equal(rows[0].sourceAnchors[0].verified, true); assert.equal(rows[0].sourceAnchors[0].verificationMethod, "normalized-whitespace");
+  const result = await proposal.reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, leaseId: "lease" });
+  db.records.set(jobRoot, { ...db.records.get(jobRoot), status: "review", ...result });
+  assert.deepEqual(result, { totalRows: 81, counts: { new: 80, changed: 0, unchanged: 0, blocked: 1 }, complete: true, nextRowIndex: 81 });
+  const reviewed = await proposal.readHotelSupplierAiImportRowsHandler(request({ hotelUid, jobId }), services(db));
+  assert.equal(reviewed.rows.length, 81); assert.equal(reviewed.rows[79].category, "new"); assert.equal(reviewed.rows[80].category, "blocked");
+  assert.ok(reviewed.rows[80].issues.some((entry) => entry.code === "evidence-quote-absent"));
+  assert.equal(history(db).length, 0);
+  const outcomes = (await confirm(db, [rowDoc(db), rowDoc(db, 81)])).outcomes;
+  assert.deepEqual(outcomes.map((outcome) => outcome.status), ["created", "blocked"]); assert.equal(history(db).length, 1);
+  await correct(db, { pricePerPurchaseUnit: 15 }, rowDoc(db, 81));
+  assert.equal(rowDoc(db, 81).category, "blocked"); assert.equal(rowDoc(db, 81).product.pricePerPurchaseUnit, 15);
+  assert.ok(rowDoc(db, 81).sourceEvidenceIssues.some((entry) => entry.code === "evidence-quote-absent"));
+  assert.deepEqual(db.records.get(jobRoot).counts, result.counts);
+  const stillBlocked = await confirm(db, [rowDoc(db, 81)], { requestId: "corrected-fields" });
+  assert.equal(stillBlocked.outcomes[0].status, "blocked"); assert.match(stillBlocked.outcomes[0].error.message, /unverified source evidence/);
+  assert.equal(history(db).length, 1);
+});
+test("a valid quote beside an invented reference does not authorize that row or clear after correction", async () => {
+  for (const invalid of [{ sourceId: "unknown-source", quote: "MILK6" }, { sourceId: "csv-row-2", quote: "free food" }]) {
+    const db = fixture(); await reconcile(db, [raw({ sourceAnchors: [{ sourceId: "csv-row-2", quote: "MILK6" }, invalid] })]);
+    assert.equal(rowDoc(db).category, "blocked"); assert.equal(rowDoc(db).sourceAnchors[0].verified, true);
+    await correct(db, { active: true, catalogProductId: "milk" }); assert.equal(rowDoc(db).category, "blocked");
+    assert.equal((await confirm(db)).outcomes[0].status, "blocked"); assert.equal(history(db).length, 0);
+  }
+});
+test("confirmation independently refuses persisted evidence errors even if the classification is inconsistent", async () => {
+  const db = fixture(); await reconcile(db, [raw({ sourceAnchors: [{ sourceId: "csv-row-2", quote: "invented" }] })]);
+  const row = rowDoc(db);
+  db.records.set(`${jobRoot}/rows/${row.rowId}`, { ...row, category: "new", issues: [] });
+  const confirmed = await confirm(db);
+  assert.equal(confirmed.outcomes[0].status, "blocked"); assert.match(confirmed.outcomes[0].error.message, /unverified source evidence/);
+  assert.equal(history(db).length, 0);
 });
 test("new offers are proposed only, inactive and unlinked until a human supplies explicit choices", async () => {
   const db = fixture(); await reconcile(db);
@@ -227,6 +313,16 @@ test("platform administration grants no operational hotel bypass and an expired 
   db.records.set(jobRoot, { ...db.records.get(jobRoot), configPolicyVersion: 99 });
   await assert.rejects(confirm(db), /policy needs review/); assert.equal(history(db).length, 0);
 });
+test("private platform configuration failures never expose model names or budget fields through confirmation", async () => {
+  for (const patch of [{ model: "private-expensive-model" }, { maxCostPerImportUsd: "0.25" }, { maxMonthlyCostPerHotelUsd: "10" },
+    { fallbackEnabled: true }, { reasoningEffort: "private-effort" }]) {
+    const db = fixture(); await reconcile(db);
+    db.records.set("platformConfiguration/aiSupplierProductImport", { enabled: false, policyVersion: 1, revision: 4, ...patch });
+    await assert.rejects(confirm(db), (error) => error.code === "failed-precondition"
+      && error.message === "This import needs administrator assistance before it can be confirmed.");
+    assert.equal(history(db).length, 0);
+  }
+});
 test("duplicates are revalidated after explicit supported SKU corrections rather than keeping obsolete blocking flags", async () => {
   const db = fixture(); await reconcile(db, [raw(), raw()]);
   await correct(db, { supplierSku: "MILK7" }, rowDoc(db, 2)); assert.equal(rowDoc(db, 2).category, "new");
@@ -264,6 +360,58 @@ test("1000 separate candidates paginate deterministically; expired jobs and lost
   await assert.rejects(confirm(db), /expired/);
   const lost = fixture(); await assert.rejects(proposal.reconcileSupplierAiRows({ db: lost, hotelUid, supplierId, jobId, rows: [raw()], leaseId: "foreign" }), /lease/);
   assert.equal([...lost.records.keys()].some((path) => path.includes("/rows/")), false);
+});
+test("bounded reconciliation resumes atomic rows and counts after a lost response or worker deadline", async () => {
+  const db = fixture(), source = { path: "private/hotel-a/source", generation: "100", sha256: "a".repeat(64), size: 123, contentType: "text/csv" };
+  db.records.set(jobRoot, { ...db.records.get(jobRoot), source });
+  const rows = proposal.validateRawSupplierAiRows({ rows: Array.from({ length: 250 }, (_, index) => raw({ supplierSku: `SKU-${index}` })) }, { sourceUnits });
+  const run = (patch = {}) => proposal.reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, leaseId: "lease", ...patch });
+  const first = await run();
+  assert.deepEqual(first, { counts: { new: 100, changed: 0, unchanged: 0, blocked: 0 }, totalRows: 250, complete: false, nextRowIndex: 100 });
+  assert.equal([...db.records.keys()].filter((path) => path.startsWith(`${jobRoot}/rows/`)).length, 100);
+  const firstRow = JSON.stringify(rowDoc(db));
+  let lostResponse = false;
+  db.afterCommit = async (writes) => {
+    if (!lostResponse && writes.some(([, path]) => path === `${jobRoot}/rows/r-000101`)) {
+      lostResponse = true; throw Error("response lost after atomic reconciliation row");
+    }
+  };
+  await assert.rejects(run(), /response lost/);
+  assert.equal(db.records.get(jobRoot).reconciliation.nextRowIndex, 101);
+  assert.equal(db.records.get(jobRoot).reconciliation.counts.new, 101);
+  db.afterCommit = null;
+  let remaining = 5;
+  const yielded = await run({ shouldContinue: () => remaining-- > 0 });
+  assert.equal(yielded.complete, false); assert.equal(yielded.nextRowIndex, 106); assert.equal(yielded.counts.new, 106);
+  const paused = await run({ shouldContinue: () => false }); assert.deepEqual(paused, yielded);
+  await assert.rejects(run({ maxRows: 101 }), /bounded worker pass/);
+  const changedRows = rows.map((row, index) => index === 249 ? { ...row, pricePerPurchaseUnit: 13 } : row);
+  await assert.rejects(run({ rows: changedRows }), /source or proposals changed/);
+  db.records.set(jobRoot, { ...db.records.get(jobRoot), source: { ...source, generation: "101" } });
+  await assert.rejects(run(), /source or proposals changed/);
+  db.records.set(jobRoot, { ...db.records.get(jobRoot), source, leaseId: "lease-2" });
+  await assert.rejects(run(), /lease is no longer current/);
+  let finished;
+  do { finished = await run({ leaseId: "lease-2" }); } while (!finished.complete);
+  assert.deepEqual(finished, { counts: { new: 250, changed: 0, unchanged: 0, blocked: 0 }, totalRows: 250, complete: true, nextRowIndex: 250 });
+  assert.equal([...db.records.keys()].filter((path) => path.startsWith(`${jobRoot}/rows/`)).length, 250);
+  assert.equal(JSON.stringify(rowDoc(db)), firstRow); assert.equal(history(db).length, 0);
+  assert.deepEqual(await run({ leaseId: "lease-2" }), finished);
+  db.records.set(jobRoot, { ...db.records.get(jobRoot), status: "review", totalRows: finished.totalRows, counts: finished.counts });
+  await correct(db, { supplierProductName: "Reviewed milk" }); const corrected = JSON.stringify(rowDoc(db));
+  await assert.rejects(run({ leaseId: "lease-2" }), /lease is no longer current/);
+  assert.equal(JSON.stringify(rowDoc(db)), corrected);
+});
+test("corrupt reconciliation receipts cannot skip or reclassify source rows", async () => {
+  for (const patch of [{ nextRowIndex: 0.5 }, { nextRowIndex: 2 }, { counts: { new: 2, changed: 0, unchanged: 0, blocked: 0 } },
+    { counts: { new: 1, changed: 0, unchanged: 0 } }, { counts: { new: -1, changed: 0, unchanged: 0, blocked: 2 } }]) {
+    const db = fixture(), rows = proposal.validateRawSupplierAiRows({ rows: [raw()] }, { sourceUnits });
+    await proposal.reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, leaseId: "lease" });
+    const job = db.records.get(jobRoot), before = JSON.stringify(rowDoc(db));
+    db.records.set(jobRoot, { ...job, reconciliation: { ...job.reconciliation, ...patch } });
+    await assert.rejects(proposal.reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, leaseId: "lease" }), /reconciliation progress is invalid/);
+    assert.equal(JSON.stringify(rowDoc(db)), before);
+  }
 });
 test("corrupt review job totals, source configuration revisions and classification counts never masquerade as empty valid imports", async () => {
   for (const patch of [{ totalRows: undefined }, { totalRows: null }, { totalRows: 0 }, { totalRows: 1001 }, { totalRows: 1.5 }, { totalRows: "1" },

@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { SAAS_RULES_VERSION } = require("./saasRollout");
 const { DEFAULT_AI_CONFIGURATION } = require("./supplierAiPolicy");
-const { uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob, normalizeMonth, supplierProductAiImportHandler, cleanupSupplierAiSourcesHandler } = require("./supplierAiImports");
+const { uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob, normalizeMonth, supplierProductAiImportHandler, cleanupSupplierAiSourcesHandler, publicJob, publicImportError } = require("./supplierAiImports");
 function memoryDatabase(initial = {}) {
   const records = new Map(Object.entries(initial)); let serial = Promise.resolve();
   const snapshot = (path) => ({ id: path.split("/").at(-1), exists: records.has(path), data: () => records.get(path), ref: db.doc(path) });
@@ -74,18 +74,25 @@ function fixture(configuration = {}) {
     extractSource: async () => source, splitSource: async () => [source],
     schema: { type: "object", properties: { rows: { type: "array", items: { type: "object" } } }, required: ["rows"], additionalProperties: false },
     validateRows: (payload) => payload.rows,
-    reconcileRows: async ({ rows }) => { calls.reconcile++; return { counts: { new: rows.length, changed: 0, blocked: 0, unchanged: 0 }, totalRows: rows.length }; },
+    reconcileRows: async ({ rows }) => { calls.reconcile++; return { counts: { new: rows.length, changed: 0, blocked: 0, unchanged: 0 }, totalRows: rows.length, complete: true }; },
     provider: { countInput: async () => { calls.count++; return 10; }, respond: async () => { calls.response++; return response(); } } };
   return services;
 }
 const jobOf = (s, id) => s.firestore.records.get(`hotels/hotel-a/supplierAiImportJobs/${id}`);
 const monthOf = (s) => s.firestore.records.get("hotels/hotel-a/aiUsageMonths/2026-10");
-test("normal hotel buyer creates an isolated job, receives complete review and real usage, with idempotent source and worker replay", async () => {
+function assertCustomerPrivacy(value) {
+  const serialized = JSON.stringify(value);
+  assert.doesNotMatch(serialized, /"(?:usage|configuration|model|fallbackModel|fallbackEnabled|inputTokens|outputTokens|reasoningTokens|priceVersion|actualCostUsd|knownCostUsd|reservedCostUsd|knownCostMicros|reservedCostMicros|limitUsd|maxCostPerImportUsd|maxMonthlyCostPerHotelUsd)"/);
+  if (value.error) assert.doesNotMatch(value.error.message, /cost|budget|reserv|paid|bill|usage|accounting|token|model|reasoning|provider|secret|configuration|fallback|USD|\$|gpt|openai/i);
+}
+test("normal hotel buyer creates an isolated job, receives complete review and safe progress while real usage stays private, with idempotent source and worker replay", async () => {
   const s = fixture(), created = await uploadSupplierAiImport(request(), data(), bytes, s);
-  assert.equal(created.status, "queued"); assert.equal(s.calls.response, 0); assert.equal(s.bucket.objects.size, 1);
+  assert.equal(created.status, "queued"); assert.deepEqual(created.progress, { completedChunks: 0, totalChunks: null }); assertCustomerPrivacy(created);
+  assert.equal(s.calls.response, 0); assert.equal(s.bucket.objects.size, 1);
   const result = await runSupplierAiImportJob("hotel-a", created.jobId, s);
   assert.equal(result.status, "review"); assert.equal(result.totalRows, 1); assert.equal(result.warnings[0].code, "CHECK_PACKAGE");
-  assert.equal(result.usage.actualCostUsd, 0.000012); assert.equal(result.usage.reservedCostUsd, 0);
+  assert.deepEqual(result.progress, { completedChunks: 1, totalChunks: 1 });
+  assert.equal(jobOf(s, created.jobId).knownCostMicros, 12); assert.equal(jobOf(s, created.jobId).reservedCostMicros, 0); assertCustomerPrivacy(result);
   assert.deepEqual([s.calls.count, s.calls.response, s.calls.reconcile], [1, 1, 1]);
   assert.equal(monthOf(s).activeJobs, 0); assert.equal(monthOf(s).importsReviewReady, 1);
   assert.equal(s.firestore.records.get("hotels/hotel-a/aiImportAdministration/state").activeJobs, 0);
@@ -94,12 +101,49 @@ test("normal hotel buyer creates an isolated job, receives complete review and r
   assert.equal(s.calls.response, 1); assert.equal(monthOf(s).importsStarted, 1);
   assert.equal(s.bucket.objects.size, 2);
 });
+test("customer availability and job DTOs cannot serialize operator accounting or provider configuration", async () => {
+  const s = fixture();
+  const availability = await readSupplierAiImport(request(), { hotelUid: "hotel-a" }, s);
+  assert.deepEqual(availability, { available: true, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 } });
+  assertCustomerPrivacy(availability);
+  const created = await uploadSupplierAiImport(request(), data(), bytes, s);
+  const stored = jobOf(s, created.jobId);
+  stored.counts = { new: 1, changed: 0, blocked: 0, unchanged: 0, knownCostMicros: 123 };
+  stored.warnings = [{ code: "CHECK_PACKAGE", message: "Check the supplier's purchase price and package content.", model: "gpt-6-luna", reservedCostMicros: 321 },
+    { code: "PROVIDER_COST", message: "Reserved cost is USD 0.25", inputTokens: 333 }];
+  const dto = publicJob(stored); assertCustomerPrivacy(dto);
+  assert.deepEqual(dto.counts, { new: 1, changed: 0, unchanged: 0, blocked: 0 });
+  assert.equal(dto.warnings[0].message, "Check the supplier's purchase price and package content.");
+  assert.equal(dto.warnings[1].code, "IMPORT_NOTICE"); assert.doesNotMatch(JSON.stringify(dto), /0\.25|333|321|123|gpt-6/);
+  assert.equal(stored.configuration.maxCostPerImportUsd, 0.25, "Public projection must not erase the private budget");
+  assert.equal(publicJob({ ...stored, counts: { new: 1 }, totalRows: 1 }).counts, null, "Missing counts must not become false zeroes");
+  assert.equal(publicJob({ ...stored, counts: { new: 1, changed: 0, unchanged: 0, blocked: 0 }, totalRows: 2 }).counts, null, "Inconsistent counts stay unavailable");
+});
+test("HTTP errors never reveal private budget, model settings, provider details or arbitrary exception text", async () => {
+  const s = fixture();
+  const month = normalizeMonth({ exists: false }, "2026-10"); month.knownCostMicros = 10000000;
+  s.firestore.records.set("hotels/hotel-a/aiUsageMonths/2026-10", month);
+  const response = () => ({ statusCode: 0, body: null, set: () => {}, status(n) { this.statusCode = n; return this; }, json(body) { this.body = body; return this; } });
+  const res = response();
+  await supplierProductAiImportHandler({ method: "POST", headers: { authorization: "Bearer fictional", "content-type": "application/octet-stream" }, rawBody: bytes, query: data() }, res, s);
+  assert.equal(res.statusCode, 429); assertCustomerPrivacy(res.body); assert.match(res.body.error.message, /hotel administrator/);
+  assert.equal(monthOf(s).knownCostMicros, 10000000); assert.equal(s.calls.response, 0);
+  s.firestore.records.get("platformConfiguration/aiSupplierProductImport").model = "unexpected-private-model";
+  const settings = response();
+  await supplierProductAiImportHandler({ method: "GET", headers: { authorization: "Bearer fictional" }, query: { hotelUid: "hotel-a" } }, settings, s);
+  assert.equal(settings.statusCode, 409); assertCustomerPrivacy(settings.body); assert.doesNotMatch(JSON.stringify(settings.body), /unexpected-private-model|reasoning/);
+  assert.equal(publicImportError({ code: "failed-precondition", message: "unrecognized infrastructure detail 777-private" }).message, "This import needs administrator assistance before it can continue.");
+  assert.doesNotMatch(JSON.stringify(publicImportError({ code: "invalid-argument", message: "The source sk-fictional-test-credential" })), /sk-fictional/);
+  assert.doesNotMatch(JSON.stringify(publicImportError({ code: "failed-precondition", message: "The import source changed. appended-private-payload" })), /appended-private/);
+});
 test("unknown billed response keeps liability and null total cost, forbids automatic regeneration and never invents zero usage", async () => {
   const s = fixture(); s.provider.respond = async () => { s.calls.response++; throw Error("timeout after send"); };
   const created = await uploadSupplierAiImport(request(), data(), bytes, s);
   const result = await runSupplierAiImportJob("hotel-a", created.jobId, s);
-  assert.equal(result.status, "response_unknown"); assert.equal(result.usage.actualCostUsd, null); assert.equal(result.usage.inputTokens, null);
-  assert.ok(result.usage.reservedCostUsd > 0); assert.equal(monthOf(s).unknownCalls, 1); assert.equal(monthOf(s).activeJobs, 0);
+  assert.equal(result.status, "response_unknown"); assertCustomerPrivacy(result);
+  const attempt = s.firestore.records.get(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}/attempts/chunk-0000`);
+  assert.equal(attempt.costMicros, null); assert.equal(attempt.inputTokens, null); assert.equal(attempt.outputTokens, null);
+  assert.ok(jobOf(s, created.jobId).reservedCostMicros > 0); assert.equal(monthOf(s).unknownCalls, 1); assert.equal(monthOf(s).activeJobs, 0);
   await runSupplierAiImportJob("hotel-a", created.jobId, s); await uploadSupplierAiImport(request(), data(), bytes, s);
   assert.equal(s.calls.response, 1); assert.equal(s.calls.reconcile, 0); assert.equal(monthOf(s).knownCostMicros, 0);
 });
@@ -107,8 +151,8 @@ test("truncated output settles known billed usage and explicitly rejects all par
   const s = fixture(); s.provider.respond = async () => response({ status: "incomplete" });
   const created = await uploadSupplierAiImport(request(), data(), bytes, s);
   const result = await runSupplierAiImportJob("hotel-a", created.jobId, s);
-  assert.equal(result.status, "failed"); assert.match(result.error.message, /truncated/); assert.equal(result.usage.actualCostUsd, 0.000012);
-  assert.equal(result.usage.reservedCostUsd, 0); assert.equal(s.calls.reconcile, 0); assert.equal(monthOf(s).importsFailed, 1);
+  assert.equal(result.status, "failed"); assert.match(result.error.message, /truncated/); assert.equal(jobOf(s, created.jobId).knownCostMicros, 12);
+  assert.equal(jobOf(s, created.jobId).reservedCostMicros, 0); assertCustomerPrivacy(result); assert.equal(s.calls.reconcile, 0); assert.equal(monthOf(s).importsFailed, 1);
 });
 test("chunk calls share one cumulative cost cap and complete source coverage; no fallback or partial review", async () => {
   const s = fixture({ maxCostPerImportUsd: 0.001, maxOutputTokens: 512 });
@@ -118,9 +162,9 @@ test("chunk calls share one cumulative cost cap and complete source coverage; no
   s.provider.respond = async (body) => { s.calls.response++; assert.equal(body.model, "gpt-6-luna"); return response({ usage: { input_tokens: 1000, output_tokens: 512, total_tokens: 1512 } }); };
   const created = await uploadSupplierAiImport(request(), data(), bytes, s);
   const result = await runSupplierAiImportJob("hotel-a", created.jobId, s);
-  assert.equal(result.status, "failed"); assert.match(result.error.message, /cost limit/);
+  assert.equal(result.status, "failed"); assert.match(jobOf(s, created.jobId).errorMessage, /cost limit/); assert.match(result.error.message, /smaller file/);
   assert.equal(s.calls.response, 2); assert.equal(s.calls.count, 3); assert.equal(s.calls.reconcile, 0);
-  assert.equal(result.usage.actualCostUsd, 0.000762); assert.equal(result.usage.reservedCostUsd, 0);
+  assert.equal(jobOf(s, created.jobId).knownCostMicros, 762); assert.equal(jobOf(s, created.jobId).reservedCostMicros, 0); assertCustomerPrivacy(result);
 });
 test("file/token/call budgets, supplier isolation and request fingerprint are enforced before unsafe provider work", async () => {
   const s = fixture(), created = await uploadSupplierAiImport(request(), data(), bytes, s);
@@ -151,7 +195,7 @@ test("live authority revocation after paid I/O preserves cost evidence but canno
   const s = fixture(); s.provider.respond = async () => { s.identity.disabled = true; return response(); };
   const created = await uploadSupplierAiImport(request(), data(), bytes, s);
   const result = await runSupplierAiImportJob("hotel-a", created.jobId, s);
-  assert.equal(result.status, "failed"); assert.equal(result.usage.actualCostUsd, 0.000012); assert.equal(s.calls.reconcile, 0);
+  assert.equal(result.status, "failed"); assert.equal(jobOf(s, created.jobId).knownCostMicros, 12); assertCustomerPrivacy(result); assert.equal(s.calls.reconcile, 0);
   await assert.rejects(readSupplierAiImport(request(), { hotelUid: "hotel-a", jobId: created.jobId }, s), { code: "permission-denied" });
   assert.equal(s.bucket.objects.size, 1);
 });
@@ -162,7 +206,8 @@ test("expired paid lease marks unknown once while late response cannot settle or
   const created = await uploadSupplierAiImport(request(), data(), bytes, s), running = runSupplierAiImportJob("hotel-a", created.jobId, s);
   await sent; s.advance(600001);
   const unknown = await readSupplierAiImport(request(), { hotelUid: "hotel-a", jobId: created.jobId }, s);
-  assert.equal(unknown.status, "response_unknown"); assert.equal(unknown.usage.actualCostUsd, null);
+  assert.equal(unknown.status, "response_unknown"); assertCustomerPrivacy(unknown);
+  assert.ok(jobOf(s, created.jobId).reservedCostMicros > 0);
   release(response()); await running;
   assert.equal(jobOf(s, created.jobId).status, "response_unknown"); assert.equal(monthOf(s).unknownCalls, 1); assert.equal(monthOf(s).knownCostMicros, 0);
   assert.equal(s.calls.response, 1);
@@ -265,15 +310,15 @@ test("new-month provider budget cannot be bypassed by an import created in the p
   const aggregate = normalizeMonth({ exists: false }, "2026-11"); aggregate.knownCostMicros = 10000000;
   s.firestore.records.set("hotels/hotel-a/aiUsageMonths/2026-11", aggregate);
   const result = await runSupplierAiImportJob("hotel-a", created.jobId, s);
-  assert.equal(result.status, "failed"); assert.equal(s.calls.response, 0); assert.equal(result.usage.reservedCostUsd, 0);
+  assert.equal(result.status, "failed"); assert.equal(s.calls.response, 0); assert.equal(jobOf(s, created.jobId).reservedCostMicros, 0); assertCustomerPrivacy(result);
   assert.equal(s.firestore.records.get("hotels/hotel-a/aiUsageMonths/2026-11").knownCostMicros, 10000000);
 });
 test("verified over-bound provider usage is recorded truthfully and stops processing instead of being hidden as unknown", async () => {
   const s = fixture(); s.provider.respond = async () => response({ usage: { input_tokens: 10000, output_tokens: 40000, total_tokens: 50000 } });
   const created = await uploadSupplierAiImport(request(), data(), bytes, s);
   const result = await runSupplierAiImportJob("hotel-a", created.jobId, s);
-  assert.equal(result.status, "failed"); assert.match(result.error.message, /exceeded the preflight/);
-  assert.equal(result.usage.actualCostUsd, 0.02125); assert.equal(result.usage.reservedCostUsd, 0);
+  assert.equal(result.status, "failed"); assert.match(jobOf(s, created.jobId).errorMessage, /exceeded the preflight/); assert.match(result.error.message, /administrator assistance/);
+  assert.equal(jobOf(s, created.jobId).knownCostMicros, 21250); assert.equal(jobOf(s, created.jobId).reservedCostMicros, 0); assertCustomerPrivacy(result);
   assert.equal(monthOf(s).knownCostMicros, 21250); assert.equal(monthOf(s).unknownCalls, 0); assert.equal(s.calls.reconcile, 0);
 });
 test("bounded continuation reuses confirmed chunks and never charges their generation again", async () => {
@@ -283,7 +328,68 @@ test("bounded continuation reuses confirmed chunks and never charges their gener
   const created = await uploadSupplierAiImport(request(), data(), bytes, s);
   assert.deepEqual(await runSupplierAiImportJob("hotel-a", created.jobId, s), { queued: true });
   assert.equal(jobOf(s, created.jobId).completedChunks, 1); assert.equal(s.calls.response, 1); assert.equal(monthOf(s).activeJobs, 1);
+  const partial = await readSupplierAiImport(request(), { hotelUid: "hotel-a", jobId: created.jobId }, s);
+  assert.deepEqual(partial.progress, { completedChunks: 1, totalChunks: 2 }); assertCustomerPrivacy(partial);
   const result = await runSupplierAiImportJob("hotel-a", created.jobId, s);
   assert.equal(result.status, "review"); assert.equal(result.totalRows, 2); assert.equal(s.calls.response, 2); assert.equal(s.calls.count, 2);
-  assert.equal(result.usage.actualCostUsd, 0.000024); assert.equal(monthOf(s).importsStarted, 1); assert.equal(monthOf(s).activeJobs, 0);
+  assert.deepEqual(result.progress, { completedChunks: 2, totalChunks: 2 });
+  assert.equal(jobOf(s, created.jobId).knownCostMicros, 24); assertCustomerPrivacy(result); assert.equal(monthOf(s).importsStarted, 1); assert.equal(monthOf(s).activeJobs, 0);
+});
+test("continuation rejects changed source partitioning instead of publishing misleading progress or billing again", async () => {
+  const s = fixture(), unit = { units: [{ sourceId: "row-1", anchor: "Row 1", text: "Milk" }] };
+  s.splitSource = async () => [unit, unit];
+  s.provider.respond = async () => { s.calls.response++; s.advance(400000); return response(); };
+  const created = await uploadSupplierAiImport(request(), data(), bytes, s);
+  assert.deepEqual(await runSupplierAiImportJob("hotel-a", created.jobId, s), { queued: true });
+  s.splitSource = async () => [unit, unit, unit];
+  const failed = await runSupplierAiImportJob("hotel-a", created.jobId, s);
+  assert.equal(failed.status, "failed"); assert.match(failed.error.message, /saved progress/);
+  assert.deepEqual(failed.progress, { completedChunks: 1, totalChunks: 2 }); assert.equal(s.calls.response, 1); assertCustomerPrivacy(failed);
+});
+test("background processing continues without a mounted dialog or customer polling", async () => {
+  const s = fixture(); let sent, release;
+  const started = new Promise((resolve) => { sent = resolve; });
+  s.provider.respond = async () => { s.calls.response++; sent(); return new Promise((resolve) => { release = resolve; }); };
+  const created = await uploadSupplierAiImport(request(), data(), bytes, s);
+  assert.ok(s.firestore.records.has(`hotels/hotel-a/supplierAiImportWork/${created.jobId}`));
+  const work = runSupplierAiImportJob("hotel-a", created.jobId, s);
+  await started;
+  assert.equal(jobOf(s, created.jobId).status, "processing");
+  assert.deepEqual(publicJob(jobOf(s, created.jobId)).progress, { completedChunks: 0, totalChunks: 1 });
+  release(response());
+  const ready = await work;
+  assert.equal(ready.status, "review"); assert.equal(s.calls.response, 1); assert.equal(s.calls.reconcile, 1);
+  assertCustomerPrivacy(ready);
+});
+test("bounded product reconciliation resumes behind a new work receipt without another provider request", async () => {
+  const s = fixture(); let reconciliations = 0;
+  s.provider.respond = async () => {
+    s.calls.response++; s.advance(350000);
+    return response({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ rows: [{ supplierSku: "001" }, { supplierSku: "002" }, { supplierSku: "003" }] }) }] }] });
+  };
+  s.reconcileRows = async ({ rows, maxRows, shouldContinue }) => {
+    reconciliations++; assert.equal(rows.length, 3); assert.equal(maxRows, 100); assert.equal(shouldContinue(), true);
+    if (reconciliations === 1) {
+      s.advance(20000); assert.equal(shouldContinue(), false);
+      return { counts: { new: 1, changed: 0, unchanged: 0, blocked: 0 }, totalRows: 3, complete: false, nextRowIndex: 1 };
+    }
+    return { counts: { new: 3, changed: 0, unchanged: 0, blocked: 0 }, totalRows: 3, complete: true, nextRowIndex: 3 };
+  };
+  const created = await uploadSupplierAiImport(request(), data(), bytes, s);
+  assert.deepEqual(await runSupplierAiImportJob("hotel-a", created.jobId, s), { queued: true });
+  assert.equal(jobOf(s, created.jobId).status, "queued"); assert.equal(monthOf(s).activeJobs, 1);
+  assert.equal([...s.firestore.records.keys()].filter((path) => path.startsWith("hotels/hotel-a/supplierAiImportWork/")).length, 2);
+  const paidReceipt = { ...s.firestore.records.get(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}/attempts/chunk-0000`) };
+  const ready = await runSupplierAiImportJob("hotel-a", created.jobId, s);
+  assert.equal(ready.status, "review"); assert.equal(ready.totalRows, 3); assert.equal(ready.counts.new, 3);
+  assert.deepEqual(ready.progress, { completedChunks: 1, totalChunks: 1 }); assertCustomerPrivacy(ready);
+  assert.equal(s.calls.response, 1); assert.equal(s.calls.count, 1); assert.equal(reconciliations, 2);
+  assert.deepEqual(s.firestore.records.get(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}/attempts/chunk-0000`), paidReceipt);
+  assert.equal(monthOf(s).importsStarted, 1); assert.equal(monthOf(s).importsReviewReady, 1); assert.equal(monthOf(s).activeJobs, 0);
+});
+test("an unconfirmed reconciliation result cannot mark an incomplete proposal reviewable", async () => {
+  const s = fixture(); s.reconcileRows = async () => ({ counts: { new: 1, changed: 0, unchanged: 0, blocked: 0 }, totalRows: 1 });
+  const created = await uploadSupplierAiImport(request(), data(), bytes, s);
+  const result = await runSupplierAiImportJob("hotel-a", created.jobId, s);
+  assert.equal(result.status, "failed"); assert.equal(s.calls.response, 1); assert.equal(monthOf(s).importsReviewReady, 0); assertCustomerPrivacy(result);
 });

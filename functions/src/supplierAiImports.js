@@ -56,16 +56,75 @@ function activeState(snapshot) {
   if (!Number.isSafeInteger(snapshot.data().activeJobs) || snapshot.data().activeJobs < 0 || snapshot.data().policyVersion !== AI_POLICY_VERSION) throw new HttpsError("failed-precondition", "AI concurrent accounting needs operator review.");
   return snapshot.data();
 }
+const PUBLIC_ERROR_CODES = new Set([...Object.keys(HTTP_STATUS), "processing-failed", "worker-interrupted", "response-unknown", "expired", "internal"]);
+const INTERNAL_IMPORT_DETAIL = /cost|budget|reserv|paid|bill|usage|accounting|token|model|reasoning|provider|secret|configuration|fallback|maxCalls|maxInput|maxOutput|priceVersion|\bUSD\b|\$|gpt[- ]|openai|sk-|AIza|Bearer|https?:|api[-_ ]?key|authorization/i;
+const SAFE_PUBLIC_IMPORT_MESSAGES = new Set([
+  "Sign in to use supplier import.", "Sign in to continue.", "Your session expired. Sign in again.",
+  "A current signed-in session is required.", "Verify your email address before continuing.",
+  "This account is no longer available.", "Your current account no longer permits this action.",
+  "An active subscription with the required hotel module is required.", "Unsupported hotel feature.",
+  "supplierproducts.read is required for this hotel.", "supplierproducts.create is required for this hotel.",
+  "Only the user who started this import can review its source and proposal.",
+  "This AI import was not found in the selected hotel.", "This AI import needs operator review.",
+  "This AI import expired. Start a new import.", "The AI import expired. Start a new import.",
+  "This import expired and its source is no longer available. Start a new import.",
+  "This upload expired. Start a new import.", "This request ID belongs to a different import.",
+  "Choose an active supplier in this hotel.", "The selected supplier is no longer active.",
+  "Upload a non-empty file no larger than 10 MiB.", "Select a CSV, XLSX, PDF, DOCX, EML or TXT file.",
+  "Use GET or POST.", "Use a binary file upload.", "The import source or supplier changed.",
+  "The import worker changed.", "The complete import source no longer matches its saved progress.",
+  "The import source expired. Start a new import.",
+  "No supplier product rows were identified. Check the source or use template import.",
+  "The AI output was truncated. Import a smaller file; no partial result was accepted.",
+  "The AI response did not complete.", "The AI could not propose a complete supplier import.",
+  "The AI returned an empty or oversized proposal.", "The AI proposal is not valid structured data.",
+  "The extracted source is too large. Split the file before importing.",
+  "The source contains more than 1,000 proposed products. No partial proposal was accepted.",
+  "The source has more than 1,000 rows. Split the file.",
+  "The source exceeds 1,000 product rows plus one header; split the source.",
+  "The workbook exceeds 1,000 data rows across its worksheets; split it.",
+  "The file exceeds the 10 MiB limit.", "The source has more than 128 columns.",
+  "The file extension does not match the declared content type.",
+  "The uploaded file is not an XLSX workbook.", "The uploaded file is not a DOCX document.",
+  "The file is not a complete PDF document.", "The CSV contains invalid quoting or an oversized record.",
+  "The source contains unsupported or invalid text encoding.",
+  "The email has no supported body text. Upload relevant attachments separately.",
+]);
+const SAFE_PUBLIC_ID_MESSAGE = /^(hotelUid|supplierId|jobId|requestId) (must be a valid document ID|contains unsupported characters)\.$/;
+function publicImportError(error = {}) {
+  const code = PUBLIC_ERROR_CODES.has(error.code) ? error.code : "internal";
+  if (code === "response-unknown") return { code, message: "The import result could not be confirmed. No products were changed. Contact your hotel administrator before starting another import." };
+  if (code === "worker-interrupted") return { code, message: "The import stopped before the proposal was ready. No products were changed. Start a new import or contact your hotel administrator." };
+  if (["internal", "processing-failed"].includes(code)) return { code, message: "The supplier import could not be prepared. Try again later or contact your hotel administrator." };
+  const message = typeof error.message === "string" ? error.message : "";
+  // Billing and provider configuration are operator information. A public status,
+  // replay or transport error must never disclose them through message copy.
+  if (!message || INTERNAL_IMPORT_DETAIL.test(message) || !SAFE_PUBLIC_IMPORT_MESSAGES.has(message) && !SAFE_PUBLIC_ID_MESSAGE.test(message)) return { code, message: code === "resource-exhausted"
+    ? "This import cannot be completed right now. Try a smaller file or contact your hotel administrator."
+    : "This import needs administrator assistance before it can continue." };
+  return { code, message: message.slice(0, 1000) };
+}
+function publicWarnings(warnings) {
+  if (!Array.isArray(warnings)) return [];
+  return warnings.slice(0, 100).filter((warning) => warning && typeof warning.code === "string" && typeof warning.message === "string").map((warning) => ({
+    code: INTERNAL_IMPORT_DETAIL.test(warning.code) ? "IMPORT_NOTICE" : warning.code.slice(0, 100),
+    message: INTERNAL_IMPORT_DETAIL.test(warning.message) ? "This import needs administrator assistance before it can continue." : warning.message.slice(0, 1000),
+    ...(Number.isSafeInteger(warning.count) && warning.count >= 0 ? { count: warning.count } : {}),
+    ...(Array.isArray(warning.sourceIds) ? { sourceIds: warning.sourceIds.filter((id) => typeof id === "string").slice(0, 20).map((id) => id.slice(0, 200)) } : {}),
+  }));
+}
 function publicJob(job) {
+  const totalChunks = Number.isSafeInteger(job.totalChunks) && job.totalChunks > 0 ? job.totalChunks : null;
+  const completedChunks = Number.isSafeInteger(job.completedChunks) && job.completedChunks >= 0 ? job.completedChunks : 0;
+  const totalRows = Number.isSafeInteger(job.totalRows) && job.totalRows >= 0 && job.totalRows <= 1000 ? job.totalRows : null;
+  const countKeys = ["new", "changed", "unchanged", "blocked"];
+  const countsValid = job.counts && countKeys.every((key) => Number.isSafeInteger(job.counts[key]) && job.counts[key] >= 0 && job.counts[key] <= 1000)
+    && (totalRows === null || countKeys.reduce((sum, key) => sum + job.counts[key], 0) === totalRows);
+  const counts = countsValid ? Object.fromEntries(countKeys.map((key) => [key, job.counts[key]])) : null;
   return { hotelUid: job.hotelUid, jobId: job.jobId, supplierId: job.supplierId, ownerUid: job.ownerUid, status: job.status,
     source: { fileName: job.fileName, size: job.size, mimeType: job.mimeType }, expiresAtMillis: job.expiresAtMillis,
-    counts: job.counts || null, totalRows: job.totalRows ?? null, warnings: job.warnings || [],
-    usage: { attempts: job.attemptedCalls || 0, succeededCalls: job.succeededCalls || 0, unknownCalls: job.unknownCalls || 0,
-      countingCalls: job.countingCalls || 0, actualCostUsd: job.unknownCalls || job.reservedCostMicros > 0 ? null : (job.knownCostMicros || 0) / 1000000,
-      knownCostUsd: (job.knownCostMicros || 0) / 1000000, reservedCostUsd: (job.reservedCostMicros || 0) / 1000000,
-      limitUsd: job.configuration.maxCostPerImportUsd, inputTokens: job.unknownCalls ? null : job.inputTokens || 0,
-      outputTokens: job.unknownCalls ? null : job.outputTokens || 0, priceVersion: PRICE_VERSION },
-    ...(job.errorCode ? { error: { code: job.errorCode, message: job.errorMessage } } : {}) };
+    counts, totalRows, warnings: publicWarnings(job.warnings), progress: { completedChunks, totalChunks },
+    ...(job.errorCode ? { error: publicImportError({ code: job.errorCode, message: job.errorMessage }) } : {}) };
 }
 async function savePrivate(bucket, path, bytes, contentType) {
   const file = bucket.file(path), sha256 = hashOf(bytes);
@@ -238,8 +297,8 @@ async function readSupplierAiImport(request, data, services = {}) {
   if (data.jobId == null) {
     await authorize(db, request, hotelUid, "create", undefined, services);
     const config = await loadSupplierAiConfiguration(db);
-    return { available: config.enabled, model: config.model, fallbackEnabled: false, reason: config.enabled ? null : "disabled",
-      limits: { maxFileBytes: MAX_SOURCE_BYTES, maxPages: 50, maxProducts: 1000, maxCostPerImportUsd: config.maxCostPerImportUsd, maxImportsPerHotelPerDay: config.maxImportsPerHotelPerDay } };
+    return { available: config.enabled, reason: config.enabled ? null : "disabled",
+      limits: { maxFileBytes: MAX_SOURCE_BYTES, maxPages: 50, maxProducts: 1000 } };
   }
   const ref = db.doc(`hotels/${hotelUid}/supplierAiImportJobs/${strictId(data.jobId, "jobId")}`), stored = await ref.get();
   if (!stored.exists) throw new HttpsError("not-found", "This AI import was not found in the selected hotel.");
@@ -362,8 +421,21 @@ async function markUnknown(db, job, attemptId) {
     tx.set(refs.state, { ...active, activeJobs: Math.max(0, active.activeJobs - (data.quotaReleased ? 0 : 1)), updatedAt: stamp() });
   });
 }
+async function queueContinuation(db, job, services) {
+  const jobRef = db.doc(`hotels/${job.hotelUid}/supplierAiImportJobs/${job.jobId}`);
+  await db.runTransaction(async (tx) => {
+    await authorize(db, actorRequest(job), job.hotelUid, "create", tx, services);
+    const current = await tx.get(jobRef);
+    if (current.data()?.leaseId !== job.leaseId || current.data().status !== "processing") throw new HttpsError("aborted", "The import worker changed.");
+    tx.update(jobRef, { status: "queued", leaseUntil: 0, leaseId: admin.firestore.FieldValue.delete(),
+      recoverAfter: admin.firestore.Timestamp.fromMillis((services.now?.() ?? Date.now()) + LEASE_MS), updatedAt: stamp() });
+    tx.create(db.doc(`hotels/${job.hotelUid}/supplierAiImportWork/${job.jobId}-${randomUUID()}`), { hotelUid: job.hotelUid, jobId: job.jobId, createdAt: stamp() });
+  });
+  return { queued: true };
+}
 async function runSupplierAiImportJob(hotelUid, jobId, services = {}) {
   hotelUid = strictId(hotelUid, "hotelUid"); jobId = strictId(jobId, "jobId");
+  const started = services.now?.() ?? Date.now();
   const db = services.firestore || admin.firestore(), bucket = services.bucket || admin.storage().bucket(), jobRef = db.doc(`hotels/${hotelUid}/supplierAiImportJobs/${jobId}`);
   const stored = await jobRef.get();
   if (!stored.exists) return { ignored: true };
@@ -393,16 +465,17 @@ async function runSupplierAiImportJob(hotelUid, jobId, services = {}) {
     await authorize(db, actorRequest(job), hotelUid, "create", undefined, services);
     const chunks = await split(source, { maxUnits: 100, maxPdfPages: 5 });
     if (!Array.isArray(chunks) || !chunks.length || chunks.length > job.configuration.maxCallsPerImport) throw new HttpsError("resource-exhausted", "This source needs too many AI calls. Split the file before importing.");
+    await db.runTransaction(async (tx) => {
+      const current = await tx.get(jobRef);
+      if (current.data()?.leaseId !== job.leaseId || current.data().status !== "processing") throw new HttpsError("aborted", "The import worker changed.");
+      if (current.data().totalChunks != null && current.data().totalChunks !== chunks.length) throw new HttpsError("failed-precondition", "The complete import source no longer matches its saved progress.");
+      tx.update(jobRef, { totalChunks: chunks.length, updatedAt: stamp() });
+    });
     const provider = services.provider || createSupplierAiProvider({ apiKey: OPENAI_API_KEY.value() });
-    const rows = []; const started = services.now?.() ?? Date.now();
+    const rows = [];
     for (let index = 0; index < chunks.length; index++) {
       if ((services.now?.() ?? Date.now()) - started > 360000 && index >= (job.completedChunks || 0)) {
-        await db.runTransaction(async (tx) => {
-          const current = await tx.get(jobRef);
-          if (current.data()?.leaseId !== job.leaseId) throw new HttpsError("aborted", "The import worker changed.");
-          tx.update(jobRef, { status: "queued", leaseUntil: 0, leaseId: admin.firestore.FieldValue.delete(), recoverAfter: admin.firestore.Timestamp.fromMillis((services.now?.() ?? Date.now()) + LEASE_MS), updatedAt: stamp() });
-          tx.create(db.doc(`hotels/${hotelUid}/supplierAiImportWork/${jobId}-${randomUUID()}`), { hotelUid, jobId, createdAt: stamp() });
-        });
+        await queueContinuation(db, job, services);
         return { queued: true };
       }
       rows.push(...await executeChunk(db, bucket, job, chunks[index], index, provider, services));
@@ -410,14 +483,25 @@ async function runSupplierAiImportJob(hotelUid, jobId, services = {}) {
     }
     await authorize(db, actorRequest(job), hotelUid, "create", undefined, services);
     if (!rows.length) throw new HttpsError("failed-precondition", "No supplier product rows were identified. Check the source or use template import.");
-    const referenced = new Set(rows.flatMap((row) => (row.sourceAnchors || []).map((anchor) => anchor.sourceId)));
+    const referenced = new Set(rows.flatMap((row) => (row.sourceAnchors || []).filter((anchor) => anchor.verified === true || anchor.evidenceKind === "visual-page").map((anchor) => anchor.sourceId)));
     const possibleOmissions = source.units.filter((unit) => !unit.contextOnly && unit.kind !== "pdf-page"
       && unit.method !== "vision" && !/header/i.test(unit.sourceId) && !referenced.has(unit.sourceId));
     const warnings = [...(source.warnings || []), ...(possibleOmissions.length ? [{ code: "POSSIBLE_OMITTED_SOURCE_ROWS",
       message: `${possibleOmissions.length} source rows were not referenced by any proposed product. Check the source for omitted products, headers or summaries.`,
       sourceIds: possibleOmissions.slice(0, 20).map((unit) => unit.sourceId), count: possibleOmissions.length }] : [])];
     const reconcile = services.reconcileRows || require("./supplierAiProposal").reconcileSupplierAiRows;
-    const result = await reconcile({ db, hotelUid, supplierId: job.supplierId, jobId, rows, sourceUnits: source.units, leaseId: job.leaseId });
+    await db.runTransaction(async (tx) => {
+      const current = await tx.get(jobRef);
+      if (current.data()?.leaseId !== job.leaseId || current.data().status !== "processing") throw new HttpsError("aborted", "The import worker changed.");
+      tx.update(jobRef, { leaseUntil: (services.now?.() ?? Date.now()) + LEASE_MS, updatedAt: stamp() });
+    });
+    const result = await reconcile({ db, hotelUid, supplierId: job.supplierId, jobId, rows, sourceUnits: source.units,
+      leaseId: job.leaseId, maxRows: 100, shouldContinue: () => (services.now?.() ?? Date.now()) - started < 360000 });
+    if (result?.complete === false) {
+      await queueContinuation(db, job, services);
+      return { queued: true };
+    }
+    if (result?.complete !== true) throw new HttpsError("failed-precondition", "The complete proposal state could not be verified.");
     await authorize(db, actorRequest(job), hotelUid, "create", undefined, services);
     const finished = await finishJob(db, job, "review", null, { counts: result.counts, totalRows: result.totalRows, warnings });
     return publicJob(finished);
@@ -453,7 +537,7 @@ async function supplierProductAiImportHandler(req, res, services = {}) {
     return res.status(200).json(await readSupplierAiImport(request, req.query, services));
   } catch (error) {
     const status = HTTP_STATUS[error.code] || 500;
-    return res.status(status).json({ error: { code: status === 500 ? "internal" : error.code, message: status === 500 ? "The supplier import could not be processed. Try again later." : error.message } });
+    return res.status(status).json({ error: publicImportError(status === 500 ? { code: "internal" } : error) });
   }
 }
 async function processSupplierAiImportJobHandler(event, services = {}) {
@@ -551,4 +635,4 @@ const processSupplierProductAiImport = onDocumentCreated({ document: "hotels/{ho
 const cleanupSupplierAiSources = onSchedule({ schedule: "every 15 minutes", region: "us-central1", timeoutSeconds: 540, memory: "512MiB", maxInstances: 1 }, cleanupSupplierAiSourcesHandler);
 module.exports = { supplierProductAiImport, processSupplierProductAiImport, cleanupSupplierAiSources, supplierProductAiImportHandler,
   processSupplierAiImportJobHandler, cleanupSupplierAiSourcesHandler, uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob,
-  publicJob, normalizeMonth, settleExpiredAttempt, savePrivate, readPrivate };
+  publicJob, publicImportError, normalizeMonth, settleExpiredAttempt, savePrivate, readPrivate };
