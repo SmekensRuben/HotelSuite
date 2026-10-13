@@ -79,6 +79,17 @@ describe("catalog loading, taxonomy and complete export", () => {
     expect(exports).toHaveLength(2);
     expect(exports.every(([, options]) => options.category === undefined && options.searchTerm === undefined)).toBe(true);
   });
+  it("offers template and AI import choices while preserving the existing workbook path", async () => {
+    render(<SupplierProductsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "products.actions.import" }));
+    const dialog = await screen.findByRole("dialog", { name: "Import supplier products" });
+    expect(within(dialog).getAllByRole("button", { name: "Close dialog" })).toHaveLength(1);
+    expect(within(dialog).getByRole("button", { name: "AI Import" })).toBeEnabled();
+    const inputClick = vi.spyOn(HTMLInputElement.prototype, "click");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Template Import" }));
+    expect(inputClick).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
   it("provides one close control in the supplier export dialog", async () => {
     render(<SupplierProductsPage />);
     fireEvent.click(screen.getByRole("button", { name: "products.actions.export" }));
