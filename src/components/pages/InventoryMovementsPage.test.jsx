@@ -3,19 +3,24 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, expect, it, vi } from "vitest";
 import InventoryMovementsPage from "./InventoryMovementsPage";
 const mocks = vi.hoisted(() => ({ hotel: "hotel-a", permissions: { read: true, create: true, reverse: false }, auth: { currentUser: { uid: "operator" } },
-  history: vi.fn(), choices: vi.fn(), pending: vi.fn(), record: vi.fn(), reverse: vi.fn(), retry: vi.fn() }));
+  history: vi.fn(), choices: vi.fn(), pending: vi.fn(), record: vi.fn(), reverse: vi.fn(), retry: vi.fn(), proposal: vi.fn(), countRead: true }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel }) }));
-vi.mock("../../hooks/usePermission", () => ({ usePermission: (_feature, action) => mocks.permissions[action] === true }));
+vi.mock("../../hooks/usePermission", () => ({ usePermission: (feature, action) => feature === "stockcounts" ? mocks.countRead : mocks.permissions[action] === true }));
 vi.mock("../../hooks/useStaffDisplayNames", () => ({ useStaffDisplayNames: () => ({ createdByName: "Jamie Hoteluser" }) }));
 vi.mock("../../firebaseConfig", () => ({ auth: mocks.auth, signOut: vi.fn() }));
 vi.mock("../layout/HeaderBar", () => ({ default: () => null }));
 vi.mock("../../services/firebaseInventoryAdjustments", () => ({ getInventoryAdjustments: mocks.history, getInventoryAdjustmentChoices: mocks.choices,
   getPendingInventoryAdjustment: mocks.pending, recordInventoryAdjustment: mocks.record, reverseInventoryAdjustment: mocks.reverse, retryPendingInventoryAdjustment: mocks.retry }));
+vi.mock("../../services/firebaseInventoryCostProposals", () => ({ getInventoryCostProposal: mocks.proposal }));
+const costProposal = { hotelUid: "hotel-a", purpose: "movement", locationId: "store", catalogProductId: "juice", stockCountId: null, businessDate: "2026-10-12", costProposalPolicyVersion: 1,
+  available: true, netUnitCost: 2.666667, baseUnit: "l", currency: "EUR", asOfMillis: 1791800000000, source: { anchorStockCountId: "opening", anchorCheckpointId: "cp1", openingBusinessDate: "2026-10-01", openingQuantity: 10, openingNetValue: 20,
+    recordedMovementQuantity: 20, recordedMovementNetValue: 60, weightedSourceQuantity: 30, weightedSourceNetValue: 80, postingCutoffSequence: 3, movementCount: 2 }, reasons: [], costBasis: "Recorded source estimate, not live valuation." };
 const event = (hotel = "hotel-a") => ({ adjustmentId: "movement-1", kind: "waste", reasonType: "breakage", catalogProductId: "juice", catalogProductName: hotel === "hotel-a" ? "Orange juice" : "Other hotel coffee", baseUnit: "l", quantity: 0.5,
   sourceLocationId: "store", sourceLocationName: "Storeroom", destinationLocationId: null, netUnitCost: null, netValue: null, currency: null, actorUid: "operator", postedAtMillis: 1234, businessDate: "2026-10-12", reference: "WASTE-1", note: "Bottle broke", reversedByAdjustmentId: null });
 const deferred = () => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; };
 beforeEach(() => {
-  vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.auth.currentUser = { uid: "operator" }; mocks.permissions = { read: true, create: true, reverse: false };
+  vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.auth.currentUser = { uid: "operator" }; mocks.permissions = { read: true, create: true, reverse: false }; mocks.countRead = true;
+  mocks.proposal.mockResolvedValue(costProposal);
   mocks.pending.mockReturnValue(null); mocks.record.mockResolvedValue({}); mocks.reverse.mockResolvedValue({}); mocks.retry.mockResolvedValue({});
   mocks.history.mockImplementation(async (hotelUid) => ({ hotelUid, adjustments: [event(hotelUid)], nextCursor: null }));
   mocks.choices.mockImplementation(async (hotelUid, kind) => ({ hotelUid, kind, hotelCurrency: "EUR", choices: kind === "catalogproducts" ? [{ id: "juice", name: "Orange juice", baseUnit: "l" }] : [{ id: "store", name: "Storeroom" }, { id: "bar", name: "Lobby bar" }], nextCursor: null }));
@@ -195,4 +200,47 @@ it("sends the typed name prefix to the protected search and preserves it on the 
   const more = await screen.findByRole("button", { name: "Load more catalog articles" });
   await waitFor(() => expect(more).not.toBeDisabled()); fireEvent.click(more);
   await waitFor(() => expect(mocks.choices).toHaveBeenCalledWith("hotel-a", "catalogproducts", "scanned-50", "orange"));
+});
+
+it("requests a reviewed cost lazily, preserves typed manual cost, then freezes the explicitly applied number with a new movement", async () => {
+  render(<InventoryMovementsPage />); await prepareTransfer();
+  const cost = screen.getByRole("spinbutton", { name: "Estimated net unit cost" }); fireEvent.change(cost, { target: { value: "7" } });
+  expect(mocks.proposal).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Suggest unit cost for Orange juice" }));
+  const apply = await screen.findByRole("button", { name: "Apply cost estimate for Orange juice" }); expect(cost).toHaveValue(7);
+  expect(mocks.proposal).toHaveBeenCalledWith({ hotelUid: "hotel-a", purpose: "movement", locationId: "store", catalogProductId: "juice", businessDate: "2026-10-12" }, { baseUnit: "l", currency: "EUR", businessDate: "2026-10-12" });
+  fireEvent.click(apply); expect(cost).toHaveValue(2.666667);
+  fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+  await waitFor(() => expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ netUnitCost: 2.666667, currency: "EUR", quantity: 12.5 })));
+  expect(mocks.record.mock.calls[0][0]).not.toHaveProperty("appliedEstimate");
+});
+it("blocks an applied suggestion after its date or physical source changes until explicitly reviewed", async () => {
+  render(<InventoryMovementsPage />); await prepareTransfer();
+  fireEvent.click(screen.getByRole("button", { name: "Suggest unit cost for Orange juice" })); fireEvent.click(await screen.findByRole("button", { name: "Apply cost estimate for Orange juice" }));
+  fireEvent.change(screen.getByLabelText("Business date"), { target: { value: "2026-10-11" } });
+  expect(screen.getByRole("button", { name: "Record movement" })).toBeDisabled(); expect(screen.getByText(/This applied estimate is stale/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Apply cost estimate for Orange juice" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Clear applied estimate" }));
+  expect(screen.getByRole("spinbutton", { name: "Estimated net unit cost" })).toHaveValue(null); expect(screen.getByRole("button", { name: "Record movement" })).not.toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Suggest unit cost for Orange juice" })); fireEvent.click(await screen.findByRole("button", { name: "Apply cost estimate for Orange juice" }));
+  await choose("From physical location", "Lobby bar");
+  expect(screen.getByText(/This applied estimate is stale/)).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Estimated net unit cost" }), { target: { value: "4" } });
+  expect(screen.queryByText(/This applied estimate is stale/)).not.toBeInTheDocument();
+});
+it("does not fetch costs without count read access and still permits an unknown-cost physical event", async () => {
+  mocks.countRead = false; render(<InventoryMovementsPage />); await prepareTransfer();
+  expect(screen.queryByRole("button", { name: "Suggest unit cost for Orange juice" })).not.toBeInTheDocument();
+  expect(screen.getByText(/Stock count read permission is required/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+  await waitFor(() => expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ netUnitCost: null, currency: null })));
+  expect(mocks.proposal).not.toHaveBeenCalled();
+});
+it("keeps quantities and manual recording usable when the weighted evidence is unavailable", async () => {
+  mocks.proposal.mockResolvedValueOnce({ ...costProposal, available: false, netUnitCost: null, source: null, reasons: [{ code: "unknown", detail: "Opening valuation is unknown." }] });
+  render(<InventoryMovementsPage />); await prepareTransfer(); fireEvent.click(screen.getByRole("button", { name: "Suggest unit cost for Orange juice" }));
+  expect(await screen.findByText("Opening valuation is unknown.")).toBeInTheDocument(); expect(screen.getByRole("spinbutton", { name: "Estimated net unit cost" })).toHaveValue(null);
+  expect(screen.getByRole("spinbutton", { name: "Movement quantity" })).toHaveValue(12.5); expect(screen.getByRole("button", { name: "Record movement" })).not.toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
+  await waitFor(() => expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ netUnitCost: null, currency: null })));
 });
