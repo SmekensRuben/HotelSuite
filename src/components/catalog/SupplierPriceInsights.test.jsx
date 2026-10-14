@@ -40,6 +40,19 @@ describe("supplier price insight workflows", () => {
     fireEvent.click(screen.getByLabelText("Show offers needing price review"));
     expect(screen.queryByText("Purchase price unknown")).not.toBeInTheDocument();
   });
+  it("does not reuse a default-package confirmation for an unconfirmed preserved option", async () => {
+    mocks.comparison.mockResolvedValueOnce(comparison([product("offer", 2, {
+      sourcePriceRecordedAt: "2026-10-14T00:00:00Z",
+      options: [option(2), option(3, { id: "small", purchaseUnit: "Small case" })],
+      reliability: { lastPriceChangeAt: null, lastPriceConfirmedAt: "2026-10-14T00:00:00Z", optionReliability: {
+        default: { lastPriceConfirmedAt: "2026-10-14T00:00:00Z", confirmationMatchesCurrentTerms: true },
+      } },
+    })]));
+    renderComparison();
+    expect(await screen.findByText("Small case")).toBeInTheDocument();
+    expect(screen.getAllByText("Changed Unknown observation date")).toHaveLength(2);
+    expect(screen.getByText("Confirmed Unknown observation date")).toBeInTheDocument();
+  });
   it("drops prior hotel responses on switching properties and after permission loss", async () => {
     const pending = deferred(); mocks.comparison.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(comparison([product("newhotel", 3)], { hotelUid: "b" }));
     const view = renderComparison(); await waitFor(() => expect(mocks.comparison).toHaveBeenCalledTimes(1));
@@ -98,4 +111,18 @@ describe("supplier price insight workflows", () => {
     fireEvent.click(screen.getByRole("button", { name: /retry/i }));
     expect(await screen.findByText(/No recorded price-content events yet/)).toBeInTheDocument();
   });
+});
+
+it("distinguishes economic changes, genuine confirmations and approved future periods", async () => {
+  mocks.permissions = true;
+  mocks.history.mockResolvedValue({ ...history([{ ...entry, observation: "price-confirmed", priceChanged: false, sourceReference: "October.csv", sourceIssuedOn: "2026-10-14" }]),
+    reliability: { lastPriceChangeAt: "2026-10-01T00:00:00Z", lastPriceConfirmedAt: "2026-10-14T00:00:00Z", sourceReference: "October.csv", sourceIssuedOn: "2026-10-14", pricingDateBasis: "delivery-date", pricingAgreementKnown: true, needsReview: false, reasons: [], hasScheduledVersions: true },
+    versions: [{ id: "future", revision: 3, observation: "approved", approvedAt: "2026-10-14T00:00:00Z", priceValidity: "future", contractualValidFrom: "2026-11-01", contractualValidUntil: null, currency: "EUR", catalogBaseUnit: "l", options: [option(3)], sourceReference: "November.csv", sourceIssuedOn: "2026-10-14" }] });
+  render(<SupplierPriceHistory hotelUid="a" supplierProductId="offer" />);
+  expect(await screen.findByText("Scheduled price")).toBeInTheDocument();
+  expect(screen.getByText("Last price change")).toBeInTheDocument();
+  expect(screen.getByText("Last source-backed price confirmation")).toBeInTheDocument();
+  expect(screen.getByText("Delivery date")).toBeInTheDocument();
+  expect(screen.getByText("Price confirmed · unchanged terms")).toBeInTheDocument();
+  expect(screen.getByText(/From 2026-11-01/)).toBeInTheDocument();
 });

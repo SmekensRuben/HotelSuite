@@ -256,7 +256,10 @@ test("user-corrected options preserve omitted GTIN by stable ID, and explicit ba
   await reconcile(db); await correct(db, { purchaseOptions: [{ id: "single", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 2 }] });
   assert.equal(rowDoc(db).product.purchaseOptions[0].gtin, "6291041500213"); assert.equal(rowDoc(db).category, "unchanged");
   await correct(db, { purchaseOptions: [{ id: "single", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 2, gtin: null }] });
-  assert.equal(rowDoc(db).category, "changed"); await confirm(db); assert.equal(history(db).length, 1);
+  assert.equal(rowDoc(db).category, "changed"); await confirm(db);
+  assert.equal(history(db).length, 2, "The genuine unchanged source price is confirmed independently of the GTIN metadata change");
+  assert.equal(history(db).at(-1)[1].observation, "price-confirmed");
+  assert.equal([...db.records.keys()].filter((path) => path.includes("/supplierPriceVersions/")).length, 1, "A confirmation does not create another price version");
 });
 test("legacy unspecified variants stay blocked until an explicit human purchase-option configuration is supplied", async () => {
   const db = fixture(); db.records.set(`hotels/${hotelUid}/supplierproducts/legacy`, offer({ hasVariants: true, revision: 0 }));

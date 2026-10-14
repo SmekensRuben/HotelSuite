@@ -27,6 +27,10 @@ const scope = (patch = {}) => ({ hotelUid: "hotel-a", supplierId: "sligro", sour
 const request = (data) => ({ auth: { uid: "buyer", token: { email_verified: true, auth_time: 9999 } }, data });
 const command = (patch = {}) => ({ ...scope(), requestId: "mapping-one", expectedRevision: 0,
   mappings: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }], ...patch });
+const interpretation = (patch = {}) => ({ version: 1, header: ["SKU", "Name", "Package", "Content", "Price"], sheetName: "Offers",
+  columns: { supplierSku: 0, supplierProductName: 1, purchaseUnit: 2, baseUnitsPerPurchaseUnit: 3, pricePerPurchaseUnit: 4 },
+  defaults: { baseUnit: "l", currency: "EUR", priceBasis: "net" }, assortmentMode: "partial", documentPurpose: "price-list",
+  decimalSeparator: ",", dateFormat: "YYYY-MM-DD", ...patch });
 
 test("Sligro profile offers human-confirmed English suggestions without silently saving them", async () => {
   const services = fixture(), before = services.firestore.records.size;
@@ -102,4 +106,36 @@ test("mapping input rejects guessed labels, duplicate canonical codes, wrong sco
   const acceptedScope = mappingScope(scope());
   assert.throws(() => mappingSnapshot({ version: 1, ...acceptedScope, supplierId: "other", revision: 1, mappings: [] }, acceptedScope), { code: "failed-precondition" });
   assert.deepEqual(normalizeMappings([{ sourceUnit: "TR", purchaseUnit: "tray" }]), [{ sourceUnit: "TR", purchaseUnit: "Tray" }]);
+});
+test("confirmed recurring interpretation is revisioned with canonical fingerprints while unit-only edits preserve it", async () => {
+  const services = fixture(), original = command({ mappings: [], interpretation: interpretation() });
+  const saved = await save(request(original), services);
+  assert.equal(saved.revision, 1); assert.equal(saved.interpretation.columns.pricePerPurchaseUnit, 4);
+  assert.match(saved.interpretationFingerprint, /^[a-f0-9]{64}$/);
+  assert.deepEqual(await save(request(original), services), saved);
+  const updated = await save(request(command({ requestId: "units", expectedRevision: 1 })), services);
+  assert.deepEqual(updated.interpretation, saved.interpretation); assert.equal(updated.interpretationFingerprint, saved.interpretationFingerprint);
+  const frozen = mappingSnapshot(saved, mappingScope(scope()));
+  await save(request(command({ requestId: "format", expectedRevision: 2, mappings: [], interpretation: interpretation({ decimalSeparator: "." }) })), services);
+  assert.equal(frozen.interpretation.decimalSeparator, ",");
+});
+test("a changed confirmed format requires live update rights including immutable operation replay", async () => {
+  const services = fixture(), first = command({ mappings: [], interpretation: interpretation() }); await save(request(first), services);
+  const second = command({ requestId: "changed-format", expectedRevision: 1, mappings: [], interpretation: interpretation({ decimalSeparator: "." }) });
+  const member = services.firestore.records.get("hotels/hotel-a/members/buyer"); member.permissions = member.permissions.filter((permission) => permission !== "supplierproducts.update");
+  await assert.rejects(save(request(second), services), { code: "permission-denied" });
+  member.permissions.push("supplierproducts.update"); const saved = await save(request(second), services); assert.equal(saved.revision, 2);
+  member.permissions = member.permissions.filter((permission) => permission !== "supplierproducts.update"); await assert.rejects(save(request(second), services), { code: "permission-denied" });
+});
+test("format review rejects duplicate channels, ambiguous columns, statistics prices and recurring one-off dates", async () => {
+  const services = fixture();
+  for (const patch of [
+    { defaults: { priceValidFrom: "2027-01-01" } },
+    { columns: { supplierSku: 0, supplierProductName: 0 } },
+    { columns: { supplierSku: 0, pricePerBaseUnit: 3, pricePerPurchaseUnit: 4 } },
+    { documentPurpose: "statistics" },
+    { defaults: { currency: "eur" } },
+    { dateFormat: "MM/DD/YYYY" },
+  ]) await assert.rejects(save(request(command({ mappings: [], interpretation: interpretation(patch) })), services), { code: "invalid-argument" });
+  await assert.rejects(save(request(command({ sourceFormat: "pdf", mappings: [], interpretation: interpretation() })), services), { code: "invalid-argument" });
 });

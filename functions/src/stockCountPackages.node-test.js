@@ -96,3 +96,62 @@ test("package identity remains unambiguous when legitimate document and option I
   assert.notEqual(left.options[1].id, right.options[0].id);
   assert.deepEqual(JSON.parse(left.options[1].id), ["a", "part:default"]);
 });
+
+function approvedPackageVersion(id, revision, patch = {}) {
+  const { pricingTerms } = require("./supplierPricePolicy");
+  const { purchaseTerms } = require("./supplierPriceVersions");
+  const { digest } = require("./validation");
+  const product = reviewed({ pricingModel: "Per Purchase Unit", pricePerPurchaseUnit: 1299, priceBasis: "net", vatRate: null,
+    priceValidFrom: "2026-10-01", priceValidUntil: null, ...patch });
+  const terms = pricingTerms(product, { baseUnit: "l" });
+  return { id, supplierPriceVersionPolicyVersion: 1, supplierProductId: "case", supplierId: "vendor", revision,
+    termsFingerprint: digest(terms), terms, productTerms: purchaseTerms(product),
+    sourceKind: "supplier-list", sourceReference: "PRIVATE supplier agreement.xlsx", sourceIssuedOn: "2026-10-01",
+    lastPriceChangeAt: { seconds: 1700000000 }, optionReliability: {} };
+}
+function countDate(db, date) {
+  for (const path of [`${base}/stockCounts/count`, `${base}/stockCounts/count/locations/store`]) db.records.set(path, { ...db.records.get(path), businessDate: date });
+}
+
+test("unfinished count package entry uses approved contents at its frozen business date without financial disclosures or count mutation", async () => {
+  const db = fixture();
+  db.records.set(`${base}/supplierPriceVersions/case/entries/current`, approvedPackageVersion("current", 1));
+  db.records.set(`${base}/supplierPriceVersions/case/entries/upcoming`, approvedPackageVersion("upcoming", 2, {
+    priceValidFrom: "2026-11-01", priceValidUntil: "2026-11-15", baseUnitsPerPurchaseUnit: 3000,
+    pricePerPurchaseUnit: 4999, currency: "USD", priceBasis: "gross", vatRate: 0.21,
+    purchaseOptions: [{ id: "bottle", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 500, pricePerPurchaseUnit: 333 }],
+  }));
+  const before = structuredClone([...db.records]);
+  const earlier = await load(db);
+  assert.deepEqual(earlier.options.map((option) => option.catalogUnitsPerPackage), [6]);
+  assert.deepEqual([...db.records], before);
+  countDate(db, "2026-11-01");
+  const activatedBefore = structuredClone([...db.records]), activated = await load(db);
+  assert.deepEqual(activated.options.map((option) => option.catalogUnitsPerPackage), [3, 0.5]);
+  assert.equal(activated.catalogBaseUnit, "l");
+  const encoded = JSON.stringify(activated);
+  for (const privateValue of ["price", "PRIVATE", "USD", "4999", "333", "0.21", "sourceReference", "confirmed"]) assert.equal(encoded.includes(privateValue), false, privateValue);
+  assert.deepEqual([...db.records], activatedBefore, "package helper never rewrites rows, costs, checkpoints or supplier terms");
+  assert.equal(db.records.get(`${base}/supplierproducts/case`).baseUnitsPerPurchaseUnit, 6000, "raw convenience projection may remain older while approved content resolves correctly");
+  countDate(db, "2026-11-20");
+  assert.deepEqual((await load(db)).options.map((option) => option.catalogUnitsPerPackage), [3, 0.5], "an expired monetary agreement does not remove known physical package content");
+});
+
+test("future-only and corrupt approved package evidence remain unavailable without exposing supplier financial sources", async () => {
+  const db = fixture();
+  db.records.set(`${base}/supplierPriceVersions/case/entries/upcoming`, approvedPackageVersion("upcoming", 1, { priceValidFrom: "2026-11-01" }));
+  const future = await load(db);
+  assert.deepEqual(future.options, []); assert.equal(future.unavailable[0].reason, "package-terms-not-effective-on-count-date");
+  const broken = db.records.get(`${base}/supplierPriceVersions/case/entries/upcoming`);
+  db.records.set(`${base}/supplierPriceVersions/case/entries/upcoming`, { ...broken, supplierProductId: "foreign" });
+  const corrupt = await load(db);
+  assert.deepEqual(corrupt.options, []); assert.equal(corrupt.unavailable[0].reason, "approved-package-evidence-needs-review");
+  assert.equal(JSON.stringify(corrupt).includes("PRIVATE"), false);
+});
+
+test("catalog counts require a reconciled valid business date before dated package conversion", async () => {
+  for (const date of [undefined, null, "2026-02-30", "2026-11-01T00:00:00Z"]) {
+    const db = fixture(); countDate(db, date);
+    await assert.rejects(load(db), { code: "failed-precondition" });
+  }
+});

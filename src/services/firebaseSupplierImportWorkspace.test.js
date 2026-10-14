@@ -1,3 +1,4 @@
+import { applySupplierImportFormat } from "./firebaseSupplierImportWorkspace";
 import { webcrypto } from "node:crypto";
 import { beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ auth: { currentUser: null }, callable: vi.fn() }));
@@ -54,4 +55,19 @@ it("does not expose provider billing errors and finalizes only through the prote
 it("does not announce a completed import or forget its original command when the complete counts still contain pending products", async () => {
   mocks.callable.mockResolvedValueOnce({ data: { hotelUid: "hotel-a", jobId: "job", totalRows: 1, reviewCounts: workspace.reviewCounts, completed: true } }); await expect(completeSupplierImportReview("hotel-a", "job")).rejects.toThrow(/final import status/); const original = mocks.callable.mock.calls[0][1].requestId;
   mocks.callable.mockResolvedValueOnce({ data: { hotelUid: "hotel-a", jobId: "job", totalRows: 1, reviewCounts: { pending: 0, approved: 0, skipped: 1, applied: 0, failed: 0 }, completed: true } }); expect(await completeSupplierImportReview("hotel-a", "job")).toMatchObject({ completed: true }); expect(mocks.callable.mock.calls[1][1].requestId).toBe(original); expect(sessionStorage.length).toBe(0);
+});
+
+it("resumes a partially applied format with the original server receipt after remount", async () => {
+  mocks.callable.mockResolvedValueOnce({ data: { hotelUid: "hotel-a", jobId: "job", completed: true, rebuiltRows: 26, skippedRows: 0 } });
+  const result = await applySupplierImportFormat("hotel-a", "job", { expectedMappingRevision: 2, requestId: "original-format-request" });
+  expect(result.completed).toBe(true);
+  expect(mocks.callable).toHaveBeenCalledWith("applyHotelSupplierImportFormat", { hotelUid: "hotel-a", jobId: "job", expectedMappingRevision: 2, requestId: "original-format-request" });
+});
+it("saves a reviewed column interpretation without requiring purchase-unit mappings", async () => {
+  const interpretation = { version: 1, header: ["Article", "Unit price"], sheetName: null, columns: { supplierSku: 0, pricePerPurchaseUnit: 1 }, defaults: { pricingModel: "Per Purchase Unit", currency: "EUR" }, assortmentMode: "partial", documentPurpose: "price-list", decimalSeparator: ".", dateFormat: "YYYY-MM-DD" };
+  mocks.callable.mockImplementationOnce(async (_name, input) => ({ data: { hotelUid: "hotel-a", supplierId: "supplier", sourceFormat: "csv", profileId: "default", version: 1, revision: 1, mappings: [], suggestions: [], interpretation: input.interpretation, requestId: input.requestId } }));
+  const result = await saveSupplierPurchaseUnitMappings("hotel-a", "supplier", "csv", "default", 0, [], { interpretation });
+  expect(result.interpretation.columns.supplierSku).toBe(0);
+  expect(mocks.callable.mock.calls[0][1].mappings).toEqual([]);
+  expect(mocks.callable.mock.calls[0][1].interpretation.documentPurpose).toBe("price-list");
 });

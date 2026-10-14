@@ -4,6 +4,7 @@ const { requireDocumentId } = require("./subscriptions");
 const { digest, revision } = require("./validation");
 const { requireHotelPermission } = require("./authorization");
 const { gated } = require("./saasRollout");
+const recurring = require("./supplierRecurringReview");
 
 const REVIEW_VERSION = 1;
 const MAX_REVIEW_BATCH = 25;
@@ -35,6 +36,12 @@ function bulkEligible(row) {
   // Inactive, unlinked draft products are an explicit safe storage mode. Price,
   // conversion, source and inferred-contract warnings still require individual
   // review, rather than a model confidence score authorizing a bulk write.
+  const detail = recurring.recurringReview(row);
+  // Confirmed recurring formats permit group decisions only for unchanged
+  // confirmations and factual price changes to existing offers. New identities,
+  // package changes and unknown interpretation need an individual decision.
+  if (row.sourceInterpretation && (!row.previousProduct || !["price-change", "confirmation"].includes(detail.category)
+    || row.sourceInterpretation.status !== "confirmed" || !detail.confirmsUnitPrice || !detail.physicalPriceComparison.comparable)) return false;
   return canApprove(row) && !(row.issues || []).some((issue) => issue.severity === "warning"
     && !["inactive-new-offer", "unlinked"].includes(issue.code))
     && !(row.normalizationFindings || []).some((finding) => ["inference", "approved-name-expansion"].includes(finding.provenance));
@@ -90,13 +97,14 @@ function indexRow(row) {
     failed: !row.committed && row.lastOutcome?.status === "blocked", sourceUnit,
     purchaseUnit: row.product?.purchaseUnit ?? null,
     purchaseUnitMapping: row.purchaseUnitMapping ?? null,
+    recurringReview: recurring.recurringReview(row),
     humanPurchaseUnit: Object.hasOwn(row.userPatch || {}, "purchaseUnit") };
 }
 function writeIndex(tx, db, hotelUid, jobId, row) {
   tx.set(db.doc(`${jobPath(hotelUid, jobId)}/reviewIndex/${row.rowId}`), indexRow(row));
 }
 function publicIndex(row) {
-  return Object.fromEntries(["rowId", "reviewRevision", "category", "requiresUpdate", "name", "sku", "reviewStatus", "committedStatus", "needsAttention", "bulkEligible", "canApprove", "failed", "sourceUnit", "purchaseUnit", "humanPurchaseUnit"].map((key) => [key, row[key] ?? null]));
+  return Object.fromEntries(["rowId", "reviewRevision", "category", "requiresUpdate", "name", "sku", "reviewStatus", "committedStatus", "needsAttention", "bulkEligible", "canApprove", "failed", "sourceUnit", "purchaseUnit", "humanPurchaseUnit", "recurringReview"].map((key) => [key, row[key] ?? null]));
 }
 function validateIndex(entries, job) {
   if (entries.length !== job.totalRows || entries.some((row, index) => row.rowId !== `r-${String(index + 1).padStart(6, "0")}` || !Number.isSafeInteger(row.reviewRevision)
@@ -142,6 +150,9 @@ function requireWorkspaceJob(snapshot, now, actorUid, allowCompleted = true) {
   if (job.importReviewVersion !== REVIEW_VERSION) throw new HttpsError("failed-precondition", "This legacy draft uses the original review dialog. Start a new import for the guided review workspace.");
   validateReviewState(job.reviewState, job.totalRows);
   return job;
+}
+function requireSettledFormat(job) {
+  if (job.formatApplication && job.formatApplication.complete !== true) throw new HttpsError("failed-precondition", "Finish applying the confirmed supplier format before reviewing or applying products.");
 }
 async function requireRowAuthority(db, request, hotelUid, tx, services, row) {
   if (row.previousProduct || row.committed?.status === "updated") await requireHotelPermission(db, request, hotelUid, "supplierproducts", "update", tx, services.auth);
@@ -220,15 +231,28 @@ async function readHotelSupplierAiImportWorkspaceHandler(request, services = {})
     if (documents.some((doc) => !doc.exists)) throw new HttpsError("failed-precondition", "An indexed review row is unavailable.");
     const rows = documents.map((doc, index) => {
       const row = doc.data();
-      if (digest(indexRow(row)) !== digest(selected[index])) throw new HttpsError("failed-precondition", "The row and review index disagree. Refresh this import.");
+      const expectedIndex = indexRow(row);
+      // Saved pre-extension indexes remain valid without re-running extraction.
+      if (!Object.hasOwn(selected[index], "recurringReview")) delete expectedIndex.recurringReview;
+      if (digest(expectedIndex) !== digest(selected[index])) throw new HttpsError("failed-precondition", "The row and review index disagree. Refresh this import.");
       return internals().publicRow(row);
     });
+    const offers = await tx.get(db.collection(`hotels/${hotelUid}/supplierproducts`).where("supplierId", "==", job.supplierId).limit(MAX_WORKSPACE_ROWS + 1));
+    const importedSkus = new Set(index.map((entry) => entry.sku).filter(Boolean));
+    const missing = offers.docs.filter((doc) => doc.data().archived !== true && !importedSkus.has(doc.data().supplierSku));
+    const completeAssortment = offers.docs.length <= MAX_WORKSPACE_ROWS;
+    const assortmentSummary = { mode: job.sourceInterpretation?.assortmentMode ?? job.importSettings?.assortmentMode ?? "unknown",
+      missingOfferCount: completeAssortment ? missing.length : null, complete: completeAssortment,
+      missingOffers: missing.slice(0, 20).map((doc) => ({ productId: doc.id, supplierSku: doc.data().supplierSku ?? null, supplierProductName: doc.data().supplierProductName ?? null })),
+      policy: "preserve-existing" };
     return { hotelUid, jobId, supplierId: job.supplierId, status: job.status, importReviewVersion: REVIEW_VERSION,
       totalRows: job.totalRows, counts: job.counts, ...publicReviewCounts(job.reviewState, job.totalRows), rows,
       ...(input.includeIndex !== false ? { index: index.map(publicIndex) } : {}),
       nextCursor: !focus && filtered.length > limit ? selected.at(-1).rowId : null,
       summary: require("./supplierAiImports").publicJob(job).summary,
       sourceFormat: job.purchaseUnitMappingSnapshot?.sourceFormat ?? job.fileName?.split(".").at(-1)?.toLowerCase() ?? null, profileId: job.purchaseUnitMappingSnapshot?.profileId ?? "default",
+      sourceInterpretation: job.sourceInterpretation ?? null, sourceFormatCandidate: job.sourceFormatCandidate ?? null, assortmentSummary,
+      formatApplication: job.formatApplication ?? null,
       ...mappingGroups(index) };
   });
 }
@@ -242,6 +266,7 @@ async function decideHotelSupplierAiImportRowsHandler(request, services = {}) {
   return db.runTransaction(async (tx) => {
     await internals().requireReviewAuthority(db, request, hotelUid, tx, services);
     const job = requireWorkspaceJob(await tx.get(db.doc(root)), services.now?.() ?? Date.now(), request.auth.uid);
+    requireSettledFormat(job);
     const receipt = await tx.get(receiptRef);
     const snapshots = await Promise.all(rows.map((selection) => tx.get(db.doc(`${root}/rows/${selection.rowId}`))));
     for (const snapshot of snapshots) {
@@ -293,6 +318,7 @@ async function completeHotelSupplierAiImportReviewHandler(request, services = {}
   return db.runTransaction(async (tx) => {
     await internals().requireReviewAuthority(db, request, hotelUid, tx, services);
     const job = requireWorkspaceJob(await tx.get(db.doc(root)), services.now?.() ?? Date.now(), request.auth.uid);
+    requireSettledFormat(job);
     const receipt = await tx.get(receiptRef);
     const snapshot = await tx.get(db.collection(`${root}/reviewIndex`).orderBy(admin.firestore.FieldPath.documentId()).limit(MAX_WORKSPACE_ROWS + 1));
     const index = validateIndex(snapshot.docs.map((doc) => doc.data()), job);
@@ -324,6 +350,7 @@ async function applyHotelSupplierAiImportMappingHandler(request, services = {}) 
     await internals().requireReviewAuthority(db, request, hotelUid, tx, services);
     await requireHotelPermission(db, request, hotelUid, "suppliers", "read", tx, services.auth);
     const job = requireWorkspaceJob(await tx.get(db.doc(root)), services.now?.() ?? Date.now(), request.auth.uid);
+    requireSettledFormat(job);
     const scope = mappings.mappingScope({ supplierId: job.supplierId,
       sourceFormat: job.purchaseUnitMappingSnapshot?.sourceFormat ?? job.fileName?.split(".").at(-1)?.toLowerCase(),
       profileId: job.purchaseUnitMappingSnapshot?.profileId ?? "default" });
@@ -359,8 +386,9 @@ async function applyHotelSupplierAiImportMappingHandler(request, services = {}) 
       }
       try {
         if (row.reviewRevision !== selection.reviewRevision) throw new HttpsError("aborted", "This product changed. Refresh before applying the mapping.");
-        const raw = { ...Object.fromEntries(internals().RAW_FIELDS.map((field) => [field, null])), ...row.inputPatch,
+        const raw = { ...Object.fromEntries(internals().RAW_FIELDS.map((field) => [field, null])), ...(row.sourceInput || row.inputPatch),
           sourceAnchors: row.sourceAnchors, sourceEvidenceIssues: row.sourceEvidenceIssues || [],
+          sourceInterpretation: row.sourceInterpretation ?? null,
           originalInput: row.originalInput ?? null, purchaseUnitMapping: row.purchaseUnitMapping ?? null,
           ...(row.normalizationVersion === 2 ? { normalizationVersion: 2, originalInput: row.originalInput,
             normalizationFindings: row.normalizationFindings, packInference: row.packInference, purchaseUnitMapping: row.purchaseUnitMapping } : {}) };
@@ -375,8 +403,9 @@ async function applyHotelSupplierAiImportMappingHandler(request, services = {}) 
           if (!current.exists) throw new HttpsError("aborted", "The existing supplier product was removed. Start a new import.");
           previous = current.data(); productId = row.productId;
         }
+        const previousPriceAgreement = await internals().loadPreviousPriceAgreement((ref) => tx.get(ref), db, hotelUid, productId, previous, mapped, userPatch);
         const next = internals().buildSupplierAiCandidate({ hotelUid, jobId, supplierId: job.supplierId, rowIndex: row.rowIndex,
-          raw: mapped, previous, productId, userPatch, reviewRevision: row.reviewRevision + 1,
+          raw: mapped, previous, productId, previousPriceAgreement, userPatch, reviewRevision: row.reviewRevision + 1,
           duplicate: duplicates.docs.some((doc) => doc.id !== row.rowId), ambiguous: matches.length > 1 });
         await internals().validateReferences((ref) => tx.get(ref), db, hotelUid, next);
         next.review = { status: "pending", reviewRevision: next.reviewRevision }; next.lastOutcome = null;
@@ -414,12 +443,159 @@ async function applyHotelSupplierAiImportMappingHandler(request, services = {}) 
   });
 }
 
+async function applyHotelSupplierImportFormatHandler(request, services = {}) {
+  const input = request.data || {};
+  object(input, ["hotelUid", "jobId", "requestId", "expectedMappingRevision"], "supplier format application");
+  const hotelUid = requireDocumentId(input.hotelUid, "hotelUid"), jobId = requireDocumentId(input.jobId, "jobId"), requestId = requireDocumentId(input.requestId, "requestId");
+  const expectedMappingRevision = revision(input.expectedMappingRevision), db = services.firestore || admin.firestore();
+  const mappings = require("./supplierImportMappings"), formats = require("./supplierImportFormat"), root = jobPath(hotelUid, jobId);
+  const operationId = `t-${digest(request.auth?.uid, requestId).slice(0, 48)}`, operationRef = db.doc(`${root}/reviewOperations/${operationId}`);
+  const fingerprint = digest(hotelUid, jobId, expectedMappingRevision), jobRef = db.doc(root);
+  const preparation = await db.runTransaction(async (tx) => {
+    await internals().requireReviewAuthority(db, request, hotelUid, tx, services);
+    await requireHotelPermission(db, request, hotelUid, "suppliers", "read", tx, services.auth);
+    const job = requireWorkspaceJob(await tx.get(jobRef), services.now?.() ?? Date.now(), request.auth.uid);
+    const receipt = await tx.get(operationRef);
+    if (receipt.exists && receipt.data().fingerprint !== fingerprint) throw new HttpsError("already-exists", "This format request was used with different details.");
+    if (receipt.data()?.requiresUpdate) await requireHotelPermission(db, request, hotelUid, "supplierproducts", "update", tx, services.auth);
+    if (receipt.data()?.complete) return { result: receipt.data().result };
+    if (job.status !== "review") throw new HttpsError("failed-precondition", "A completed import cannot receive a new source interpretation.");
+    if (job.formatApplication?.complete === false && job.formatApplication.operationId !== operationId) {
+      throw new HttpsError("failed-precondition", "Resume the saved format application before starting another one.");
+    }
+    const scope = mappings.mappingScope({ supplierId: job.supplierId, sourceFormat: job.purchaseUnitMappingSnapshot?.sourceFormat,
+      profileId: job.purchaseUnitMappingSnapshot?.profileId ?? "default" });
+    const profile = receipt.exists ? null : await tx.get(mappings.mappingProfileRef(db, hotelUid, scope));
+    const snapshot = mappings.mappingSnapshot(receipt.exists ? receipt.data().profileSnapshot : profile.exists ? profile.data() : null, scope);
+    if (receipt.exists && digest(snapshot) !== receipt.data().profileFingerprint) throw new HttpsError("failed-precondition", "The saved supplier format snapshot is unavailable or inconsistent.");
+    if (snapshot.revision !== expectedMappingRevision || !snapshot.interpretation) throw new HttpsError("aborted", "The confirmed supplier format changed. Refresh before applying it.");
+    if (!job.sourceFormatCandidate || !job.sourceFormatObject || job.sourceFormatObject.path !== `private/supplier-ai-imports/${hotelUid}/${jobId}/source-format.json`) {
+      throw new HttpsError("failed-precondition", "This import has no pinned structured source. Start a new import with the confirmed profile.");
+    }
+    const tableFingerprint = mappings.tableFingerprint(snapshot.interpretation.header.map((value) => value.trim()), snapshot.interpretation.sheetName, scope.sourceFormat);
+    if (tableFingerprint !== job.sourceFormatCandidate.formatFingerprint) throw new HttpsError("failed-precondition", "The confirmed profile describes a different table. Review this file's actual columns.");
+    return { job, scope, snapshot };
+  });
+  if (preparation.result) return preparation.result;
+  const bucket = services.bucket || admin.storage().bucket();
+  const source = JSON.parse((await require("./supplierAiImports").readPrivate(bucket, preparation.job.sourceFormatObject, 2 * 1024 * 1024)).toString("utf8"));
+  if (source.sourceSha256 !== preparation.job.source?.sha256 || source.format !== preparation.scope.sourceFormat) {
+    throw new HttpsError("failed-precondition", "The structured source does not match this import's uploaded file.");
+  }
+  const parsed = formats.interpretSupplierSourceRows(source, preparation.snapshot, { importSettings: preparation.job.importSettings || {} });
+  if (parsed.sourceInterpretation.status !== "confirmed" || parsed.rows.length !== preparation.job.totalRows) {
+    throw new HttpsError("failed-precondition", "The confirmed format changes the number of source articles. Start a new import so every article can be reviewed.");
+  }
+  const profileFingerprint = digest(preparation.snapshot), sourceFingerprint = digest(preparation.job.sourceFormatObject);
+  const frequencies = new Map();
+  for (const row of parsed.rows) if (row.supplierSku) frequencies.set(row.supplierSku, (frequencies.get(row.supplierSku) || 0) + 1);
+  for (let batch = 0; batch <= Math.ceil(MAX_WORKSPACE_ROWS / MAX_REVIEW_BATCH); batch++) {
+    const result = await db.runTransaction(async (tx) => {
+      await internals().requireReviewAuthority(db, request, hotelUid, tx, services);
+      await requireHotelPermission(db, request, hotelUid, "suppliers", "read", tx, services.auth);
+      const job = requireWorkspaceJob(await tx.get(jobRef), services.now?.() ?? Date.now(), request.auth.uid);
+      const receipt = await tx.get(operationRef);
+      const profile = receipt.exists ? null : await tx.get(mappings.mappingProfileRef(db, hotelUid, preparation.scope));
+      const snapshot = mappings.mappingSnapshot(receipt.exists ? receipt.data().profileSnapshot : profile.exists ? profile.data() : null, preparation.scope);
+      if (digest(snapshot) !== profileFingerprint || digest(job.sourceFormatObject) !== sourceFingerprint) throw new HttpsError("aborted", "The confirmed format or source changed during application. Start a new import with the current profile; the original review is preserved.");
+      let operation = receipt.exists ? receipt.data() : null;
+      if (operation?.fingerprint !== fingerprint && operation) throw new HttpsError("already-exists", "This format request was used with different details.");
+      if (operation?.requiresUpdate) await requireHotelPermission(db, request, hotelUid, "supplierproducts", "update", tx, services.auth);
+      if (operation?.complete) return operation.result;
+      if (job.status !== "review" || job.formatApplication?.complete === false && job.formatApplication.operationId !== operationId) throw new HttpsError("failed-precondition", "This import cannot apply the requested format.");
+      let reconciliation = job.reconciliation || {}, summaryAccumulator = reconciliation.summaryAccumulator;
+      if (!operation) {
+        const all = await tx.get(db.collection(`${root}/rows`).orderBy(admin.firestore.FieldPath.documentId()).limit(MAX_WORKSPACE_ROWS + 1));
+        if (all.docs.length !== job.totalRows) throw new HttpsError("failed-precondition", "The complete source review rows are unavailable.");
+        // Model output order is not source identity. Keep each saved correction
+        // attached to its exact source row when deterministic columns replace
+        // an initial interpretation, or require a fresh import if ambiguous.
+        const sources = new Map();
+        parsed.rows.forEach((row, index) => {
+          for (const anchor of row.sourceAnchors || []) {
+            const indexes = sources.get(anchor.sourceId) || new Set(); indexes.add(index); sources.set(anchor.sourceId, indexes);
+          }
+        });
+        const rowSourceIndexes = all.docs.map((doc, index) => {
+          const row = doc.data(), expectedId = `r-${String(index + 1).padStart(6, "0")}`;
+          if (doc.id !== expectedId || row.rowId !== expectedId || row.rowIndex !== index) throw new HttpsError("failed-precondition", "The complete source review row identities are invalid.");
+          const matches = new Set((row.sourceAnchors || []).flatMap((anchor) => [...(sources.get(anchor.sourceId) || [])]));
+          if (matches.size !== 1) throw new HttpsError("failed-precondition", "An original proposal cannot be linked to exactly one source article. Start a new import with the confirmed format.");
+          return [...matches][0];
+        });
+        if (new Set(rowSourceIndexes).size !== job.totalRows) throw new HttpsError("failed-precondition", "The original proposals do not cover every source article exactly once. Start a new import with the confirmed format.");
+        const requiresUpdate = all.docs.some((doc) => Boolean(doc.data().previousProduct));
+        if (requiresUpdate) await requireHotelPermission(db, request, hotelUid, "supplierproducts", "update", tx, services.auth);
+        if (!summaryAccumulator) {
+          summaryAccumulator = all.docs.reduce((state, doc) => internals().adjustSummaryAccumulator(state, doc.data()), internals().emptySummaryAccumulator());
+        }
+        operation = { fingerprint, profileFingerprint, profileSnapshot: snapshot, sourceFingerprint, requiresUpdate, rowSourceIndexes,
+          processed: 0, rebuiltRows: 0, skippedRows: 0, complete: false, actorUid: request.auth.uid, createdAt: stamp() };
+      }
+      if (operation.profileFingerprint !== profileFingerprint || operation.sourceFingerprint !== sourceFingerprint) throw new HttpsError("aborted", "The saved format application no longer matches the source or profile.");
+      if (!Array.isArray(operation.rowSourceIndexes) || operation.rowSourceIndexes.length !== job.totalRows
+        || operation.rowSourceIndexes.some((index) => !Number.isSafeInteger(index) || index < 0 || index >= job.totalRows)
+        || new Set(operation.rowSourceIndexes).size !== job.totalRows) throw new HttpsError("failed-precondition", "The saved source row associations are invalid.");
+      const start = operation.processed, end = Math.min(start + MAX_REVIEW_BATCH, job.totalRows);
+      const documents = await Promise.all(parsed.rows.slice(start, end).map((_, offset) => tx.get(db.doc(`${root}/rows/r-${String(start + offset + 1).padStart(6, "0")}`))));
+      let state = job.reviewState, counts = { ...job.counts }, rebuiltRows = operation.rebuiltRows, skippedRows = operation.skippedRows;
+      const updates = [];
+      for (let offset = 0; offset < documents.length; offset++) {
+        const document = documents[offset];
+        if (!document.exists) throw new HttpsError("failed-precondition", "A source review row is unavailable.");
+        const row = document.data();
+        await requireRowAuthority(db, request, hotelUid, tx, services, row);
+        if (row.committed || reviewStatus(row) === "skipped") { skippedRows++; continue; }
+        const raw = parsed.rows[operation.rowSourceIndexes[start + offset]], userPatch = row.userPatch || {}, sku = userPatch.supplierSku ?? raw.supplierSku;
+        const matches = await internals().matchesForSku((ref) => tx.get(ref), db, hotelUid, job.supplierId, sku);
+        let previous = matches.length === 1 ? matches[0].data() : null, productId = matches.length === 1 ? matches[0].id : null;
+        if (previous) await requireHotelPermission(db, request, hotelUid, "supplierproducts", "update", tx, services.auth);
+        if (row.previousProduct) {
+          const current = await tx.get(db.doc(`hotels/${hotelUid}/supplierproducts/${row.productId}`));
+          if (!current.exists) throw new HttpsError("aborted", "An existing offer was removed. Start a new import.");
+          previous = current.data(); productId = row.productId;
+        }
+        const previousPriceAgreement = await internals().loadPreviousPriceAgreement((ref) => tx.get(ref), db, hotelUid, productId, previous, raw, userPatch);
+        const next = internals().buildSupplierAiCandidate({ hotelUid, jobId, supplierId: job.supplierId, rowIndex: row.rowIndex, raw, previous, productId, previousPriceAgreement,
+          userPatch, reviewRevision: row.reviewRevision + 1, duplicate: frequencies.get(sku) > 1, ambiguous: matches.length > 1 });
+        await internals().validateReferences((ref) => tx.get(ref), db, hotelUid, next);
+        next.review = { status: "pending", reviewRevision: next.reviewRevision }; next.lastOutcome = null;
+        next.createdAt = row.createdAt; next.updatedAt = stamp(); next.correctedBy = request.auth.uid;
+        if (counts[row.category] < 1) throw new HttpsError("failed-precondition", "The import category counts do not reconcile.");
+        counts[row.category]--; counts[next.category]++;
+        state = adjustReviewState(adjustReviewState(state, row, -1), next);
+        summaryAccumulator = internals().adjustSummaryAccumulator(internals().adjustSummaryAccumulator(summaryAccumulator, row, -1), next);
+        rebuiltRows++; updates.push(next);
+      }
+      validateReviewState(state, job.totalRows);
+      const complete = end === job.totalRows, result = { hotelUid, jobId, rebuiltRows, skippedRows, completed: complete };
+      for (const row of updates) {
+        tx.set(db.doc(`${root}/rows/${row.rowId}`), row); writeIndex(tx, db, hotelUid, jobId, row);
+        tx.create(db.doc(`hotels/${hotelUid}/productAudit/ai-format-${digest(jobId, requestId, row.rowId).slice(0, 40)}`), {
+          action: "ai-import-format-application", jobId, rowId: row.rowId, actorUid: request.auth.uid,
+          profileRevision: snapshot.revision, interpretationFingerprint: snapshot.interpretationFingerprint, reviewRevision: row.reviewRevision, createdAt: stamp() });
+      }
+      tx.set(operationRef, { ...operation, requiresUpdate: operation.requiresUpdate || updates.some((row) => Boolean(row.previousProduct)),
+        processed: end, rebuiltRows, skippedRows, complete, result, updatedAt: stamp() });
+      reconciliation = { ...reconciliation, summaryAccumulator };
+      tx.set(jobRef, { ...job, counts, reviewState: state, reconciliation, summary: internals().publicSummary(summaryAccumulator, job.totalRows),
+        formatApplication: { operationId, requestId, complete, processed: end, totalRows: job.totalRows, profileRevision: snapshot.revision },
+        ...(complete ? { purchaseUnitMappingSnapshot: snapshot, sourceInterpretation: parsed.sourceInterpretation, sourceFormatCandidate: parsed.sourceFormatCandidate } : {}), updatedAt: stamp() });
+      return result;
+    });
+    if (result.completed) return result;
+  }
+  throw new HttpsError("aborted", "The confirmed format application is incomplete. Resume the same request to continue from its saved progress.");
+}
+
 const options = { region: "us-central1", cors: true, timeoutSeconds: 120 };
 const readHotelSupplierAiImportWorkspace = onCall(options, gated(readHotelSupplierAiImportWorkspaceHandler));
 const decideHotelSupplierAiImportRows = onCall(options, gated(decideHotelSupplierAiImportRowsHandler));
 const completeHotelSupplierAiImportReview = onCall(options, gated(completeHotelSupplierAiImportReviewHandler));
 const applyHotelSupplierAiImportMapping = onCall(options, gated(applyHotelSupplierAiImportMappingHandler));
+const applyHotelSupplierImportFormat = onCall(options, gated(applyHotelSupplierImportFormatHandler));
 module.exports = { REVIEW_VERSION, MAX_REVIEW_BATCH, emptyReviewState, adjustReviewState, validateReviewState, publicReviewCounts,
-  reviewStatus, canApprove, bulkEligible, publicReview, indexRow, writeIndex,
+  reviewStatus, canApprove, bulkEligible, publicReview, indexRow, writeIndex, requireSettledFormat,
   readHotelSupplierAiImportWorkspaceHandler, decideHotelSupplierAiImportRowsHandler, completeHotelSupplierAiImportReviewHandler, applyHotelSupplierAiImportMappingHandler,
+  applyHotelSupplierImportFormatHandler, applyHotelSupplierImportFormat,
   readHotelSupplierAiImportWorkspace, decideHotelSupplierAiImportRows, completeHotelSupplierAiImportReview, applyHotelSupplierAiImportMapping };

@@ -14,8 +14,8 @@ function fixture(product = offer(), catalog = { name: "Milk", baseUnit: "l", inv
     "hotels/a/supplierproducts/milk-vendor": product, "hotels/a/catalogproducts/milk": catalog,
     "hotels/a/suppliers/vendor": { name: "Vendor" }, "hotels/a/outlets/kitchen": { name: "Kitchen" },
   }));
-  const db = { doc: (path) => ({ path }) };
-  const tx = { getAll: async (...refs) => refs.map((ref) => ({ id: ref.path.split("/").at(-1), exists: records.has(ref.path), data: () => records.get(ref.path) })) };
+  const db = { doc: (path) => ({ path }), collection: (path) => ({ path, limit: () => ({ path }) }) };
+  const tx = { get: async () => ({ docs: [] }), getAll: async (...refs) => refs.map((ref) => ({ id: ref.path.split("/").at(-1), exists: records.has(ref.path), data: () => records.get(ref.path) })) };
   return { db, tx, records };
 }
 const input = (purchaseOptionId = "default", quantity = 1) => ({ supplierProductId: "milk-vendor", outletId: "kitchen", purchaseOptionId, qtyPurchaseUnits: quantity });

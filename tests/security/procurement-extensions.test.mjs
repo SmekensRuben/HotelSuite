@@ -14,6 +14,9 @@ const { SAAS_RULES_VERSION } = require("../../functions/src/saasRollout");
 const { getHotelStockCountPackageOptionsHandler } = require("../../functions/src/stockCountPackages");
 const { mutateHotelSupplierProductHandler } = require("../../functions/src/products");
 const { getHotelSupplierPriceInsightsHandler } = require("../../functions/src/supplierPriceInsights");
+const { resolveSupplierPriceVersion, purchaseTerms } = require("../../functions/src/supplierPriceVersions");
+const { pricingTerms } = require("../../functions/src/supplierPricePolicy");
+const { digest } = require("../../functions/src/validation");
 const { recordHotelInventoryAdjustmentHandler, reverseHotelInventoryAdjustmentHandler, listHotelInventoryAdjustmentsHandler } = require("../../functions/src/inventoryAdjustments");
 const { requireHotelImportTarget } = require("../../functions/src/fileImportTypes");
 const db = admin.firestore(), auth = admin.auth();
@@ -57,7 +60,9 @@ after(async () => environment.cleanup());
 
 describe("procurement extensions with ordinary hotel users and actual Firestore transactions", () => {
   it("private histories and movement evidence reject client read/create/update/delete including platform administrators", async () => {
-    const paths = ["supplierPriceHistory/offer/entries/0000000001", "inventoryAdjustments/event", "inventoryAdjustmentOperations/command", "inventoryAdjustmentReversals/reversal", "futureServerOnlyEvidence/record"];
+    const paths = ["supplierPriceHistory/offer/entries/0000000001", "supplierPriceVersions/offer/entries/0000000001",
+      "supplierPriceConfirmations/offer/entries/0000000001", "inventoryAdjustments/event", "inventoryAdjustmentOperations/command",
+      "inventoryAdjustmentReversals/reversal", "futureServerOnlyEvidence/record"];
     for (const path of paths) await db.doc(`hotels/hotel-a/${path}`).set({ immutable: true });
     for (const actor of [staff, outsider, platform]) {
       const browser = environment.authenticatedContext(actor.uid, actor.token).firestore();
@@ -67,7 +72,7 @@ describe("procurement extensions with ordinary hotel users and actual Firestore 
         await assertFails(updateDoc(ref, { immutable: false })); await assertFails(deleteDoc(ref));
       }
     }
-    for (const path of paths.slice(0, 4)) assert.throws(() => requireHotelImportTarget(`hotels/hotel-a/${path}`, "hotel-a"));
+    for (const path of paths.slice(0, -1)) assert.throws(() => requireHotelImportTarget(`hotels/hotel-a/${path}`, "hotel-a"));
     assert.equal(SAAS_RULES_VERSION, "saas-platform-v6", "The reviewed stock-point policy requires protected outlet and location commands.");
   });
   it("ordinary counters get exact package quantities without catalog, supplier or price access", async () => {
@@ -79,6 +84,48 @@ describe("procurement extensions with ordinary hotel users and actual Firestore 
     await deny(getHotelStockCountPackageOptionsHandler(request({ ...input, hotelUid: "hotel-b" }), services), "permission-denied");
     await db.doc(`hotels/hotel-a/members/${staff.uid}`).update({ permissions: ["stockcounts.read"] });
     await deny(getHotelStockCountPackageOptionsHandler(request(input), services), "permission-denied");
+  });
+  it("count-only users resolve approved dated packages without financial disclosures or changes to frozen count evidence", async () => {
+    await db.doc(`hotels/hotel-a/members/${staff.uid}`).set({ permissions: ["stockcounts.read", "stockcounts.update"] });
+    const timestamp = admin.firestore.Timestamp.fromDate(new Date("2026-10-05T12:00:00Z"));
+    const version = (hotelUid, id, revision, patch = {}) => {
+      const product = { ...offer({ pricePerPurchaseUnit: 1299, priceValidFrom: "2026-10-01", priceValidUntil: "2026-10-31", ...patch }), productPolicyVersion: 1 };
+      const terms = pricingTerms(product, { baseUnit: "l" });
+      return { hotelUid, id, supplierPriceVersionPolicyVersion: 1, supplierProductId: "offer", supplierId: "drinks", revision,
+        termsFingerprint: digest(terms), terms, productTerms: purchaseTerms(product), approvedAt: timestamp,
+        sourceKind: "supplier-list", sourceReference: "PRIVATE supplier agreement.xlsx", sourceIssuedOn: "2026-10-05",
+        lastPriceChangeAt: timestamp, optionReliability: {} };
+    };
+    const currentId = "0000000000000001", futureId = "0000000000000002";
+    const protectedRefs = [db.doc(`hotels/hotel-a/supplierPriceVersions/offer/entries/${currentId}`),
+      db.doc(`hotels/hotel-a/supplierPriceVersions/offer/entries/${futureId}`),
+      db.doc(`hotels/hotel-a/supplierPriceConfirmations/offer/entries/${currentId}`)];
+    await protectedRefs[0].set(version("hotel-a", currentId, 1));
+    await protectedRefs[1].set(version("hotel-a", futureId, 2, { priceValidFrom: "2026-11-01", priceValidUntil: "2026-11-15",
+      baseUnitsPerPurchaseUnit: 3000, pricePerPurchaseUnit: 4999, currency: "USD", vatRate: 0.21,
+      purchaseOptions: [{ id: "bottle", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 500, pricePerPurchaseUnit: 333 }] }));
+    await protectedRefs[2].set({ supplierPriceVersionPolicyVersion: 1, supplierProductId: "offer", versionId: currentId, revision: 1,
+      confirmedOptionIds: ["default"], confirmedAt: timestamp, sourceReference: "PRIVATE price confirmation.xlsx", sourceIssuedOn: "2026-10-05" });
+    await db.doc(`hotels/hotel-b/supplierPriceVersions/offer/entries/${currentId}`).set(version("hotel-b", currentId, 1, { baseUnitsPerPurchaseUnit: 99000 }));
+    const countRefs = [db.doc("hotels/hotel-a/stockCounts/count"), db.doc("hotels/hotel-a/stockCounts/count/locations/store")];
+    const productRef = db.doc("hotels/hotel-a/supplierproducts/offer"), input = { hotelUid: "hotel-a", stockCountId: "count", locationId: "store", catalogProductId: "juice" };
+    for (const [businessDate, expected] of [["2026-10-10", [6]], ["2026-11-01", [3, 0.5]], ["2026-11-20", [3, 0.5]]]) {
+      await Promise.all(countRefs.map((reference) => reference.update({ businessDate })));
+      const refs = [...countRefs, productRef, ...protectedRefs], before = await db.getAll(...refs);
+      const response = await getHotelStockCountPackageOptionsHandler(request(input), services);
+      assert.deepEqual(response.options.map((option) => option.catalogUnitsPerPackage), expected, businessDate);
+      assert.equal(response.catalogBaseUnit, "l");
+      assert.doesNotMatch(JSON.stringify(response), /price|source|confirmation|currency|vat|PRIVATE|USD|1299|4999|333/i);
+      const after = await db.getAll(...refs);
+      after.forEach((snapshot, index) => {
+        assert.deepEqual(snapshot.data(), before[index].data());
+        assert.equal(snapshot.updateTime.isEqual(before[index].updateTime), true);
+      });
+    }
+    const browser = environment.authenticatedContext(staff.uid, staff.token).firestore();
+    for (const reference of [...protectedRefs, productRef]) await assertFails(getDoc(doc(browser, reference.path)));
+    await deny(getHotelStockCountPackageOptionsHandler(request({ ...input, hotelUid: "hotel-b" }), services), "permission-denied");
+    await deny(getHotelSupplierPriceInsightsHandler(request({ hotelUid: "hotel-a", mode: "history", supplierProductId: "offer" }), services), "permission-denied");
   });
   it("transfers and compensating reversals preserve both frozen legs with separate supervisor authority", async () => {
     const input = transferInput(), first = await recordHotelInventoryAdjustmentHandler(request(input), services);
@@ -122,5 +169,54 @@ describe("procurement extensions with ordinary hotel users and actual Firestore 
     assert.equal(prices.products[0].options[0].catalogUnitsPerPurchaseUnit, 6);
     assert.equal(prices.products[0].options[0].netPricePerCatalogUnit, 5);
     await deny(getHotelSupplierPriceInsightsHandler(request({ ...input, hotelUid: "hotel-b" }), services), "permission-denied");
+  });
+  it("approved price projections recheck hotel, all read grants, subscription and current account on every request", async () => {
+    const grants = ["catalogproducts.read", "supplierproducts.read", "suppliers.read", "supplierproducts.update"];
+    const member = db.doc(`hotels/hotel-a/members/${staff.uid}`);
+    await member.update({ permissions: grants });
+    await mutateHotelSupplierProductHandler(request({ hotelUid: "hotel-a", action: "update", productId: "offer",
+      expectedRevision: 0, requestId: next(), product: offer({ pricePerPurchaseUnit: 31.8 }) }), services);
+    const input = { hotelUid: "hotel-a", mode: "history", supplierProductId: "offer" };
+    assert.equal((await getHotelSupplierPriceInsightsHandler(request(input), services)).entries.length, 1);
+    for (const actor of [outsider, platform]) await deny(getHotelSupplierPriceInsightsHandler(request(input, actor), services), "permission-denied");
+    for (const missing of ["catalogproducts.read", "supplierproducts.read", "suppliers.read"]) {
+      await member.update({ permissions: grants.filter((permission) => permission !== missing) });
+      await deny(getHotelSupplierPriceInsightsHandler(request(input), services), "permission-denied");
+    }
+    await member.update({ permissions: grants });
+    await db.doc("hotelSubscriptions/hotel-a").update({ status: "canceled" });
+    await deny(getHotelSupplierPriceInsightsHandler(request(input), services), "permission-denied");
+    await db.doc("hotelSubscriptions/hotel-a").update({ status: "active" });
+    await auth.updateUser(staff.uid, { disabled: true });
+    await deny(getHotelSupplierPriceInsightsHandler(request(input), services), "permission-denied");
+    await auth.updateUser(staff.uid, { disabled: false });
+    await member.delete();
+    await deny(getHotelSupplierPriceInsightsHandler(request(input), services), "permission-denied");
+    assert.equal((await db.collection("hotels/hotel-a/supplierPriceHistory/offer/entries").get()).size, 1);
+  });
+  it("future approved prices remain private evidence and leave current and historical financial snapshots unchanged", async () => {
+    await db.doc(`hotels/hotel-a/members/${staff.uid}`).update({ permissions: ["catalogproducts.read", "supplierproducts.read", "suppliers.read", "supplierproducts.update"] });
+    const historic = { status: "Finalized", products: [{ supplierProductId: "offer", pricePerPurchaseUnit: 15.9,
+      netPricePerPurchaseUnit: 15, currency: "EUR", qtyPurchaseUnits: 4 }] };
+    const evidence = { quantity: 24, unitCost: 2.5, value: 60, currency: "EUR" };
+    await db.doc("hotels/hotel-a/orders/historic").set(historic);
+    await db.doc("hotels/hotel-a/inventoryMovements/historic").set(evidence);
+    await mutateHotelSupplierProductHandler(request({ hotelUid: "hotel-a", action: "update", productId: "offer", expectedRevision: 0,
+      requestId: next(), product: offer({ pricePerPurchaseUnit: 31.8, priceValidFrom: "2026-10-01", priceValidUntil: "2026-10-31" }) }), services);
+    const future = { hotelUid: "hotel-a", action: "update", productId: "offer", expectedRevision: 1, requestId: next(),
+      product: offer({ pricePerPurchaseUnit: 47.7, priceValidFrom: "2026-11-01", priceValidUntil: "2026-11-30" }) };
+    await mutateHotelSupplierProductHandler(request(future), services);
+    const product = (await db.doc("hotels/hotel-a/supplierproducts/offer").get()).data();
+    assert.equal(product.pricePerPurchaseUnit, 31.8);
+    const records = await db.collection("hotels/hotel-a/supplierPriceVersions/offer/entries").get();
+    const versions = records.docs.map((document) => ({ ...document.data(), id: document.id }));
+    assert.equal(versions.length, 3, "The legacy starting price is retained as a baseline version.");
+    const selected = resolveSupplierPriceVersion(product, versions, { orderDate: "2026-10-12", deliveryDate: "2026-11-02", pricingDateBasis: "delivery-date" });
+    assert.equal(selected.product.pricePerPurchaseUnit, 47.7); assert.equal(selected.priceValidity, "current");
+    assert.deepEqual((await db.doc("hotels/hotel-a/orders/historic").get()).data(), historic);
+    assert.deepEqual((await db.doc("hotels/hotel-a/inventoryMovements/historic").get()).data(), evidence);
+    await db.doc(`hotels/hotel-a/members/${staff.uid}`).update({ permissions: ["catalogproducts.read", "supplierproducts.read", "suppliers.read"] });
+    await deny(mutateHotelSupplierProductHandler(request(future), services), "permission-denied");
+    assert.equal((await db.collection("hotels/hotel-a/supplierPriceVersions/offer/entries").get()).size, 3);
   });
 });

@@ -23,6 +23,34 @@ function PriceScopeNotice() {
   return <p className="text-sm text-gray-600">Net entered goods prices per catalog unit; VAT is removed once from gross prices. Currencies are compared separately without exchange rates. Freight, deposits, minimum order quantities and other unentered terms are excluded. The lowest goods price is not an automatic supplier recommendation.</p>;
 }
 
+function PriceReliability({ value }) {
+  if (!value) return null;
+  return <section aria-label="Price reliability" className="space-y-3 rounded-xl bg-slate-50 p-4">
+    <div className="grid gap-3 sm:grid-cols-2">
+      <div><p className="text-xs text-gray-500">Last price change</p><p className="text-sm font-medium">{date(value.lastPriceChangeAt)}</p></div>
+      <div><p className="text-xs text-gray-500">Last source-backed price confirmation</p><p className="text-sm font-medium">{date(value.lastPriceConfirmedAt)}</p></div>
+      <div><p className="text-xs text-gray-500">Price source</p><p className="break-words text-sm">{value.sourceReference || "Source reference unknown"}</p><p className="text-xs text-gray-500">Issued {value.sourceIssuedOn || "date unknown"}</p></div>
+      {value.latestConfirmationSourceReference && value.latestConfirmationSourceReference !== value.sourceReference && <div><p className="text-xs text-gray-500">Latest confirmation source</p><p className="break-words text-sm">{value.latestConfirmationSourceReference}</p><p className="text-xs text-gray-500">Issued {value.latestConfirmationSourceIssuedOn || "date unknown"}</p></div>}
+      <div><p className="text-xs text-gray-500">Supplier price agreement</p><p className="text-sm">{value.pricingAgreementKnown ? value.pricingDateBasis === "delivery-date" ? "Delivery date" : "Order date" : "Not recorded — confirm with the supplier"}</p></div>
+    </div>
+    {value.needsReview && <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><p className="font-semibold">Price data needs review</p>
+      <ul className="mt-1 list-disc pl-5">{(value.reasons || []).map((reason) => <li key={reason}>{supplierPriceUnavailableLabel(reason)}</li>)}</ul></div>}
+  </section>;
+}
+function ApprovedPriceVersions({ versions = [], scheduled = false }) {
+  if (!versions.length) return null;
+  return <details open={scheduled || undefined} className="rounded-xl border p-4"><summary className="cursor-pointer text-sm font-semibold">Approved price periods ({versions.length})</summary>
+    <div className="mt-3 space-y-3">{versions.map((version) => <article key={version.id} className="rounded-lg bg-slate-50 p-3 text-sm">
+      <div className="flex flex-wrap justify-between gap-2"><p className="font-medium">{version.observation === "retained-prior-terms" ? "Retained previous terms · approval date unknown" : `Approved ${date(version.approvedAt)}`}</p>
+        <span className={version.priceValidity === "future" ? "font-semibold text-indigo-800" : "text-gray-600"}>{version.priceValidity === "future" ? "Scheduled price" : version.priceValidity === "unknown" ? "Validity unknown" : version.priceValidity === "current" ? "Valid on assessment date" : version.priceValidity === "expired" ? "Expired" : "Validity needs review"}</span></div>
+      <p className="mt-1">From {version.contractualValidFrom || "unknown"} · Until {version.contractualValidUntil || "not specified"}</p>
+      {(version.options || []).map((option) => <p key={option.id} className="mt-1">{option.purchaseUnit || "Purchase option"}: {formatSupplierPrice(option.pricePerPurchaseUnit, version.currency)} / package
+        {option.available && <> · {formatSupplierPrice(option.netPricePerCatalogUnit, version.currency)} net / {version.catalogBaseUnit}</>}</p>)}
+      <p className="mt-2 text-xs text-gray-500">{version.sourceReference || "Source reference unknown"} · Issued {version.sourceIssuedOn || "date unknown"}</p>
+    </article>)}</div>
+  </details>;
+}
+
 export function SupplierPriceComparison({ hotelUid, catalogProductId }) {
   return <Comparison key={`${auth.currentUser?.uid}:${hotelUid}:${catalogProductId}`} hotelUid={hotelUid} catalogProductId={catalogProductId} />;
 }
@@ -76,7 +104,12 @@ function Comparison({ hotelUid, catalogProductId }) {
         <td className="p-3"><p className="font-medium">{row.supplierName || "Supplier name unavailable"}</p><Link className="text-brand-700 underline" to={`/catalog/supplier-products/${row.supplierProductId}`}>{row.name || "Supplier article"}</Link><p className="text-xs text-gray-500">SKU {row.supplierSku || "unknown"}</p></td>
         <td className="p-3"><p>{row.purchaseUnit || "Package unavailable"}</p><p className="text-xs text-gray-500">{row.catalogUnitsPerPurchaseUnit !== null ? `${row.catalogUnitsPerPurchaseUnit} ${catalog?.baseUnit || "catalog units"}` : "Content conversion unavailable"}</p><p className="text-xs text-gray-500">{formatSupplierPrice(row.pricePerPurchaseUnit, row.currency)} entered ({row.priceBasis || "unknown basis"})</p></td>
         <td className="p-3">{row.comparable ? <><p className="font-semibold">{formatSupplierPrice(row.netPricePerCatalogUnit, row.currency)}</p>{row.lowestLoadedPrice && <span className="text-xs text-emerald-700">{incomplete ? "Lowest loaded goods price" : "Lowest entered goods price"}</span>}</> : <p className="text-amber-800">{supplierPriceUnavailableLabel(row.reason)}</p>}</td>
-        <td className="p-3"><p>{date(row.sourcePriceRecordedAt)}</p><p className="text-xs text-gray-500">{validity(row)}</p>{row.priceValidity === "current" && <p className="text-xs text-gray-500">Within the recorded bounds on {assessment?.date || "the assessment date"}</p>}</td>
+        <td className="p-3"><p>Changed {date(row.reliability ? row.reliability.lastPriceChangeAt : row.sourcePriceRecordedAt)}</p>
+          <p className="text-xs text-gray-500">Confirmed {date(row.reliability?.optionReliability?.[row.id]?.lastPriceConfirmedAt)}</p>
+          {row.reliability?.optionReliability?.[row.id]?.confirmationMatchesCurrentTerms === false && <p className="text-xs font-medium text-amber-800">Confirmation applies to previous terms</p>}
+          <p className="text-xs text-gray-500">{validity(row)}</p>
+          {row.reliability?.needsReview && <p className="text-xs font-medium text-amber-800">Price data needs review</p>}
+          {row.scheduledVersionCount > 0 && <p className="text-xs text-indigo-800">{row.scheduledVersionCount} scheduled price {row.scheduledVersionCount === 1 ? "period" : "periods"}</p>}{row.priceValidity === "current" && <p className="text-xs text-gray-500">Within the recorded bounds on {assessment?.date || "the assessment date"}</p>}</td>
       </tr>)}</tbody></table></div>}
       {inactive > 0 && <p className="text-xs text-gray-500">{inactive} inactive, archived or unresolved supplier offer{inactive === 1 ? " is" : "s are"} excluded from current purchasing comparisons.</p>}
       {query.data?.nextProductId && <button type="button" className="rounded-lg border px-4 py-2 text-sm font-semibold" disabled={query.loading} onClick={() => setCursor(query.data.nextProductId)}>Load more supplier offers</button>}
@@ -101,6 +134,8 @@ function History({ hotelUid, supplierProductId }) {
     <h2 className="text-lg font-semibold">Supplier price history</h2>
     {!canRead ? <AccessNotice /> : <>
       <p className="text-sm text-gray-600">Immutable observations start with this feature. Earlier price changes are not reconstructed. Each event freezes its package, catalog unit, currency and VAT basis; existing orders and receipts retain their original terms.</p>
+      <PriceReliability value={query.data?.reliability} />
+      <ApprovedPriceVersions versions={query.data?.versions} scheduled={query.data?.reliability?.hasScheduledVersions} />
       <button type="button" className="rounded-lg border px-4 py-2 text-sm font-semibold" disabled={query.loading} onClick={() => {
         setEntries([]); if (cursor !== null) setCursor(null); else query.retry();
       }}>Refresh price history</button>
@@ -110,7 +145,9 @@ function History({ hotelUid, supplierProductId }) {
       {query.loading && <p role="status" className="text-sm text-gray-600">Loading price history…</p>}
       {!query.loading && !query.error && !entries.length && <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-700">No recorded price-content events yet. Current prices are available in the product details; no historical dates or changes have been invented.</p>}
       <div className="space-y-4">{entries.map((entry) => <article className="rounded-xl border p-4" key={entry.revision}>
-        <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{entry.observation === "initial-create" ? "Initial product terms" : "Price / package terms observed"}</h3><p className="text-sm text-gray-600">{date(entry.observedAt)} · revision {entry.revision}</p></div>
+        <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{entry.observation === "initial-create" ? "Initial product terms" : entry.observation === "price-confirmed" ? "Price confirmed · unchanged terms" : "Price / package terms observed"}</h3><p className="text-sm text-gray-600">{date(entry.observedAt)} · revision {entry.revision}</p></div>
+        {entry.sourceReference && <p className="mt-2 text-xs text-gray-500">Source: {entry.sourceReference} · Issued {entry.sourceIssuedOn || "date unknown"}</p>}
+        {entry.observation === "price-confirmed" && <p className="mt-2 text-xs text-gray-500">An explicit unit price in the reviewed source confirmed these terms. Statistics and documents without current unit prices cannot refresh this confirmation.</p>}
         <div className="mt-3 grid gap-3 md:grid-cols-2">{supplierPriceChanges(entry).map((change, index) => <div key={`${change.id}:${index}`} className="rounded-lg bg-gray-50 p-3 text-sm">
           <p className="font-medium">{change.purchaseUnit || "Unknown purchase option"}</p>
           <p>New: {change.available ? `${formatSupplierPrice(change.netPricePerCatalogUnit, entry.currency)} / ${entry.catalogBaseUnit}` : supplierPriceUnavailableLabel(change.reason)}</p>

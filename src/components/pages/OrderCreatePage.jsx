@@ -18,7 +18,7 @@ import {
   getShoppingCart,
 } from "../../services/firebaseShoppingCarts";
 
-import { productPurchaseOptions, formatPurchasePrice, knownPrice } from "../../utils/productPurchaseOptions";
+import { productPurchaseOptions, formatPurchasePrice, hasApprovedScheduledPrice, canAddPurchaseOptionToDraftCart } from "../../utils/productPurchaseOptions";
 
 const PAGE_SIZE = 20;
 
@@ -165,9 +165,9 @@ function ScopedOrderCreatePage() {
     return {
       ...product, options, purchaseOptionId: option?.id || "", selectedOption: option,
       purchaseUnit: option?.purchaseUnit || "",
-      contentLabel: option ? formatContent({ ...product, ...option }) : "Legacy packages need review",
-      priceLabel: formatPurchasePrice(option, product.currency, product.priceBasis),
-      orderable: product.active !== false && product.archived !== true && Boolean(option?.purchaseUnit) && knownPrice(option?.pricePerPurchaseUnit) !== null,
+      contentLabel: option ? `${formatContent({ ...product, ...option })}${option.priceRequiresDateReview ? " · dated version" : ""}` : "Legacy packages need review",
+      priceLabel: formatPurchasePrice(option, product.currency, product.priceBasis, { approvedScheduledPrice: hasApprovedScheduledPrice(product) }),
+      orderable: canAddPurchaseOptionToDraftCart(product, option),
     };
   }), [products, selectedOptions]);
 
@@ -226,7 +226,7 @@ function ScopedOrderCreatePage() {
         />
       ),
     },
-    { key: "priceLabel", label: "Price" },
+    { key: "priceLabel", label: "Indicative price" },
     {
       key: "action",
       label: "Action",
@@ -258,7 +258,7 @@ function ScopedOrderCreatePage() {
         {supplierError && <p role="status" className="text-sm text-amber-800">Supplier filter unavailable: {supplierError} You can still choose products.</p>}
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><p className="text-xs uppercase tracking-wider text-slate-500">Purchasing & inventory</p><h1 className="text-2xl font-semibold">New order</h1><p className="mt-1 text-sm text-slate-600">Choose supplier packages, then review your cart before placing an order.</p></div>
+            <div><p className="text-xs uppercase tracking-wider text-slate-500">Purchasing & inventory</p><h1 className="text-2xl font-semibold">New order</h1><p className="mt-1 text-sm text-slate-600">Choose supplier packages, then review your cart before placing an order.</p><p className="mt-1 text-xs text-slate-600">Catalog prices are indicative. Order preview checks applicable approved prices against the supplier's order-date or delivery-date agreement.</p></div>
             <div className="flex flex-wrap items-center gap-2 ml-auto">
               <button
                 type="button"

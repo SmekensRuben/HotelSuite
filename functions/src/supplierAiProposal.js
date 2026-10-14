@@ -8,6 +8,7 @@ const policy = require("./productPolicy");
 const { supplierProductInternals } = require("./products");
 const { loadSupplierAiConfiguration } = require("./supplierAiPolicy");
 const review = require("./supplierAiReview");
+const recurring = require("./supplierRecurringReview");
 
 const AI_PROPOSAL_POLICY_VERSION = 1;
 const MAX_AI_ROWS = 1000;
@@ -206,18 +207,30 @@ function validationIssues(product) {
   return issues;
 }
 
-function buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex, raw, previous = null, productId = null, userPatch = {}, duplicate = false, ambiguous = false, reviewRevision = 1 }) {
+function buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex, raw, previous = null, previousPriceAgreement = null, productId = null, userPatch = {}, duplicate = false, ambiguous = false, reviewRevision = 1 }) {
   if (!Number.isSafeInteger(rowIndex) || rowIndex < 0 || rowIndex >= MAX_AI_ROWS || !Number.isSafeInteger(reviewRevision) || reviewRevision < 1) bad("The supplier product review row or revision is invalid.");
   const inputPatch = Object.fromEntries(RAW_FIELDS.filter((field) => raw[field] !== null && raw[field] !== undefined).map((field) => [field, raw[field]]));
   const normalizationFindings = raw.normalizationFindings || [];
-  const sourcePriceMissing = raw.normalizationVersion === 2 && raw.pricePerBaseUnit == null && raw.pricePerPurchaseUnit == null;
+  const sourcePriceMissing = (raw.pricePerBaseUnit == null && raw.pricePerPurchaseUnit == null)
+    || raw.sourceInterpretation?.documentPurpose === "statistics" || raw.sourceInterpretation?.unitPriceEstablished === false;
+  if (previous && raw.sourceInterpretation?.providedFields) {
+    for (const field of Object.keys(inputPatch)) if (!raw.sourceInterpretation.providedFields.includes(field)) delete inputPatch[field];
+  }
+  if (previous) {
+    // An inferred replacement is useful for a new draft but cannot silently
+    // overwrite a hotel's existing correction without source evidence.
+    for (const finding of normalizationFindings) {
+      if (["inference", "approved-name-expansion"].includes(finding.provenance)) delete inputPatch[finding.field];
+    }
+  }
   if (previous && sourcePriceMissing) {
-    for (const field of ["pricingModel", "currency", "priceBasis", "vatRate", "purchaseUnit", "baseUnitsPerPurchaseUnit"]) delete inputPatch[field];
+    for (const field of ["pricingModel", "currency", "priceBasis", "vatRate", "purchaseUnit", "baseUnitsPerPurchaseUnit", "pricePerBaseUnit", "pricePerPurchaseUnit", "priceValidFrom", "priceValidUntil"]) delete inputPatch[field];
   }
   const before = productView(previous);
+  const comparisonBefore = productView(previousPriceAgreement?.product) || before;
   // Omitted AI values never clear an existing package, GTIN, price contract or
   // catalog link. Only a separately authenticated human correction may clear.
-  const candidate = { ...emptyProduct(supplierId), ...(before || {}), ...inputPatch, ...userPatch, supplierId };
+  const candidate = { ...emptyProduct(supplierId), ...(comparisonBefore || {}), ...inputPatch, ...userPatch, supplierId };
   if (previous && candidate.purchaseOptions === null) candidate.purchaseOptions = previous.purchaseOptions ?? [];
   if (previous && Array.isArray(candidate.purchaseOptions)) {
     const priorOptions = new Map((previous.purchaseOptions || []).map((option) => [option.id, option]));
@@ -230,6 +243,17 @@ function buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex, raw, 
   const issues = [...validationIssues(candidate), ...sourceEvidenceIssues,
     ...normalizationFindings.filter((entry) => entry.severity !== "info" && !(entry.severity === "error" && Object.hasOwn(userPatch, entry.field)))
       .map((entry) => ({ field: entry.field, code: entry.code, message: entry.message, severity: entry.severity }))];
+  if (previousPriceAgreement?.issue) issues.push(previousPriceAgreement.issue);
+  if (raw.sourceInterpretation && raw.sourceInterpretation.status !== "confirmed" && raw.sourceInterpretation.requiresFormatReview !== false) {
+    issues.push(issue("sourceFormat", "source-format-review-required", "Confirm the supplier file interpretation before approving these values."));
+  }
+  if (previous?.latestPriceSourceIssuedOn && raw.sourceInterpretation?.sourceIssuedOn
+    && raw.sourceInterpretation.sourceIssuedOn < previous.latestPriceSourceIssuedOn && recurring.sourceEstablishesUnitPrice(raw)) {
+    issues.push(issue("price", "older-price-source", "This source predates the latest approved supplier price agreement. It cannot replace or reconfirm that agreement."));
+  }
+  if (previous?.latestPriceSourceIssuedOn && !raw.sourceInterpretation?.sourceIssuedOn && recurring.sourceEstablishesUnitPrice(raw)) {
+    issues.push(issue("sourceIssuedOn", "price-source-date-unknown", "This source has no established issue date. Review its chronology against the latest dated supplier agreement before replacing or confirming prices.", "warning"));
+  }
   if (previous && sourcePriceMissing) issues.push(issue("price", "existing-price-contract-preserved", "The source has no new unit price. Existing package and financial terms were preserved; explicit human corrections may change the reviewed contract.", "warning"));
   let packInference = raw.packInference ?? normalizationFindings.find((entry) => entry.code === "piece-count-inferred")?.after ?? null;
   if (packInference) {
@@ -254,23 +278,56 @@ function buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex, raw, 
   }
   let normalized = candidate;
   if (!hasErrors(issues)) normalized = policy.normalizeSupplierProduct(candidate);
-  const canonicalBefore = before && (() => { try { return policy.normalizeSupplierProduct(before); } catch { return before; } })();
+  const canonicalBefore = comparisonBefore && (() => { try { return policy.normalizeSupplierProduct(comparisonBefore); } catch { return comparisonBefore; } })();
   const changes = PRODUCT_FIELDS.filter((field) => JSON.stringify(canonicalBefore?.[field] ?? null) !== JSON.stringify(normalized[field] ?? null))
     .map((field) => ({ field, before: canonicalBefore?.[field] ?? null, after: normalized[field] ?? null }));
-  return { rowId: `r-${String(rowIndex + 1).padStart(6, "0")}`, rowIndex, policyVersion: AI_PROPOSAL_POLICY_VERSION,
+  const result = { rowId: `r-${String(rowIndex + 1).padStart(6, "0")}`, rowIndex, policyVersion: AI_PROPOSAL_POLICY_VERSION,
     category: hasErrors(issues) ? "blocked" : previous ? changes.length ? "changed" : "unchanged" : "new",
     productId: productId || `p-${digest(hotelUid, jobId, rowIndex).slice(0, 40)}`,
     expectedRevision: supplierProductInternals.currentRevision(previous), reviewRevision,
     product: productView(normalized), previousProduct: before ? { ...before, productPolicyVersion: previous.productPolicyVersion ?? null } : null, inputPatch, userPatch,
+    previousPriceAgreement: previousPriceAgreement?.product ? { versionId: previousPriceAgreement.versionId, product: comparisonBefore } : null,
     issues, changes, sourceAnchors: raw.sourceAnchors || [], sourceEvidenceIssues, duplicate, ambiguous, committed: null, purchaseUnitMapping: raw.purchaseUnitMapping ?? null,
+    sourceInput: Object.fromEntries(RAW_FIELDS.map((field) => [field, raw[field] ?? null])),
+    sourceInterpretation: raw.sourceInterpretation ?? null, sourcePriceMissing,
     ...(raw.normalizationVersion === 2 ? { normalizationVersion: 2, originalInput: raw.originalInput,
-      normalizationFindings, packInference, sourcePriceMissing } : {}) };
+      normalizationFindings, packInference } : {}) };
+  result.recurringReview = recurring.recurringReview(result);
+  return result;
 }
 
 async function matchesForSku(reader, db, hotelUid, supplierId, sku) {
   if (typeof sku !== "string" || !sku.trim()) return [];
   const query = db.collection(`hotels/${hotelUid}/supplierproducts`).where("supplierId", "==", supplierId).where("supplierSku", "==", sku.trim()).limit(2);
   return (await reader(query)).docs;
+}
+async function loadPreviousPriceAgreement(reader, db, hotelUid, productId, previous, raw, userPatch = {}) {
+  const from = Object.hasOwn(userPatch, "priceValidFrom") ? userPatch.priceValidFrom : raw.priceValidFrom;
+  const until = Object.hasOwn(userPatch, "priceValidUntil") ? userPatch.priceValidUntil : raw.priceValidUntil;
+  if (!previous || !productId || !from || !previous.latestApprovedPriceVersionId
+    || raw.pricePerBaseUnit == null && raw.pricePerPurchaseUnit == null && !Object.hasOwn(userPatch, "pricePerPurchaseUnit") && !Object.hasOwn(userPatch, "pricePerBaseUnit")) return null;
+  let versionId;
+  try { versionId = requireDocumentId(previous.latestApprovedPriceVersionId, "Approved price version ID"); }
+  catch { return { issue: issue("price", "approved-price-agreement-invalid", "The latest approved supplier price reference is invalid. Review the stored price history before importing this offer.") }; }
+  const document = await reader(db.doc(`hotels/${hotelUid}/supplierPriceVersions/${productId}/entries/${versionId}`));
+  if (!document.exists) return { issue: issue("price", "approved-price-agreement-missing", "The latest approved supplier price agreement is unavailable. Review the stored price history before importing this offer.") };
+  const version = document.data(), terms = version.productTerms;
+  if (version.supplierPriceVersionPolicyVersion !== 1 || version.supplierProductId !== productId || version.supplierId !== previous.supplierId
+    || !terms || typeof terms !== "object" || Array.isArray(terms) || !Array.isArray(terms.purchaseOptions ?? [])) {
+    return { issue: issue("price", "approved-price-agreement-invalid", "The approved supplier price agreement does not match this offer. Review its stored price history.") };
+  }
+  if (terms.priceValidFrom !== from || until != null && terms.priceValidUntil !== until) return null;
+  const product = { ...productView(previous), ...terms, baseUnit: previous.baseUnit };
+  const options = new Map((Array.isArray(previous.purchaseOptions) ? previous.purchaseOptions : []).map((option) => [option?.id, option]));
+  // Price versions carry purchasing terms only. Local identity, catalog links,
+  // display names, active state and barcodes stay attached to the current offer.
+  let normalized;
+  try {
+    product.purchaseOptions = (terms.purchaseOptions || []).map((option) => ({ ...option, gtin: options.get(option.id)?.gtin ?? null }));
+    normalized = policy.normalizeSupplierProduct(product);
+  }
+  catch { return { issue: issue("price", "approved-price-agreement-invalid", "The approved supplier price terms are invalid. Review the stored price history before importing this offer.") }; }
+  return { versionId, product: productView(normalized) };
 }
 async function validateReferences(reader, db, hotelUid, candidate) {
   const supplier = await reader(db.doc(`hotels/${hotelUid}/suppliers/${candidate.product.supplierId}`));
@@ -289,6 +346,7 @@ async function validateReferences(reader, db, hotelUid, candidate) {
     }
   }
   if (hasErrors(candidate.issues)) candidate.category = "blocked";
+  candidate.recurringReview = recurring.recurringReview(candidate);
   return candidate;
 }
 
@@ -355,8 +413,9 @@ async function reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, 
         }
       } else {
         const matches = await matchesForSku((ref) => tx.get(ref), db, hotelUid, supplierId, rows[index].supplierSku);
-        result = buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex: index, raw: rows[index],
-          previous: matches.length === 1 ? matches[0].data() : null, productId: matches.length === 1 ? matches[0].id : null,
+        const previous = matches.length === 1 ? matches[0].data() : null, productId = matches.length === 1 ? matches[0].id : null;
+        const previousPriceAgreement = await loadPreviousPriceAgreement((ref) => tx.get(ref), db, hotelUid, productId, previous, rows[index]);
+        result = buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex: index, raw: rows[index], previous, productId, previousPriceAgreement,
           duplicate: frequencies.get(rows[index].supplierSku?.trim()) > 1, ambiguous: matches.length > 1 });
         await validateReferences((ref) => tx.get(ref), db, hotelUid, result);
         if (job.importReviewVersion === review.REVIEW_VERSION) result.review = { status: "pending", reviewRevision: result.reviewRevision };
@@ -409,6 +468,8 @@ function publicRow(row) {
     inputPatch: row.inputPatch, issues: row.issues, changes: row.changes, sourceAnchors: row.sourceAnchors, committed: row.committed || null,
     normalizationVersion: row.normalizationVersion ?? null, originalInput: row.originalInput ?? null,
     normalizationFindings: row.normalizationFindings ?? null, packInference: row.packInference ?? null,
+    previousPriceAgreement: row.previousPriceAgreement ?? null,
+    sourceInterpretation: row.sourceInterpretation ?? null, recurringReview: recurring.recurringReview(row),
     purchaseUnitMapping: row.purchaseUnitMapping ?? null, ...(row.review ? review.publicReview(row) : {}) };
 }
 
@@ -440,6 +501,7 @@ async function correctHotelSupplierAiImportRowHandler(request, services = {}) {
   return db.runTransaction(async (tx) => {
     const actor = await requireReviewAuthority(db, request, hotelUid, tx, services);
     const job = requireReviewJob(await tx.get(db.doc(jobPath(hotelUid, jobId))), services.now?.() ?? Date.now(), request.auth.uid);
+    review.requireSettledFormat(job);
     if (job.reviewMigration && job.importReviewVersion !== review.REVIEW_VERSION) throw new HttpsError("failed-precondition", "The guided review workspace is being prepared. Refresh before correcting products.");
     const rowRef = db.doc(`${jobPath(hotelUid, jobId)}/rows/${rowId}`), snapshot = await tx.get(rowRef);
     if (!snapshot.exists) throw new HttpsError("not-found", "Review row not found in this hotel import.");
@@ -463,11 +525,13 @@ async function correctHotelSupplierAiImportRowHandler(request, services = {}) {
       if (!current.exists) throw new HttpsError("aborted", "The existing supplier product was removed. Start a new import.");
       previous = current.data(); productId = row.productId;
     }
-    const raw = { ...Object.fromEntries(RAW_FIELDS.map((field) => [field, null])), ...row.inputPatch,
+    const raw = { ...Object.fromEntries(RAW_FIELDS.map((field) => [field, null])), ...(row.sourceInput || row.inputPatch),
       sourceAnchors: row.sourceAnchors, sourceEvidenceIssues: row.sourceEvidenceIssues || [], purchaseUnitMapping: row.purchaseUnitMapping ?? null,
+      sourceInterpretation: row.sourceInterpretation ?? null,
       ...(row.normalizationVersion === 2 ? { normalizationVersion: 2, originalInput: row.originalInput,
         normalizationFindings: row.normalizationFindings, packInference: row.packInference, purchaseUnitMapping: row.purchaseUnitMapping ?? null } : {}) };
-    const next = buildSupplierAiCandidate({ hotelUid, jobId, supplierId: job.supplierId, rowIndex: row.rowIndex, raw, previous, productId,
+    const previousPriceAgreement = await loadPreviousPriceAgreement((ref) => tx.get(ref), db, hotelUid, productId, previous, raw, userPatch);
+    const next = buildSupplierAiCandidate({ hotelUid, jobId, supplierId: job.supplierId, rowIndex: row.rowIndex, raw, previous, productId, previousPriceAgreement,
       userPatch, reviewRevision: expected + 1, duplicate: duplicateRows.docs.some((document) => document.id !== rowId), ambiguous: matches.length > 1 });
     await validateReferences((ref) => tx.get(ref), db, hotelUid, next);
     if (job.importReviewVersion === review.REVIEW_VERSION) { next.review = { status: "pending", reviewRevision: next.reviewRevision }; next.lastOutcome = null; }
@@ -512,6 +576,7 @@ async function commitHotelSupplierAiImportRowsHandler(request, services = {}) {
   await db.runTransaction(async (tx) => {
     await requireReviewAuthority(db, request, hotelUid, tx, services);
     const job = requireReviewJob(await tx.get(db.doc(jobPath(hotelUid, jobId))), services.now?.() ?? Date.now(), request.auth.uid, true);
+    review.requireSettledFormat(job);
     if (job.reviewMigration && job.importReviewVersion !== review.REVIEW_VERSION) throw new HttpsError("failed-precondition", "The guided review workspace is being prepared. Refresh before applying products.");
     const prior = await tx.get(operationRef);
     if (prior.exists) {
@@ -526,6 +591,7 @@ async function commitHotelSupplierAiImportRowsHandler(request, services = {}) {
     const outcome = await db.runTransaction(async (tx) => {
       const actor = await requireReviewAuthority(db, request, hotelUid, tx, services);
       const job = requireReviewJob(await tx.get(db.doc(jobPath(hotelUid, jobId))), services.now?.() ?? Date.now(), request.auth.uid, true);
+      review.requireSettledFormat(job);
       // Turning off billable AI processing does not prevent a human finishing a
       // valid existing draft. The current policy is still read and validated.
       let config;
@@ -552,11 +618,15 @@ async function commitHotelSupplierAiImportRowsHandler(request, services = {}) {
           if (row.category === "blocked" || hasErrors(row.issues || [])) throw new HttpsError("failed-precondition", "Correct the blocking fields before confirming this row.");
           if (row.product.supplierId !== job.supplierId) throw new HttpsError("failed-precondition", "The candidate supplier identity does not match this import.");
           const action = row.previousProduct ? "update" : "create";
-          const plan = await supplierProductInternals.prepareProduct(tx, db, hotelUid, "supplierproducts", row.productId, action, row.expectedRevision, row.product, new Map());
+          const priceEvidence = { ...recurring.priceEvidenceForRow(row, job), sourceImportId: jobId };
+          const plan = await supplierProductInternals.prepareProduct(tx, db, hotelUid, "supplierproducts", row.productId, action, row.expectedRevision, row.product, new Map(), priceEvidence, services);
           // Reconciliation is not trusted at commit time. Compare the freshly
           // validated public result against the exact values the user reviewed.
-          if (digest(productView(plan.next)) !== digest(productView(row.product))) throw new HttpsError("aborted", "Current product validation changed the reviewed values. Correct and review this row again.");
-          if (row.category === "unchanged") result = { rowId: row.rowId, status: "unchanged", productId: row.productId, revision: row.expectedRevision };
+          if (digest(productView(plan.approvedProduct || plan.next)) !== digest(productView(row.product))) throw new HttpsError("aborted", "Current product validation changed the reviewed values. Correct and review this row again.");
+          if (row.category === "unchanged") {
+            const confirmation = priceEvidence.confirmsUnitPrice ? supplierProductInternals.writeProduct(tx, plan, "supplierproducts", request.auth.uid) : null;
+            result = { rowId: row.rowId, status: "unchanged", productId: row.productId, revision: confirmation?.revision ?? row.expectedRevision };
+          }
           else result = { rowId: row.rowId, status: action === "create" ? "created" : "updated", ...supplierProductInternals.writeProduct(tx, plan, "supplierproducts", request.auth.uid) };
           const committedRow = { ...row, committed: result, lastOutcome: result, confirmedBy: request.auth.uid, confirmedAt: stamp() };
           tx.set(rowRef, committedRow);
@@ -594,4 +664,4 @@ module.exports = { AI_PROPOSAL_POLICY_VERSION, MAX_AI_ROWS, MAX_CONFIRM_ROWS, AI
   buildSupplierAiCandidate, reconcileSupplierAiRows, readHotelSupplierAiImportRowsHandler, correctHotelSupplierAiImportRowHandler, commitHotelSupplierAiImportRowsHandler,
   readHotelSupplierAiImportRows, correctHotelSupplierAiImportRow, commitHotelSupplierAiImportRows,
   supplierAiProposalInternals: { RAW_FIELDS, PATCH_FIELDS, PRODUCT_FIELDS, jobPath, requireReviewJob, requireReviewAuthority, publicRow,
-    matchesForSku, validateReferences, productView, adjustSummaryAccumulator, publicSummary, buildSupplierAiCandidate } };
+    matchesForSku, loadPreviousPriceAgreement, validateReferences, productView, emptySummaryAccumulator, adjustSummaryAccumulator, publicSummary, buildSupplierAiCandidate } };

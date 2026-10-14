@@ -20,7 +20,8 @@ const { uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob, sa
 const { readHotelSupplierAiImportRowsHandler: review, correctHotelSupplierAiImportRowHandler: correct,
   commitHotelSupplierAiImportRowsHandler: commit } = require("../../functions/src/supplierAiProposal");
 const { readHotelSupplierAiImportWorkspaceHandler: workspace, decideHotelSupplierAiImportRowsHandler: decide,
-  completeHotelSupplierAiImportReviewHandler: completeReview, applyHotelSupplierAiImportMappingHandler: applyMapping } = require("../../functions/src/supplierAiReview");
+  completeHotelSupplierAiImportReviewHandler: completeReview, applyHotelSupplierAiImportMappingHandler: applyMapping,
+  applyHotelSupplierImportFormatHandler: applyFormat } = require("../../functions/src/supplierAiReview");
 const { readHotelSupplierPurchaseUnitMappingsHandler: readMappings, saveHotelSupplierPurchaseUnitMappingHandler: saveMappings,
   mappingProfileRef, mappingScope } = require("../../functions/src/supplierImportMappings");
 const { getPlatformSupplierAiImportSettingsHandler: settings, listPlatformSupplierAiUsageHandler: usage } = require("../../functions/src/supplierAiPlatform");
@@ -37,8 +38,8 @@ const identities = Object.fromEntries(["manager", "other-manager", "hotel-b", "o
 const request = (data, actor = "manager") => ({ auth: identities[actor], data });
 // The source declares the full purchase-package price, rather than leaving a
 // bare "price" column ambiguous between package and inventory-unit pricing.
-const bytes = Buffer.from("sku,name,Net Purchase Price,currency,Purchase Unit,Package Content\nMILK6,Milk six pack,15,EUR,Case,6 l net\n");
-const uploadData = (patch = {}) => ({ hotelUid: "hotel-a", supplierId: "dairy", requestId: "import-one", fileName: "offers.csv", mimeType: "text/csv", reviewWorkspaceVersion: "1", importSettings: JSON.stringify({ policyVersion: 2, priceBasis: "net", currency: "EUR", vatRate: null }), ...patch });
+const bytes = Buffer.from("sku,name,Net Purchase Price,currency,Purchase Unit,Package Content\nMILK6,Milk six pack,15,EUR,Case,6\n");
+const uploadData = (patch = {}) => ({ hotelUid: "hotel-a", supplierId: "dairy", requestId: "import-one", fileName: "offers.csv", mimeType: "text/csv", reviewWorkspaceVersion: "1", recurringImportVersion: "1", importSettings: JSON.stringify({ policyVersion: 2, priceBasis: "net", currency: "EUR", vatRate: null }), ...patch });
 let environment, calls;
 const provider = { countInput: async () => 500, respond: async (body) => {
   calls++;
@@ -52,14 +53,28 @@ const provider = { countInput: async () => 500, respond: async (body) => {
     output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ rows: [row] }) }] }] };
 } };
 const services = { ...baseServices, provider };
-async function uploaded() { return uploadSupplierAiImport(request(), uploadData(), bytes, services); }
-async function ready() { const job = await uploaded(); const result = await runSupplierAiImportJob("hotel-a", job.jobId, services); assert.equal(result.status, "review", JSON.stringify(result)); return job; }
+async function uploaded(patch = {}) { return uploadSupplierAiImport(request(), uploadData(patch), bytes, services); }
+async function confirmFormat(jobId, overrides = {}) {
+  const view = await workspace(request({ hotelUid: "hotel-a", jobId }), services);
+  const { sourceFormat, formatFingerprint: _fingerprint, ...candidate } = view.sourceFormatCandidate;
+  const scope = mappingData({ sourceFormat }), previous = await readMappings(request(scope), services);
+  const saved = await saveMappings(request({ ...scope, requestId: `confirm-format-${jobId}`, expectedRevision: previous.revision, mappings: [],
+    interpretation: { ...candidate, defaults: { baseUnit: "l", currency: "EUR", priceBasis: "net" }, ...overrides } }), services);
+  const result = await applyFormat(request({ hotelUid: "hotel-a", jobId, requestId: `apply-format-${jobId}`, expectedMappingRevision: saved.revision }), services);
+  assert.equal(result.completed, true); return saved;
+}
+async function ready() { const job = await uploaded(); const result = await runSupplierAiImportJob("hotel-a", job.jobId, services); assert.equal(result.status, "review", JSON.stringify(result)); await confirmFormat(job.jobId); return job; }
 const decisionData = (jobId, row, action = "approve", requestId = `decision-${action}`) => ({ hotelUid: "hotel-a", jobId, requestId,
   rows: [{ rowId: row.rowId, reviewRevision: row.reviewRevision, action, acknowledged: true }], bulk: false });
 async function approve(jobId, row, requestId) { return decide(request(decisionData(jobId, row, "approve", requestId)), services); }
 const mappingData = (patch = {}) => ({ hotelUid: "hotel-a", supplierId: "dairy", sourceFormat: "csv", profileId: "default", ...patch });
 const mappingCommand = (patch = {}) => mappingData({ requestId: "mapping-one", expectedRevision: 0,
   mappings: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }, { sourceUnit: "TR", purchaseUnit: "Tray" }], ...patch });
+const confirmedInterpretation = (patch = {}) => ({ version: 1,
+  header: ["sku", "name", "Net Purchase Price", "currency", "Purchase Unit", "Package Content"], sheetName: null,
+  columns: { supplierSku: 0, supplierProductName: 1, pricePerPurchaseUnit: 2, currency: 3, purchaseUnit: 4, baseUnitsPerPurchaseUnit: 5 },
+  defaults: { baseUnit: "l", priceBasis: "net", pricingModel: "Per Purchase Unit" },
+  assortmentMode: "partial", documentPurpose: "price-list", decimalSeparator: ".", dateFormat: "YYYY-MM-DD", ...patch });
 const rejectPermission = (promise) => assert.rejects(promise, { code: "permission-denied" });
 function assertCustomerPrivacy(value) {
   assert.doesNotMatch(JSON.stringify(value), /"(?:usage|configuration|model|fallbackModel|fallbackEnabled|inputTokens|outputTokens|reasoningTokens|priceVersion|actualCostUsd|knownCostUsd|reservedCostUsd|knownCostMicros|reservedCostMicros|limitUsd|maxCostPerImportUsd|maxMonthlyCostPerHotelUsd)"/);
@@ -106,8 +121,9 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
     } } };
     const job = await uploadSupplierAiImport(request(), uploadData({ requestId: "import-kg" }), sourceBytes, kgServices);
     assert.equal((await runSupplierAiImportJob("hotel-a", job.jobId, kgServices)).status, "review");
+    await confirmFormat(job.jobId);
     const page = await review(request({ hotelUid: "hotel-a", jobId: job.jobId }), kgServices), original = page.rows[0];
-    assert.equal(original.category, "new"); assert.equal(original.product.purchaseUnit, "kg");
+    assert.equal(original.category, "new", JSON.stringify(original.issues)); assert.equal(original.product.purchaseUnit, "kg");
     assert.equal(original.product.baseUnit, "kg"); assert.equal(original.product.baseUnitsPerPurchaseUnit, 1);
     assert.equal(original.product.pricePerBaseUnit, 8); assert.equal(original.packInference, null);
     await db.doc("hotels/hotel-a/catalogproducts/weighed").set({ name: "Fictional weighed goods", baseUnit: "g", inventoryTracked: true, active: true, productPolicyVersion: 1, revision: 1 });
@@ -198,7 +214,7 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
   });
   it("exposes only file limits in customer availability and keeps operator pricing configuration restricted", async () => {
     const availability = await readSupplierAiImport(request(), { hotelUid: "hotel-a" }, services);
-    assert.deepEqual(availability, { available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 }, defaults: { currency: "EUR" } });
+    assert.deepEqual(availability, { available: true, aiAvailable: true, recurringFormatsAvailable: true, recurringImportVersion: 1, sourceFormatProfileVersion: 1, importPolicyVersion: 2, reviewWorkspaceVersion: 1, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 }, defaults: { currency: "EUR" } });
     assertCustomerPrivacy(availability);
     await rejectPermission(settings(request(), services));
     const operator = await settings(request(null, "operator"), services);
@@ -252,7 +268,7 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
     assert.equal((await jobRef.get()).data().fingerprint, existing.fingerprint);
   });
   it("recovers a legacy lost upload acknowledgement only for the original source, owner and request", async () => {
-    const created = await uploaded(), currentRef = db.doc(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}`), current = (await currentRef.get()).data();
+    const created = await uploaded({ recurringImportVersion: undefined }), currentRef = db.doc(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}`), current = (await currentRef.get()).data();
     const fingerprint = digest(current.supplierId, current.fileName, current.mimeType, current.sha256);
     const jobId = digest(current.hotelUid, current.requestId, current.ownerUid, fingerprint), path = `private/supplier-ai-imports/hotel-a/${jobId}/source`;
     const source = await savePrivate(bucket, path, bytes, "application/octet-stream");
@@ -263,11 +279,11 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
     const receiptRef = db.doc("hotels/hotel-a/supplierAiImportRequests/import-one"), { importSettings: _receiptSettings, importPolicyVersion: _receiptVersion,
       importReviewVersion: _receiptReviewVersion, mappingProfileId: _receiptProfileId, purchaseUnitMappingSnapshot: _receiptMappingSnapshot, ...receipt } = (await receiptRef.get()).data();
     await receiptRef.set({ ...receipt, jobId, fingerprint });
-    const result = await uploadSupplierAiImport(request(), uploadData({ importSettings: undefined, reviewWorkspaceVersion: undefined }), bytes, services);
+    const result = await uploadSupplierAiImport(request(), uploadData({ importSettings: undefined, reviewWorkspaceVersion: undefined, recurringImportVersion: undefined }), bytes, services);
     assert.equal(result.jobId, jobId); assert.equal(result.status, "queued"); assert.equal(result.importSettings, null); assert.equal(result.summary, null); assertCustomerPrivacy(result);
-    await assert.rejects(uploadSupplierAiImport(request(), uploadData({ importSettings: undefined, reviewWorkspaceVersion: undefined, requestId: "new-legacy" }), bytes, services), { code: "invalid-argument" });
-    await assert.rejects(uploadSupplierAiImport(request(), uploadData({ importSettings: undefined, reviewWorkspaceVersion: undefined }), Buffer.from("different source"), services), { code: "already-exists" });
-    await assert.rejects(uploadSupplierAiImport(request(null, "other-manager"), uploadData({ importSettings: undefined, reviewWorkspaceVersion: undefined }), bytes, services), { code: "already-exists" });
+    await assert.rejects(uploadSupplierAiImport(request(), uploadData({ importSettings: undefined, reviewWorkspaceVersion: undefined, recurringImportVersion: undefined, requestId: "new-legacy" }), bytes, services), { code: "invalid-argument" });
+    await assert.rejects(uploadSupplierAiImport(request(), uploadData({ importSettings: undefined, reviewWorkspaceVersion: undefined, recurringImportVersion: undefined }), Buffer.from("different source"), services), { code: "already-exists" });
+    await assert.rejects(uploadSupplierAiImport(request(null, "other-manager"), uploadData({ importSettings: undefined, reviewWorkspaceVersion: undefined, recurringImportVersion: undefined }), bytes, services), { code: "already-exists" });
     const ready = await runSupplierAiImportJob("hotel-a", jobId, services);
     assert.equal(ready.status, "review"); assert.equal(ready.importSettings, null); assert.equal(ready.summary, null); assert.equal(calls, 1);
     const row = (await review(request({ hotelUid: "hotel-a", jobId }), services)).rows[0];
@@ -325,7 +341,7 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
   });
   it("reconciles review decisions across the whole 250-product import rather than only the first loaded page", async () => {
     const source = Buffer.from("SKU,Name,Net Purchase Price,Currency,Purchase Unit,Package Content\n"
-      + Array.from({ length: 250 }, (_, index) => `BULK-${String(index).padStart(3, "0")},Fictional product ${index},18,EUR,Case,6 L`).join("\n") + "\n");
+      + Array.from({ length: 250 }, (_, index) => `BULK-${String(index).padStart(3, "0")},Fictional product ${index},18,EUR,Case,6`).join("\n") + "\n");
     const bulkServices = { ...services, provider: { ...provider, respond: async (body) => {
       calls++;
       const rows = JSON.parse(body.input[0].content[0].text).units.filter((unit) => /^csv-row-\d+$/.test(unit.sourceId) && !unit.contextOnly)
@@ -348,6 +364,7 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
       assert.equal(processed.queued, true, JSON.stringify(processed));
     }
     assert.equal(processed.status, "review");
+    await confirmFormat(job.jobId);
     const first = await workspace(request({ hotelUid: "hotel-a", jobId: job.jobId, limit: 25, includeIndex: true }), services);
     assert.equal(first.rows.length, 25); assert.equal(first.index.length, 250); assert.equal(first.totalRows, 250);
     assert.deepEqual(first.reviewCounts, { pending: 250, approved: 0, skipped: 0, applied: 0, failed: 0 });
@@ -480,7 +497,7 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
   it("applies a confirmed mapping only to matching unedited units and invalidates approval without rewriting paid evidence", async () => {
     await saveMappings(request(mappingCommand()), services);
     const source = Buffer.from("SKU,Name,Net Purchase Price,Currency,Purchase Unit,Package Content\n"
-      + "MILK6,Milk six pack,18,EUR,FL,6 L\nOTHERFL,Other bottle,18,EUR,FL,6 L\nOTHERZK,Other bag,18,EUR,ZK,6 L\n");
+      + "MILK6,Milk six pack,18,EUR,FL,6\nOTHERFL,Other bottle,18,EUR,FL,6\nOTHERZK,Other bag,18,EUR,ZK,6\n");
     const mappedServices = { ...services, provider: { ...provider, respond: async (body) => {
       calls++;
       const rows = JSON.parse(body.input[0].content[0].text).units.filter((unit) => /^csv-row-\d+$/.test(unit.sourceId) && !unit.contextOnly)
@@ -496,6 +513,7 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
     const input = uploadData({ requestId: "mapping-application-import" });
     const job = await uploadSupplierAiImport(request(), input, source, mappedServices);
     assert.equal((await runSupplierAiImportJob("hotel-a", job.jobId, mappedServices)).status, "review"); assert.equal(calls, 1);
+    await confirmFormat(job.jobId);
     const rows = (await review(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)).rows;
     const first = rows.find((row) => row.product.supplierSku === "MILK6"), second = rows.find((row) => row.product.supplierSku === "OTHERFL"), third = rows.find((row) => row.product.supplierSku === "OTHERZK");
     assert.equal(first.product.purchaseUnit, "Bottle"); assert.equal(second.product.purchaseUnit, "Bottle");
@@ -506,9 +524,9 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
     await approve(job.jobId, editedFirst, "approve-before-remapping");
     const jobRef = db.doc(`hotels/hotel-a/supplierAiImportJobs/${job.jobId}`), stored = (await jobRef.get()).data();
     const attempts = (await db.collection(`${jobRef.path}/attempts`).get()).docs.map((doc) => doc.data());
-    const replacement = await saveMappings(request(mappingCommand({ requestId: "confirm-box", expectedRevision: 1,
-      mappings: [{ sourceUnit: "FL", purchaseUnit: "Box" }] })), services); assert.equal(replacement.revision, 2);
-    const command = { hotelUid: "hotel-a", jobId: job.jobId, requestId: "apply-box", sourceUnit: "FL", purchaseUnit: "Box", expectedMappingRevision: 2,
+    const replacement = await saveMappings(request(mappingCommand({ requestId: "confirm-box", expectedRevision: 2,
+      mappings: [{ sourceUnit: "FL", purchaseUnit: "Box" }] })), services); assert.equal(replacement.revision, 3);
+    const command = { hotelUid: "hotel-a", jobId: job.jobId, requestId: "apply-box", sourceUnit: "FL", purchaseUnit: "Box", expectedMappingRevision: 3,
       rows: [editedFirst, editedSecond, third].map((row) => ({ rowId: row.rowId, reviewRevision: row.reviewRevision })) };
     await assert.rejects(applyMapping(request({ ...command, requestId: "stale-mapping", expectedMappingRevision: 1 }), services), { code: "aborted" });
     const result = await applyMapping(request(command), services);
@@ -522,7 +540,7 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
     assert.equal((await db.doc(`${jobRef.path}/rows/${third.rowId}`).get()).data().reviewRevision, third.reviewRevision);
     assert.deepEqual(await applyMapping(request(command), services), result);
     const after = (await jobRef.get()).data();
-    assert.deepEqual(after.purchaseUnitMappingSnapshot, stored.purchaseUnitMappingSnapshot); assert.equal(after.purchaseUnitMappingSnapshot.revision, 1);
+    assert.deepEqual(after.purchaseUnitMappingSnapshot, stored.purchaseUnitMappingSnapshot); assert.equal(after.purchaseUnitMappingSnapshot.revision, 2);
     assert.equal(after.fingerprint, stored.fingerprint); assert.deepEqual(after.source, stored.source);
     assert.deepEqual((await db.collection(`${jobRef.path}/attempts`).get()).docs.map((doc) => doc.data()), attempts);
     assert.equal((await uploadSupplierAiImport(request(), input, source, mappedServices)).jobId, job.jobId);
@@ -564,5 +582,108 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
       assert.throws(() => requireHotelImportTarget(`hotels/hotel-a/${collection}/forged`, "hotel-a"), /protected|operational/);
     }
     assert.deepEqual((await profileRef.get()).data().mappings, mappingCommand().mappings); assert.equal(calls, 0);
+  });
+  it("protects confirmed file interpretations against cross-hotel access, stale replacement and replay after permission revocation", async () => {
+    const command = mappingCommand({ requestId: "format-first", mappings: [], interpretation: confirmedInterpretation() });
+    for (const actor of ["hotel-b", "operator"]) await rejectPermission(saveMappings(request(command, actor), services));
+    const saved = await saveMappings(request(command), services); assert.equal(saved.revision, 1);
+    assert.deepEqual((await readMappings(request(mappingData(), "other-manager"), services)).interpretation, saved.interpretation);
+    assert.equal((await readMappings(request(mappingData({ hotelUid: "hotel-b" }), "hotel-b"), services)).interpretation, undefined);
+    const reference = mappingProfileRef(db, "hotel-a", mappingScope(command)), original = await reference.get();
+    assert.deepEqual(await saveMappings(request(command), services), saved);
+    assert.equal((await reference.get()).updateTime.isEqual(original.updateTime), true);
+    const changed = mappingCommand({ requestId: "format-replaced", expectedRevision: 1, mappings: [],
+      interpretation: confirmedInterpretation({ decimalSeparator: "," }) });
+    await db.doc("hotels/hotel-a/members/manager").update({ permissions: access.permissions.filter((permission) => permission !== "supplierproducts.update") });
+    await rejectPermission(saveMappings(request(changed), services));
+    assert.equal((await reference.get()).data().revision, 1);
+    await db.doc("hotels/hotel-a/members/manager").set(access);
+    const replacement = await saveMappings(request(changed), services); assert.equal(replacement.revision, 2);
+    await assert.rejects(saveMappings(request({ ...command, requestId: "stale-format" }), services), { code: "aborted" });
+    await assert.rejects(saveMappings(request({ ...changed, interpretation: confirmedInterpretation({ assortmentMode: "full" }) }), services), { code: "already-exists" });
+    await db.doc("hotels/hotel-a/members/manager").update({ permissions: access.permissions.filter((permission) => permission !== "supplierproducts.update") });
+    await rejectPermission(saveMappings(request(changed), services));
+    await db.doc("hotels/hotel-a/members/manager").set(access); await auth.updateUser("manager", { disabled: true });
+    await rejectPermission(saveMappings(request(changed), services));
+    await rejectPermission(readMappings(request(mappingData()), services));
+    assert.equal((await db.collection("hotels/hotel-a/supplierImportMappingOperations").get()).size, 2);
+    assert.equal((await db.collection("hotels/hotel-a/supplierImportMappingAudit").get()).size, 2); assert.equal(calls, 0);
+  });
+  it("rejects untrusted interpretation fields and statistics prices before writing a confirmed format", async () => {
+    for (const interpretation of [confirmedInterpretation({ automaticApproval: true }),
+      confirmedInterpretation({ defaults: { priceBasis: "net", priceValidFrom: "2026-10-01" } }),
+      confirmedInterpretation({ documentPurpose: "statistics" }),
+      confirmedInterpretation({ columns: { supplierSku: 0, pricePerPurchaseUnit: 2, pricePerBaseUnit: 3 } })]) {
+      await assert.rejects(saveMappings(request(mappingCommand({ mappings: [], interpretation })), services), { code: "invalid-argument" });
+    }
+    assert.equal((await db.collection("hotels/hotel-a/supplierImportMappingProfiles").get()).size, 0);
+    assert.equal((await db.collection("hotels/hotel-a/supplierImportMappingOperations").get()).size, 0); assert.equal(calls, 0);
+  });
+  it("applies a first-file format only with live owner and update authority and rechecks them after private source I/O", async () => {
+    const job = await uploaded(); await runSupplierAiImportJob("hotel-a", job.jobId, services);
+    const initial = (await review(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)).rows[0];
+    assert.equal(initial.category, "blocked");
+    await assert.rejects(approve(job.jobId, initial), { code: "failed-precondition" });
+    const saved = await saveMappings(request(mappingCommand({ requestId: "format-for-first-file", mappings: [], interpretation: confirmedInterpretation() })), services);
+    const command = { hotelUid: "hotel-a", jobId: job.jobId, requestId: "apply-first-file", expectedMappingRevision: saved.revision };
+    for (const actor of ["other-manager", "hotel-b", "operator"]) await rejectPermission(applyFormat(request(command, actor), services));
+    await assert.rejects(applyFormat(request({ ...command, requestId: "stale-file-format", expectedMappingRevision: 0 }), services), { code: "aborted" });
+    await db.doc("hotels/hotel-a/members/manager").update({ permissions: access.permissions.filter((permission) => permission !== "supplierproducts.update") });
+    await rejectPermission(applyFormat(request(command), services));
+    await db.doc("hotels/hotel-a/members/manager").set(access);
+    const lostAuthorityServices = { ...services, bucket: { file: (...args) => {
+      const object = bucket.file(...args);
+      return { getMetadata: (...parameters) => object.getMetadata(...parameters), download: async (...parameters) => {
+        const result = await object.download(...parameters); await auth.updateUser("manager", { disabled: true }); return result;
+      } };
+    } } };
+    await rejectPermission(applyFormat(request(command), lostAuthorityServices));
+    const rowRef = db.doc(`hotels/hotel-a/supplierAiImportJobs/${job.jobId}/rows/${initial.rowId}`), unchanged = await rowRef.get();
+    assert.equal(unchanged.data().reviewRevision, initial.reviewRevision);
+    await auth.updateUser("manager", { disabled: false });
+    const result = await applyFormat(request(command), services); assert.equal(result.completed, true); assert.equal(result.rebuiltRows, 1);
+    const rebuilt = await rowRef.get(); assert.equal(rebuilt.data().reviewRevision, initial.reviewRevision + 1);
+    assert.equal(rebuilt.data().review.status, "pending"); assert.equal(rebuilt.data().category, "changed");
+    assert.deepEqual(await applyFormat(request(command), services), result); assert.equal((await rowRef.get()).updateTime.isEqual(rebuilt.updateTime), true);
+    await db.doc("hotels/hotel-a/members/manager").update({ permissions: access.permissions.filter((permission) => permission !== "supplierproducts.update") });
+    await rejectPermission(applyFormat(request(command), services));
+    const stored = (await db.doc(`hotels/hotel-a/supplierAiImportJobs/${job.jobId}`).get()).data();
+    for (const actor of ["manager", "hotel-b", "operator"]) {
+      const context = environment.authenticatedContext(actor, identities[actor].token);
+      await assertFails(getBytes(ref(context.storage(), stored.sourceFormatObject.path)));
+      await assertFails(uploadBytes(ref(context.storage(), stored.sourceFormatObject.path), Buffer.from("forged")));
+    }
+    assert.equal((await db.doc("hotels/hotel-a/supplierproducts/milk").get()).data().pricePerPurchaseUnit, 12); assert.equal(calls, 1);
+  });
+  it("processes a recurring future price list without AI, approves proven price changes together and preserves today's price", async () => {
+    const first = await ready(), firstRow = (await review(request({ hotelUid: "hotel-a", jobId: first.jobId }), services)).rows[0];
+    await approve(first.jobId, firstRow, "approve-current-list");
+    await commit(request({ hotelUid: "hotel-a", jobId: first.jobId, requestId: "commit-current-list",
+      rows: [{ rowId: firstRow.rowId, reviewRevision: firstRow.reviewRevision, acknowledged: true }] }), services);
+    const productRef = db.doc("hotels/hotel-a/supplierproducts/milk"), current = (await productRef.get()).data();
+    await db.doc("platformConfiguration/aiSupplierProductImport").update({ enabled: false });
+    const forbiddenProvider = { ...services, provider: { countInput: async () => { throw new Error("A confirmed recurring format must not call AI."); },
+      respond: async () => { throw new Error("A confirmed recurring format must not call AI."); } } };
+    const today = new Date(), futureYear = today.getUTCFullYear() + 1;
+    const settings = { policyVersion: 2, priceBasis: "net", currency: "EUR", vatRate: null,
+      sourceIssuedOn: today.toISOString().slice(0, 10), priceValidFrom: `${futureYear}-01-01`, priceValidUntil: `${futureYear}-12-31` };
+    const source = Buffer.from("sku,name,Net Purchase Price,currency,Purchase Unit,Package Content\nMILK6,Milk six pack,18,EUR,Case,6\n");
+    const job = await uploadSupplierAiImport(request(), uploadData({ requestId: "recurring-future", fileName: "next-year.csv", importSettings: JSON.stringify(settings) }), source, forbiddenProvider);
+    assert.equal((await runSupplierAiImportJob("hotel-a", job.jobId, forbiddenProvider)).status, "review");
+    const view = await workspace(request({ hotelUid: "hotel-a", jobId: job.jobId }), services), row = view.rows[0];
+    assert.equal(row.sourceInterpretation.status, "confirmed"); assert.equal(row.bulkEligible, true);
+    assert.equal(row.recurringReview.category, "price-change");
+    await decide(request({ ...decisionData(job.jobId, row, "approve", "approve-recurring-bulk"), bulk: true }), services);
+    const command = { hotelUid: "hotel-a", jobId: job.jobId, requestId: "commit-recurring-future",
+      rows: [{ rowId: row.rowId, reviewRevision: row.reviewRevision, acknowledged: true }] };
+    const result = await commit(request(command), services); assert.equal(result.outcomes[0].status, "updated");
+    assert.deepEqual(await commit(request(command), services), result);
+    const after = (await productRef.get()).data();
+    assert.equal(after.pricePerPurchaseUnit, 15); assert.equal(after.catalogProductId, current.catalogProductId);
+    assert.equal(after.priceConfirmedOn.isEqual(current.priceConfirmedOn), true);
+    const versions = (await db.collection("hotels/hotel-a/supplierPriceVersions/milk/entries").get()).docs.map((document) => document.data());
+    const scheduled = versions.find((version) => version.productTerms.priceValidFrom === settings.priceValidFrom);
+    assert.equal(scheduled.productTerms.pricePerPurchaseUnit, 18); assert.match(scheduled.sourceReference, /next-year\.csv/);
+    assert.equal(calls, 1);
   });
 });

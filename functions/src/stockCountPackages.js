@@ -5,6 +5,8 @@ const { requireDocumentId } = require("./subscriptions");
 const { requireSaasRollout, gated } = require("./saasRollout");
 const { units, decimal, convertQuantity } = require("./productPolicy");
 const { isArchived } = require("./procurementResources");
+const { validDate } = require("./importMonitoringPolicy");
+const { loadSupplierPriceVersions, resolveSupplierPriceVersion } = require("./supplierPriceVersions");
 const PAGE_SIZE = 25;
 const label = (value, maximum = 200) => typeof value === "string" ? value.trim().slice(0, maximum) : "";
 
@@ -60,7 +62,7 @@ async function getHotelStockCountPackageOptionsHandler(request, services = {}) {
       || !parent.data().locations.some((row) => row.locationId === locationId)) throw new HttpsError("not-found", "Stock count location not found in this hotel.");
     const count = parent.data(), frozen = location.data();
     if (count.inventoryPolicyVersion !== 1 || frozen.inventoryPolicyVersion !== 1
-      || count.currency !== frozen.currency || count.businessDate !== frozen.businessDate) throw new HttpsError("failed-precondition", "The stock count snapshot policy needs reconciliation.");
+      || count.currency !== frozen.currency || count.businessDate !== frozen.businessDate || !validDate(count.businessDate)) throw new HttpsError("failed-precondition", "The stock count snapshot policy needs reconciliation.");
     if (!["Started", "In Progress"].includes(count.status) || !["Not Started", "In Progress"].includes(frozen.status)) {
       throw new HttpsError("failed-precondition", "Package entry is available only for an unfinished catalog count.");
     }
@@ -90,11 +92,31 @@ async function getHotelStockCountPackageOptionsHandler(request, services = {}) {
     const snapshot = await tx.get(query), page = snapshot.docs.slice(0, PAGE_SIZE);
     const supplierIds = [...new Set(page.map((row) => row.data().supplierId).filter((id) => typeof id === "string" && id.trim() === id && id.length > 0 && id.length <= 128 && !id.includes("/") && ![".", ".."].includes(id)))];
     const suppliers = supplierIds.length ? await tx.getAll(...supplierIds.map((id) => db.doc(`hotels/${hotelUid}/suppliers/${id}`))) : [];
-    const names = new Map(suppliers.filter((row) => row.exists && !isArchived(row.data())).map((row) => [row.id, row.data().name]));
+    const supplierData = new Map(suppliers.filter((row) => row.exists && !isArchived(row.data())).map((row) => [row.id, row.data()]));
+    const approvedPackages = new Map();
+    await Promise.all(page.map(async (row) => {
+      const data = row.data();
+      if (!supplierData.has(data.supplierId)) return;
+      try {
+        const versions = await loadSupplierPriceVersions(tx, db, hotelUid, row.id);
+        const resolved = resolveSupplierPriceVersion(data, versions, { orderDate: count.businessDate, deliveryDate: count.businessDate,
+          pricingDateBasis: supplierData.get(data.supplierId).priceDateBasis });
+        // Price expiry does not make a physical package disappear. This helper
+        // projects only reviewed content at the frozen count business date; it
+        // never imports the version price or source into counts or valuation.
+        approvedPackages.set(row.id, versions.length && !resolved.versionId
+          ? { product: null, reason: "package-terms-not-effective-on-count-date" } : { product: resolved.product, reason: null });
+      } catch (error) {
+        if (!(error instanceof HttpsError) || error.code !== "failed-precondition") throw error;
+        approvedPackages.set(row.id, { product: null, reason: "approved-package-evidence-needs-review" });
+      }
+    }));
     for (const row of page) {
       const data = row.data();
-      if (!names.has(data.supplierId)) { response.unavailable.push({ supplierProductId: row.id, reason: "supplier-unavailable" }); continue; }
-      const projected = packageOptions(data, row.id, baseUnit, names.get(data.supplierId));
+      if (!supplierData.has(data.supplierId)) { response.unavailable.push({ supplierProductId: row.id, reason: "supplier-unavailable" }); continue; }
+      const approved = approvedPackages.get(row.id);
+      if (!approved?.product) { response.unavailable.push({ supplierProductId: row.id, reason: approved?.reason ?? "approved-package-evidence-needs-review" }); continue; }
+      const projected = packageOptions(approved.product, row.id, baseUnit, supplierData.get(data.supplierId).name);
       response.options.push(...projected.options);
       if (projected.reason) response.unavailable.push({ supplierProductId: row.id, reason: projected.reason });
     }

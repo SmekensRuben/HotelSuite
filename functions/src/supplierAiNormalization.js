@@ -85,6 +85,7 @@ function priceEvidence(value, sources, baseUnit) {
           const sourceValue = priceNumber(cells[index]); if (sourceValue === null) continue;
           const label = plain(labels[index]);
           if (isPriceHeader(label)) {
+            if (row.uncertainColumns?.includes(index) || header.uncertainColumns?.includes(index)) { if (sourceValue === value) return { kind: "formula-unverified" }; continue; }
             const contract = priceChannel(label, cells, labels, sources);
             if (contract.channel === "unknown") { if (sourceValue === value) unknownChannel = true; continue; }
             let matches = sourceValue === value;
@@ -279,7 +280,7 @@ function displayName(value) {
     .replace(/(\d(?:[.,]\d+)?\s*)(KG|GR|G|ML|LTR|LT|L)\b/gi, (_, amount, unit) => amount + (unitOf(unit) || unit.toLowerCase()));
 }
 
-function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [], purchaseUnitMappingSnapshot } = {}) {
+function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [], purchaseUnitMappingSnapshot, sourceInterpretation } = {}) {
   if (!importSettings || importSettings.policyVersion === 1) return raw;
   if (importSettings.policyVersion !== NORMALIZATION_VERSION || typeof raw !== "object" || !raw || Array.isArray(raw)
     || raw.normalizationVersion !== undefined) throw new HttpsError("failed-precondition", "This supplier import normalization policy is unavailable or was already applied.");
@@ -292,6 +293,17 @@ function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [], pu
     if (result[field] !== next) { finding(field, code, message, result[field], next, provenance, severity); result[field] = next; }
   };
   const sources = { ...relevantSources(raw, sourceUnits), purchaseUnitMappingSnapshot }, originalName = raw.supplierProductName;
+  if (sourceInterpretation?.version === 1) {
+    result.sourceInterpretation = { ...sourceInterpretation, sourceIssuedOn: importSettings.sourceIssuedOn ?? null,
+      providedFields: [], unitPriceEstablished: false };
+    if (sourceInterpretation.requiresFormatReview) finding("sourceInterpretation", "source-format-review-required",
+      sourceInterpretation.reason === "changed-format" ? "The supplier file structure changed. Confirm its columns, packaging and price channel before importing any products."
+        : "Confirm the file columns, packaging and price channel before reusing this supplier format.", null, null, "source-format", "error");
+  }
+  if (importSettings.documentPurpose === "statistics") {
+    for (const field of ["pricePerPurchaseUnit", "pricePerBaseUnit"]) if (result[field] !== null) change(field, null, "statistical-amount-not-price",
+      "A statistics document does not establish current supplier unit prices. Existing prices are not reconfirmed.", "source", "warning");
+  }
   if (typeof originalName === "string") {
     const expanded = originalName.replace(/\bROCH\.\s*BOTER(?=\s|\d|$)/gi, (match, offset) => "Rochefort Boter" + (/\d/.test(originalName[offset + match.length] || "") ? " " : ""));
     if (expanded !== originalName) change("supplierProductName", expanded, "approved-name-expansion", "The approved ROCH.BOTER abbreviation was expanded to Rochefort Boter. Confirm the product identity.", "approved-name-expansion", "warning");
@@ -343,6 +355,8 @@ function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [], pu
     const evidence = priceEvidence(value, sources, result.baseUnit);
     if (evidence.kind === "channel-unavailable") {
       change(field, null, "source-price-channel-unknown", "The source amount has no explicit base-unit or purchase-package price channel. A bare price cannot establish a priced offer; supply a reviewed contract.", "source", "warning");
+    } else if (evidence.kind === "formula-unverified") {
+      finding(field, "source-formula-unverified", "The source contains a cached spreadsheet formula for this price. Check an explicit supplier price before approving it.", value, value, "source", "error");
     } else if (evidence.kind === "statistics" || evidence.kind === "unverified") {
       change(field, null, evidence.kind === "statistics" ? "statistical-amount-not-price" : "unit-price-unverified",
         evidence.kind === "statistics" ? "A quantity, spend or statistical amount is not a supplier unit price. The proposed price was removed and remains unknown."
@@ -430,6 +444,22 @@ function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [], pu
         } else finding("packInference", "piece-count-not-integral", "Named piece content does not divide the full package exactly. No rounded piece count or separate purchase option was created.", null, null, "inference", "warning");
       } catch { finding("packInference", "piece-count-unavailable", "The piece count cannot be represented exactly. The physical package remains unchanged.", null, null, "inference", "warning"); }
     } else if (distinct.length > 1) finding("packInference", "ambiguous-piece-content", "Several named piece sizes could fit the full package. No piece count was guessed.", null, null, "inference", "warning");
+  }
+  if (result.sourceInterpretation) {
+    const established = result.normalizationFindings.some((entry) => entry.code === "source-unit-price") && result.sourceInterpretation.documentPurpose !== "statistics";
+    result.sourceInterpretation.unitPriceEstablished = established;
+    result.sourceInterpretation.providedFields = RAW_FIELDS.filter((field) => result[field] !== null && result[field] !== undefined && sources.rows.some((unit) => {
+      const values = sourceCells(unit);
+      return values ? values.some((value) => typeof result[field] === "number" ? priceNumber(value) === result[field] : plain(value) === plain(raw[field]))
+        : typeof raw[field] === "string" && unit.text.includes(raw[field]);
+    }));
+    for (const entry of result.normalizationFindings) if (["source-unit-price", "supplier-purchase-unit-mapped", "source-purchase-unit-recovered", "full-package-unit-from-source", "full-package-content-from-source", "pricing-model-from-channel"].includes(entry.code)
+      && result[entry.field] !== null && !result.sourceInterpretation.providedFields.includes(entry.field)) result.sourceInterpretation.providedFields.push(entry.field);
+    if (established) for (const field of ["currency", "priceBasis", "vatRate", "priceValidFrom", "priceValidUntil"]) {
+      if (result[field] === null && importSettings[field] !== undefined && importSettings[field] !== null) result[field] = importSettings[field];
+      if (result[field] !== null && result[field] !== undefined && Object.hasOwn(importSettings, field) && !result.sourceInterpretation.providedFields.includes(field)) result.sourceInterpretation.providedFields.push(field);
+    }
+    result.sourceInterpretation.providedFields.sort();
   }
   return result;
 }

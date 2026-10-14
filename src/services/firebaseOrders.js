@@ -1,5 +1,5 @@
 import { normalizeOrderPriceBasis } from "../utils/orderPricing";
-import { functions, httpsCallable } from "../firebaseConfig";
+import { auth, functions, httpsCallable } from "../firebaseConfig";
 import {
   db,
   collection,
@@ -75,7 +75,25 @@ export async function confirmOrder(hotelUid, orderId, expectedRevision, requestI
   return (await httpsCallable(functions, "confirmHotelOrder")({ hotelUid, orderId, expectedRevision, requestId })).data;
 }
 
-export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor, expectedCartRevision) {
+export async function previewOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, expectedCartRevision) {
+  const actor = auth.currentUser;
+  const { data } = await httpsCallable(functions, "previewOrdersFromCart")({ hotelUid, shoppingCartId, deliveryDate, expectedCartRevision });
+  if (auth.currentUser !== actor) throw new Error("Your sign-in changed. Reload the cart before reviewing prices.");
+  if (!data || data.hotelUid !== hotelUid || data.shoppingCartId !== shoppingCartId || data.requestedDeliveryDate !== deliveryDate
+    || data.cartRevision !== expectedCartRevision || typeof data.priceFingerprint !== "string" || !data.priceFingerprint
+    || !Array.isArray(data.orders) || !data.orders.length || data.orders.length > 25
+    || data.orders.some((order) => !Array.isArray(order.products) || !order.products.length || order.products.length > 100
+      || typeof order.totalAmount !== "number" || !Number.isFinite(order.totalAmount) || order.totalAmount < 0
+      || typeof order.currency !== "string" || !/^[A-Z]{3}$/.test(order.currency)
+      || order.products.some((line) => !line || typeof line.supplierProductId !== "string" || !line.supplierProductId
+        || typeof line.pricePerPurchaseUnit !== "number" || !Number.isFinite(line.pricePerPurchaseUnit) || line.pricePerPurchaseUnit < 0
+        || !["current", "unknown"].includes(line.priceValidity)))) {
+    throw new Error("The applicable-price review could not be verified. Refresh the cart and review again.");
+  }
+  return data;
+}
+
+export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor, expectedCartRevision, expectedPriceFingerprint) {
   if (expectedCartRevision === undefined) throw new Error("Refresh and review the cart before submitting.");
   const storageKey = `order-request:${hotelUid}:${shoppingCartId}:${deliveryDate}:${expectedCartRevision}`;
   let requestId = sessionStorage.getItem(storageKey);
@@ -83,7 +101,8 @@ export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, del
     requestId = crypto.randomUUID();
     sessionStorage.setItem(storageKey, requestId);
   }
-  const result = (await httpsCallable(functions, "createOrdersFromCart")({ hotelUid, shoppingCartId, deliveryDate, requestId, expectedCartRevision })).data;
+  const result = (await httpsCallable(functions, "createOrdersFromCart")({ hotelUid, shoppingCartId, deliveryDate, requestId, expectedCartRevision,
+    ...(expectedPriceFingerprint ? { expectedPriceFingerprint } : {}) })).data;
   sessionStorage.removeItem(storageKey);
   return result;
 }

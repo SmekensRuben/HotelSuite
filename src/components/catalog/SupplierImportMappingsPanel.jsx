@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
+import SupplierImportFormatProfile from "./SupplierImportFormatProfile";
 import { Combobox } from "../ui/combobox";
 import { usePermission } from "../../hooks/usePermission";
 import { PURCHASE_UNITS } from "../../utils/supplierImportWorkspace";
 import { readSupplierPurchaseUnitMappings, saveSupplierPurchaseUnitMappings, applySupplierImportMapping } from "../../services/firebaseSupplierImportWorkspace";
 
-export default function SupplierImportMappingsPanel({ hotelUid, jobId = null, supplierId, supplierName, sourceFormat, profileId = "default", groups = [], truncated = false, locked = false, standalone = false, current = () => true, onApplied, onBusyChange }) {
+export default function SupplierImportMappingsPanel({ hotelUid, jobId = null, supplierId, supplierName, sourceFormat, profileId = "default", sourceFormatCandidate = null, sourceInterpretation = null, formatApplication = null, groups = [], truncated = false, locked = false, standalone = false, current = () => true, onApplied, onBusyChange }) {
   const [profile, setProfile] = useState(null), [loading, setLoading] = useState(true), [error, setError] = useState(null), [busy, setBusy] = useState(false);
   const [choices, setChoices] = useState({}), [remember, setRemember] = useState({}), [message, setMessage] = useState("");
   const [editingRule, setEditingRule] = useState(null), [editedUnit, setEditedUnit] = useState(null);
@@ -24,12 +25,13 @@ export default function SupplierImportMappingsPanel({ hotelUid, jobId = null, su
   }, [hotelUid, supplierId, sourceFormat, profileId, readRetry]);
   const unresolved = groups.filter((group) => group.status !== "mapped");
   const waiting = Boolean(pending.current || pendingRule.current);
-  const controlsLocked = locked || busy || waiting;
+  const formatPending = Boolean(formatApplication && !formatApplication.complete);
+  const controlsLocked = locked || busy || waiting || formatPending;
   const sameCode = (left, right) => left.normalize("NFKC").trim().toUpperCase() === right.normalize("NFKC").trim().toUpperCase();
   const canRetryRule = canCreate && (canUpdate || !profile?.mappings.some((entry) => pendingRule.current
     && sameCode(entry.sourceUnit, pendingRule.current.sourceUnit) && entry.purchaseUnit !== pendingRule.current.purchaseUnit));
   const saveRule = async (newMapping = false) => {
-    if (!active() || locked || busy || pending.current || !canCreate || !profile) return;
+    if (!active() || formatPending || locked || busy || pending.current || !canCreate || !profile) return;
     const operation = pendingRule.current || { sourceUnit: newMapping === true ? newCode.normalize("NFC").trim().toUpperCase() : editingRule,
       purchaseUnit: newMapping === true ? newUnit : editedUnit, expectedRevision: profile.revision, identity };
     if (!operation.sourceUnit || !PURCHASE_UNITS.includes(operation.purchaseUnit)) return;
@@ -55,7 +57,7 @@ export default function SupplierImportMappingsPanel({ hotelUid, jobId = null, su
     } finally { if (active(operation.identity)) { setBusy(false); onBusyChange?.(false); } }
   };
   const apply = async (group, savedRule = null) => {
-    if (!active() || locked || busy || pendingRule.current || (!canCreate && !canUpdate)) return;
+    if (!active() || formatPending || locked || busy || pendingRule.current || (!canCreate && !canUpdate)) return;
     let operation = pending.current;
     if (!operation) {
       const purchaseUnit = savedRule?.purchaseUnit || choices[group.sourceUnit] || group.suggestedUnit;
@@ -102,9 +104,9 @@ export default function SupplierImportMappingsPanel({ hotelUid, jobId = null, su
       }
     } finally { if (active(operation.identity)) { setBusy(false); onBusyChange?.(false); } }
   };
-  if (!sourceFormat || (!standalone && !unresolved.length && !profile?.mappings?.length && !loading)) return null;
+  if (!sourceFormat || (!standalone && !unresolved.length && !profile?.mappings?.length && !profile?.interpretation && !sourceFormatCandidate && !loading)) return null;
   return <section aria-label="Supplier purchase-unit mappings" className="space-y-4 rounded-2xl border border-stone-200 bg-white p-4 sm:p-5">
-    <div><h2 className="font-semibold text-brand-950">Purchase-unit mappings</h2><p className="mt-1 text-sm text-stone-600">{standalone ? "Manage the supplier's package codes for future imports of this file format. " : "Confirm abbreviations once for the affected products. "}Saving a supplier rule also reuses it in future {sourceFormat?.toUpperCase()} imports with this profile. A package label does not establish its physical contents or approve any product.</p></div>
+    <div><h2 className="font-semibold text-brand-950">Supplier import profile</h2><p className="mt-1 text-sm text-stone-600">{standalone ? "Manage the supplier's package codes for future imports of this file format. " : "Confirm abbreviations once for the affected products. "}Saving a supplier rule also reuses it in future {sourceFormat?.toUpperCase()} imports with this profile. A package label does not establish its physical contents or approve any product.</p></div>
     {loading && <p role="status" className="animate-pulse text-sm text-stone-500">Checking saved supplier mappings…</p>}
     {error && !profile && !pending.current && !pendingRule.current && <button type="button" className="ht-button-secondary" disabled={locked || busy} onClick={() => setReadRetry((value) => value + 1)}>Retry mapping profile</button>}
     {standalone && profile && <div className="space-y-3 rounded-xl border border-stone-200 bg-stone-50 p-4">
@@ -117,6 +119,7 @@ export default function SupplierImportMappingsPanel({ hotelUid, jobId = null, su
       <button type="button" className="ht-button-primary" disabled={controlsLocked || !canCreate || !newCode.trim() || /[\u0000-\u001f\u007f/\\]/.test(newCode) || !newUnit || (!canUpdate && profile.mappings.some((entry) => sameCode(entry.sourceUnit, newCode) && entry.purchaseUnit !== newUnit))} onClick={() => saveRule(true)}>Save mapping for future imports</button>
       {!canCreate && <p className="text-xs text-stone-500">Supplier-product create permission is required to save mapping rules.</p>}
     </div>}
+    <SupplierImportFormatProfile key={identity} hotelUid={hotelUid} supplierId={supplierId} sourceFormat={sourceFormat} profileId={profileId} jobId={jobId} profile={profile} candidate={sourceFormatCandidate} interpretation={sourceInterpretation} formatApplication={formatApplication} canCreate={canCreate} canUpdate={canUpdate} locked={locked || busy || waiting} current={() => active()} onSaved={setProfile} onApplied={onApplied} onBusyChange={(value) => { setBusy(value); onBusyChange?.(value); }} />
     {truncated && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">There are more purchase-unit codes than this overview can display. Review the remaining products individually.</p>}
     <div className="space-y-3">{unresolved.map((group) => {
       const chosen = choices[group.sourceUnit] || group.suggestedUnit || null;

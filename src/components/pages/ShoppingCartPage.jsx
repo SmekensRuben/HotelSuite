@@ -12,7 +12,7 @@ import SupplierProductImage from "../catalog/SupplierProductImage";
 import CartQuantityInput from "../catalog/CartQuantityInput";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { createOrdersFromShoppingCart } from "../../services/firebaseOrders";
+import { createOrdersFromShoppingCart, previewOrdersFromShoppingCart } from "../../services/firebaseOrders";
 import { getOutlets } from "../../services/firebaseSettings";
 import {
   getShoppingCart,
@@ -23,7 +23,8 @@ import {
 } from "../../services/firebaseShoppingCarts";
 
 import { knownPrice } from "../../utils/productPurchaseOptions";
-import { formatOrderPriceBasis, normalizeOrderPriceBasis } from "../../utils/orderPricing";
+import { formatOrderMoney, formatOrderPriceBasis, normalizeOrderPriceBasis } from "../../utils/orderPricing";
+import { orderPriceReliability, orderPriceSource, orderPriceEvidence } from "../../utils/orderPriceReliability";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -51,6 +52,11 @@ function ScopedShoppingCartPage() {
   const [showCreateOrderModal, setShowCreateOrderModal] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState("");
   const [creatingOrder, setCreatingOrder] = useState(false);
+  const [creationUncertain, setCreationUncertain] = useState(false);
+  const [pricePreview, setPricePreview] = useState(null);
+  const [pricePreviewLoading, setPricePreviewLoading] = useState(false);
+  const [pricePreviewError, setPricePreviewError] = useState("");
+  const [priceReviewAttempt, setPriceReviewAttempt] = useState(0);
   const [outlets, setOutlets] = useState([]);
   const [errorMessage, setErrorMessage] = useState("");
   const [showDeliveryAdjustmentsModal, setShowDeliveryAdjustmentsModal] = useState(false);
@@ -85,7 +91,20 @@ function ScopedShoppingCartPage() {
   };
 
   const isCurrent = () => mounted.current && auth.currentUser === actor;
-  const cartBlocked = mutating || creatingOrder || pendingCommand || cartNeedsRefresh;
+  const createBlocked = mutating || creatingOrder || pendingCommand || cartNeedsRefresh;
+  const cartBlocked = createBlocked || creationUncertain;
+  useEffect(() => {
+    let canceled = false;
+    if (creationUncertain) return undefined;
+    setPricePreview(null); setPricePreviewError("");
+    if (!showCreateOrderModal || !deliveryDate || !shoppingCart || !isCurrent()) { setPricePreviewLoading(false); return undefined; }
+    setPricePreviewLoading(true);
+    previewOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, shoppingCart.revision ?? 0)
+      .then((result) => { if (!canceled && isCurrent()) setPricePreview(result); })
+      .catch((error) => { if (!canceled && isCurrent()) setPricePreviewError(error?.message || "Could not verify applicable prices."); })
+      .finally(() => { if (!canceled && isCurrent()) setPricePreviewLoading(false); });
+    return () => { canceled = true; };
+  }, [showCreateOrderModal, deliveryDate, shoppingCart, hotelUid, cartId, priceReviewAttempt, creationUncertain]);
   const refreshCart = async ({ background = false, expectedOutlet = null } = {}) => {
     if (!hotelUid || !cartId || !isCurrent()) return false;
     if (!background) setLoading(true);
@@ -306,7 +325,7 @@ function ScopedShoppingCartPage() {
             <section aria-labelledby="cart-summary-heading" className="ml-auto w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
               <div className="flex items-center justify-between gap-3"><h2 id="cart-summary-heading" className="font-semibold">Cart summary</h2><span className="text-xs text-slate-500">{items.length} {items.length === 1 ? "line" : "lines"}</span></div>
               <dl className="mt-3 divide-y divide-slate-100">{Object.entries(cartTotals).map(([key, entry]) => <div key={key} className="flex items-start justify-between gap-4 py-2"><dt className="min-w-0 text-xs text-slate-600"><span className="block font-medium text-slate-800">{entry.currency}</span>{formatOrderPriceBasis(entry.basis)}</dt><dd className="shrink-0 text-sm font-semibold tabular-nums">{entry.total.toFixed(2)}</dd></div>)}</dl>
-              <p className="mt-2 text-xs leading-5 text-slate-500">Quoted amounts. Currencies and price bases stay separate; no VAT conversion is applied.</p>
+              <p className="mt-2 text-xs leading-5 text-slate-500">Indicative cart prices. The next step verifies approved prices for each supplier's order-date or delivery-date agreement. Currencies and price bases stay separate.</p>
               <div className="mt-3 space-y-2 text-sm">
               {hasUnknownPricing && <p className="text-sm text-red-700">Some prices or currencies are unavailable. Review these offers before creating orders.</p>}
               {hasMissingOutlets && (
@@ -331,36 +350,53 @@ function ScopedShoppingCartPage() {
         )}
       </ProcurementPage>
 
-      <Modal open={showCreateOrderModal} onClose={() => setShowCreateOrderModal(false)} title="Create Order">
+      <Modal open={showCreateOrderModal} onClose={() => { if (!creationUncertain && !creatingOrder) setShowCreateOrderModal(false); }} title="Create Order">
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           Delivery Date
           <input
             type="date"
+            disabled={creatingOrder || creationUncertain}
             value={deliveryDate}
-            onChange={(event) => setDeliveryDate(event.target.value)}
+            onChange={(event) => { setPricePreview(null); setDeliveryDate(event.target.value); }}
             className="rounded border border-gray-300 px-3 py-2 text-sm"
           />
         </label>
+        {creationUncertain && <p role="alert" className="mt-3 text-sm text-amber-800">Creation could not be confirmed. Retry the saved request to reconcile its result before changing this cart or delivery date.</p>}
+        <p className="mt-2 text-xs text-slate-600">Supplier delivery weekdays are applied before choosing prices. Future price lists are used only when applicable to the agreed date.</p>
+        {pricePreviewLoading && <p role="status" className="mt-3 text-sm text-slate-600">Reviewing applicable prices…</p>}
+        {pricePreviewError && <div className="mt-3 space-y-2"><p role="alert" className="text-sm text-red-700">{pricePreviewError}</p><button type="button" onClick={() => setPriceReviewAttempt((value) => value + 1)} className="rounded border px-3 py-2 text-sm">Review prices again</button></div>}
+        {pricePreview && <div className="mt-4 space-y-3" aria-label="Applicable order prices">{pricePreview.orders.map((order) => <section key={`${order.supplierId}:${order.outletId}`} className="rounded-lg border border-slate-200 p-3 text-sm">
+          <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{order.supplierName} · {order.outletName}</h3><span>{formatOrderMoney(order.totalAmount, order.currency)}</span></div>
+          <p className="mt-1 text-xs text-slate-600">Delivery: {order.deliveryDate} · {formatOrderPriceBasis(order.priceBasis)}</p>
+          <ul className="mt-2 divide-y divide-slate-100">{order.products.map((line) => <li key={`${line.supplierProductId}:${line.purchaseOptionId}`} className="py-2">
+            <div className="flex justify-between gap-2"><span>{line.supplierProductName} · {line.qtyPurchaseUnits} {line.purchaseUnit}</span><span className="shrink-0 tabular-nums">{formatOrderMoney(line.pricePerPurchaseUnit, line.currency)} each</span></div>
+            <p className={`mt-1 text-xs ${line.priceValidity === "unknown" || line.priceNeedsReview ? "text-amber-800" : "text-slate-600"}`}>{orderPriceReliability(line)}</p>
+            <p className="mt-1 break-words text-xs text-slate-500">{orderPriceSource(line)}</p>
+            <p className="mt-1 text-xs text-slate-500">{orderPriceEvidence(line)}</p>
+          </li>)}</ul>
+        </section>)}</div>}
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
             onClick={() => setShowCreateOrderModal(false)}
+            disabled={creatingOrder || creationUncertain}
             className="px-4 py-2 rounded border border-gray-300 text-gray-700"
           >
             Cancel
           </button>
           <button
             type="button"
-            disabled={!deliveryDate || cartBlocked || hasMissingOutlets || hasUnknownPricing}
+            disabled={!deliveryDate || createBlocked || hasMissingOutlets || hasUnknownPricing || pricePreviewLoading || !pricePreview}
             onClick={async () => {
-              if (!deliveryDate || cartBlocked || mutationLock.current || hasMissingOutlets || hasUnknownPricing || !isCurrent()) return;
+              if (!deliveryDate || createBlocked || mutationLock.current || hasMissingOutlets || hasUnknownPricing || pricePreviewLoading || !pricePreview || !isCurrent()) return;
               mutationLock.current = true;
               setCreatingOrder(true);
               setErrorMessage("");
               try {
                 const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-                const result = await createOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, actor, shoppingCart?.revision || 0);
+                const result = await createOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, actor, shoppingCart?.revision || 0, pricePreview.priceFingerprint);
                 if (!isCurrent()) return;
+                setCreationUncertain(false);
                 const adjustments = Array.isArray(result?.deliveryDateAdjustments)
                   ? result.deliveryDateAdjustments
                   : [];
@@ -374,14 +410,20 @@ function ScopedShoppingCartPage() {
                   navigate("/orders");
                 }
               } catch (error) {
-                if (isCurrent()) setErrorMessage(error?.message || "Could not create orders");
+                if (isCurrent()) {
+                  setErrorMessage(error?.message || "Could not create orders");
+                  const code = String(error?.code || "").replace(/^functions\//, "");
+                  if (["aborted", "failed-precondition", "invalid-argument", "permission-denied", "unauthenticated", "not-found", "already-exists"].includes(code)) {
+                    setCreationUncertain(false); setPricePreview(null); setPriceReviewAttempt((value) => value + 1);
+                  } else setCreationUncertain(true);
+                }
               } finally {
                 mutationLock.current = false; if (isCurrent()) setCreatingOrder(false);
               }
             }}
             className="px-4 py-2 rounded bg-brand-800 text-white hover:bg-brand-950 disabled:opacity-50"
           >
-            {creatingOrder ? "Creating..." : "Create"}
+            {creatingOrder ? "Creating..." : creationUncertain ? "Retry saved creation" : "Create"}
           </button>
         </div>
       </Modal>

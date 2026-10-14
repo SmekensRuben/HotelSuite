@@ -21,6 +21,22 @@ const codes = (row) => row.normalizationFindings.map((entry) => entry.code);
 const mappingSnapshot = (mappings = [], revision = mappings.length ? 1 : 0) => ({ version: 1, supplierId: "supplier", sourceFormat: "xlsx", profileId: "default", revision, mappings });
 const normalizeMapped = (data, snapshot = mappingSnapshot()) => normalizeSupplierAiProposal(data.checked,
   { importSettings: settings, sourceUnits: data.sourceUnits, purchaseUnitMappingSnapshot: snapshot });
+test("statistics context removes even an otherwise explicit source unit price without establishing price confirmation", () => {
+  const data = fixture({ pricePerPurchaseUnit: 2.4, baseUnit: "g" }, { price: 2.4, priceHeader: "Net purchase price", content: "400 g" });
+  const row = normalizeSupplierAiProposal(data.checked, { importSettings: { ...settings, documentPurpose: "statistics", sourceIssuedOn: "2026-10-14" },
+    sourceUnits: data.sourceUnits, purchaseUnitMappingSnapshot: mappingSnapshot([{ sourceUnit: "PK", purchaseUnit: "Pack" }]),
+    sourceInterpretation: { version: 1, status: "unconfirmed", profileId: "default", profileRevision: 1, documentPurpose: "statistics", requiresFormatReview: true } });
+  assert.equal(row.pricePerPurchaseUnit, null); assert.equal(row.pricePerBaseUnit, null); assert.equal(row.sourceInterpretation.unitPriceEstablished, false);
+  assert.equal(row.sourceInterpretation.sourceIssuedOn, "2026-10-14"); assert.equal(codes(row).includes("source-format-review-required"), true);
+});
+test("source format review provenance preserves explicit zero unit prices and one-off dates without profile inference", () => {
+  const data = fixture({ pricePerPurchaseUnit: 0, baseUnit: "g" }, { price: 0, priceHeader: "Net purchase price", content: "400 g" });
+  const row = normalizeSupplierAiProposal(data.checked, { importSettings: { ...settings, priceValidFrom: "2027-01-01", sourceIssuedOn: "2026-10-14" },
+    sourceUnits: data.sourceUnits, sourceInterpretation: { version: 1, status: "unconfirmed", profileId: "default", profileRevision: 0, documentPurpose: "price-list", requiresFormatReview: true } });
+  assert.equal(row.pricePerPurchaseUnit, 0); assert.equal(row.sourceInterpretation.unitPriceEstablished, true); assert.equal(row.priceValidFrom, "2027-01-01");
+  assert.equal(row.sourceInterpretation.providedFields.includes("pricePerPurchaseUnit"), true); assert.equal(row.sourceInterpretation.providedFields.includes("priceValidFrom"), true);
+  assert.equal(candidate(row).category, "blocked");
+});
 
 async function splitExport({ count = 1, purchase = "BK", content = 500, unit = "GR", raw = {}, duplicate = false, csv = false } = {}) {
   const ExcelJS = require("exceljs"), { extractSupplierAiSource } = require("./supplierAiExtraction");

@@ -6,6 +6,8 @@ const { text, digest, revision: validRevision } = require("./validation");
 const { gated } = require("./saasRollout");
 const { resolvePurchaseOption } = require("./productPolicy");
 const { isArchived } = require("./procurementResources");
+const { loadSupplierPriceVersions } = require("./supplierPriceVersions");
+const { assessPriceValidity } = require("./supplierPricePolicy");
 
 function quantity(value, allowZero = false) {
   const n = value;
@@ -22,7 +24,7 @@ async function mutateShoppingCartHandler(request, services = {}) {
   const purchaseOptionId = requireDocumentId(input.purchaseOptionId ?? "default", "purchaseOptionId");
   const fingerprint = digest(input.action, input.cartId || null, input.productId || null, purchaseOptionId, input.value ?? null, input.expectedRevision ?? null);
   return db.runTransaction(async (tx) => {
-    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "create", tx);
+    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "create", tx, services.auth);
     const op = await tx.get(operationRef);
     if (op.exists) {
       if (op.data().fingerprint !== fingerprint) throw new HttpsError("already-exists", "This cart request was already used.");
@@ -51,7 +53,15 @@ async function mutateShoppingCartHandler(request, services = {}) {
       if (input.action === "add") {
         const product = await tx.get(db.doc(`hotels/${hotelUid}/supplierproducts/${productId}`));
         if (!product.exists || product.data().active === false) throw new HttpsError("not-found", "Choose an active product from this hotel.");
-        const p = product.data();
+        let p = product.data();
+        // The cart is an editable estimate. A future-only offer can be added;
+        // preview/creation select its actual dated agreement before ordering.
+        const sourceOption = purchaseOptionId === "default" ? p : p.purchaseOptions?.find((option) => option.id === purchaseOptionId);
+        if (sourceOption?.pricePerPurchaseUnit === null || sourceOption?.pricePerPurchaseUnit === undefined
+          || p.hasVariants && !(p.purchaseOptions?.length > 0)) {
+          const approved = (await loadSupplierPriceVersions(tx, db, hotelUid, productId)).at(-1);
+          if (approved) p = { ...p, ...approved.productTerms, indicativePriceVersionId: approved.id };
+        }
         const option = resolvePurchaseOption(p, purchaseOptionId);
         const qty = quantity(input.value);
         if (index >= 0) items[index] = { ...items[index], qtyPurchaseUnits: quantity(Number(items[index].qtyPurchaseUnits) + qty) };
@@ -59,6 +69,8 @@ async function mutateShoppingCartHandler(request, services = {}) {
           const item = { supplierProductId: productId, purchaseOptionId, supplierId: requireDocumentId(p.supplierId, "Product supplier ID"), qtyPurchaseUnits: qty, outletId: "", note: "" };
           for (const key of ["supplierName", "supplierSku", "supplierProductName", "pricingModel", "image", "imageRevision"]) if (p[key] !== undefined) item[key] = p[key];
           for (const key of ["purchaseUnit", "pricePerPurchaseUnit", "currency", "baseUnit", "baseUnitsPerPurchaseUnit", "priceBasis", "vatRate"]) item[key] = option[key];
+          item.priceValidity = assessPriceValidity(p, new Date(services.now?.() ?? Date.now()).toISOString().slice(0, 10));
+          if (p.indicativePriceVersionId) item.indicativePriceVersionId = p.indicativePriceVersionId;
           items.push(item);
         }
       } else {

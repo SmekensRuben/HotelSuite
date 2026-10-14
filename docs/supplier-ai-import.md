@@ -77,3 +77,14 @@ Local follow-up verification on 13 October 2026: 1,337 frontend tests, 472 Funct
 Browser checks use the real App, provider, Supplier Products page, dialog, rows, badge and BrowserRouter, with synthetic auth/hotel/service responses. Desktop 1440 and mobile 390 verified acknowledged-upload countdowns, route-unmount continuity, reopening without another countdown, ready/error notifications, two simultaneous jobs, slow supplier lists, cold recovery on another route, private-field removal, visible purchase prices and subscription revocation. No JavaScript errors, external requests or horizontal overflow; settled mobile notifications fit within the viewport. These checks establish browser behavior, not live extraction accuracy.
 
 Resume point: code and local verification are complete; consult the PR for this branch for exact-head CI and review status before merge. Merge/deployment and production verification remain outstanding. Production checks must use a normal hotel account, exercise navigation and status reopening, verify customer network responses contain no internal AI fields, and confirm operator usage still reconciles. The actual customer spreadsheet and live provider extraction remain unverified locally. No new Rules, indexes, secrets, commercial limits or Cloud Shell rollout are required by this follow-up.
+
+## Recurring supplier lists and price agreements
+
+The current recurring workflow extends the reviewed supplier mapping profile with
+CSV/XLSX column interpretation, source purpose/scope and date conventions. Exact
+confirmed formats can process without an AI call; changes require explicit format
+review. New upload capability/version flags preserve already queued jobs and
+unknown acknowledgments. Approved source prices create immutable effective terms
+and separate confirmation evidence instead of replacing historical snapshots.
+See [the workflow and policy](recurring-supplier-prices.md) for daily use,
+future-price ordering and bounded reconciliation limits.

@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, expect, it, vi } from "vitest";
 import ShoppingCartPage from "./ShoppingCartPage";
 
-const mocks = vi.hoisted(() => ({ hotel: "hotel-a", permissions: ["orders.create"], actor: { currentUser: { uid: "buyer" } }, cart: vi.fn(), outlets: vi.fn(), outlet: vi.fn(), create: vi.fn(), navigate: vi.fn() }));
+const mocks = vi.hoisted(() => ({ hotel: "hotel-a", permissions: ["orders.create"], actor: { currentUser: { uid: "buyer" } }, cart: vi.fn(), outlets: vi.fn(), outlet: vi.fn(), create: vi.fn(), preview: vi.fn(), navigate: vi.fn() }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, permissions: mocks.permissions, subscriptionActive: true }) }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key) => key }) }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => mocks.navigate, useParams: () => ({ cartId: "cart" }) }));
@@ -12,7 +12,7 @@ vi.mock("../layout/HeaderBar", () => ({ default: () => null }));
 vi.mock("../catalog/PendingCartCommand", () => ({ default: () => null }));
 vi.mock("../shared/Modal", () => ({ default: ({ open, children }) => open ? <section>{children}</section> : null }));
 vi.mock("../../services/firebaseSettings", () => ({ getOutlets: mocks.outlets }));
-vi.mock("../../services/firebaseOrders", () => ({ createOrdersFromShoppingCart: mocks.create }));
+vi.mock("../../services/firebaseOrders", () => ({ createOrdersFromShoppingCart: mocks.create, previewOrdersFromShoppingCart: mocks.preview }));
 vi.mock("../../services/firebaseShoppingCarts", () => ({ getShoppingCart: mocks.cart, removeShoppingCartItem: vi.fn(), updateShoppingCartItemNote: vi.fn(), updateShoppingCartItemOutlet: mocks.outlet, updateShoppingCartItemQty: vi.fn() }));
 const cart = (outletId = "") => ({ id: "cart", revision: 8, items: [{ supplierProductId: "juice", purchaseOptionId: "case", supplierProductName: "Orange juice", supplierName: "Drinks supplier", pricePerPurchaseUnit: 12, currency: "EUR", priceBasis: "net", baseUnitsPerPurchaseUnit: 6000, baseUnit: "ml", purchaseUnit: "case", qtyPurchaseUnits: 2, outletId }] });
 const deferred = () => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; };
@@ -26,6 +26,7 @@ beforeEach(() => {
   vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.permissions = ["orders.create"]; mocks.actor.currentUser = { uid: "buyer" };
   mocks.cart.mockResolvedValue(cart()); mocks.outlets.mockResolvedValue([{ id: "bar", name: "Lobby bar" }, { id: "kitchen", name: "Main kitchen" }]);
   mocks.outlet.mockResolvedValue({ revision: 9 }); mocks.create.mockResolvedValue({ deliveryDateAdjustments: [] });
+  mocks.preview.mockResolvedValue({ priceFingerprint: "reviewed-price", orders: [{ supplierId: "drinks", supplierName: "Drinks supplier", outletId: "bar", outletName: "Lobby bar", deliveryDate: "2026-10-16", totalAmount: 28, currency: "EUR", priceBasis: "net", products: [{ ...cart("bar").items[0], pricePerPurchaseUnit: 14, priceValidity: "current", pricingDateBasis: "delivery-date", pricingDate: "2026-10-16", priceSourceReference: "October list.xlsx" }] }] });
 });
 
 it("searches outlets and sends their stable identity with the reviewed cart revision", async () => {
@@ -127,8 +128,49 @@ it("ignores a late order creation after leaving the scoped cart", async () => {
   const pending = deferred(); mocks.create.mockReturnValueOnce(pending.promise);
   const view = render(<ShoppingCartPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Create Order" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled());
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
-  await waitFor(() => expect(mocks.create).toHaveBeenCalledWith("hotel-a", "cart", expect.any(String), "buyer", 8));
+  await waitFor(() => expect(mocks.create).toHaveBeenCalledWith("hotel-a", "cart", expect.any(String), "buyer", 8, "reviewed-price"));
   view.unmount(); await act(async () => pending.resolve({ deliveryDateAdjustments: [] }));
   expect(mocks.navigate).not.toHaveBeenCalled();
+});
+
+it("reviews effective prices and source evidence for the delivery date before allowing creation", async () => {
+  const pending = deferred(); mocks.cart.mockResolvedValue(cart("bar")); mocks.preview.mockReturnValueOnce(pending.promise);
+  render(<ShoppingCartPage />); fireEvent.click(await screen.findByRole("button", { name: "Create Order" }));
+  expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+  expect(screen.getByRole("status")).toHaveTextContent("Reviewing applicable prices");
+  const result = { priceFingerprint: "dated-price", orders: [{ supplierId: "drinks", supplierName: "Drinks supplier", outletId: "bar", outletName: "Lobby bar", deliveryDate: "2026-10-16", totalAmount: 30, currency: "EUR", priceBasis: "net", products: [{ ...cart("bar").items[0], pricePerPurchaseUnit: 15, priceValidity: "unknown", pricingDateBasis: "delivery-date", pricingDate: "2026-10-16", priceSourceReference: "Price agreement.pdf" }] }] };
+  await act(async () => pending.resolve(result));
+  expect(screen.getByText("30.00 EUR")).toBeInTheDocument();
+  expect(screen.getByText(/Validity unknown · delivery date: 2026-10-16/)).toBeInTheDocument();
+  expect(screen.getByText("Source: Price agreement.pdf")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await waitFor(() => expect(mocks.create).toHaveBeenCalledWith("hotel-a", "cart", expect.any(String), "buyer", 8, "dated-price"));
+});
+
+it("blocks expired prices and can retry an applicable-price review without creating an order", async () => {
+  mocks.cart.mockResolvedValue(cart("bar")); mocks.preview.mockRejectedValueOnce(new Error("No approved price applies (expired)."));
+  render(<ShoppingCartPage />); fireEvent.click(await screen.findByRole("button", { name: "Create Order" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("expired");
+  expect(screen.getByRole("button", { name: "Create" })).toBeDisabled(); expect(mocks.create).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Review prices again" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled());
+  expect(mocks.preview).toHaveBeenCalledTimes(2);
+});
+
+it("keeps the reviewed request available for idempotent recovery after an uncertain creation", async () => {
+  mocks.cart.mockResolvedValue(cart("bar")); mocks.create.mockRejectedValueOnce(new Error("Connection interrupted"));
+  render(<ShoppingCartPage />); fireEvent.click(await screen.findByRole("button", { name: "Create Order" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  const retry = await screen.findByRole("button", { name: "Retry saved creation" });
+  expect(screen.getByText(/Creation could not be confirmed/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "Outlet for Orange juice" })).toBeDisabled();
+  expect(mocks.preview).toHaveBeenCalledTimes(1);
+  fireEvent.click(retry);
+  await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(2));
+  expect(mocks.create.mock.calls[0]).toEqual(mocks.create.mock.calls[1]);
+  await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith("/orders"));
 });

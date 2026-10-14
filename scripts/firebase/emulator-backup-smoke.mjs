@@ -48,6 +48,7 @@ const require = createRequire(import.meta.url);
 const { checkpointId, prepareCheckpoint, readLocationSequence } = require("../../functions/src/inventoryMovements");
 const { getHotelInventoryPeriodHandler } = require("../../functions/src/inventoryReports");
 const { mutateHotelSupplierProductHandler } = require("../../functions/src/products");
+const { resolveSupplierPriceVersion } = require("../../functions/src/supplierPriceVersions");
 const { uploadSupplierProductImage, readSupplierProductImage, sourcePath } = require("../../functions/src/supplierProductImages");
 const sharp = requireFunctions("sharp");
 const { recordHotelInventoryAdjustmentHandler, reverseHotelInventoryAdjustmentHandler } = require("../../functions/src/inventoryAdjustments");
@@ -56,7 +57,7 @@ const { recordHotelOrderReceiptHandler: recordConfirmedReceipt } = require("../.
 const { DEFAULT_AI_CONFIGURATION } = require("../../functions/src/supplierAiPolicy");
 const { uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob } = require("../../functions/src/supplierAiImports");
 const { readHotelSupplierAiImportRowsHandler } = require("../../functions/src/supplierAiProposal");
-const { readHotelSupplierAiImportWorkspaceHandler, decideHotelSupplierAiImportRowsHandler } = require("../../functions/src/supplierAiReview");
+const { readHotelSupplierAiImportWorkspaceHandler, decideHotelSupplierAiImportRowsHandler, applyHotelSupplierImportFormatHandler } = require("../../functions/src/supplierAiReview");
 const { readHotelSupplierPurchaseUnitMappingsHandler, saveHotelSupplierPurchaseUnitMappingHandler,
   mappingScope, mappingProfileRef } = require("../../functions/src/supplierImportMappings");
 const inventoryFixtures = [
@@ -113,8 +114,18 @@ async function verifyUnknownAiImport(proof) {
 const aiMappingScope = { hotelUid: "restore-hotel-a", supplierId: "restore-dairy", sourceFormat: "csv", profileId: "default" };
 const aiMappingCommand = { ...aiMappingScope, requestId: "restore-purchase-units", expectedRevision: 0,
   mappings: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }, { sourceUnit: "TR", purchaseUnit: "Tray" }] };
-const reviewedAiUpload = { ...aiUpload, requestId: "restore-ai-reviewed", reviewWorkspaceVersion: "1" };
-const reviewedAiBytes = Buffer.from("SKU,Name,Net Purchase Price,Currency,Purchase Unit,Package Content\nRESTORE-MILK6,Fictional milk six-pack,18,EUR,FL,6 L\n");
+const recurringFormatScope = { ...aiMappingScope, profileId: "recurring-price-list" };
+const recurringFormatCommand = { ...recurringFormatScope, requestId: "restore-recurring-format", expectedRevision: 0,
+  mappings: [], interpretation: { version: 1, header: ["SKU", "Name", "Net Price", "Pack count", "Content", "Unit", "Valid from"], sheetName: null,
+    columns: { supplierSku: 0, supplierProductName: 1, pricePerPurchaseUnit: 2, packCount: 3, contentQuantity: 4, contentUnit: 5, priceValidFrom: 6 },
+    defaults: { currency: "EUR", priceBasis: "net", pricingModel: "Per Purchase Unit" }, assortmentMode: "partial", documentPurpose: "price-list",
+    decimalSeparator: ".", dateFormat: "YYYY-MM-DD" } };
+const reviewedAiUpload = { ...aiUpload, requestId: "restore-ai-reviewed", reviewWorkspaceVersion: "1", recurringImportVersion: "1" };
+const reviewedAiBytes = Buffer.from("SKU,Name,Net Purchase Price,Currency,Purchase Unit,Package Content\nRESTORE-MILK6,Fictional milk six-pack,18,EUR,FL,6000\n");
+const reviewedFormatCommand = { ...aiMappingScope, requestId: "restore-reviewed-format", expectedRevision: 1, mappings: [],
+  interpretation: { version: 1, header: ["SKU", "Name", "Net Purchase Price", "Currency", "Purchase Unit", "Package Content"], sheetName: null,
+    columns: { supplierSku: 0, supplierProductName: 1, pricePerPurchaseUnit: 2, currency: 3, purchaseUnit: 4, baseUnitsPerPurchaseUnit: 5 },
+    defaults: { baseUnit: "ml", priceBasis: "net" }, assortmentMode: "partial", documentPurpose: "price-list", decimalSeparator: ".", dateFormat: "YYYY-MM-DD" } };
 async function reviewRecords(jobId) {
   const root = `hotels/${aiUpload.hotelUid}`, jobRef = database.doc(`${root}/supplierAiImportJobs/${jobId}`);
   const records = {};
@@ -127,12 +138,19 @@ async function reviewRecords(jobId) {
   await collect(mappingProfileRef(database, aiUpload.hotelUid, mappingScope(aiMappingScope)));
   const operationId = `m-${digest("restore-a", aiMappingCommand.requestId).slice(0, 48)}`;
   for (const collection of ["supplierImportMappingOperations", "supplierImportMappingAudit"]) await collect(database.doc(`${root}/${collection}/${operationId}`));
+  await collect(mappingProfileRef(database, aiUpload.hotelUid, mappingScope(recurringFormatScope)));
+  const formatOperationId = `m-${digest("restore-a", recurringFormatCommand.requestId).slice(0, 48)}`;
+  for (const collection of ["supplierImportMappingOperations", "supplierImportMappingAudit"]) await collect(database.doc(`${root}/${collection}/${formatOperationId}`));
+  const reviewedFormatOperationId = `m-${digest("restore-a", reviewedFormatCommand.requestId).slice(0, 48)}`;
+  for (const collection of ["supplierImportMappingOperations", "supplierImportMappingAudit"]) await collect(database.doc(`${root}/${collection}/${reviewedFormatOperationId}`));
   return records;
 }
 async function seedReviewedAiImport() {
   const authTime = Math.floor(Date.now() / 1000), actor = aiRequest(authTime); let paid = 0;
   const mappings = await saveHotelSupplierPurchaseUnitMappingHandler({ ...actor, data: aiMappingCommand }, aiServices);
   assert.equal(mappings.revision, 1);
+  const format = await saveHotelSupplierPurchaseUnitMappingHandler({ ...actor, data: recurringFormatCommand }, aiServices);
+  assert.equal(format.revision, 1); assert.equal(format.interpretation.documentPurpose, "price-list");
   const services = { ...aiServices, provider: { countInput: async () => 500, respond: async (body) => {
     paid++;
     const source = JSON.parse(body.input[0].content[0].text).units.find((unit) => unit.text.includes("RESTORE-MILK6"));
@@ -147,6 +165,11 @@ async function seedReviewedAiImport() {
   } } };
   const job = await uploadSupplierAiImport(actor, reviewedAiUpload, reviewedAiBytes, services);
   assert.equal((await runSupplierAiImportJob(aiUpload.hotelUid, job.jobId, services)).status, "review"); assert.equal(paid, 1);
+  const confirmed = await saveHotelSupplierPurchaseUnitMappingHandler({ ...actor, data: reviewedFormatCommand }, aiServices);
+  assert.equal(confirmed.revision, 2);
+  const formatApplication = { hotelUid: aiUpload.hotelUid, jobId: job.jobId, requestId: "restore-apply-format", expectedMappingRevision: 2 };
+  const appliedFormat = await applyHotelSupplierImportFormatHandler({ ...actor, data: formatApplication }, aiServices);
+  assert.equal(appliedFormat.completed, true);
   const row = (await readHotelSupplierAiImportRowsHandler({ ...actor, data: { hotelUid: aiUpload.hotelUid, jobId: job.jobId } }, aiServices)).rows[0];
   assert.equal(row.product.purchaseUnit, "Bottle"); assert.equal(row.product.baseUnitsPerPurchaseUnit, 6000);
   const decision = { hotelUid: aiUpload.hotelUid, jobId: job.jobId, requestId: "restore-approve-product", bulk: false,
@@ -165,7 +188,7 @@ async function seedReviewedAiImport() {
         sha256: bytesHash((await bucket.file(result.path).download())[0]) });
     }
   }
-  return { jobId: job.jobId, decision, outcome, records: await reviewRecords(job.jobId),
+  return { jobId: job.jobId, decision, outcome, formatApplication, appliedFormat, formatSource: stored.sourceFormatObject, records: await reviewRecords(job.jobId),
     source: { path: stored.source.path, generation: metadata.generation, sha256: bytesHash(reviewedAiBytes) }, resultObjects };
 }
 async function verifyReviewedAiImport(proof) {
@@ -177,9 +200,19 @@ async function verifyReviewedAiImport(proof) {
   const rowRef = database.doc(`hotels/${aiUpload.hotelUid}/supplierAiImportJobs/${proof.jobId}/rows/${proof.decision.rows[0].rowId}`);
   const before = await rowRef.get();
   const profile = await readHotelSupplierPurchaseUnitMappingsHandler({ ...actor, data: aiMappingScope }, services);
-  assert.equal(profile.revision, 1); assert.deepEqual(profile.mappings, aiMappingCommand.mappings);
+  assert.equal(profile.revision, 2); assert.deepEqual(profile.mappings, aiMappingCommand.mappings);
+  const format = await readHotelSupplierPurchaseUnitMappingsHandler({ ...actor, data: recurringFormatScope }, services);
+  assert.equal(format.revision, 1); assert.deepEqual(format.interpretation, recurringFormatCommand.interpretation);
+  assert.deepEqual(await saveHotelSupplierPurchaseUnitMappingHandler({ ...actor, data: recurringFormatCommand }, services),
+    proof.records[`hotels/${aiUpload.hotelUid}/supplierImportMappingOperations/m-${digest("restore-a", recurringFormatCommand.requestId).slice(0, 48)}`].result);
   assert.deepEqual(await saveHotelSupplierPurchaseUnitMappingHandler({ ...actor, data: aiMappingCommand }, services),
     proof.records[`hotels/${aiUpload.hotelUid}/supplierImportMappingOperations/m-${digest("restore-a", aiMappingCommand.requestId).slice(0, 48)}`].result);
+  assert.deepEqual(await saveHotelSupplierPurchaseUnitMappingHandler({ ...actor, data: reviewedFormatCommand }, services),
+    proof.records[`hotels/${aiUpload.hotelUid}/supplierImportMappingOperations/m-${digest("restore-a", reviewedFormatCommand.requestId).slice(0, 48)}`].result);
+  assert.deepEqual(await applyHotelSupplierImportFormatHandler({ ...actor, data: proof.formatApplication }, services), proof.appliedFormat);
+  const [formatMetadata] = await bucket.file(proof.formatSource.path).getMetadata();
+  assert.equal(formatMetadata.generation, proof.formatSource.generation);
+  assert.equal(bytesHash((await bucket.file(proof.formatSource.path).download())[0]), proof.formatSource.sha256);
   const workspace = await readHotelSupplierAiImportWorkspaceHandler({ ...actor, data: { hotelUid: aiUpload.hotelUid, jobId: proof.jobId, filter: "approved", includeIndex: true } }, services);
   assert.equal(workspace.rows.length, 1); assert.equal(workspace.rows[0].review.status, "approved");
   assert.deepEqual(await decideHotelSupplierAiImportRowsHandler({ ...actor, data: proof.decision }, services), proof.outcome);
@@ -206,6 +239,19 @@ const offerInput = (fixture, price) => ({ supplierId: "restore-dairy", supplierS
   priceBasis: "net", vatRate: null, purchaseOptions: [], priceValidFrom: "2026-10-01", priceValidUntil: "2026-10-31" });
 const offerCommand = (fixture, action) => ({ action, productId: "restore-priced-milk", expectedRevision: action === "create" ? 0 : 1,
   requestId: `restore-price-${action}`, product: offerInput(fixture, action === "create" ? 12 : 15) });
+const futurePriceCommand = (fixture) => ({ action: "update", productId: "restore-priced-milk", expectedRevision: 2,
+  requestId: "restore-future-price", product: { ...offerInput(fixture, 21), priceValidFrom: "2026-11-01", priceValidUntil: "2026-11-30" } });
+async function verifyScheduledPrice(fixture) {
+  const product = (await database.doc(`hotels/${fixture.hotelUid}/supplierproducts/restore-priced-milk`).get()).data();
+  assert.equal(product.pricePerPurchaseUnit, 15, "A scheduled price must not replace the current October agreement.");
+  const found = await database.collection(`hotels/${fixture.hotelUid}/supplierPriceVersions/restore-priced-milk/entries`).get();
+  const versions = found.docs.map((document) => ({ ...document.data(), id: document.id }));
+  assert.equal(versions.length, 3);
+  const current = resolveSupplierPriceVersion(product, versions, { orderDate: "2026-10-12", pricingDateBasis: "order-date" });
+  const scheduled = resolveSupplierPriceVersion(product, versions, { orderDate: "2026-10-12", deliveryDate: "2026-11-02", pricingDateBasis: "delivery-date" });
+  assert.equal(current.product.pricePerPurchaseUnit, 15); assert.equal(current.hasScheduledVersions, true);
+  assert.equal(scheduled.product.pricePerPurchaseUnit, 21); assert.equal(scheduled.priceValidity, "current");
+}
 const adjustmentCommand = (fixture, kind, reasonType = null) => ({ requestId: `restore-${reasonType || kind}`, expectedActorUid: fixture.actorUid,
   kind, reasonType, catalogProductId: "milk", quantity: kind === "transfer" ? 6 : reasonType === "waste" ? 3 : reasonType === "breakage" ? 1 : 2,
   sourceLocationId: "movements-store", destinationLocationId: kind === "transfer" ? "movements-bar" : null,
@@ -359,7 +405,8 @@ async function seedSupplierConfirmation(fixture) {
 }
 async function procurementEvidence(fixture) {
   const root = `hotels/${fixture.hotelUid}`, collections = ["productOperations", "productAudit", "productSkuKeys", "inventoryAdjustments", "inventoryAdjustmentOperations",
-    "inventoryAdjustmentReversals", "inventoryMovements", "inventoryLocationStates", "inventoryCheckpoints", "inventoryPeriodReports", "supplierPriceHistory/restore-priced-milk/entries", "orderAudit",
+    "inventoryAdjustmentReversals", "inventoryMovements", "inventoryLocationStates", "inventoryCheckpoints", "inventoryPeriodReports", "supplierPriceHistory/restore-priced-milk/entries",
+    "supplierPriceVersions/restore-priced-milk/entries", "supplierPriceConfirmations/restore-priced-milk/entries", "orderAudit",
     "supplierProductImages", "supplierProductImageOperations",
     ...["supplierConfirmations", "supplierConfirmationReferences", "receipts", "receiptReferences"].map((name) => `orders/${confirmationOrderId}/${name}`)];
   const rows = (await Promise.all(collections.map((name) => database.collection(`${root}/${name}`).get()))).flatMap((snapshot) => snapshot.docs);
@@ -448,6 +495,8 @@ async function verifyProcurementReplay(fixture, proof) {
     const result = await mutateHotelSupplierProductHandler(procurementRequest(fixture, offerCommand(fixture, action)), procurementServices);
     assert.equal(result.productId, "restore-priced-milk"); assert.equal(result.revision, action === "create" ? 1 : 2);
   }
+  assert.equal((await mutateHotelSupplierProductHandler(procurementRequest(fixture, futurePriceCommand(fixture)), procurementServices)).revision, 3);
+  await verifyScheduledPrice(fixture);
   const original = await recordHotelInventoryAdjustmentHandler(procurementRequest(fixture, adjustmentCommand(fixture, "transfer")), procurementServices);
   assert.equal(original.adjustmentId, transferId(fixture)); assert.equal(original.movementIds.length, 2);
   const reversed = await reverseHotelInventoryAdjustmentHandler(procurementRequest(fixture, reverseCommand(fixture)), procurementServices);
@@ -534,6 +583,8 @@ try {
       const history = await database.collection(`hotels/${fixture.hotelUid}/supplierPriceHistory/restore-priced-milk/entries`).orderBy("revision").get();
       assert.deepEqual(history.docs.map((doc) => [doc.data().revision, doc.data().observation, doc.data().terms.currency, doc.data().terms.options[0].pricePerPurchaseUnit]),
         [[1, "initial-create", fixture.currency, 12], [2, "terms-changed", fixture.currency, 15]]);
+      await mutateHotelSupplierProductHandler(procurementRequest(fixture, futurePriceCommand(fixture)), procurementServices);
+      await verifyScheduledPrice(fixture);
       proof.managedImages[fixture.hotelUid] = await seedManagedImage(fixture);
       await finishAdjustmentCheckpoints(fixture, "opening");
       const transfer = await recordHotelInventoryAdjustmentHandler(procurementRequest(fixture, adjustmentCommand(fixture, "transfer")), procurementServices);
@@ -557,7 +608,7 @@ try {
     assert.ok(Object.values(proof[aiUpload.hotelUid]).some((record) => record.action === "ai-import-review-decision"
       && record.jobId === proof.reviewedAiImport.jobId), "The final procurement evidence must include the original AI review audit.");
     await writeFile(procurementProofPath, JSON.stringify(proof), { mode: 0o600 });
-    console.log("Seeded a confirmed supplier purchase-unit profile and a reviewed AI draft with persisted approval, original paid attempt/result bytes and pinned source generations.");
+    console.log("Seeded confirmed recurring file formats, an audited first-file interpretation, reviewed AI approval, original paid attempt/result bytes and pinned source/format generations.");
     console.log("Seeded fictional two-hotel data, supplier responses and approved-price receipts, protected supplier price changes, paired manual transfer/reversal/waste/return evidence, immutable v1/v2 reports, Auth users/claims, private Storage bytes and real managed product-image sources/derivatives with pinned generations.");
   } else if (process.argv[2] === "verify") {
     for (const [path, expected] of Object.entries(documents)) {
@@ -604,7 +655,7 @@ try {
     const proof = JSON.parse(await readFile(procurementProofPath, "utf8"));
     await verifyReviewedAiImport(proof.reviewedAiImport);
     await verifyUnknownAiImport(proof.unknownAiImport);
-    console.log("Verified confirmed mapping profiles, frozen upload snapshots, persisted approvals and original AI source/result hashes after restore; exact mapping/decision/upload/worker replay made zero provider calls and preserved all review receipts.");
+    console.log("Verified confirmed recurring formats, audited format application, frozen upload snapshots, persisted approvals and original AI source/format/result hashes after restore; exact format/mapping/decision/upload/worker replay made zero provider calls and preserved all review receipts.");
     for (const fixture of inventoryFixtures) await verifyManagedImage(fixture, proof.managedImages[fixture.hotelUid]);
     for (const fixture of inventoryFixtures) await verifyProcurementReplay(fixture, proof[fixture.hotelUid]);
     await assert.rejects(recordHotelInventoryAdjustmentHandler({ auth: { uid: "restore-a", token: { email_verified: true } },

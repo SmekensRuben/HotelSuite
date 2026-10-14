@@ -113,9 +113,9 @@ function ScopedSupplierProductsPage({ hotelUid }) {
     { key: "packageContent", label: "Supplier package content", sortable: false, render: (product) => <span className="text-sm">{typeof product.baseUnitsPerPurchaseUnit === "number" ? product.baseUnitsPerPurchaseUnit : "Unknown"} {productUnitLabel(product.baseUnit)}<span className="mt-1 block text-xs text-gray-500">per {product.purchaseUnit || "unknown purchase unit"}</span></span> },
     {
       key: "price",
-      label: "Price",
+      label: "Indicative price",
       sortValue: (product) => resolveDisplayPrice(product),
-      render: (product) => <span>{formatDisplayPrice(product)}<span className="mt-1 block text-xs text-gray-500">{formatOrderPriceBasis(product.priceBasis)}</span></span>,
+      render: (product) => <span>{formatDisplayPrice(product)}<span className="mt-1 block text-xs text-gray-500">{formatOrderPriceBasis(product.priceBasis)}</span><span className="mt-1 block max-w-[16rem] text-xs text-slate-500">Order preview checks applicable approved prices.</span></span>,
     },
     {
       key: "active",

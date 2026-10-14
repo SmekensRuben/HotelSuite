@@ -74,3 +74,40 @@ it("does not apply a previous actor's delayed cart after the same hotel rerender
   fireEvent.click(screen.getByRole("button", { name: "Add" }));
   await waitFor(() => expect(mocks.add).toHaveBeenCalledWith("hotel-a", "other-cart", expect.anything(), 1, "default", 1));
 });
+
+it("adds a future-only approved package as a draft estimate and explains date-specific price review", async () => {
+  const future = { ...offer, pricePerPurchaseUnit: null, currentPriceVersionId: null, latestApprovedPriceVersionId: "0000000000000002" };
+  mocks.products.mockResolvedValue({ products: [future], hasMore: false });
+  render(<OrderCreatePage />);
+  expect(await screen.findByText("Approved dated price · checked in order preview")).toBeInTheDocument();
+  expect(screen.getByText(/Catalog prices are indicative/)).toHaveTextContent("Order preview checks applicable approved prices");
+  const add = screen.getByRole("button", { name: "Add" }); await waitFor(() => expect(add).not.toBeDisabled());
+  fireEvent.click(add); await waitFor(() => expect(mocks.add).toHaveBeenCalledWith("hotel-a", "cart", expect.objectContaining({ id: "juice" }), 1, "default", 4));
+});
+
+it("shows cached prices as indicative before effective-date draft creation", async () => {
+  render(<OrderCreatePage />);
+  expect(await screen.findByText(/Indicative: 12.00 EUR/)).toBeInTheDocument();
+});
+
+it("reports the server's rejected scheduled-price estimate without manufacturing a price", async () => {
+  mocks.products.mockResolvedValue({ products: [{ ...offer, pricePerPurchaseUnit: null, latestApprovedPriceVersionId: "0000000000000002", currentPriceVersionId: null }], hasMore: false });
+  mocks.add.mockRejectedValue(new Error("This purchase option has an unknown price and cannot be ordered."));
+  render(<OrderCreatePage />); const add = await screen.findByRole("button", { name: "Add" }); await waitFor(() => expect(add).not.toBeDisabled());
+  fireEvent.click(add); expect(await screen.findByRole("alert")).toHaveTextContent("unknown price");
+  expect(mocks.read).not.toHaveBeenCalled();
+});
+
+it("offers a new package from an approved dated preview without replacing the current default package", async () => {
+  const future = { ...offer, currentPriceVersionId: "v1", latestApprovedPriceVersionId: "v2", latestApprovedPurchaseTerms: { versionId: "v2", currency: "EUR", priceBasis: "net", baseUnit: "l", purchaseUnit: "smaller case", baseUnitsPerPurchaseUnit: 4, pricePerPurchaseUnit: 12,
+    purchaseOptions: [{ id: "future-bottle", purchaseUnit: "bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 4 }] } };
+  mocks.products.mockResolvedValue({ products: [future], hasMore: false }); render(<OrderCreatePage />);
+  expect(await screen.findByText(/Indicative: 12.00 EUR \/ case/)).toBeInTheDocument();
+  expect(screen.getByText("6 l")).toBeInTheDocument();
+  const selector = screen.getByRole("combobox", { name: "Purchase option for Orange juice" });
+  fireEvent.focus(selector); fireEvent.click(await screen.findByRole("option", { name: "bottle" }));
+  expect(screen.getByText(/4.00 EUR \/ bottle.*dated version/)).toBeInTheDocument();
+  expect(screen.getByText("1 l · dated version")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  await waitFor(() => expect(mocks.add).toHaveBeenCalledWith("hotel-a", "cart", expect.objectContaining({ purchaseOptionId: "future-bottle" }), 1, "future-bottle", 4));
+});

@@ -7,6 +7,8 @@ const { gated } = require("./saasRollout");
 const { resolvePurchaseOption, inventoryTerms } = require("./productPolicy");
 const { isArchived } = require("./procurementResources");
 const { saveSupplierOutletAccountHandler } = require("./supplierOutletAccounts");
+const { localDate, validDate } = require("./importMonitoringPolicy");
+const { loadSupplierPriceVersions, resolveSupplierPriceVersion } = require("./supplierPriceVersions");
 
 const stamp = () => admin.firestore.FieldValue.serverTimestamp();
 function dateOnly(value) {
@@ -46,7 +48,15 @@ function cartInput(items) {
   });
 }
 
-async function canonicalLines(db, tx, hotelUid, items) {
+async function orderBusinessDate(db, tx, hotelUid, services = {}) {
+  const hotel = await tx.get(db.doc(`hotels/${hotelUid}`));
+  if (!hotel.exists) throw new HttpsError("failed-precondition", "Hotel configuration is missing.");
+  try { return localDate(services.now?.() ?? Date.now(), hotel.data().timeZone || "UTC"); }
+  catch { throw new HttpsError("failed-precondition", "Review the hotel's time zone before ordering."); }
+}
+
+async function canonicalLines(db, tx, hotelUid, items, context = {}) {
+  const orderDate = dateOnly(context.orderDate ?? new Date().toISOString().slice(0, 10));
   const input = cartInput(items);
   const productIds = [...new Set(input.map((i) => i.supplierProductId))];
   const productSnaps = await tx.getAll(...productIds.map((id) => db.doc(`hotels/${hotelUid}/supplierproducts/${id}`)));
@@ -69,9 +79,30 @@ async function canonicalLines(db, tx, hotelUid, items) {
   if (snapshots.slice(supplierIds.length).some((s) => isArchived(s.data()))) throw new HttpsError("failed-precondition", "Choose an active outlet before creating or confirming this order.");
   const suppliers = new Map(snapshots.slice(0, supplierIds.length).map((s) => [s.id, s.data()]));
   const outlets = new Map(snapshots.slice(supplierIds.length).map((s) => [s.id, s.data()]));
+  // Resolve each supplier's actual delivery day before selecting dated prices.
+  const deliveryDates = new Map(supplierIds.map((id) => [id,
+    context.deliveryDate ? deliveryDate(context.deliveryDate, suppliers.get(id).deliveryDays) : orderDate]));
+  const selectedPrices = new Map();
+  await Promise.all(productIds.map(async (id) => {
+    const product = products.get(id).data();
+    const versions = await loadSupplierPriceVersions(tx, db, hotelUid, id);
+    selectedPrices.set(id, resolveSupplierPriceVersion(product, versions, {
+      orderDate, deliveryDate: deliveryDates.get(product.supplierId),
+      pricingDateBasis: suppliers.get(product.supplierId).priceDateBasis,
+    }));
+  }));
   const lines = input.map((item) => {
-    const p = products.get(item.supplierProductId).data();
+    const selection = selectedPrices.get(item.supplierProductId);
+    if (["future", "expired", "invalid", "unavailable"].includes(selection.priceValidity)) {
+      throw new HttpsError("failed-precondition", `No approved price applies to ${selection.pricingDate} (${selection.priceValidity}) for ${selection.product.supplierProductName || "this product"}. Review supplier price validity before ordering.`);
+    }
+    const p = selection.product;
     const option = resolvePurchaseOption(p, item.purchaseOptionId);
+    const optionEvidence = selection.optionReliability?.[item.purchaseOptionId];
+    const optionConfirmed = optionEvidence?.lastPriceConfirmedAt ?? null;
+    const confirmationSourceIssuedOn = optionEvidence?.sourceIssuedOn ?? selection.latestConfirmationSourceIssuedOn ?? selection.sourceIssuedOn ?? null;
+    const selectedNeedsReview = (selection.reasons ?? []).some((reason) => !["purchase-option-price-confirmation-unknown", "price-source-date-unknown"].includes(reason))
+      || !optionConfirmed || optionEvidence?.confirmationMatchesCurrentTerms === false || !validDate(confirmationSourceIssuedOn);
     const price = option.pricePerPurchaseUnit, currency = option.currency;
     const line = { ...item, supplierId: p.supplierId, supplierName: suppliers.get(p.supplierId).name || p.supplierId,
       outletName: outlets.get(item.outletId).name || item.outletId, pricePerPurchaseUnit: price, currency };
@@ -80,9 +111,64 @@ async function canonicalLines(db, tx, hotelUid, items) {
       baseUnitsPerPurchaseUnit: option.baseUnitsPerPurchaseUnit, priceBasis: option.priceBasis,
       vatRate: option.vatRate, netPricePerPurchaseUnit: option.netPricePerPurchaseUnit,
       inventoryTerms: inventoryTerms(p, catalog.get(p.catalogProductId) ?? null, option) });
+    Object.assign(line, { supplierPriceVersionId: selection.versionId ?? null,
+      priceValidity: selection.priceValidity, pricingDateBasis: selection.pricingDateBasis,
+      pricingDate: selection.pricingDate, priceSourceReference: selection.sourceReference ?? null,
+      priceSourceIssuedOn: selection.sourceIssuedOn ?? null,
+      priceValidFrom: p.priceValidFrom ?? null, priceValidUntil: p.priceValidUntil ?? null,
+      priceNeedsReview: selectedNeedsReview,
+      pricingAgreementKnown: selection.pricingAgreementKnown === true,
+      lastPriceChangeAt: selection.lastPriceChangeAt ?? null,
+      lastPriceConfirmedAt: optionConfirmed,
+      priceConfirmationMatchesCurrentTerms: optionEvidence?.confirmationMatchesCurrentTerms !== false && optionConfirmed !== null,
+      priceConfirmationSourceReference: optionEvidence?.sourceReference ?? null,
+      priceConfirmationSourceIssuedOn: confirmationSourceIssuedOn });
     return line;
   });
-  return { lines, suppliers, outlets };
+  return { lines, suppliers, outlets, deliveryDates, orderDate };
+}
+
+function orderPriceFingerprint(lines, orderDate, requestedDate) {
+  return digest(orderDate, requestedDate, lines.map((line) => ({
+    supplierProductId: line.supplierProductId, purchaseOptionId: line.purchaseOptionId, outletId: line.outletId,
+    supplierPriceVersionId: line.supplierPriceVersionId, pricingDateBasis: line.pricingDateBasis,
+    pricingDate: line.pricingDate, priceValidity: line.priceValidity, priceSourceReference: line.priceSourceReference,
+    priceValidFrom: line.priceValidFrom, priceValidUntil: line.priceValidUntil,
+    pricePerPurchaseUnit: line.pricePerPurchaseUnit, currency: line.currency, priceBasis: line.priceBasis,
+    vatRate: line.vatRate, purchaseUnit: line.purchaseUnit, baseUnit: line.baseUnit,
+    baseUnitsPerPurchaseUnit: line.baseUnitsPerPurchaseUnit, inventoryTerms: line.inventoryTerms,
+  })));
+}
+
+async function previewOrdersFromCartHandler(request, services = {}) {
+  const db = services.firestore || admin.firestore();
+  const hotelUid = requireDocumentId(request.data?.hotelUid, "hotelUid");
+  const cartId = requireDocumentId(request.data?.shoppingCartId, "shoppingCartId");
+  const requestedDate = dateOnly(request.data?.deliveryDate);
+  const expected = revision(request.data?.expectedCartRevision);
+  return db.runTransaction(async (tx) => {
+    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "create", tx, services.auth);
+    const cart = await tx.get(db.doc(`hotels/${hotelUid}/shoppingCarts/${cartId}`));
+    if (!cart.exists) throw new HttpsError("not-found", "Shopping cart not found.");
+    if ((cart.data().revision || 0) !== expected) throw new HttpsError("aborted", "The cart changed. Refresh before reviewing prices.");
+    const orderDate = await orderBusinessDate(db, tx, hotelUid, services);
+    const { lines, deliveryDates } = await canonicalLines(db, tx, hotelUid, cart.data().items, { orderDate, deliveryDate: requestedDate });
+    const groups = new Map();
+    for (const line of lines) {
+      const key = `${line.supplierId}/${line.outletId}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(line);
+    }
+    if (groups.size > 25) throw new HttpsError("invalid-argument", "Create at most 25 supplier/outlet orders at a time.");
+    return { hotelUid, shoppingCartId: cartId, requestedDeliveryDate: requestedDate, cartRevision: expected, orderDate,
+      priceFingerprint: orderPriceFingerprint(lines, orderDate, requestedDate), orders: [...groups].map(([, products]) => ({
+      supplierId: products[0].supplierId, supplierName: products[0].supplierName,
+      outletId: products[0].outletId, outletName: products[0].outletName,
+      deliveryDate: deliveryDates.get(products[0].supplierId), products,
+      ...orderPriceContract(products),
+      totalAmount: Math.round(products.reduce((sum, line) => sum + line.pricePerPurchaseUnit * line.qtyPurchaseUnits, 0) * 100) / 100,
+    })) };
+  });
 }
 
 async function canonicalAccount(db, tx, hotelUid, supplierId, outletId, supplier) {
@@ -102,7 +188,7 @@ async function createOrdersFromCartHandler(request, services = {}) {
   const operation = db.doc(`hotels/${hotelUid}/orderOperations/${digest(request.auth?.uid, requestId)}`);
   const fingerprint = digest(cartId, requestedDate, cartRevision);
   return db.runTransaction(async (tx) => {
-    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "create", tx);
+    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "create", tx, services.auth);
     const [op, cart] = await Promise.all([tx.get(operation), tx.get(db.doc(`hotels/${hotelUid}/shoppingCarts/${cartId}`))]);
     if (op.exists) {
       if (op.data().fingerprint !== fingerprint) throw new HttpsError("already-exists", "This order request was used with different details.");
@@ -110,7 +196,11 @@ async function createOrdersFromCartHandler(request, services = {}) {
     }
     if (!cart.exists) throw new HttpsError("not-found", "Shopping cart not found.");
     if ((cart.data().revision || 0) !== cartRevision) throw new HttpsError("aborted", "The cart changed. Refresh and review it before creating orders.");
-    const { lines, suppliers } = await canonicalLines(db, tx, hotelUid, cart.data().items);
+    const orderDate = await orderBusinessDate(db, tx, hotelUid, services);
+    const { lines, suppliers, deliveryDates } = await canonicalLines(db, tx, hotelUid, cart.data().items, { orderDate, deliveryDate: requestedDate });
+    if (input.expectedPriceFingerprint !== undefined && input.expectedPriceFingerprint !== orderPriceFingerprint(lines, orderDate, requestedDate)) {
+      throw new HttpsError("aborted", "Applicable prices changed after your review. Review the delivery-date prices again before creating orders.");
+    }
     const groups = new Map();
     for (const line of lines) {
       const key = `${line.supplierId}/${line.outletId}`;
@@ -129,14 +219,14 @@ async function createOrdersFromCartHandler(request, services = {}) {
     for (const [key, products] of groups) {
       const [supplierId, outletId] = key.split("/");
       const supplier = suppliers.get(supplierId);
-      const resolvedDate = deliveryDate(requestedDate, supplier.deliveryDays);
+      const resolvedDate = deliveryDates.get(supplierId);
       const orderId = `o-${digest(hotelUid, request.auth.uid, requestId, key).slice(0, 40)}`;
       result.orderIds.push(orderId);
       if (resolvedDate !== requestedDate) result.deliveryDateAdjustments.push({ supplierId, supplierName: supplier.name || supplierId, requestedDeliveryDate: requestedDate, resolvedDeliveryDate: resolvedDate });
       tx.create(db.doc(`hotels/${hotelUid}/orders/${orderId}`), { supplierId, supplierName: supplier.name || supplierId,
         outletId, outletName: products[0].outletName, accountNumber: accounts.get(key), products,
         totalAmount: Math.round(products.reduce((sum, p) => sum + p.pricePerPurchaseUnit * p.qtyPurchaseUnits, 0) * 100) / 100,
-        currency: products[0].currency, priceBasis: orderPriceContract(products).priceBasis, deliveryDate: resolvedDate, shoppingCartId: cartId, status: "Created", revision: 1,
+        currency: products[0].currency, priceBasis: orderPriceContract(products).priceBasis, deliveryDate: resolvedDate, orderDate, shoppingCartId: cartId, status: "Created", revision: 1,
         createdBy: request.auth.uid, createdAt: stamp(), updatedAt: stamp(), dispatchStatus: "", dispatchMode: deliveryModes.get(key) });
     }
     tx.update(cart.ref, { items: [], revision: cartRevision + 1, updatedAt: stamp() });
@@ -157,7 +247,7 @@ async function updateOrderHandler(request, services = {}) {
   const payload = input.payload || {};
   if (Object.keys(payload).some((k) => !["products", "deliveryDate"].includes(k))) throw new HttpsError("invalid-argument", "Only product quantities, notes and the delivery date can be edited.");
   return db.runTransaction(async (tx) => {
-    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "update", tx);
+    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "update", tx, services.auth);
     const snap = await tx.get(db.doc(`hotels/${hotelUid}/orders/${orderId}`));
     if (!snap.exists) throw new HttpsError("not-found", "Order not found.");
     const order = snap.data(); editable(order);
@@ -168,12 +258,13 @@ async function updateOrderHandler(request, services = {}) {
     const originalIds = new Set(order.products.map((p) => JSON.stringify([p.supplierProductId, p.purchaseOptionId ?? "default"])));
     const normalized = products.map((p) => ({ ...p, outletId: order.outletId }));
     if (normalized.some((p) => !originalIds.has(JSON.stringify([p.supplierProductId, p.purchaseOptionId ?? "default"])))) throw new HttpsError("invalid-argument", "Use the shopping cart to add new products or purchase options.");
-    const { lines, suppliers } = await canonicalLines(db, tx, hotelUid, normalized);
+    const orderDate = await orderBusinessDate(db, tx, hotelUid, services);
+    const { lines, suppliers, deliveryDates } = await canonicalLines(db, tx, hotelUid, normalized, { orderDate, deliveryDate: payload.deliveryDate ?? order.deliveryDate });
     if (lines.some((p) => p.supplierId !== order.supplierId)) throw new HttpsError("failed-precondition", "A product's supplier has changed. Recreate the order.");
     const priceContract = orderPriceContract(lines);
-    const resolved = deliveryDate(payload.deliveryDate ?? order.deliveryDate, suppliers.get(order.supplierId).deliveryDays);
+    const resolved = deliveryDates.get(order.supplierId);
     const accountNumber = await canonicalAccount(db, tx, hotelUid, order.supplierId, order.outletId, suppliers.get(order.supplierId));
-    tx.update(snap.ref, { products: lines, deliveryDate: resolved, totalAmount: Math.round(lines.reduce((sum, p) => sum + p.pricePerPurchaseUnit * p.qtyPurchaseUnits, 0) * 100) / 100,
+    tx.update(snap.ref, { products: lines, deliveryDate: resolved, orderDate, totalAmount: Math.round(lines.reduce((sum, p) => sum + p.pricePerPurchaseUnit * p.qtyPurchaseUnits, 0) * 100) / 100,
       currency: priceContract.currency, priceBasis: priceContract.priceBasis, accountNumber, revision: expected + 1, updatedAt: stamp(), updatedBy: request.auth.uid });
     return { revision: expected + 1 };
   });
@@ -184,7 +275,7 @@ async function deleteOrderHandler(request, services = {}) {
   const hotelUid = requireDocumentId(request.data?.hotelUid, "hotelUid");
   const orderId = requireDocumentId(request.data?.orderId, "orderId");
   return db.runTransaction(async (tx) => {
-    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "delete", tx);
+    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "delete", tx, services.auth);
     const order = await tx.get(db.doc(`hotels/${hotelUid}/orders/${orderId}`));
     if (!order.exists) return { deleted: false };
     editable(order.data()); tx.delete(order.ref);
@@ -202,7 +293,7 @@ async function confirmOrderHandler(request, services = {}) {
   const expected = revision(input.expectedRevision);
   const dispatchId = digest(hotelUid, orderId, request.auth?.uid, requestId);
   return db.runTransaction(async (tx) => {
-    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "approve", tx);
+    await requireHotelPermission(db, { ...request }, hotelUid, "orders", "approve", tx, services.auth);
     const ref = db.doc(`hotels/${hotelUid}/orders/${orderId}`);
     const snap = await tx.get(ref);
     if (!snap.exists) throw new HttpsError("not-found", "Order not found.");
@@ -222,7 +313,8 @@ async function confirmOrderHandler(request, services = {}) {
       try { require("./validation").email(publicSupplier.orderEmail); }
       catch { throw new HttpsError("failed-precondition", "Configure the supplier's order email first."); }
     }
-    const { lines } = await canonicalLines(db, tx, hotelUid, (order.products || []).map((p) => ({ ...p, outletId: order.outletId })));
+    const orderDate = await orderBusinessDate(db, tx, hotelUid, services);
+    const { lines } = await canonicalLines(db, tx, hotelUid, (order.products || []).map((p) => ({ ...p, outletId: order.outletId })), { orderDate, deliveryDate: order.deliveryDate });
     const priceContract = orderPriceContract(lines);
     if (order.priceBasis !== undefined && order.priceBasis !== priceContract.priceBasis) {
       throw new HttpsError("failed-precondition", "The order price basis changed. Edit and review this order before confirming.");
@@ -235,7 +327,8 @@ async function confirmOrderHandler(request, services = {}) {
       throw new HttpsError("failed-precondition", "Pricing, packaging or inventory terms changed. Edit and review this order before confirming.");
     }
     const simulation = await require("./demoDataPolicy").demoSupplierMode(db, hotelUid, order.supplierId, tx);
-    const snapshot = { id: orderId, products: lines, deliveryDate: dateOnly(order.deliveryDate),
+    const confirmedProducts = order.products.map((line, index) => ({ ...line, pricingDate: lines[index].pricingDate }));
+    const snapshot = { id: orderId, products: confirmedProducts, deliveryDate: dateOnly(order.deliveryDate), orderDate,
       supplierId: order.supplierId, supplierName: publicSupplier.name, outletId: order.outletId, outletName: order.outletName,
       accountNumber, currency: order.currency, priceBasis: order.priceBasis ?? "unknown",
       hotelName: hotel.data().hotelName || hotel.data().name || hotelUid,
@@ -243,7 +336,7 @@ async function confirmOrderHandler(request, services = {}) {
     tx.create(db.doc(`hotels/${hotelUid}/dispatches/${dispatchId}`), { orderId, status: simulation ? "simulated" : "pending", deliveryMode: simulation ? "simulation" : "external", actorUid: request.auth.uid,
       order: snapshot, supplier: publicSupplier, createdAt: stamp() });
     tx.update(ref, { dispatchRequestId: dispatchId, dispatchStatus: simulation ? "sent" : "pending", dispatchMode: simulation ? "simulation" : "external",
-      ...(simulation ? { status: "Ordered" } : {}), dispatchProgress: simulation ? 100 : 5, dispatchStep: simulation ? "Demo simulation: no supplier contacted" : "Awaiting delivery worker",
+      ...(simulation ? { status: "Ordered" } : {}), orderDate, products: confirmedProducts, dispatchProgress: simulation ? 100 : 5, dispatchStep: simulation ? "Demo simulation: no supplier contacted" : "Awaiting delivery worker",
       dispatchError: "", dispatchRequestedByEmail: snapshot.dispatchRequestedByEmail, revision: expected + 1, updatedAt: stamp(), updatedBy: request.auth.uid });
     tx.create(db.doc(`hotels/${hotelUid}/orderAudit/${dispatchId}`), { orderId, action: "approve", actorUid: request.auth.uid, revision: expected + 1, createdAt: stamp() });
     return { dispatchId, status: simulation ? "sent" : "pending" };
@@ -295,12 +388,19 @@ function sameOrderContract(current, frozen, order) {
   if (!frozen || current.supplierId !== order.supplierId || current.currency !== order.currency
     || fields.some((field) => current[field] !== frozen[field])
     || current.purchaseOptionId !== (frozen.purchaseOptionId ?? "default")) return false;
+  // A date advancing within the same version does not alter the agreed terms;
+  // crossing into another version or changing the supplier date basis does.
+  if (Object.hasOwn(frozen, "supplierPriceVersionId") && digest(current.supplierPriceVersionId, current.pricingDateBasis,
+    current.priceValidity, current.priceSourceReference, current.priceValidFrom, current.priceValidUntil)
+    !== digest(frozen.supplierPriceVersionId, frozen.pricingDateBasis, frozen.priceValidity,
+      frozen.priceSourceReference, frozen.priceValidFrom, frozen.priceValidUntil)) return false;
   // Existing orders keep their historic contract. New orders additionally freeze
   // cost basis and the exact catalog identity/conversion used by receiving.
   return frozen.inventoryTerms === undefined || digest(current.inventoryTerms, current.priceBasis, current.vatRate)
     === digest(frozen.inventoryTerms, frozen.priceBasis, frozen.vatRate);
 }
-module.exports = { dateOnly, deliveryDate, cartInput, canonicalLines, sameOrderContract, orderPriceContract, createOrdersFromCartHandler, updateOrderHandler, deleteOrderHandler, confirmOrderHandler, setOutletApproversHandler, saveSupplierOutletAccountHandler,
+module.exports = { dateOnly, deliveryDate, cartInput, canonicalLines, sameOrderContract, orderPriceContract, orderPriceFingerprint, orderBusinessDate, previewOrdersFromCartHandler, createOrdersFromCartHandler, updateOrderHandler, deleteOrderHandler, confirmOrderHandler, setOutletApproversHandler, saveSupplierOutletAccountHandler,
+  previewOrdersFromCart: onCall(options, gated(previewOrdersFromCartHandler)),
   createOrdersFromCart: onCall(options, gated(createOrdersFromCartHandler)), updateHotelOrder: onCall(options, gated(updateOrderHandler)),
   deleteHotelOrder: onCall(options, gated(deleteOrderHandler)), confirmHotelOrder: onCall(options, gated(confirmOrderHandler)), setHotelOutletApprovers: onCall(options, gated(setOutletApproversHandler)),
   saveSupplierOutletAccount: onCall(options, gated(saveSupplierOutletAccountHandler)) };

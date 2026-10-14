@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { pricingTerms, priceTermsChanged, canonicalPrice, projectOptions, assessPriceValidity } = require("./supplierPricePolicy");
+const { pricingTerms, priceTermsChanged, priceValueChanged, canonicalPrice, projectOptions, assessPriceValidity } = require("./supplierPricePolicy");
 const offer = (patch = {}) => ({ productPolicyVersion: 1, supplierId: "s", supplierSku: "sku", supplierProductName: "Orange juice", catalogProductId: "juice",
   currency: "EUR", priceBasis: "gross", vatRate: 0.06, pricingModel: "Per Purchase Unit", baseUnit: "ml", purchaseUnit: "Case",
   baseUnitsPerPurchaseUnit: 6000, pricePerPurchaseUnit: 15.9, purchaseOptions: [], ...patch });
@@ -46,4 +46,14 @@ test("contract bounds qualify today's prices without inventing dates or using an
   assert.equal(assessPriceValidity(bounds, null), "unavailable");
   assert.equal(assessPriceValidity(offer({ priceValidFrom: "invalid" }), "2026-10-12"), "invalid");
   assert.equal(priceTermsChanged(offer(), bounds, catalog, catalog), true);
+});
+
+
+test("economic price changes compare equivalent physical unit spellings without hiding smaller packages", () => {
+  const grams = offer({ baseUnit: "g", baseUnitsPerPurchaseUnit: 400, pricePerPurchaseUnit: 12 });
+  const kilos = offer({ baseUnit: "kg", baseUnitsPerPurchaseUnit: 0.4, pricePerPurchaseUnit: 12 });
+  assert.equal(priceValueChanged(grams, kilos), false);
+  assert.equal(priceValueChanged(grams, { ...kilos, baseUnitsPerPurchaseUnit: 0.3 }), true);
+  assert.equal(priceValueChanged(offer({ baseUnit: "ml", baseUnitsPerPurchaseUnit: 6000 }), offer({ baseUnit: "l", baseUnitsPerPurchaseUnit: 6 })), false);
+  assert.equal(priceValueChanged(grams, offer({ baseUnit: "ml", baseUnitsPerPurchaseUnit: 400, pricePerPurchaseUnit: 12 })), true, "cross-dimension contracts remain incomparable");
 });

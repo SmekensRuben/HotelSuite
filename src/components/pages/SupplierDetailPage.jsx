@@ -200,6 +200,7 @@ function ScopedSupplierDetailPage({ hotelUid, supplierId }) {
               <div className="grid gap-4 sm:grid-cols-2">
                 <DetailField label="Order System" value={supplier.orderSystem} />
                 <DetailField label="Delivery days" value={formatDeliveryDays(supplier.deliveryDays)} />
+                <DetailField label="Price agreement date" value={supplier.priceDateBasis === "delivery-date" ? "Delivery date" : supplier.priceDateBasis === "order-date" ? "Order date" : "Not recorded — review the supplier agreement"} />
                 <DetailField label="Category" value={supplier.category} />
                 <DetailField label="Subcategory" value={supplier.subcategory} />
               </div>

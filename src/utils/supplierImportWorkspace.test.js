@@ -39,3 +39,16 @@ it("keeps applied server receipt objects read-only and accepts the actual applie
   const value = row(); value.committed = { status: "created", productId: "product", revision: 1 }; value.canApprove = true; value.bulkEligible = true; const projected = projectSupplierImportRow(value); expect(projected.committed).toBe(true); expect(projected.canApprove).toBe(false); expect(projected.bulkEligible).toBe(false);
   const complete = workspace(); complete.index[0].reviewStatus = "applied"; complete.index[0].committedStatus = "created"; expect(projectSupplierImportWorkspace(complete).index[0].reviewStatus).toBe("applied");
 });
+
+it("keeps recurring physical-price changes and format progress in the complete index", () => {
+  const value = workspace();
+  value.rows[0].recurringReview = { category: "packaging-change", physicalPriceComparison: { before: 2, after: 4, unit: "l", currency: "EUR", comparable: true, percentChange: 100, reason: null }, confirmsUnitPrice: true, sourceIssuedOn: "2026-10-14", formatStatus: "confirmed", assortmentMode: "partial", providerCostUsd: 9 };
+  value.index[0].recurringReview = value.rows[0].recurringReview;
+  value.formatApplication = { operationId: "format-op", requestId: "request", complete: false, processed: 25, totalRows: 250, profileRevision: 2, privateSourcePath: "private-source" };
+  const projected = projectSupplierImportWorkspace(value);
+  expect(projected.rows[0].recurringReview.physicalPriceComparison.percentChange).toBe(100);
+  expect(filterSupplierImportIndex(projected.index, "packaging-change").map((item) => item.rowId)).toEqual([row().rowId]);
+  expect(projected.formatApplication).toEqual({ operationId: "format-op", requestId: "request", complete: false, processed: 25, totalRows: 250, profileRevision: 2 });
+  expect(JSON.stringify(projected)).not.toContain("providerCostUsd");
+  expect(JSON.stringify(projected)).not.toContain("privateSourcePath");
+});

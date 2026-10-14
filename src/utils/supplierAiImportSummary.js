@@ -1,3 +1,4 @@
+import { validSupplierDate } from "./supplierImportFormat";
 const counters = ["totalRows", "normalizedRows", "assumptionRows", "unknownPriceRows", "blockedNormalizationRows", "inferredPieceRows", "missingRequiredRows"];
 const categories = ["new", "changed", "unchanged", "blocked"];
 const own = (value, field) => Object.hasOwn(value, field);
@@ -36,7 +37,15 @@ export function supplierAiImportSummary(value, { totalRows, counts } = {}) {
 
 export function supplierAiImportSettings(value) {
   if (!value || typeof value !== "object" || ["policyVersion", "priceBasis", "currency", "vatRate"].some((field) => !own(value, field)) || value.policyVersion !== 2 || !["net", "gross", "unknown"].includes(value.priceBasis) || typeof value.currency !== "string" || !/^[A-Z]{3}$/.test(value.currency) || (value.vatRate !== null && (typeof value.vatRate !== "number" || !Number.isFinite(value.vatRate) || value.vatRate < 0 || value.vatRate > 1))) return null;
-  return { policyVersion: 2, priceBasis: value.priceBasis, currency: value.currency, vatRate: value.vatRate };
+  const result = { policyVersion: 2, priceBasis: value.priceBasis, currency: value.currency, vatRate: value.vatRate };
+  for (const [key, allowed] of [["assortmentMode", ["full", "partial", "unknown"]], ["documentPurpose", ["price-list", "product-list", "statistics"]]]) {
+    if (own(value, key)) { if (!allowed.includes(value[key])) return null; result[key] = value[key]; }
+  }
+  for (const key of ["sourceIssuedOn", "priceValidFrom", "priceValidUntil"]) {
+    if (own(value, key)) { if (value[key] !== null && !validSupplierDate(value[key])) return null; result[key] = value[key]; }
+  }
+  if (result.priceValidFrom && result.priceValidUntil && result.priceValidFrom > result.priceValidUntil) return null;
+  return result;
 }
 
 export function supplierAiReviewRowLabel(rowId) {

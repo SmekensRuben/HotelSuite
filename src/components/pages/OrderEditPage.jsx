@@ -12,6 +12,7 @@ import AsyncError from "../shared/AsyncError";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 import { formatOrderMoney, formatOrderSubtotal, formatOrderPriceBasis } from "../../utils/orderPricing";
+import { orderPriceReliability } from "../../utils/orderPriceReliability";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -113,6 +114,7 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
       qty,
       price: formatOrderMoney(unitPrice, item.currency || order.currency),
       priceBasisLabel: formatOrderPriceBasis(item.priceBasis),
+      priceReliability: orderPriceReliability(item),
       subtotal: formatOrderSubtotal(unitPrice, item.qtyPurchaseUnits, item.currency || order.currency),
       rowIndex: index,
     };
@@ -140,7 +142,7 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
         />
       ),
     },
-    { key: "price", label: "Package price" },
+    { key: "price", label: "Package price", render: (row) => <div><p>{row.price}</p><p className="mt-1 max-w-[18rem] text-xs text-slate-600">{row.priceReliability}</p></div> },
     { key: "priceBasisLabel", label: "Price basis" },
     { key: "subtotal", label: "Quoted subtotal" },
     {
@@ -203,7 +205,7 @@ function ScopedOrderEdit({ hotelUid, orderId }) {
           </div>
         </Card>
 
-        <p className="text-xs text-gray-600">Quoted amounts are shown as recorded. No VAT conversion is applied; missing historical price bases remain unknown.</p>
+        <p className="text-xs text-gray-600">Saving refreshes this draft to the applicable approved prices using the supplier's order-date or adjusted delivery-date agreement. Review the saved draft before confirming. Historical orders remain unchanged.</p>
         <DataListTable columns={columns} rows={rows} emptyMessage="No order lines remaining." />
       </ProcurementPage>
     </div>
