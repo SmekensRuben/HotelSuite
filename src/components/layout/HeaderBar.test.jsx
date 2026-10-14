@@ -60,4 +60,10 @@ describe("HeaderBar Front Office permissions", () => {
     renderHeader();
     expect(screen.queryByRole("link", { name: "Purchasing & Inventory Settings" })).not.toBeInTheDocument();
   });
+  it("exposes mapping settings only with both supplier and supplier-product read rights", () => {
+    permissions = ["suppliers.read", "supplierproducts.read"]; const view = renderHeader();
+    expect(screen.getByRole("link", { name: "Purchasing & Inventory Settings" })).toBeInTheDocument(); view.unmount();
+    permissions = ["supplierproducts.read"]; renderHeader();
+    expect(screen.queryByRole("link", { name: "Purchasing & Inventory Settings" })).not.toBeInTheDocument();
+  });
 });

@@ -10,6 +10,61 @@ const group = { sourceUnit: "FL", count: 1, suggestedUnit: "Bottle", status: "un
 const props = () => ({ hotelUid: "hotel-a", jobId: "job", supplierId: "supplier", sourceFormat: "xlsx", groups: [group], current: () => true, onApplied: vi.fn(), onBusyChange: vi.fn() });
 const applied = (rows) => ({ rows: rows.map((row) => ({ ...row, reviewRevision: row.reviewRevision + 1 })), outcomes: rows.map((row) => ({ rowId: row.rowId, status: "mapped", reviewRevision: row.reviewRevision + 1 })) });
 beforeEach(() => { vi.clearAllMocks(); mocks.permission.mockReturnValue(true); mocks.read.mockResolvedValue(profile); mocks.save.mockResolvedValue({ ...profile, revision: 1, mappings: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }] }); mocks.apply.mockImplementation(async (_, __, input) => applied(input.rows)); });
+it("shows an empty standalone profile and requires an explicit save after choosing a suggestion", async () => {
+  mocks.read.mockResolvedValueOnce({ ...profile, suggestions: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }] });
+  render(<SupplierImportMappingsPanel hotelUid="hotel-a" supplierId="supplier" sourceFormat="xlsx" standalone />);
+  await screen.findByText("No saved mappings for this supplier and file format.");
+  fireEvent.click(screen.getByRole("button", { name: "Use FL → Bottle" }));
+  expect(screen.getByRole("textbox", { name: "Source package code" })).toHaveValue("FL");
+  expect(mocks.save).not.toHaveBeenCalled(); expect(mocks.apply).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Save mapping for future imports" }));
+  await screen.findByText(/FL → Bottle saved for future XLSX imports/);
+  expect(mocks.save).toHaveBeenCalledWith("hotel-a", "supplier", "xlsx", "default", 0, [{ sourceUnit: "FL", purchaseUnit: "Bottle" }]);
+  expect(mocks.apply).not.toHaveBeenCalled();
+  expect(screen.queryByText(/Apply the saved rule to this draft separately/)).not.toBeInTheDocument();
+});
+it("allows create-only users to recover their original new-rule save without granting replacement rights", async () => {
+  mocks.permission.mockImplementation((_, action) => action !== "update");
+  mocks.read.mockResolvedValueOnce({ ...profile, suggestions: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }] });
+  mocks.save.mockRejectedValueOnce(new Error("Connection lost"));
+  render(<SupplierImportMappingsPanel hotelUid="hotel-a" supplierId="supplier" sourceFormat="xlsx" standalone />);
+  fireEvent.click(await screen.findByRole("button", { name: "Use FL → Bottle" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save mapping for future imports" }));
+  const retry = await screen.findByRole("button", { name: "Retry the same rule save" }); expect(retry).toBeEnabled();
+  fireEvent.click(retry); await screen.findByText(/FL → Bottle saved for future XLSX imports/);
+  expect(mocks.save.mock.calls[0]).toEqual(mocks.save.mock.calls[1]);
+  expect(screen.getByRole("button", { name: "Edit FL rule" })).toBeDisabled();
+});
+it("recovers a standalone unknown save with the same code and revision and prevents replacement edits", async () => {
+  mocks.read.mockResolvedValueOnce({ ...profile, suggestions: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }] });
+  mocks.save.mockRejectedValueOnce(new Error("Connection lost"));
+  render(<SupplierImportMappingsPanel hotelUid="hotel-a" supplierId="supplier" sourceFormat="xlsx" standalone />);
+  fireEvent.click(await screen.findByRole("button", { name: "Use FL → Bottle" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save mapping for future imports" }));
+  await screen.findByRole("button", { name: "Retry the same rule save" });
+  expect(screen.getByRole("textbox", { name: "Source package code" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save mapping for future imports" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Retry the same rule save" }));
+  await screen.findByText(/FL → Bottle saved for future XLSX imports/);
+  expect(mocks.save.mock.calls[0]).toEqual(mocks.save.mock.calls[1]); expect(mocks.apply).not.toHaveBeenCalled();
+});
+it("permits standalone read-only profiles but prevents add and edit without current create authority", async () => {
+  mocks.permission.mockImplementation((_, action) => action !== "create");
+  mocks.read.mockResolvedValueOnce({ ...profile, revision: 1, mappings: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }] });
+  render(<SupplierImportMappingsPanel hotelUid="hotel-a" supplierId="supplier" sourceFormat="xlsx" standalone />);
+  await screen.findByText("Saved mappings (1)");
+  expect(screen.getByRole("button", { name: "Edit FL rule" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save mapping for future imports" })).toBeDisabled();
+  expect(mocks.save).not.toHaveBeenCalled(); expect(mocks.apply).not.toHaveBeenCalled();
+});
+it("keeps a failed empty-profile read visible and can retry without creating a mapping", async () => {
+  mocks.read.mockRejectedValueOnce(new Error("Profile connection lost"));
+  render(<SupplierImportMappingsPanel hotelUid="hotel-a" supplierId="supplier" sourceFormat="xlsx" standalone />);
+  await screen.findByRole("alert");
+  fireEvent.click(screen.getByRole("button", { name: "Retry mapping profile" }));
+  await screen.findByText("No saved mappings for this supplier and file format.");
+  expect(mocks.read).toHaveBeenCalledTimes(2); expect(mocks.save).not.toHaveBeenCalled();
+});
 it("requires explicit confirmation of supplier-code suggestions and does not save rules without the checkbox", async () => {
   const p = props(); render(<SupplierImportMappingsPanel {...p} />); await screen.findByRole("combobox", { name: "Purchase unit for FL" }); await waitFor(() => expect(mocks.read).toHaveBeenCalled()); expect(mocks.apply).not.toHaveBeenCalled(); expect(mocks.save).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Confirm & apply" })); await screen.findByText(/1 draft products updated/); expect(mocks.save).not.toHaveBeenCalled(); expect(mocks.apply).toHaveBeenCalledWith("hotel-a", "job", { sourceUnit: "FL", purchaseUnit: "Bottle", expectedMappingRevision: null, rows: group.rowIds }); expect(p.onApplied).toHaveBeenCalledTimes(1);

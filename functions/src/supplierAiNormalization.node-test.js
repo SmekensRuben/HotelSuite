@@ -22,6 +22,69 @@ const mappingSnapshot = (mappings = [], revision = mappings.length ? 1 : 0) => (
 const normalizeMapped = (data, snapshot = mappingSnapshot()) => normalizeSupplierAiProposal(data.checked,
   { importSettings: settings, sourceUnits: data.sourceUnits, purchaseUnitMappingSnapshot: snapshot });
 
+async function splitExport({ count = 1, purchase = "BK", content = 500, unit = "GR", raw = {}, duplicate = false, csv = false } = {}) {
+  const ExcelJS = require("exceljs"), { extractSupplierAiSource } = require("./supplierAiExtraction");
+  const name = "FICTIONAL SUPPLIER ITEM";
+  const headers = ["Artikelnummer", "Artikel omschrijving", "\n Inhoud verpakking \n", "\n Eenheid verpakking \n", "Inhoud", "\n Eenheid \n", "Aantal", "Inkoopwaarde"];
+  const values = ["00081-A", name, count, purchase, content, unit, 100, 1200];
+  if (duplicate) { headers.push("Purchase unit"); values.push("TR"); }
+  const workbook = new ExcelJS.Workbook(); workbook.addWorksheet("Volumes").addRows([headers, values]);
+  const bytes = csv ? Buffer.from(headers.map((value) => JSON.stringify(value.replace(/\s+/g, " ").trim())).join(",") + "\n" + values.map((value) => value === null ? "" : value).join(",")) : Buffer.from(await workbook.xlsx.writeBuffer());
+  const source = await extractSupplierAiSource({ fileName: csv ? "fictional.csv" : "fictional.xlsx", mimeType: csv ? "text/csv" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes });
+  const sourceUnits = source.units.map((value, index) => ({ ...value, contextOnly: index === 0 }));
+  const proposal = { ...fixture().raw, supplierProductName: name, purchaseUnit: unit, baseUnit: null, baseUnitsPerPurchaseUnit: 1,
+    sourceAnchors: [{ sourceId: sourceUnits[1].sourceId, quote: name }], ...raw };
+  return { raw: proposal, sourceUnits, checked: validateRawSupplierAiRows({ rows: [proposal] }, { sourceUnits })[0] };
+}
+test("real XLSX and CSV split exports map Eenheid verpakking and retain physical content independently", async () => {
+  for (const csv of [false, true]) {
+    const data = await splitExport({ csv });
+    const normalized = normalizeMapped(data, mappingSnapshot([{ sourceUnit: "BK", purchaseUnit: "Box" }, { sourceUnit: "GR", purchaseUnit: "Jar" }]));
+    assert.equal(normalized.purchaseUnit, "Box"); assert.equal(normalized.purchaseUnitMapping.sourceUnit, "BK");
+    assert.equal(normalized.baseUnit, "g"); assert.equal(normalized.baseUnitsPerPurchaseUnit, 500);
+    assert.equal(normalized.originalInput.purchaseUnit, "GR"); assert.deepEqual(normalized.sourceAnchors, data.checked.sourceAnchors);
+    assert.equal(normalized.pricePerPurchaseUnit, null); assert.equal(normalized.pricePerBaseUnit, null);
+    const pending = normalizeMapped(data);
+    assert.equal(pending.purchaseUnit, "BK"); assert.equal(pending.purchaseUnitMapping.suggestedUnit, "Box");
+    assert.equal(pending.purchaseUnitMapping.status, "unconfirmed"); assert.equal(candidate(pending).category, "blocked");
+  }
+});
+test("split exports multiply inner packages by their content instead of substituting one inner item", async () => {
+  for (const [count, purchase, content, unit, label, base, total] of [[12, "PK", 1, "LT", "Pack", "l", 12], [2, "ZK", 5, "KG", "Bag", "kg", 10], [6, "FL", 2, "CL", "Bottle", "ml", 120]]) {
+    const row = normalizeMapped(await splitExport({ count, purchase, content, unit }), mappingSnapshot([{ sourceUnit: purchase, purchaseUnit: label }]));
+    assert.equal(row.purchaseUnit, label); assert.equal(row.baseUnit, base); assert.equal(row.baseUnitsPerPurchaseUnit, total);
+    assert.equal(row.pricePerPurchaseUnit, null); assert.equal(row.pricePerBaseUnit, null);
+  }
+});
+test("a blank explicit package column never falls back to physical Eenheid or a provider guess", async () => {
+  const row = normalizeMapped(await splitExport({ purchase: null, unit: "ST", raw: { purchaseUnit: "TR" } }), mappingSnapshot([{ sourceUnit: "ST", purchaseUnit: "Piece" }, { sourceUnit: "TR", purchaseUnit: "Tray" }]));
+  assert.equal(row.purchaseUnit, null); assert.equal(row.purchaseUnitMapping.sourceUnit, null);
+  assert.equal(row.purchaseUnitMapping.status, "unconfirmed"); assert.equal(row.baseUnitsPerPurchaseUnit, null);
+  assert.equal(candidate(row).category, "blocked");
+  assert.throws(() => applyPurchaseUnitMappingToProposal(row, { sourceUnit: "ST", purchaseUnit: "Piece" }), { code: "failed-precondition" });
+});
+test("conflicting explicit package columns cannot be approved through a physical-unit mapping", async () => {
+  const row = normalizeMapped(await splitExport({ duplicate: true }), mappingSnapshot([{ sourceUnit: "BK", purchaseUnit: "Box" }, { sourceUnit: "TR", purchaseUnit: "Tray" }, { sourceUnit: "GR", purchaseUnit: "Bottle" }]));
+  assert.equal(row.purchaseUnitMapping.sourceUnit, null); assert.equal(row.purchaseUnitMapping.status, "unconfirmed");
+  assert.equal(candidate(row).category, "blocked");
+});
+test("weight purchase units and missing inner quantities remain unavailable rather than becoming item counts", async () => {
+  for (const fields of [{ purchase: "KG", unit: "ST", content: 1 }, { purchase: "PK", content: null }, { purchase: "PK", count: null }]) {
+    const row = normalizeMapped(await splitExport(fields), mappingSnapshot([{ sourceUnit: fields.purchase, purchaseUnit: "Pack" }]));
+    assert.equal(row.baseUnitsPerPurchaseUnit, null); assert.ok(codes(row).includes("split-package-content-unavailable"));
+    assert.equal(candidate(row).category, "blocked");
+  }
+});
+test("unit-price channel uses the explicit package column even when bare Eenheid has a saved rule", () => {
+  const data = fixture({ purchaseUnit: "GR", baseUnit: "g", pricePerPurchaseUnit: 15 }, { content: "500 GR" });
+  data.sourceUnits[0].text = JSON.stringify(["SKU", "Name", "Eenheid verpakking", "Package content", "Unit price", "Eenheid"]);
+  data.sourceUnits[1].text = JSON.stringify([data.raw.supplierSku, data.raw.supplierProductName, "BK", "500 GR", 15, "GR"]);
+  data.checked = validateRawSupplierAiRows({ rows: [data.raw] }, { sourceUnits: data.sourceUnits })[0];
+  const row = normalizeMapped(data, mappingSnapshot([{ sourceUnit: "BK", purchaseUnit: "Box" }, { sourceUnit: "GR", purchaseUnit: "Jar" }]));
+  assert.equal(row.purchaseUnit, "Box"); assert.equal(row.pricePerPurchaseUnit, 15); assert.equal(row.pricingModel, "Per Purchase Unit");
+  assert.equal(codes(row).includes("price-purchase-label-conflict"), false);
+});
+
 test("confirmed Sligro source mappings produce canonical English packages without changing physical contents", () => {
   for (const [sourceUnit, purchaseUnit] of Object.entries({ FL: "Bottle", ZK: "Bag", EM: "Bucket", BK: "Box", TR: "Tray", PT: "Jar", ST: "Piece", DS: "Box", PK: "Pack" })) {
     const normalized = normalizeMapped(fixture({ purchaseUnit: sourceUnit, baseUnit: "KG", baseUnitsPerPurchaseUnit: 1 }, { content: "1 KG" }), mappingSnapshot([{ sourceUnit, purchaseUnit }]));

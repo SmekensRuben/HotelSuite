@@ -6,7 +6,7 @@ import ProcurementSettingsPage from "./ProcurementSettingsPage";
 
 const mocks = vi.hoisted(() => ({
   hotelUid: "hotel-a", actor: { uid: "actor-a" }, permissions: new Set(),
-  taxonomy: vi.fn(), outlets: vi.fn(), locations: vi.fn(),
+  taxonomy: vi.fn(), outlets: vi.fn(), locations: vi.fn(), suppliers: vi.fn(), mappings: vi.fn(),
   createCatalogCategory: vi.fn(), updateCatalogCategory: vi.fn(), deleteCatalogCategory: vi.fn(),
   createCatalogSubcategory: vi.fn(), updateCatalogSubcategory: vi.fn(), deleteCatalogSubcategory: vi.fn(),
 }));
@@ -19,6 +19,8 @@ vi.mock("../../services/firebaseSettings", () => ({
   createCatalogCategory: mocks.createCatalogCategory, updateCatalogCategory: mocks.updateCatalogCategory, deleteCatalogCategory: mocks.deleteCatalogCategory,
   createCatalogSubcategory: mocks.createCatalogSubcategory, updateCatalogSubcategory: mocks.updateCatalogSubcategory, deleteCatalogSubcategory: mocks.deleteCatalogSubcategory,
 }));
+vi.mock("../../services/firebaseSuppliers", () => ({ getSuppliers: mocks.suppliers }));
+vi.mock("../../services/firebaseSupplierImportWorkspace", () => ({ readSupplierPurchaseUnitMappings: mocks.mappings, saveSupplierPurchaseUnitMappings: vi.fn(), applySupplierImportMapping: vi.fn() }));
 vi.mock("../layout/HeaderBar", () => ({ default: () => <div data-testid="workspace-header" /> }));
 function CurrentUrl() { const { pathname, search } = useLocation(); return <output data-testid="url">{pathname}{search}</output>; }
 const page = (section = "categories") => <MemoryRouter initialEntries={[`/settings/procurement?section=${section}`]}><CurrentUrl /><ProcurementSettingsPage /></MemoryRouter>;
@@ -32,10 +34,29 @@ beforeEach(() => {
   mocks.taxonomy.mockResolvedValue({ categories: [{ id: "drinks", name: "Drinks" }], subcategories: [] });
   mocks.outlets.mockResolvedValue([{ id: "bar", name: "Lobby bar" }, { id: "closed", name: "Closed restaurant", archived: true }]);
   mocks.locations.mockResolvedValue([{ id: "store", name: "Cold room" }]);
+  mocks.suppliers.mockResolvedValue([{ id: "supplier", name: "Fictional supplier" }]);
+  mocks.mappings.mockResolvedValue({ revision: 0, mappings: [], suggestions: [] });
 });
 afterEach(cleanup);
 
 describe("one permitted procurement settings section", () => {
+  it("offers supplier mappings to users with both read rights without granting unrelated settings", async () => {
+    mocks.permissions = new Set(["suppliers.read", "supplierproducts.read"]);
+    render(page("supplier-imports"));
+    await screen.findByRole("combobox", { name: "Mapping supplier" });
+    expect(mocks.suppliers).toHaveBeenCalledWith("hotel-a");
+    expect(screen.queryByRole("link", { name: "Categories" })).not.toBeInTheDocument();
+    fireEvent.focus(screen.getByRole("combobox", { name: "Mapping supplier" }));
+    fireEvent.click(screen.getByRole("option", { name: "Fictional supplier" }));
+    await screen.findByText("No saved mappings for this supplier and file format.");
+    expect(screen.getByRole("button", { name: "Save mapping for future imports" })).toBeDisabled();
+    expect(mocks.taxonomy).not.toHaveBeenCalled(); expect(mocks.locations).not.toHaveBeenCalled();
+  });
+  it.each(["suppliers.read", "supplierproducts.read"])("never mounts mapping reads with only %s", (permission) => {
+    mocks.permissions = new Set([permission]); render(page("supplier-imports"));
+    expect(screen.queryByRole("link", { name: "Supplier import mappings" })).not.toBeInTheDocument();
+    expect(mocks.suppliers).not.toHaveBeenCalled(); expect(mocks.mappings).not.toHaveBeenCalled();
+  });
   it("uses one workspace header and fetches only the chosen section, then exposes keyboard-accessible detail links", async () => {
     render(page());
     await screen.findByText("Drinks", { selector: "span" });

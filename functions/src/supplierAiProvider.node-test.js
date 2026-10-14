@@ -101,6 +101,9 @@ test("new extraction contract distinguishes purchase price channels, quantities 
   assert.match(request.instructions, /Return every identifiable product even when its price, package or VAT is missing/);
   assert.match(request.instructions, /pricingModel and the price fields stay null/);
   assert.match(request.instructions, /A package being a box does not prove that a displayed price is per box/);
+  assert.match(request.instructions, /purchaseUnit comes exclusively from 'Eenheid verpakking'/);
+  assert.match(request.instructions, /12, PK, 1, LT means purchaseUnit PK with 12 l total content/);
+  assert.match(request.instructions, /KG as a purchase unit with ST inner content cannot establish a mass-to-item conversion/);
 });
 test("new extraction contract preserves display provenance while guiding canonical physical values", () => {
   const request = createSupplierAiRequest(source, DEFAULT_AI_CONFIGURATION, schema, importSettings);
