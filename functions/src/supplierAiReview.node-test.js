@@ -4,6 +4,13 @@ const proposal = require("./supplierAiProposal");
 const review = require("./supplierAiReview");
 const { mutateHotelSupplierProductHandler } = require("./products");
 const { SAAS_RULES_VERSION } = require("./saasRollout");
+test("an explicitly unavailable package source cannot become a physical-unit mapping group through originalInput", () => {
+  const indexed = review.indexRow({ rowId: "r-000001", reviewRevision: 1, category: "blocked", product: { purchaseUnit: null },
+    originalInput: { purchaseUnit: "GR" }, purchaseUnitMapping: { sourceUnit: null, status: "unconfirmed" }, issues: [{ severity: "error" }] });
+  assert.equal(indexed.sourceUnit, null); assert.equal(indexed.canApprove, false);
+  const legacy = review.indexRow({ rowId: "r-000001", reviewRevision: 1, category: "new", product: { purchaseUnit: "FL" }, originalInput: { purchaseUnit: "FL" } });
+  assert.equal(legacy.sourceUnit, "FL");
+});
 function database(initial = {}) {
   const records = new Map(Object.entries(initial));
   const snapshot = (path) => ({ id: path.split("/").at(-1), exists: records.has(path), data: () => structuredClone(records.get(path)) });

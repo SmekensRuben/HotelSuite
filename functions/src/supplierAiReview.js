@@ -77,7 +77,8 @@ function publicReview(row) {
     decidedBy: review.decidedBy ?? null }, canApprove: canApprove(row), bulkEligible: bulkEligible(row), lastOutcome: row.lastOutcome ?? null };
 }
 function sourcePurchaseUnit(row) {
-  const value = row.purchaseUnitMapping?.sourceUnit ?? row.originalInput?.purchaseUnit;
+  const value = row.purchaseUnitMapping && Object.hasOwn(row.purchaseUnitMapping, "sourceUnit")
+    ? row.purchaseUnitMapping.sourceUnit : row.originalInput?.purchaseUnit;
   return typeof value === "string" && value.trim() && value.length <= 100 ? value.trim() : null;
 }
 function indexRow(row) {

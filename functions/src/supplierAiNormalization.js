@@ -53,8 +53,9 @@ function priceChannel(header, cells = [], labels = [], sources = {}) {
   if (unit) return { channel: "base", unit };
   if (/\b(?:purchase\s*price|aankoopprijs|inkoopprijs|(?:per|par)\s*(?:verpakking|package|purchase\s*unit))\b/i.test(header)) return { channel: "purchase", unit: null };
   if (/\b(?:unit\s*price|eenheidsprijs|stukprijs)\b/i.test(header)) {
-    for (let index = 0; index < Math.min(cells.length, labels.length); index++) {
-      if (!(sources.purchaseUnitMappingSnapshot ? isPurchaseUnitHeader : isPackageHeader)(plain(labels[index]))) continue;
+    const indexes = sources.purchaseUnitMappingSnapshot ? purchaseUnitColumns(labels)
+      : labels.flatMap((label, index) => isPackageHeader(plain(label)) ? [index] : []);
+    for (const index of indexes) {
       const value = plain(cells[index]), candidate = mappedPurchaseLabel(value, sources) || (/^(?:case|carton|bag|tray|jar|can)$/i.test(value)
         ? sources.purchaseUnitMappingSnapshot ? canonicalPurchaseUnit(value) : value : null);
       if (candidate) return { channel: "purchase", purchaseUnit: candidate, sourceUnit: purchaseSourceUnit(value), unit: null, inferred: true };
@@ -126,24 +127,31 @@ function namedQuantities(value) {
 }
 const isPackageHeader = (label) => /\b(?:content|inhoud|pack\s*size|package|purchase\s*unit|aankoop\s*eenheid|verpakking|verpakkingsinhoud|net\s*weight|netto\s*gewicht|gewicht\s*per)\b/i.test(label)
   && !/\b(?:annual|yearly|jaarlijkse?|ordered|besteld|afname|verbruik|sales|sold|total|totaal)\b/i.test(label);
-const isPurchaseUnitHeader = (label) => /^(?:eenheid|purchase\s*unit|purchase\s*package|package|verpakking|besteleenheid|aankoop\s*eenheid)$/i.test(plain(label));
+const headerLabel = (label) => plain(label).toLowerCase().replace(/[_-]+/g, " ");
+const isPurchaseUnitHeader = (label) => /^(?:eenheid\s*verpakking|verpakkings?\s*eenheid|packaging\s*unit|package\s*unit|purchase\s*unit|purchase\s*package|package|verpakking|besteleenheid|aankoop\s*eenheid)$/i.test(headerLabel(label));
+function purchaseUnitColumns(labels) {
+  const explicit = labels.flatMap((label, index) => isPurchaseUnitHeader(label) ? [index] : []);
+  // A bare Eenheid may identify a purchase unit in simpler exports. Once an
+  // explicit package-unit column exists, it cannot fall back to content units.
+  return explicit.length ? explicit : labels.flatMap((label, index) => headerLabel(label) === "eenheid" ? [index] : []);
+}
 function purchaseSourceUnit(value) {
   const spelling = plain(value), content = spelling.match(/^(.+?)\s*\d+(?:[.,]\d+)?\s*(?:kg|gr|g|ml|l)\b/i);
   try { return sourceUnitKey(content ? content[1] : spelling); } catch { return null; }
 }
 function sourcePurchaseUnit(raw, sources) {
-  const codes = new Set();
+  const codes = new Set(); let authoritative = false;
   for (const row of sources.rows) {
     const cells = sourceCells(row); if (!cells) continue;
     for (const header of headersFor(row, sources)) {
       const labels = sourceCells(header); if (!labels) continue;
-      for (let index = 0; index < Math.min(labels.length, cells.length); index++) {
-        if (!isPurchaseUnitHeader(labels[index])) continue;
+      const indexes = purchaseUnitColumns(labels); authoritative ||= indexes.length > 0;
+      for (const index of indexes) {
         const code = purchaseSourceUnit(cells[index]); if (code) codes.add(code);
       }
     }
   }
-  return { sourceUnit: codes.size === 1 ? [...codes][0] : purchaseSourceUnit(raw.purchaseUnit), ambiguous: codes.size > 1 };
+  return { sourceUnit: codes.size === 1 ? [...codes][0] : authoritative ? null : purchaseSourceUnit(raw.purchaseUnit), ambiguous: codes.size > 1, authoritative };
 }
 function normalizePurchaseUnit(value, { snapshot, sourceUnit = purchaseSourceUnit(value), ambiguous = false } = {}) {
   if (!snapshot) return null;
@@ -157,7 +165,8 @@ function normalizePurchaseUnit(value, { snapshot, sourceUnit = purchaseSourceUni
 }
 function applyPurchaseUnitMappingToProposal(raw, { sourceUnit, purchaseUnit, snapshot }) {
   const code = sourceUnitKey(sourceUnit), label = canonicalPurchaseUnit(purchaseUnit);
-  const currentCode = raw.purchaseUnitMapping?.sourceUnit || purchaseSourceUnit(raw.originalInput?.purchaseUnit ?? raw.purchaseUnit);
+  const currentCode = raw.purchaseUnitMapping && Object.hasOwn(raw.purchaseUnitMapping, "sourceUnit")
+    ? raw.purchaseUnitMapping.sourceUnit : purchaseSourceUnit(raw.originalInput?.purchaseUnit ?? raw.purchaseUnit);
   if (currentCode !== code) throw new HttpsError("failed-precondition", "This product belongs to a different source purchase unit.");
   const accepted = snapshot ? mappingSnapshot(snapshot, { supplierId: snapshot.supplierId, sourceFormat: snapshot.sourceFormat, profileId: snapshot.profileId }) : null;
   const matched = accepted?.mappings.find((entry) => entry.sourceUnit === code);
@@ -185,15 +194,39 @@ function packageCellQuantities(value) {
 function sourceSinglePiece(sources) {
   return sources.rows.some((row) => {
     const cells = sourceCells(row); if (!cells) return false;
-    return headersFor(row, sources).some((header) => (sourceCells(header) || []).some((label, index) => isPackageHeader(plain(label))
-      && /^(?:ST|STUK|PIECE|EACH|EA|PCS)$/i.test(plain(cells[index]))));
+    return headersFor(row, sources).some((header) => purchaseUnitColumns(sourceCells(header) || []).some((index) =>
+      /^(?:ST|STUK|PIECE|EACH|EA|PCS)$/i.test(plain(cells[index]))));
   });
 }
-function packageQuantities(sources) {
-  const quantities = [];
+function splitPackageContent(labels, cells) {
+  const matches = (pattern) => labels.flatMap((label, index) => pattern.test(headerLabel(label)) ? [index] : []);
+  const count = matches(/^inhoud\s+verpakking$/), packages = matches(/^eenheid\s+verpakking$/);
+  const content = matches(/^inhoud$/), units = matches(/^eenheid$/);
+  if (!count.length || !packages.length || !content.length || !units.length) return null;
+  if ([count, packages, content, units].some((indexes) => indexes.length !== 1)) return { unavailable: true };
+  const number = priceNumber(cells[count[0]]), amount = priceNumber(cells[content[0]]);
+  const packageUnit = plain(cells[packages[0]]), contentUnit = plain(cells[units[0]]);
+  const unit = unitOf(contentUnit) || (/^cl$/i.test(contentUnit) ? "ml" : null);
+  // A weight-priced purchase unit such as KG is not a count multiplier.
+  // In particular, 1 KG + 1 ST cannot establish a mass-to-item conversion.
+  if (!packageUnit || unitOf(packageUnit) && unitOf(packageUnit) !== "each" || !unit
+    || number === null || number <= 0 || amount === null || amount <= 0) return { unavailable: true };
+  try { return { quantity: policy.multiplyQuantities(policy.multiplyQuantities(number, amount), /^cl$/i.test(contentUnit) ? 10 : 1), unit }; }
+  catch { return { unavailable: true }; }
+}
+function packageQuantityEvidence(sources) {
+  const quantities = []; let unavailable = false;
   for (const row of sources.rows) {
     const cells = sourceCells(row);
     if (cells) {
+      const split = headersFor(row, sources).map((header) => splitPackageContent(sourceCells(header) || [], cells)).filter(Boolean);
+      if (split.length) {
+        for (const content of split) {
+          if (content.unavailable) unavailable = true;
+          else quantities.push({ quantity: content.quantity, unit: content.unit });
+        }
+        continue;
+      }
       for (const cell of cells) {
         if (/^(?:DS|DOOS|BOX|PK|PAK|PACK|FL|FLES|BOTTLE)\s*\d/i.test(plain(cell))) {
           const named = packageCellQuantities(cell); if (named.length === 1) quantities.push(named[0]);
@@ -216,12 +249,13 @@ function packageQuantities(sources) {
       if (named.length === 1) quantities.push(named[0]);
     }
   }
-  return [...new Map(quantities.map((entry) => {
+  return { unavailable, quantities: [...new Map(quantities.map((entry) => {
     try { const dimension = policy.units[entry.unit].dimension, canonical = dimension === "mass" ? "g" : dimension === "volume" ? "ml" : "each";
       return [canonical + ":" + policy.convertQuantity(entry.quantity, entry.unit, canonical), entry]; }
     catch { return [entry.unit + ":" + entry.quantity, entry]; }
-  })).values()];
+  })).values()] };
 }
+const packageQuantities = (sources) => packageQuantityEvidence(sources).quantities;
 function namedQuantityInSource(quantity, unit, sources) {
   return sources.rows.some((row) => {
     const cells = sourceCells(row); let values;
@@ -264,6 +298,8 @@ function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [], pu
   }
   if (purchaseUnitMappingSnapshot) {
       const source = sourcePurchaseUnit(raw, sources);
+      if (source.authoritative && !source.ambiguous) change("purchaseUnit", source.sourceUnit, "source-purchase-unit-recovered",
+        "The verified purchase-package column supplies the source package label. The physical content unit is a separate field.");
       result.purchaseUnitMapping = normalizePurchaseUnit(result.purchaseUnit, { snapshot: purchaseUnitMappingSnapshot, ...source });
       if (result.purchaseUnitMapping.status === "unconfirmed") {
         finding("purchaseUnit", "purchase-unit-unconfirmed", "Confirm the supplier source purchase unit and its English label before importing. A suggested abbreviation is not an accepted supplier mapping.",
@@ -341,11 +377,14 @@ function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [], pu
   if (result.pricePerBaseUnit === null && result.pricePerPurchaseUnit === null) finding("price", "source-price-missing", "The source has no established supplier unit price. New offers remain unpriced and cannot be ordered; existing prices are preserved.", null, null, "source", "warning");
   const quantities = namedQuantities(originalName), singlePack = ["Pack", "Bottle", "Piece"].includes(result.purchaseUnit), hasMultiplier = /\d+\s*[x×*]\s*\d+/i.test(originalName || "");
   let base = unitOf(result.baseUnit), quantity = result.baseUnitsPerPurchaseUnit;
-  const explicitContents = packageQuantities(sources);
-  if (!explicitContents.length && base === "each" && result.purchaseUnit === "Piece" && sourceSinglePiece(sources)) {
+  const contentEvidence = packageQuantityEvidence(sources), explicitContents = contentEvidence.quantities;
+  if (contentEvidence.unavailable) {
+    change("baseUnitsPerPurchaseUnit", null, "split-package-content-unavailable", "The source package count, inner content or content unit is missing or ambiguous. A weight purchase unit cannot establish a mass-to-item conversion.", "source", "error"); quantity = null;
+  }
+  if (!contentEvidence.unavailable && !explicitContents.length && base === "each" && result.purchaseUnit === "Piece" && sourceSinglePiece(sources)) {
     change("baseUnitsPerPurchaseUnit", 1, "single-piece-content-inferred", "An explicit supplier ST/Piece purchase unit represents one item. No Box count or mass-to-item conversion was inferred.", "inference", "warning"); quantity = 1;
   }
-  if (explicitContents.length === 1) {
+  if (!contentEvidence.unavailable && explicitContents.length === 1) {
     const content = explicitContents[0];
     if (!base && result.baseUnit === null) { change("baseUnit", content.unit, "full-package-unit-from-source", "An explicit source package-content field identifies the physical base unit."); base = content.unit; }
     if (base && policy.compatibleUnits(base, content.unit)) {
@@ -360,7 +399,7 @@ function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [], pu
     change("baseUnitsPerPurchaseUnit", null, "package-quantity-unverified", "The proposed full package content cannot be established from an explicit package field. Inner size or annual/ordered quantities cannot establish a Box's content.", "source", "warning"); quantity = null;
   }
   if (quantity !== null && base && base !== "each" && sources.visual) finding("baseUnitsPerPurchaseUnit", "visual-package-content-unverified", "The package content comes from an unverified visual source. Check the entire purchasable package in the original document.", quantity, quantity, "source", "warning");
-  if (quantity === null && singlePack && !hasMultiplier && quantities.length === 1 && namedQuantityInSource(quantities[0].quantity, quantities[0].unit, sources)) {
+  if (!contentEvidence.unavailable && quantity === null && singlePack && !hasMultiplier && quantities.length === 1 && namedQuantityInSource(quantities[0].quantity, quantities[0].unit, sources)) {
     const named = quantities[0];
     if (!base && result.baseUnit === null) { change("baseUnit", named.unit, "single-pack-unit-inferred", "A single consumer package's explicit named content supplies its draft base unit. Verify the package.", "inference", "warning"); base = named.unit; }
     if (base && policy.compatibleUnits(base, named.unit)) {

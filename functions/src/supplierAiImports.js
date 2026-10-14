@@ -71,6 +71,8 @@ const SUMMARY_BUSINESS_MESSAGES = Object.freeze({
   "purchase-label-normalized": "The purchase-package label was standardized without creating another purchase option.",
   "purchase-unit-unconfirmed": "Confirm this source purchase unit and its English label before importing. Suggested abbreviations are not accepted supplier mappings.",
   "supplier-purchase-unit-mapped": "The confirmed supplier and source-format profile supplies the English purchase-package label. Quantities and financial terms remain unchanged.",
+  "source-purchase-unit-recovered": "The verified purchase-package column supplies the package label; the physical content unit remains separate.",
+  "split-package-content-unavailable": "Package count, inner content or content unit needs review. A weight purchase unit does not establish a mass-to-item conversion.",
   "purchase-unit-confirmed-for-import": "The purchase-package label was explicitly confirmed for this import. Quantities and financial terms remain unchanged.",
   "base-unit-normalized": "The source unit was mapped to a supported physical unit without changing its dimension.",
   "unsupported-source-unit": "The source unit is unsupported or ambiguous. Choose a supported unit before confirmation.",
