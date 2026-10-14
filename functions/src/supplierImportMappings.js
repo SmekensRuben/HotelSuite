@@ -17,6 +17,7 @@ function sourceUnitKey(value) {
   return result;
 }
 function canonicalPurchaseUnit(value) {
+  if (/^(?:kg|kilo|kilograms?)$/i.test(plain(value))) return "kg";
   const result = PURCHASE_UNITS.find((unit) => unit.toLowerCase() === plain(value).toLowerCase());
   if (!result) throw new HttpsError("invalid-argument", "Choose a supported English purchase-package label.");
   return result;

@@ -12,6 +12,18 @@ describe("cart purchase option identity", () => {
     await removeShoppingCartItem("hotel", "cart", "milk", "case6");
     expect(mocks.call.mock.calls.map(([input]) => input.purchaseOptionId)).toEqual(Array(5).fill("case6"));
   });
+  it("sends decimal quantities from HTML inputs as numbers and preserves unknown-command replay", async () => {
+    mocks.call.mockRejectedValueOnce(new Error("Lost response"));
+    await expect(updateShoppingCartItemQty("hotel", "cart", "weighed", "0.25", "default", 7)).rejects.toThrow("Lost response");
+    const original = mocks.call.mock.calls[0][0]; expect(original.value).toBe(0.25);
+    await retryPendingCartCommand("hotel", "cart"); expect(mocks.call.mock.calls[1][0]).toEqual(original);
+  });
+  it("keeps blank quantities unknown and rejects unsupported precision before reserving a command", async () => {
+    for (const value of ["", " ", null, undefined, "0.0001", -1]) await expect(updateShoppingCartItemQty("hotel", "cart", "weighed", value)).rejects.toThrow("explicit purchase quantity");
+    expect(mocks.call).not.toHaveBeenCalled(); expect(sessionStorage.length).toBe(0);
+    await updateShoppingCartItemQty("hotel", "cart", "weighed", "0");
+    expect(mocks.call).toHaveBeenCalledWith(expect.objectContaining({ value: 0 }));
+  });
   it("preserves the default identity for historical cart callers", async () => {
     await updateShoppingCartItemQty("hotel", "cart", "milk", 3);
     expect(mocks.call).toHaveBeenCalledWith(expect.objectContaining({ purchaseOptionId: "default" }));

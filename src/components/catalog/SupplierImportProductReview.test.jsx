@@ -15,6 +15,13 @@ const props = (value = row()) => ({ hotelUid: "hotel-a", jobId: "job-a", row: va
 beforeEach(() => { vi.clearAllMocks(); mocks.permissions = ["supplierproducts.read", "supplierproducts.create", "supplierproducts.update"]; mocks.catalog.mockResolvedValue({ products: [] }); });
 
 describe("compact supplier product review", () => {
+  it("recognizes kg in the review selector and offers it as a correction", () => {
+    render(<SupplierImportProductReview {...props(row({ product: { ...product, purchaseUnit: "kg" } }))} />);
+    expect(screen.getByRole("combobox", { name: "Purchase unit" })).toHaveValue("kg");
+    expect(screen.queryByText(/Unrecognized source unit/)).not.toBeInTheDocument();
+    fireEvent.focus(screen.getByRole("combobox", { name: "Purchase unit" }));
+    expect(screen.getByRole("option", { name: "kg", exact: true })).toBeInTheDocument();
+  });
   it("does not repeat null-to-value differences for new products", () => {
     render(<SupplierImportProductReview {...props(row({ changes: Object.entries(product).map(([field, after]) => ({ field, before: null, after })) }))} />);
     expect(screen.queryByRole("region", { name: "Proposed changes" })).not.toBeInTheDocument();

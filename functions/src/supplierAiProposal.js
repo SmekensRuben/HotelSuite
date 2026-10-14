@@ -189,7 +189,10 @@ function validationIssues(product) {
     pricingModel: "Per Purchase Unit", purchaseUnit: "Case", baseUnit: "each", baseUnitsPerPurchaseUnit: 1 };
   for (const field of PATCH_FIELDS) {
     if (issues.some((entry) => entry.field === field)) continue;
-    try { policy.normalizeSupplierProduct({ ...baseline, [field]: product[field], ...(field === "priceBasis" && product[field] === "gross" ? { vatRate: product.vatRate } : {}) }); }
+    const unitContext = field === "purchaseUnit" && policy.measuredPurchaseContent(product[field], "kg") !== null
+      ? { baseUnit: "kg", baseUnitsPerPurchaseUnit: 1 }
+      : field === "purchaseOptions" && policy.units[product.baseUnit] ? { baseUnit: product.baseUnit } : {};
+    try { policy.normalizeSupplierProduct({ ...baseline, ...unitContext, [field]: product[field], ...(field === "priceBasis" && product[field] === "gross" ? { vatRate: product.vatRate } : {}) }); }
     catch (error) { issues.push(issue(field, "invalid", error.message)); }
   }
   if (!hasErrors(issues)) {

@@ -1,4 +1,13 @@
 import units from "../../functions/src/unitCatalog.json";
+import purchaseMeasures from "../../functions/src/purchaseUnitMeasures.json";
+
+export const isMeasuredPurchaseUnit = (unit) => typeof unit === "string" && Object.hasOwn(purchaseMeasures, unit.trim().toLowerCase());
+export function measuredPurchaseContent(purchaseUnit, contentUnit) {
+  const key = typeof purchaseUnit === "string" ? purchaseUnit.trim().toLowerCase() : "";
+  if (!Object.hasOwn(purchaseMeasures, key)) return null;
+  const measure = purchaseMeasures[key];
+  return previewCatalogPackageQuantity(measure.quantity, measure.baseUnit, contentUnit);
+}
 
 export const PRODUCT_UNIT_LABELS = {
   g: "g (grams)", kg: "kg (kilograms)", ml: "ml (millilitres)",

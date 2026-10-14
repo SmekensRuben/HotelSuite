@@ -25,6 +25,7 @@ const { readHotelSupplierPurchaseUnitMappingsHandler: readMappings, saveHotelSup
   mappingProfileRef, mappingScope } = require("../../functions/src/supplierImportMappings");
 const { getPlatformSupplierAiImportSettingsHandler: settings, listPlatformSupplierAiUsageHandler: usage } = require("../../functions/src/supplierAiPlatform");
 const { mutateHotelSupplierProductHandler } = require("../../functions/src/products");
+const { mutateShoppingCartHandler } = require("../../functions/src/shoppingCarts");
 const { requireHotelImportTarget } = require("../../functions/src/fileImportTypes");
 const { digest } = require("../../functions/src/validation");
 const db = admin.firestore(), auth = admin.auth(), bucket = admin.storage().bucket();
@@ -91,6 +92,42 @@ beforeEach(async () => {
 });
 after(async () => environment.cleanup());
 describe("supplier AI import with ordinary hotel accounts and real Firebase boundaries", () => {
+  it("imports and approves kg offers for an ordinary hotel user, accepts fractional purchases and rejects false mass contracts", async () => {
+    const sourceBytes = Buffer.from("SKU,Name,Eenheid verpakking,Inhoud verpakking,Inhoud,Eenheid,Net price per kg,Currency\nWEIGH1,Fictional weighed item,KG,1,1,ST,8,EUR\n");
+    const kgServices = { ...services, provider: { countInput: provider.countInput, respond: async (body) => {
+      calls++;
+      const source = JSON.parse(body.input[0].content[0].text).units.find((unit) => unit.text.includes("WEIGH1"));
+      assert.ok(source, "The actual weighed product source must reach the provider request.");
+      const row = { supplierSku: "WEIGH1", supplierProductName: "Fictional weighed item", purchaseUnit: "KG", baseUnit: "each", baseUnitsPerPurchaseUnit: 1,
+        currency: "EUR", pricingModel: "Per Purchase Unit", priceBasis: "net", vatRate: null, gtin: null, priceValidFrom: null, priceValidUntil: null,
+        pricePerPurchaseUnit: 8, pricePerBaseUnit: null, sourceAnchors: [{ sourceId: source.sourceId, quote: "WEIGH1" }] };
+      return { id: "fictional-weight-response", model: "gpt-6-luna", status: "completed", usage: { input_tokens: 500, output_tokens: 100, total_tokens: 600 },
+        output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ rows: [row] }) }] }] };
+    } } };
+    const job = await uploadSupplierAiImport(request(), uploadData({ requestId: "import-kg" }), sourceBytes, kgServices);
+    assert.equal((await runSupplierAiImportJob("hotel-a", job.jobId, kgServices)).status, "review");
+    const page = await review(request({ hotelUid: "hotel-a", jobId: job.jobId }), kgServices), original = page.rows[0];
+    assert.equal(original.category, "new"); assert.equal(original.product.purchaseUnit, "kg");
+    assert.equal(original.product.baseUnit, "kg"); assert.equal(original.product.baseUnitsPerPurchaseUnit, 1);
+    assert.equal(original.product.pricePerBaseUnit, 8); assert.equal(original.packInference, null);
+    await db.doc("hotels/hotel-a/catalogproducts/weighed").set({ name: "Fictional weighed goods", baseUnit: "g", inventoryTracked: true, active: true, productPolicyVersion: 1, revision: 1 });
+    const corrected = await correct(request({ hotelUid: "hotel-a", jobId: job.jobId, rowId: original.rowId, expectedReviewRevision: original.reviewRevision, patch: { active: true, catalogProductId: "weighed" } }), kgServices);
+    await approve(job.jobId, corrected.row, "approve-kg");
+    const result = await commit(request({ hotelUid: "hotel-a", jobId: job.jobId, requestId: "commit-kg", rows: [{ rowId: corrected.row.rowId, reviewRevision: corrected.row.reviewRevision, acknowledged: true }] }), kgServices);
+    assert.equal(result.outcomes[0].status, "created"); const productId = result.outcomes[0].productId;
+    const productRef = db.doc(`hotels/hotel-a/supplierproducts/${productId}`), before = await productRef.get();
+    const stored = before.data();
+    // Construct only the public mutation contract; server-owned metadata cannot
+    // be supplied by the hotel user or used to bypass the kilogram validation.
+    const fields = ["supplierId", "supplierSku", "supplierProductName", "currency", "pricingModel", "pricePerBaseUnit", "pricePerPurchaseUnit", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "catalogProductId", "active", "priceBasis", "vatRate", "purchaseOptions", "priceValidFrom", "priceValidUntil", "gtin"];
+    const invalid = Object.fromEntries(fields.filter((field) => Object.hasOwn(stored, field)).map((field) => [field, stored[field]])); invalid.baseUnit = "g"; invalid.baseUnitsPerPurchaseUnit = 1;
+    await assert.rejects(mutateHotelSupplierProductHandler(request({ hotelUid: "hotel-a", productId, action: "update", requestId: "invalid-kg-content", expectedRevision: stored.revision, product: invalid }), services), /exactly 1 kg/);
+    assert.equal((await productRef.get()).updateTime.isEqual(before.updateTime), true);
+    const cart = await mutateShoppingCartHandler(request({ hotelUid: "hotel-a", action: "get-or-create", requestId: "kg-cart" }), services);
+    await mutateShoppingCartHandler(request({ hotelUid: "hotel-a", action: "add", cartId: cart.cartId, requestId: "kg-cart-add", expectedRevision: cart.revision, productId, purchaseOptionId: "default", value: 2.5 }), services);
+    assert.equal((await db.doc(`hotels/hotel-a/shoppingCarts/${cart.cartId}`).get()).data().items[0].qtyPurchaseUnits, 2.5);
+    assert.equal(calls, 1); assertCustomerPrivacy(page);
+  });
   it("creates a private reviewed draft, then commits once while preserving recorded financial evidence", async () => {
     const snapshot = { currency: "EUR", quantity: 6, unitCost: 2, total: 12, revision: 4 };
     await db.doc("hotels/hotel-a/orders/finalized").set(snapshot);

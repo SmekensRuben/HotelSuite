@@ -2,6 +2,7 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const { requireDocumentId } = require("./subscriptions");
 const { text } = require("./validation");
 const units = require("./unitCatalog.json");
+const purchaseMeasures = require("./purchaseUnitMeasures.json");
 const { validDate } = require("./importMonitoringPolicy");
 
 const PRODUCT_POLICY_VERSION = 1;
@@ -55,6 +56,21 @@ function baseUnit(value) {
   return value;
 }
 function compatibleUnits(from, to) { return Boolean(units[from] && units[to] && units[from].dimension === units[to].dimension); }
+function measuredPurchaseContent(purchaseUnit, contentUnit) {
+  const key = typeof purchaseUnit === "string" ? purchaseUnit.trim().toLowerCase() : "";
+  if (!Object.hasOwn(purchaseMeasures, key)) return null;
+  const measure = purchaseMeasures[key];
+  if (!compatibleUnits(measure.baseUnit, contentUnit)) fail("A kg purchase unit requires kg or g content; no conversion to pieces or volume is available.");
+  return convertQuantity(measure.quantity, measure.baseUnit, contentUnit);
+}
+function validateMeasuredPurchaseOption(option, contentUnit) {
+  const expected = measuredPurchaseContent(option.purchaseUnit, contentUnit);
+  if (expected !== null && option.baseUnitsPerPurchaseUnit !== expected) fail("A kg purchase unit must contain exactly 1 kg or 1000 g. Use a named package for other sizes.");
+}
+function purchaseUnitLabel(value) {
+  const label = text(value, "Purchase unit", 100, true), key = label.toLowerCase();
+  return Object.hasOwn(purchaseMeasures, key) ? key : label;
+}
 function exactResult(scaled, field = "Converted quantity") {
   if (scaled < 0n || scaled > BigInt(MAX_CONVERTED_QUANTITY) * SCALE || scaled > BigInt(Number.MAX_SAFE_INTEGER)) fail(`${field} is outside the exact quantity limit.`);
   return Number(scaled) / Number(SCALE);
@@ -147,7 +163,7 @@ function normalizeCatalogProduct(input) {
 }
 function normalizeOption(input) {
   supportedFields(input, ["id", "purchaseUnit", "baseUnitsPerPurchaseUnit", "pricePerPurchaseUnit", "gtin"], "purchase option");
-  return { id: requireDocumentId(input.id, "Purchase option ID"), purchaseUnit: text(input.purchaseUnit, "Purchase unit", 100, true),
+  return { id: requireDocumentId(input.id, "Purchase option ID"), purchaseUnit: purchaseUnitLabel(input.purchaseUnit),
     baseUnitsPerPurchaseUnit: decimal(input.baseUnitsPerPurchaseUnit, "Base units per purchase unit", { maximum: MAX_QUANTITY, positive: true }),
     pricePerPurchaseUnit: optionalNumber(input.pricePerPurchaseUnit, "Purchase price", { maximum: MAX_PRICE }), gtin: packageGtin(input.gtin) };
 }
@@ -159,7 +175,7 @@ function normalizeSupplierProduct(input) {
   const result = { supplierId: requireDocumentId(input.supplierId, "supplierId"),
     supplierSku: text(input.supplierSku, "Supplier SKU", 150, true), supplierProductName: text(input.supplierProductName, "Supplier product name", 200, true),
     currency: input.currency, pricingModel: input.pricingModel, baseUnit: baseUnit(input.baseUnit),
-    purchaseUnit: text(input.purchaseUnit, "Purchase unit", 100, true), gtin: packageGtin(input.gtin),
+    purchaseUnit: purchaseUnitLabel(input.purchaseUnit), gtin: packageGtin(input.gtin),
     baseUnitsPerPurchaseUnit: decimal(input.baseUnitsPerPurchaseUnit, "Base units per purchase unit", { maximum: MAX_QUANTITY, positive: true }),
     pricePerBaseUnit: optionalNumber(input.pricePerBaseUnit, "Base unit price", { maximum: MAX_PRICE }),
     pricePerPurchaseUnit: optionalNumber(input.pricePerPurchaseUnit, "Purchase price", { maximum: MAX_PRICE }),
@@ -168,6 +184,7 @@ function normalizeSupplierProduct(input) {
     priceValidFrom: optionalPriceDate(input.priceValidFrom, "Price valid from"), priceValidUntil: optionalPriceDate(input.priceValidUntil, "Price valid until"),
     productPolicyVersion: PRODUCT_POLICY_VERSION };
   if (result.priceValidFrom && result.priceValidUntil && result.priceValidFrom > result.priceValidUntil) fail("Price valid from must not be after price valid until.");
+  validateMeasuredPurchaseOption(result, result.baseUnit);
   if (result.pricingModel === "Per Base Unit") result.pricePerPurchaseUnit = result.pricePerBaseUnit === null ? null : derivedPrice(result.pricePerBaseUnit, result.baseUnitsPerPurchaseUnit);
   else {
     result.pricePerBaseUnit = null;
@@ -180,6 +197,7 @@ function normalizeSupplierProduct(input) {
   }
   if (!Array.isArray(input.purchaseOptions ?? []) || (input.purchaseOptions ?? []).length > 20) fail("Use at most 20 additional purchase options.");
   result.purchaseOptions = (input.purchaseOptions ?? []).map(normalizeOption);
+  for (const option of result.purchaseOptions) validateMeasuredPurchaseOption(option, result.baseUnit);
   const ids = result.purchaseOptions.map((option) => option.id);
   if (ids.includes("default") || new Set(ids).size !== ids.length) fail("Additional purchase option IDs must be unique and cannot be default.");
   return result;
@@ -212,12 +230,14 @@ function resolvePurchaseOption(product, optionId = "default") {
     catch (error) { if (product.productPolicyVersion === PRODUCT_POLICY_VERSION || optionId !== "default") throw error; }
   }
   if (amount === null && product.productPolicyVersion === PRODUCT_POLICY_VERSION) throw new HttpsError("failed-precondition", "The reviewed package quantity needs repair.");
+  try { validateMeasuredPurchaseOption({ purchaseUnit: source.purchaseUnit, baseUnitsPerPurchaseUnit: amount }, unit); }
+  catch { throw new HttpsError("failed-precondition", "The kg purchase unit needs exactly 1 kg or 1000 g of reviewed content before ordering."); }
   const basis = ["net", "gross", "unknown"].includes(product.priceBasis) ? product.priceBasis : "unknown";
   let vatRate = null;
   try { vatRate = optionalNumber(product.vatRate, "VAT rate", { maximum: 1 }); }
   catch (error) { if (product.productPolicyVersion === PRODUCT_POLICY_VERSION) throw error; }
   if (basis === "gross" && vatRate === null && product.productPolicyVersion === PRODUCT_POLICY_VERSION) throw new HttpsError("failed-precondition", "The gross price contract needs an explicit VAT rate.");
-  return { id: optionId, purchaseUnit: text(source.purchaseUnit, "Purchase unit", 100, true), baseUnit: unit,
+  return { id: optionId, purchaseUnit: purchaseUnitLabel(source.purchaseUnit), baseUnit: unit,
     baseUnitsPerPurchaseUnit: amount, pricePerPurchaseUnit: price, currency: product.currency,
     priceBasis: basis, vatRate, netPricePerPurchaseUnit: netPrice(price, basis, vatRate) };
 }
@@ -233,6 +253,8 @@ function inventoryTerms(product, catalog, option) {
   if (catalog.inventoryTracked !== true) return unavailable("inventory-tracking-policy-unknown");
   if (catalog.active === false || catalog.archived === true) return unavailable("catalog-product-inactive");
   if (!option?.baseUnit || !catalog.baseUnit || !compatibleUnits(option.baseUnit, catalog.baseUnit) || option.baseUnitsPerPurchaseUnit === null) return unavailable("unknown-or-incompatible-unit-conversion");
+  try { validateMeasuredPurchaseOption(option, option.baseUnit); }
+  catch { return unavailable("invalid-measured-purchase-content"); }
   let amount;
   try { amount = convertQuantity(option.baseUnitsPerPurchaseUnit, option.baseUnit, catalog.baseUnit); }
   catch { return unavailable("unrepresentable-unit-conversion"); }
@@ -250,5 +272,6 @@ function inventoryTerms(product, catalog, option) {
 }
 
 module.exports = { PRODUCT_POLICY_VERSION, MAX_QUANTITY, MAX_PRICE, units, baseUnit, compatibleUnits,
+  measuredPurchaseContent,
   decimal, derivedPrice, convertQuantity, multiplyQuantities, calculateNetValue, netPrice, normalizeCatalogProduct, normalizeSupplierProduct,
   resolvePurchaseOption, inventoryTerms };

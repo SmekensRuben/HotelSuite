@@ -20,6 +20,19 @@ const catalog = { id: "catalog-orange", name: "Orange juice", baseUnit: "l", act
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { resolve, promise }; };
 
 describe("supplier package presentation", () => {
+  it("offers kg as a purchase-unit suggestion and saves its explicit mass contract", async () => {
+    const save = vi.fn().mockResolvedValue(undefined);
+    render(<SupplierProductFormFields initialData={{ ...offer, purchaseUnit: "kg", baseUnit: "kg", baseUnitsPerPurchaseUnit: 1, catalogProductId: null }} onSubmit={save} submitLabel="Save" savingLabel="Saving" />);
+    await screen.findByDisplayValue("Supplier A"); expect(document.querySelector('datalist option[value="kg"]')).not.toBeNull();
+    expect(screen.getByText(/For kg purchases, set content to 1 kg/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ purchaseUnit: "kg", baseUnit: "kg", baseUnitsPerPurchaseUnit: 1 })));
+  });
+  it("rejects a mislabeled kilogram containing one gram without sending a product mutation", async () => {
+    const save = vi.fn(); render(<SupplierProductFormFields initialData={{ ...offer, purchaseUnit: "kg", baseUnit: "g", baseUnitsPerPurchaseUnit: 1, catalogProductId: null }} onSubmit={save} submitLabel="Save" savingLabel="Saving" />);
+    await screen.findByDisplayValue("Supplier A"); fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText(/A kg purchase unit requires exactly 1 kg or 1000 g/); expect(save).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.permissions = ["catalogproducts.read", "supplierproducts.read"];
     mocks.detail.mockResolvedValue(offer); mocks.catalog.mockResolvedValue(catalog); mocks.catalogList.mockResolvedValue([catalog]); mocks.suppliers.mockResolvedValue([{ id: "supplier", name: "Supplier A" }]);

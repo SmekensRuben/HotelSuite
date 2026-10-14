@@ -16,6 +16,12 @@ vi.mock("../../services/firebaseOrders", () => ({ createOrdersFromShoppingCart: 
 vi.mock("../../services/firebaseShoppingCarts", () => ({ getShoppingCart: mocks.cart, removeShoppingCartItem: vi.fn(), updateShoppingCartItemNote: vi.fn(), updateShoppingCartItemOutlet: mocks.outlet, updateShoppingCartItemQty: vi.fn() }));
 const cart = (outletId = "") => ({ id: "cart", revision: 8, items: [{ supplierProductId: "juice", purchaseOptionId: "case", supplierProductName: "Orange juice", supplierName: "Drinks supplier", pricePerPurchaseUnit: 12, currency: "EUR", priceBasis: "net", baseUnitsPerPurchaseUnit: 6000, baseUnit: "ml", purchaseUnit: "case", qtyPurchaseUnits: 2, outletId }] });
 const deferred = () => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; };
+it("supports fractional kg quantities with the server's three-decimal quantity precision", async () => {
+  const weighed = cart("kitchen"); weighed.items[0] = { ...weighed.items[0], purchaseUnit: "kg", baseUnit: "kg", baseUnitsPerPurchaseUnit: 1, qtyPurchaseUnits: 2.5, pricePerPurchaseUnit: 8 };
+  mocks.cart.mockResolvedValue(weighed); render(<ShoppingCartPage />);
+  const input = await screen.findByRole("spinbutton"); expect(input).toHaveValue(2.5);
+  expect(input).toHaveAttribute("min", "0.001"); expect(input).toHaveAttribute("step", "0.001");
+});
 beforeEach(() => {
   vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.permissions = ["orders.create"]; mocks.actor.currentUser = { uid: "buyer" };
   mocks.cart.mockResolvedValue(cart()); mocks.outlets.mockResolvedValue([{ id: "bar", name: "Lobby bar" }, { id: "kitchen", name: "Main kitchen" }]);

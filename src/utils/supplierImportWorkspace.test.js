@@ -28,8 +28,12 @@ it("does not conflate unchanged proposals with explicit skipped decisions or app
 it("rejects duplicate references and unsupported workspace protocols instead of opening an unsafe draft", () => {
   expect(() => projectSupplierImportWorkspace({ ...workspace(), importReviewVersion: undefined })).toThrow(/workspace/); const value = workspace(); value.index[1] = value.index[0]; expect(() => projectSupplierImportWorkspace(value)).toThrow(/duplicate/);
 });
-it("supports every approved English supplier-package mapping without inventing unit dimensions", () => {
-  for (const unit of ["Bottle", "Bag", "Bucket", "Box", "Tray", "Jar", "Piece"]) expect(PURCHASE_UNITS).toContain(unit); expect(PURCHASE_UNITS).not.toContain("kg");
+it("supports package labels and measured kg without changing an explicit source content contract", () => {
+  for (const unit of ["Bottle", "Bag", "Bucket", "Box", "Tray", "Jar", "Piece", "kg"]) expect(PURCHASE_UNITS).toContain(unit);
+  const value = row(); value.product = { ...value.product, purchaseUnit: "kg", baseUnit: "g", baseUnitsPerPurchaseUnit: 1000 };
+  value.purchaseUnitMapping = { sourceUnit: "KG", suggestedUnit: "kg", status: "known" };
+  const projected = projectSupplierImportRow(value); expect(projected.product.baseUnit).toBe("g"); expect(projected.product.baseUnitsPerPurchaseUnit).toBe(1000);
+  expect(projected.purchaseUnitMapping.suggestedUnit).toBe("kg");
 });
 it("keeps applied server receipt objects read-only and accepts the actual applied index status", () => {
   const value = row(); value.committed = { status: "created", productId: "product", revision: 1 }; value.canApprove = true; value.bulkEligible = true; const projected = projectSupplierImportRow(value); expect(projected.committed).toBe(true); expect(projected.canApprove).toBe(false); expect(projected.bulkEligible).toBe(false);
