@@ -1,3 +1,5 @@
+import { supplierAiImportSummary, supplierAiImportSettings } from "../utils/supplierAiImportSummary";
+import { currencyChoices } from "../utils/propertySettingChoices";
 import { auth, functions, httpsCallable } from "../firebaseConfig";
 import { invalidateProcurementReads, poolProcurementRead, procurementReadScope } from "./procurementReadPool";
 
@@ -20,11 +22,32 @@ const publicMessage = (value, fallback = "The import could not be prepared. Cont
 };
 const publicError = (value) => value && typeof value === "object" ? { code: typeof value.code === "string" && !INTERNAL_IMPORT_DETAIL.test(value.code) ? value.code.slice(0, 80) : "unavailable", message: publicMessage(value.message) } : undefined;
 const count = (value, maximum = 1000) => Number.isSafeInteger(value) && value >= 0 && value <= maximum;
+const supportedCurrencies = new Set(currencyChoices().map((choice) => choice.id));
+export function normalizeSupplierAiImportSettings(value) {
+  const keys = ["policyVersion", "priceBasis", "currency", "vatRate"];
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== keys.length || keys.some((key) => !Object.hasOwn(value, key)) || value.policyVersion !== 2 || !["net", "gross", "unknown"].includes(value.priceBasis) || !supportedCurrencies.has(value.currency) || (value.vatRate !== null && (typeof value.vatRate !== "number" || !Number.isFinite(value.vatRate) || value.vatRate < 0 || value.vatRate > 1 || Number(value.vatRate.toFixed(6)) !== value.vatRate))) throw new Error("Choose the document's price basis, currency and optional shared VAT rate before importing.");
+  return { policyVersion: 2, priceBasis: value.priceBasis, currency: value.currency, vatRate: value.vatRate };
+}
+const publicImportSettings = (value) => { const settings = supplierAiImportSettings(value); return settings && supportedCurrencies.has(settings.currency) && (settings.vatRate === null || Number(settings.vatRate.toFixed(6)) === settings.vatRate) ? settings : null; };
+export function supplierAiImportVatFraction(percent) {
+  const value = String(percent ?? "");
+  if (value.length > 30 || !/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) throw new Error("Enter a VAT percentage from 0 to 100 with at most four decimal places.");
+  const [whole = "0", rawFraction = ""] = value.split("."), fraction = rawFraction.replace(/0+$/, "");
+  if (fraction.length > 4) throw new Error("Shared VAT supports at most four decimal places as a percentage.");
+  const micros = BigInt((whole || "0") + fraction.padEnd(4, "0"));
+  if (micros > 1000000n) throw new Error("Enter a VAT percentage from 0 to 100.");
+  const digits = micros.toString().padStart(7, "0");
+  return Number(`${digits.slice(0, -6)}.${digits.slice(-6)}`);
+}
+const sameSettings = (first, second) => JSON.stringify(first) === JSON.stringify(second);
+export function normalizeSupplierAiImportSummary(value, expectedRows = null) {
+  return supplierAiImportSummary(value, { totalRows: expectedRows });
+}
 // Explicitly project the customer contract, including responses from older deployments.
 // Provider configuration and accounting data must never reach hotel-facing components.
 export function normalizeSupplierAiImportJob(value) {
   if (!value || !id(value.hotelUid) || !id(value.jobId) || !id(value.ownerUid) || !jobStatuses.has(value.status)) throw new Error("The import status could not be verified. Reopen the original import.");
-  const result = { hotelUid: value.hotelUid, jobId: value.jobId, ...(id(value.supplierId) ? { supplierId: value.supplierId } : {}), ownerUid: value.ownerUid, status: value.status };
+  const result = { hotelUid: value.hotelUid, jobId: value.jobId, ...(id(value.supplierId) ? { supplierId: value.supplierId } : {}), ownerUid: value.ownerUid, status: value.status, importSettings: publicImportSettings(value.importSettings), summary: null };
   if (value.source && typeof value.source === "object") {
     result.source = {};
     if (typeof value.source.fileName === "string" && value.source.fileName.length <= 180) result.source.fileName = value.source.fileName;
@@ -33,6 +56,7 @@ export function normalizeSupplierAiImportJob(value) {
   }
   if (Number.isSafeInteger(value.expiresAtMillis) && value.expiresAtMillis > 0) result.expiresAtMillis = value.expiresAtMillis;
   if (value.totalRows != null) { if (!count(value.totalRows)) throw new Error("The import row count could not be verified."); result.totalRows = value.totalRows; }
+  if (result.importSettings && ["review", "partially_committed", "completed"].includes(value.status)) result.summary = normalizeSupplierAiImportSummary(value.summary, value.totalRows ?? null);
   if (value.counts === null) result.counts = null;
   else if (value.counts) {
     const keys = ["new", "changed", "unchanged", "blocked"], total = keys.reduce((sum, key) => sum + value.counts[key], 0);
@@ -78,14 +102,15 @@ async function request(method, input, captured, file) {
   if (!result || typeof result !== "object") throw new Error("AI import returned an invalid response. Retry the same request.");
   return result;
 }
+function importAvailability(result) {
+  if (typeof result.available !== "boolean" || (result.reason != null && !["disabled", "upgrade-required"].includes(result.reason))) throw new Error("AI import settings could not be verified.");
+  const limits = {};
+  for (const [key, maximum] of [["maxFileBytes", MAX_SUPPLIER_AI_IMPORT_BYTES], ["maxPages", 50], ["maxProducts", 1000]]) if (count(result.limits?.[key], maximum) && result.limits[key] > 0) limits[key] = result.limits[key];
+  const supported = result.importPolicyVersion === 2;
+  return { available: result.available && supported, importPolicyVersion: supported ? 2 : null, reason: result.available && !supported ? "upgrade-required" : result.reason ?? null, limits, defaults: { currency: supportedCurrencies.has(result.defaults?.currency) ? result.defaults.currency : null } };
+}
 export function getSupplierAiImportAvailability(hotelUid) {
-  return poolProcurementRead(hotelUid, "supplier-ai-import-availability", async () => {
-    const result = await request("GET", { hotelUid }, context(hotelUid));
-    if (typeof result.available !== "boolean" || (result.reason != null && result.reason !== "disabled")) throw new Error("AI import settings could not be verified.");
-    const limits = {};
-    for (const [key, maximum] of [["maxFileBytes", MAX_SUPPLIER_AI_IMPORT_BYTES], ["maxPages", 50], ["maxProducts", 1000]]) if (count(result.limits?.[key], maximum) && result.limits[key] > 0) limits[key] = result.limits[key];
-    return { available: result.available, reason: result.reason ?? null, limits };
-  });
+  return poolProcurementRead(hotelUid, "supplier-ai-import-availability", async () => importAvailability(await request("GET", { hotelUid }, context(hotelUid))));
 }
 async function fileFingerprint(file) {
   const bytes = typeof file.arrayBuffer === "function" ? await file.arrayBuffer() : await new Promise((resolve, reject) => {
@@ -94,7 +119,8 @@ async function fileFingerprint(file) {
   const hash = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(hash), (value) => value.toString(16).padStart(2, "0")).join("");
 }
-export async function startSupplierAiImport(hotelUid, supplierId, file) {
+export async function startSupplierAiImport(hotelUid, supplierId, file, settings) {
+  const importSettings = normalizeSupplierAiImportSettings(settings);
   const mimeType = validateSupplierAiImportFile(file), captured = context(hotelUid);
   if (!id(supplierId)) throw new Error("Choose an existing hotel supplier.");
   if (!uploadCommands.has(captured.actor)) uploadCommands.set(captured.actor, new WeakMap());
@@ -104,16 +130,43 @@ export async function startSupplierAiImport(hotelUid, supplierId, file) {
   const fingerprint = await fileFingerprint(file); captured.assertCurrent();
   const recoveryKey = `supplier-ai-upload:${captured.actor.uid}:${hotelUid}:${supplierId}:${fingerprint}`;
   let recovered; try { recovered = JSON.parse(sessionStorage.getItem(recoveryKey) || "null"); } catch { /* Local recovery is optional. */ }
+  let pending = commands.get(key) || recovered;
+  const legacyRecovery = Boolean(pending?.requestId && !Object.hasOwn(pending, "importSettings"));
+  if (pending?.requestId && (typeof pending.requestId !== "string" || !/^[a-z0-9-]{1,128}$/i.test(pending.requestId))) throw new Error("The original upload reference could not be verified. Contact your hotel administrator.");
+  if (pending?.requestId && !legacyRecovery) {
+    const original = publicImportSettings(typeof pending.importSettings === "string" ? (() => { try { return JSON.parse(pending.importSettings); } catch { return null; } })() : pending.importSettings);
+    if (!original) throw Object.assign(new Error("An earlier upload must be checked before importing this document again. Contact your hotel administrator."), { code: "import-settings-unavailable" });
+    if (!sameSettings(original, importSettings)) throw Object.assign(new Error("Recover the original upload with its saved price settings. These settings have been restored; retry the same file and supplier."), { code: "import-settings-changed", importSettings: original });
+  }
+  if (!legacyRecovery) {
+    const availability = importAvailability(await request("GET", { hotelUid }, captured));
+    if (availability.importPolicyVersion !== 2) throw Object.assign(new Error("Import service update is in progress. Try again after it finishes."), { code: pending?.requestId ? "unavailable" : "failed-precondition" });
+    if (!pending?.requestId && !availability.available) throw Object.assign(new Error("AI supplier imports are currently unavailable. Ask your hotel administrator for assistance."), { code: "failed-precondition" });
+  }
+  // Another upload can reserve the same document while the capability check is
+  // awaiting the server. Preserve that original command across File instances.
+  if (!pending?.requestId) {
+    let stored; try { stored = JSON.parse(sessionStorage.getItem(recoveryKey) || "null"); } catch { /* Browser recovery is optional. */ }
+    const concurrent = commands.get(key) || stored;
+    if (concurrent?.requestId) {
+      if (typeof concurrent.requestId !== "string" || !/^[a-z0-9-]{1,128}$/i.test(concurrent.requestId)) throw new Error("The original upload reference could not be verified. Contact your hotel administrator.");
+      const original = publicImportSettings(typeof concurrent.importSettings === "string" ? (() => { try { return JSON.parse(concurrent.importSettings); } catch { return null; } })() : concurrent.importSettings);
+      if (!original) throw Object.assign(new Error("An earlier upload must be checked before importing this document again. Contact your hotel administrator."), { code: "import-settings-unavailable" });
+      if (!sameSettings(original, importSettings)) throw Object.assign(new Error("Recover the original upload with its saved price settings. These settings have been restored; retry the same file and supplier."), { code: "import-settings-changed", importSettings: original });
+      pending = concurrent; recovered = concurrent;
+    }
+  }
   const requestId = typeof recovered?.requestId === "string" && /^[a-z0-9-]{1,128}$/i.test(recovered.requestId) ? recovered.requestId : crypto.randomUUID();
   const recoveredName = typeof recovered?.fileName === "string" && recovered.fileName.length <= 180 && recovered.fileName.length > 0 && !/[\u0000-\u001f\\/]/.test(recovered.fileName) ? recovered.fileName : file.name;
   const recoveredType = Object.values(types).includes(recovered?.mimeType) ? recovered.mimeType : mimeType;
-  const command = commands.get(key) || { hotelUid, supplierId, fileName: recoveredName, mimeType: recoveredType, requestId };
+  const command = commands.get(key) || { hotelUid, supplierId, fileName: recoveredName, mimeType: recoveredType, requestId, ...(legacyRecovery ? {} : { importSettings: JSON.stringify(importSettings) }) };
   commands.set(key, command);
-  try { sessionStorage.setItem(recoveryKey, JSON.stringify({ requestId: command.requestId, fileName: command.fileName, mimeType: command.mimeType })); } catch { /* In-view retries retain the original request. */ }
+  try { sessionStorage.setItem(recoveryKey, JSON.stringify({ requestId: command.requestId, fileName: command.fileName, mimeType: command.mimeType, ...(legacyRecovery ? {} : { importSettings }) })); } catch { /* In-view retries retain the original request. */ }
   try {
     const result = await request("POST", command, captured, file);
     if (result.hotelUid !== hotelUid || result.supplierId !== supplierId || result.ownerUid !== captured.actor.uid || !id(result.jobId)) throw new Error("The import acknowledgement could not be verified. Retry the same file and supplier.");
     const confirmed = normalizeSupplierAiImportJob(result);
+    if (!sameSettings(confirmed.importSettings, legacyRecovery ? null : importSettings)) throw new Error("The import price settings could not be verified. Recover the original upload.");
     commands.delete(key);
     try { sessionStorage.setItem(`supplier-ai-import:${hotelUid}:${captured.actor.uid}`, JSON.stringify({ jobId: result.jobId })); } catch { /* The open view can still recover the job. */ }
     try { sessionStorage.removeItem(recoveryKey); } catch { /* Optional local recovery. */ }
@@ -149,7 +202,10 @@ async function command(name, hotelUid, input) {
 export function getSupplierAiImportReview(hotelUid, jobId, cursor = null) {
   return poolProcurementRead(hotelUid, `supplier-ai-review:${jobId}:${cursor || "first"}`, () => command("readHotelSupplierAiImportRows", hotelUid, { jobId, limit: 25, cursor }));
 }
-export const saveSupplierAiImportReview = (hotelUid, input) => command("correctHotelSupplierAiImportRow", hotelUid, input);
+export async function saveSupplierAiImportReview(hotelUid, input) {
+  try { return await command("correctHotelSupplierAiImportRow", hotelUid, input); }
+  finally { invalidateProcurementReads(hotelUid); }
+}
 export async function confirmSupplierAiImport(hotelUid, jobId, rows) {
   const captured = context(hotelUid);
   if (!id(jobId) || !Array.isArray(rows) || !rows.length || rows.length > 1000 || rows.some((row) => !id(row.rowId) || !Number.isSafeInteger(row.reviewRevision) || row.reviewRevision < 1 || row.acknowledged !== true)) throw new Error("Select reviewed rows before confirming this import.");

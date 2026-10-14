@@ -164,7 +164,7 @@ test("81 proposed rows with one invented quote publish 80 reviewable offers and 
   assert.equal(rows[0].sourceAnchors[0].verified, true); assert.equal(rows[0].sourceAnchors[0].verificationMethod, "normalized-whitespace");
   const result = await proposal.reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, leaseId: "lease" });
   db.records.set(jobRoot, { ...db.records.get(jobRoot), status: "review", ...result });
-  assert.deepEqual(result, { totalRows: 81, counts: { new: 80, changed: 0, unchanged: 0, blocked: 1 }, complete: true, nextRowIndex: 81 });
+  assert.deepEqual(result, { totalRows: 81, counts: { new: 80, changed: 0, unchanged: 0, blocked: 1 }, complete: true, nextRowIndex: 81, summary: null });
   const reviewed = await proposal.readHotelSupplierAiImportRowsHandler(request({ hotelUid, jobId }), services(db));
   assert.equal(reviewed.rows.length, 81); assert.equal(reviewed.rows[79].category, "new"); assert.equal(reviewed.rows[80].category, "blocked");
   assert.ok(reviewed.rows[80].issues.some((entry) => entry.code === "evidence-quote-absent"));
@@ -367,7 +367,7 @@ test("bounded reconciliation resumes atomic rows and counts after a lost respons
   const rows = proposal.validateRawSupplierAiRows({ rows: Array.from({ length: 250 }, (_, index) => raw({ supplierSku: `SKU-${index}` })) }, { sourceUnits });
   const run = (patch = {}) => proposal.reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, leaseId: "lease", ...patch });
   const first = await run();
-  assert.deepEqual(first, { counts: { new: 100, changed: 0, unchanged: 0, blocked: 0 }, totalRows: 250, complete: false, nextRowIndex: 100 });
+  assert.deepEqual(first, { counts: { new: 100, changed: 0, unchanged: 0, blocked: 0 }, totalRows: 250, complete: false, nextRowIndex: 100, summary: null });
   assert.equal([...db.records.keys()].filter((path) => path.startsWith(`${jobRoot}/rows/`)).length, 100);
   const firstRow = JSON.stringify(rowDoc(db));
   let lostResponse = false;
@@ -393,7 +393,7 @@ test("bounded reconciliation resumes atomic rows and counts after a lost respons
   await assert.rejects(run(), /lease is no longer current/);
   let finished;
   do { finished = await run({ leaseId: "lease-2" }); } while (!finished.complete);
-  assert.deepEqual(finished, { counts: { new: 250, changed: 0, unchanged: 0, blocked: 0 }, totalRows: 250, complete: true, nextRowIndex: 250 });
+  assert.deepEqual(finished, { counts: { new: 250, changed: 0, unchanged: 0, blocked: 0 }, totalRows: 250, complete: true, nextRowIndex: 250, summary: null });
   assert.equal([...db.records.keys()].filter((path) => path.startsWith(`${jobRoot}/rows/`)).length, 250);
   assert.equal(JSON.stringify(rowDoc(db)), firstRow); assert.equal(history(db).length, 0);
   assert.deepEqual(await run({ leaseId: "lease-2" }), finished);
@@ -439,4 +439,54 @@ test("classification overview changes atomically with correction, while exact re
   assert.deepEqual(db.records.get(jobRoot).counts, { new: 1, changed: 0, unchanged: 0, blocked: 1 });
   assert.equal(db.records.get(jobRoot).totalRows, before.totalRows); assert.equal(db.records.get(jobRoot).configVersion, before.configVersion);
   assert.equal(db.records.get(jobRoot).configPolicyVersion, before.configPolicyVersion);
+});
+test("normalization policy 2 uses a separate canonical schema and cannot be forged through provider output", () => {
+  assert.equal(proposal.AI_SUPPLIER_SCHEMA.properties.rows.items.properties.baseUnit.enum, undefined);
+  assert.deepEqual(proposal.AI_SUPPLIER_SCHEMA_V2.properties.rows.items.properties.baseUnit.enum, ["g", "kg", "ml", "l", "each", null]);
+  assert.deepEqual(proposal.AI_SUPPLIER_SCHEMA_V2.properties.rows.items.properties.pricingModel.enum, ["Per Purchase Unit", "Per Base Unit", null]);
+  for (const patch of [{ normalizationVersion: 2 }, { originalInput: {} }, { normalizationFindings: [] }, { packInference: { piecesPerPurchaseUnit: 100 } }]) {
+    assert.throws(() => proposal.validateRawSupplierAiRows({ rows: [raw(patch)] }, { sourceUnits }), /Unsupported AI row/);
+  }
+});
+test("import-wide normalization findings include all 125 rows and correct atomically without double counting replay", async () => {
+  const { normalizeSupplierAiProposal } = require("./supplierAiNormalization"), db = fixture();
+  const sources = [{ sourceId: "csv-header", anchor: "Header", contextOnly: true, text: JSON.stringify(["SKU", "Name", "Package", "Content"]) }];
+  const input = Array.from({ length: 125 }, (_, index) => {
+    const sku = `SKU-${index}`, sourceId = `csv-row-${index + 2}`, blocked = index >= 120;
+    sources.push({ sourceId, anchor: `Row ${index + 2}`, text: JSON.stringify([sku, "MOZZARELLA400G", blocked ? "DS" : "PK", blocked ? "" : "400GR"]) });
+    return raw({ supplierSku: sku, supplierProductName: "MOZZARELLA400G", purchaseUnit: blocked ? "DS" : "PK", baseUnit: "GR",
+      baseUnitsPerPurchaseUnit: blocked ? null : 400, currency: null, priceBasis: null, pricingModel: null,
+      pricePerPurchaseUnit: null, sourceAnchors: [{ sourceId, quote: sku }] });
+  });
+  const settings = { policyVersion: 2, currency: "EUR", priceBasis: "net", vatRate: null };
+  const rows = proposal.validateRawSupplierAiRows({ rows: input }, { sourceUnits: sources }).map((row) => normalizeSupplierAiProposal(row, { importSettings: settings, sourceUnits: sources }));
+  const run = () => proposal.reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, leaseId: "lease" });
+  const first = await run(); assert.equal(first.complete, false); assert.equal(first.summary.totalRows, 125); assert.equal(first.summary.normalizedRows, 100);
+  const result = await run(); assert.equal(result.complete, true); assert.deepEqual(result.counts, { new: 120, changed: 0, unchanged: 0, blocked: 5 });
+  assert.equal(result.summary.normalizedRows, 125); assert.equal(result.summary.assumptionRows, 125); assert.equal(result.summary.unknownPriceRows, 125);
+  assert.equal(result.summary.blockedNormalizationRows, 5); assert.equal(result.summary.missingRequiredRows, 5); assert.equal(result.summary.inferredPieceRows, 0);
+  assert.ok(result.summary.findings.length <= 20); assert.ok(result.summary.findings.every((entry) => entry.rowIds.length <= 3 && entry.count <= 125));
+  assert.equal(result.summary.findings.find((entry) => entry.code === "source-price-missing").count, 125);
+  assert.equal(result.summary.findings.find((entry) => entry.code === "package-content-missing").count, 5);
+  assert.deepEqual(await run(), result);
+  db.records.set(jobRoot, { ...db.records.get(jobRoot), status: "review", counts: result.counts, totalRows: result.totalRows, summary: result.summary });
+  const page = await proposal.readHotelSupplierAiImportRowsHandler(request({ hotelUid, jobId, limit: 100 }), services(db));
+  assert.equal(page.rows.length, 100); assert.equal(page.rows[0].originalInput.supplierProductName, "MOZZARELLA400G");
+  const blockedRow = rowDoc(db, 121), correctionInput = request({ hotelUid, jobId, rowId: blockedRow.rowId, expectedReviewRevision: blockedRow.reviewRevision, patch: { baseUnitsPerPurchaseUnit: 400 } });
+  const corrected = await proposal.correctHotelSupplierAiImportRowHandler(correctionInput, services(db));
+  assert.equal(corrected.row.category, "new"); assert.equal(db.records.get(jobRoot).summary.blockedNormalizationRows, 4);
+  assert.equal(db.records.get(jobRoot).summary.missingRequiredRows, 4); assert.equal(db.records.get(jobRoot).summary.findings.find((entry) => entry.code === "package-content-missing").count, 4);
+  assert.deepEqual(await proposal.correctHotelSupplierAiImportRowHandler(correctionInput, services(db)), corrected);
+  assert.equal(db.records.get(jobRoot).summary.missingRequiredRows, 4);
+  await correct(db, { pricePerPurchaseUnit: 12 }); assert.equal(db.records.get(jobRoot).summary.unknownPriceRows, 124);
+  assert.equal(db.records.get(jobRoot).summary.findings.find((entry) => entry.code === "source-price-missing").count, 125);
+  assert.equal((await confirm(db)).outcomes[0].status, "created"); assert.equal(db.records.get(jobRoot).summary.totalRows, 125);
+  assert.equal(rowDoc(db).originalInput.pricePerPurchaseUnit, null); assert.equal(rowDoc(db).product.pricePerPurchaseUnit, 12);
+});
+test("legacy review rows retain no fabricated normalization history or import-wide summary", async () => {
+  const db = fixture(), result = await reconcile(db);
+  assert.equal(result.summary, null);
+  const page = await proposal.readHotelSupplierAiImportRowsHandler(request({ hotelUid, jobId }), services(db));
+  assert.equal(page.rows[0].normalizationVersion, null); assert.equal(page.rows[0].normalizationFindings, null);
+  assert.equal(page.rows[0].originalInput, null); assert.equal(page.rows[0].packInference, null);
 });

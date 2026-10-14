@@ -4,14 +4,18 @@ import { usePermission } from "../../hooks/usePermission";
 import { getSuppliers } from "../../services/firebaseSuppliers";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { useSupplierProductAuthority } from "../../hooks/useSupplierProductAuthority";
+import { currencyChoices } from "../../utils/propertySettingChoices";
 import { Combobox } from "../ui/combobox";
 import Modal from "../shared/Modal";
 import SupplierAiImportRow from "./SupplierAiImportRow";
+import SupplierAiImportFindings from "./SupplierAiImportFindings";
 import {
   SUPPLIER_AI_IMPORT_ACCEPT, validateSupplierAiImportFile, getSupplierAiImportAvailability,
-  startSupplierAiImport, getSupplierAiImport, getSupplierAiImportReview, confirmSupplierAiImport,
+  startSupplierAiImport, getSupplierAiImport, getSupplierAiImportReview, confirmSupplierAiImport, normalizeSupplierAiImportSettings, supplierAiImportVatFraction,
 } from "../../services/firebaseSupplierAiImports";
 
+const currencyOptions = currencyChoices();
+const supportedCurrency = (value) => currencyOptions.some((option) => option.id === value);
 const processing = new Set(["queued", "processing"]);
 const reviewable = new Set(["review", "partially_committed", "completed"]);
 const statuses = {
@@ -31,10 +35,13 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
   const permitted = canRead && canCreate && canReadSuppliers;
   const storageKey = `supplier-ai-import:${hotelUid}:${actor?.uid || "anonymous"}`;
   const [availability, setAvailability] = useState(null), [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [priceBasis, setPriceBasis] = useState(""), [currency, setCurrency] = useState(""), [sharedVat, setSharedVat] = useState(false), [vatPercent, setVatPercent] = useState("");
+  const currencyTouched = useRef(false), pendingUploadSettings = useRef(null);
   const [supplierId, setSupplierId] = useState(initialSupplierId), [file, setFile] = useState(null), [job, setJob] = useState(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(null), [pollError, setPollError] = useState(null), [rows, setRows] = useState([]);
   const [nextCursor, setNextCursor] = useState(null), [cursor, setCursor] = useState(null), [cursorHistory, setCursorHistory] = useState([null]);
   const [totalRows, setTotalRows] = useState(0), [reviewLoading, setReviewLoading] = useState(false), [selected, setSelected] = useState({});
+  const [summaryStale, setSummaryStale] = useState(false), [summaryRefreshing, setSummaryRefreshing] = useState(false);
   const [outcomes, setOutcomes] = useState([]), [uncertainUpload, setUncertainUpload] = useState(false), [uncertainCommit, setUncertainCommit] = useState(false);
   const pendingCommit = useRef(null), lastReviewJob = useRef(null), input = useRef(null);
   const generation = useRef(0), jobRequests = useRef(0), rowRequests = useRef(0), latestJob = useRef(job), latestRows = useRef(rows); latestJob.current = job; latestRows.current = rows;
@@ -45,20 +52,28 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
   const publishJob = (value) => { const accepted = jobChange.current?.(value); setJob(accepted || value); };
   const close = () => { setCloseIn(null); onClose?.(); };
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => { if (!currencyTouched.current && supportedCurrency(availability?.defaults?.currency)) setCurrency(availability.defaults.currency); }, [availability?.defaults?.currency]);
+  const clearPriceSettings = () => { setPriceBasis(""); setSharedVat(false); setVatPercent(""); currencyTouched.current = false; setCurrency(supportedCurrency(availability?.defaults?.currency) ? availability.defaults.currency : ""); pendingUploadSettings.current = null; };
+  const restorePriceSettings = (value) => { setPriceBasis(value.priceBasis); setCurrency(value.currency); currencyTouched.current = true; setSharedVat(value.vatRate !== null); setVatPercent(value.vatRate === null ? "" : String(Number((value.vatRate * 100).toFixed(4)))); pendingUploadSettings.current = value; };
+  const sharedVatRequired = priceBasis === "gross" && sharedVat;
+  let enteredVatRate = null;
+  try { if (sharedVatRequired) enteredVatRate = supplierAiImportVatFraction(vatPercent); } catch { /* Invalid VAT remains unavailable before any request. */ }
+  const vatInputValid = !sharedVatRequired || enteredVatRate !== null;
+  const priceSettingsReady = ["net", "gross", "unknown"].includes(priceBasis) && supportedCurrency(currency) && vatInputValid;
   useEffect(() => {
     if (!backgroundManaged || !current() || busy || uncertainUpload || uncertainCommit) return;
     if (!trackedJobId) {
       if (previousTrackedJobId.current && latestJob.current) {
         generation.current += 1; rowRequests.current += 1; jobRequests.current += 1;
-        setJob(null); setRows([]); setSelected({}); setOutcomes([]); setCursor(null); setCursorHistory([null]); setNextCursor(null); setError(null); setPollError(null); setCloseIn(null);
-        pendingCommit.current = null; lastReviewJob.current = null; setReviewLoading(false); setFile(null); setSupplierId(initialSupplierId); setResuming(false);
+        setJob(null); setSummaryStale(false); setSummaryRefreshing(false); setRows([]); setSelected({}); setOutcomes([]); setCursor(null); setCursorHistory([null]); setNextCursor(null); setError(null); setPollError(null); setCloseIn(null);
+        pendingCommit.current = null; lastReviewJob.current = null; setReviewLoading(false); setFile(null); setSupplierId(initialSupplierId); clearPriceSettings(); setResuming(false);
       }
       previousTrackedJobId.current = null; return;
     }
     previousTrackedJobId.current = trackedJobId;
     if (latestJob.current?.jobId !== trackedJobId) {
       generation.current += 1; rowRequests.current += 1; jobRequests.current += 1;
-      setRows([]); setSelected({}); setOutcomes([]); setCursor(null); setCursorHistory([null]); setNextCursor(null); setError(null); setPollError(null); setCloseIn(null);
+      setSummaryStale(false); setSummaryRefreshing(false); setRows([]); setSelected({}); setOutcomes([]); setCursor(null); setCursorHistory([null]); setNextCursor(null); setError(null); setPollError(null); setCloseIn(null);
       pendingCommit.current = null; lastReviewJob.current = null; setUncertainCommit(false); setUncertainUpload(false); setReviewLoading(false); setFile(null);
     }
     if (trackedJob) { setJob(trackedJob); setSupplierId(trackedJob.supplierId || ""); setResuming(false); return; }
@@ -81,7 +96,7 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
   const loadAvailability = useCallback(async () => {
     if (!permitted || !hotelUid || !current()) return;
     setAvailabilityLoading(true); setError(null);
-    try { const value = await getSupplierAiImportAvailability(hotelUid); if (current()) setAvailability(value); }
+    try { const value = await getSupplierAiImportAvailability(hotelUid); if (current()) setAvailability(value.importPolicyVersion === 2 ? value : { ...value, available: false, reason: value.available ? "upgrade-required" : value.reason }); }
     catch (failure) { if (current()) setError(failure); }
     finally { if (current()) setAvailabilityLoading(false); }
   }, [permitted, hotelUid, current]);
@@ -97,16 +112,17 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
     if (!job?.jobId || !current()) return;
     const captured = { jobId: job.jobId, generation: generation.current, request: ++jobRequests.current };
     const active = () => current() && generation.current === captured.generation && latestJob.current?.jobId === captured.jobId && jobRequests.current === captured.request;
-    try { const value = await getSupplierAiImport(hotelUid, captured.jobId); if (active()) { publishJob(value); setPollError(null); } }
+    setSummaryRefreshing(true);
+    try { const value = await getSupplierAiImport(hotelUid, captured.jobId); if (active()) { publishJob(value); setSummaryStale(false); setPollError(null); } }
     catch (failure) { if (active()) {
       setPollError(failure);
       if (["not-found", "failed-precondition"].includes(String(failure.code || "").replace(/^functions\//, ""))) {
         setPollError(null);
         const expired = { hotelUid, jobId: captured.jobId, ownerUid: actor?.uid, status: "expired", error: { message: failure.message } }; publishJob(expired);
-        setRows([]); setSelected({}); setOutcomes([]); pendingCommit.current = null; setUncertainCommit(false);
+        setSummaryStale(false); setRows([]); setSelected({}); setOutcomes([]); pendingCommit.current = null; setUncertainCommit(false);
         try { sessionStorage.removeItem(storageKey); } catch { /* An expired reference contains no source content. */ }
       }
-    } }
+    } } finally { if (active()) setSummaryRefreshing(false); }
   }, [job?.jobId, hotelUid, current, storageKey]);
   useEffect(() => {
     if (backgroundManaged || !job || !processing.has(job.status) || !current()) return;
@@ -143,21 +159,24 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
     catch (failure) { event.target.value = ""; setFile(null); setError(failure); }
   };
   const start = async () => {
-    if (!file || !supplierId || !supplierOptions.some((supplier) => supplier.id === supplierId) || directoryLoading || supplierDirectory.error || busy || resuming || !permitted || !availability?.available || !current()) return;
+    if (!priceSettingsReady || !file || !supplierId || !supplierOptions.some((supplier) => supplier.id === supplierId) || directoryLoading || supplierDirectory.error || busy || resuming || !permitted || !availability?.available || !current()) return;
     const captured = ++generation.current;
+    const importSettings = pendingUploadSettings.current || normalizeSupplierAiImportSettings({ policyVersion: 2, priceBasis, currency, vatRate: enteredVatRate });
+    pendingUploadSettings.current = importSettings;
     setBusy(true); setError(null);
     try {
-      const value = await startSupplierAiImport(hotelUid, supplierId, file);
+      const value = await startSupplierAiImport(hotelUid, supplierId, file, importSettings);
       if (!current() || captured !== generation.current) return;
-      publishJob(value); remember(value); setUncertainUpload(false); setFile(null); if (processing.has(value.status)) { closeDeadline.current = Date.now() + 5000; setCloseIn(5); }
+      publishJob(value); remember(value); setUncertainUpload(false); pendingUploadSettings.current = null; setFile(null); if (processing.has(value.status)) { closeDeadline.current = Date.now() + 5000; setCloseIn(5); }
     } catch (failure) {
       if (!current() || captured !== generation.current) return;
+      if (failure.code === "import-settings-changed" && failure.importSettings) { try { restorePriceSettings(normalizeSupplierAiImportSettings(failure.importSettings)); } catch { /* Invalid saved settings remain unavailable. */ } }
       setError(failure);
       setUncertainUpload(!["invalid-argument", "permission-denied", "unauthenticated", "failed-precondition", "resource-exhausted", "already-exists", "not-found"].includes(String(failure.code || "").replace(/^functions\//, "")));
     } finally { if (current() && captured === generation.current) setBusy(false); }
   };
   const select = (rowId, checked, reviewRevision) => setSelected((prior) => { const next = { ...prior }; if (checked) next[rowId] = reviewRevision; else delete next[rowId]; return next; });
-  const corrected = (row) => { if (!current() || generation.current !== renderedGeneration || latestJob.current?.jobId !== job?.jobId || !row?.rowId) return; setRows((prior) => prior.map((value) => value.rowId === row.rowId ? row : value)); select(row.rowId, false); };
+  const corrected = (row) => { if (!current() || generation.current !== renderedGeneration || latestJob.current?.jobId !== job?.jobId || !row?.rowId) return; setRows((prior) => prior.map((value) => value.rowId === row.rowId ? row : value)); select(row.rowId, false); setSummaryStale(true); refreshJob(); };
   const confirm = async () => {
     if (busy || !current() || !job || !permitted) return;
     const captured = { generation: generation.current, jobId: job.jobId };
@@ -173,7 +192,7 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
     } catch (failure) { if (active()) { setError(failure); setUncertainCommit(true); } }
     finally { if (active()) setBusy(false); }
   };
-  const reset = () => { if (busy || uncertainUpload || uncertainCommit) return; generation.current += 1; rowRequests.current += 1; jobRequests.current += 1; setReviewLoading(false); setResuming(false); setPollError(null); forget(); setCloseIn(null); setJob(null); onNewDocument?.(); setRows([]); setSelected({}); setOutcomes([]); setCursor(null); setCursorHistory([null]); setNextCursor(null); lastReviewJob.current = null; setError(null); };
+  const reset = () => { if (busy || uncertainUpload || uncertainCommit) return; generation.current += 1; rowRequests.current += 1; jobRequests.current += 1; setReviewLoading(false); setResuming(false); setPollError(null); forget(); clearPriceSettings(); setSummaryStale(false); setSummaryRefreshing(false); setCloseIn(null); setJob(null); onNewDocument?.(); setRows([]); setSelected({}); setOutcomes([]); setCursor(null); setCursorHistory([null]); setNextCursor(null); lastReviewJob.current = null; setError(null); };
   const loadSupplierDirectory = useCallback(() => getSuppliers(hotelUid), [hotelUid]);
   const supplierDirectory = useScopedAsync({ scopeKey: `${hotelUid}:ai-import-suppliers`, enabled: Boolean(backgroundManaged && open && !job && permitted), initialData: null, load: loadSupplierDirectory });
   const supplierOptions = backgroundManaged ? supplierDirectory.data || [] : suppliers;
@@ -188,27 +207,37 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
         {resuming && <p role="status" className="animate-pulse text-sm text-stone-600">Recovering the saved private draft…</p>}
         {availabilityLoading && <p role="status" className="animate-pulse text-sm text-stone-600">Checking hotel import access…</p>}
         {!availabilityLoading && !availability && <button type="button" className="ht-button-secondary" onClick={loadAvailability}>Retry access check</button>}
-        {availability && !availability.available && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">AI supplier imports are disabled. Ask the platform operator to enable the global AI import settings.</p>}
+        {availability && !availability.available && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{availability.reason === "upgrade-required" ? "Import service update is in progress. Try again after it finishes." : "AI supplier imports are disabled. Ask the platform operator to enable the global AI import settings."}<button type="button" onClick={loadAvailability} className="ml-2 underline">Retry access check</button></p>}
         {availability?.available && <>
           <label className="block text-sm font-semibold">Supplier<Combobox aria-label="AI import supplier" disabled={busy || resuming || uncertainUpload} value={supplierOptions.find((supplier) => supplier.id === supplierId) || null} options={supplierOptions} displayValue={(supplier) => supplier.name || "Unnamed supplier"} getOptionValue={(supplier) => supplier.id} onChange={(supplier) => setSupplierId(supplier?.id || "")} loading={directoryLoading} placeholder="Choose this document's supplier" /></label>
           {backgroundManaged && supplierDirectory.error && <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><p role="alert">The supplier directory could not be loaded. {supplierDirectory.error.message}</p><button type="button" onClick={supplierDirectory.run} className="mt-2 underline">Retry supplier directory</button></div>}
+          <fieldset disabled={busy || resuming || uncertainUpload} className="space-y-3 rounded-xl border border-stone-200 bg-stone-50 p-3">
+            <legend className="px-1 text-sm font-semibold">Document price settings</legend>
+            <p className="text-xs text-stone-600">Select how prices in this document are quoted. AI cannot turn sales totals or statistics into purchase prices.</p>
+            <label className="block text-sm font-semibold">Document price basis<select aria-label="Document price basis" required value={priceBasis} onChange={(event) => { setPriceBasis(event.target.value); pendingUploadSettings.current = null; }} className="mt-1 w-full rounded-lg border bg-white p-2 text-sm"><option value="">Select how prices are quoted</option><option value="net">Net — excluding VAT</option><option value="gross">Gross — including VAT</option><option value="unknown">Unknown — requires review</option></select></label>
+            <label className="block text-sm font-semibold">Document currency<Combobox aria-label="Document currency" disabled={busy || resuming || uncertainUpload} value={currencyOptions.find((option) => option.id === currency) || null} options={currencyOptions} displayValue={(option) => option.label} getOptionValue={(option) => option.id} onChange={(option) => { currencyTouched.current = true; setCurrency(option?.id || ""); pendingUploadSettings.current = null; }} placeholder="Choose this document's currency" allowClear /></label>
+            {priceBasis === "gross" && <div className="space-y-2 text-sm"><label className="flex items-start gap-2"><input type="checkbox" checked={sharedVat} onChange={(event) => { setSharedVat(event.target.checked); pendingUploadSettings.current = null; }} className="mt-1" /><span>Use one shared VAT rate when a product has no documented rate</span></label>{sharedVat && <label className="block text-xs font-semibold">Shared VAT rate (%)<input type="number" required min="0" max="100" step="any" value={vatPercent} onChange={(event) => { setVatPercent(event.target.value); pendingUploadSettings.current = null; }} className="mt-1 w-full rounded-lg border bg-white p-2 text-sm" /></label>}<p className="text-xs text-stone-600">A documented product VAT rate takes precedence. No tax rate is guessed from the hotel's country. Gross prices without a VAT rate remain unavailable until reviewed.</p>{!vatInputValid && <p role="alert" className="text-xs text-red-700">Enter a shared VAT percentage from 0 to 100 with at most four decimal places, or leave shared VAT disabled.</p>}</div>}
+            {priceBasis === "unknown" && <p className="text-xs text-amber-800">Prices without a documented net or gross basis require correction before they can be imported.</p>}
+          </fieldset>
           <label className="block text-sm font-semibold">Supplier document<input ref={input} type="file" accept={SUPPLIER_AI_IMPORT_ACCEPT} disabled={busy || resuming || uncertainUpload} onChange={chooseFile} className="mt-2 block max-w-full text-sm" /></label>
           {file && <p className="text-xs text-stone-600">Selected: {file.name} · {(file.size / 1024).toFixed(1)} KiB</p>}
           <p className="text-xs text-stone-500">CSV, XLSX, PDF, DOCX, EML or TXT. Maximum {Math.floor((limits.maxFileBytes || 10485760) / 1048576)} MiB, {limits.maxPages || 50} document pages and {limits.maxProducts || 1000} products. Do not upload guest or personal data. Documents are private and expire automatically.</p>
           {uncertainUpload && <p className="text-sm text-amber-800">The upload acknowledgement was lost. Retry this same file and supplier to recover the original import; a new run will not be started.</p>}
-          <button type="button" disabled={!file || !supplierId || !supplierOptions.some((supplier) => supplier.id === supplierId) || busy || resuming || directoryLoading || Boolean(supplierDirectory.error)} onClick={start} className="ht-button-primary w-full">{busy ? "Uploading document…" : uncertainUpload ? "Recover original upload" : "Prepare AI import review"}</button>
+          <button type="button" disabled={!priceSettingsReady || !file || !supplierId || !supplierOptions.some((supplier) => supplier.id === supplierId) || busy || resuming || directoryLoading || Boolean(supplierDirectory.error)} onClick={start} className="ht-button-primary w-full">{busy ? "Uploading document…" : uncertainUpload ? "Recover original upload" : "Prepare AI import review"}</button>
         </>}
       </>}
       {job && <>
         <div role="status" className={`rounded-xl border p-3 text-sm ${["failed", "response_unknown", "expired"].includes(job.status) ? "border-red-200 bg-red-50 text-red-900" : "border-brand-200 bg-brand-50"}`}><p className="font-semibold">{statuses[job.status] || `Import status: ${job.status}`}</p><p className="mt-1 text-xs">{job.source?.fileName || "Supplier document"}</p>{processing.has(job.status) && <div aria-hidden="true" className="mt-3 h-1.5 overflow-hidden rounded-full bg-brand-100"><div className="h-full w-1/2 animate-pulse rounded-full bg-brand-700" /></div>}</div>
         {processing.has(job.status) && job.progress?.totalChunks > 0 && <p className="text-xs text-stone-600">{job.progress.completedChunks} of {job.progress.totalChunks} document sections processed.</p>}
         {closeIn !== null && processing.has(job.status) && <div className="flex items-center justify-between gap-3 rounded-lg bg-stone-50 p-3 text-sm"><p role="status">This dialog closes in {closeIn} {closeIn === 1 ? "second" : "seconds"}. The import continues in the background.</p><button type="button" onClick={() => setCloseIn(null)} className="shrink-0 text-brand-800 underline">Keep open</button></div>}
+        {job.importSettings ? <section aria-label="Applied document price settings" className="rounded-lg border border-stone-200 bg-stone-50 p-3 text-xs text-stone-600"><p className="font-semibold">Applied document price settings</p><p className="mt-1">{job.importSettings.priceBasis === "net" ? "Net — excluding VAT" : job.importSettings.priceBasis === "gross" ? "Gross — including VAT" : "Unknown price basis — requires review"} · {job.importSettings.currency} · {job.importSettings.vatRate === null ? "No shared VAT rate supplied" : `${(job.importSettings.vatRate * 100).toLocaleString(undefined, { maximumFractionDigits: 4 })}% shared VAT where the source has no rate`}</p><p className="mt-1">These settings are saved with this import. Documented product-specific values take precedence.</p></section> : <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900">This earlier import has no saved document price settings. Existing rows have not been recalculated, and new selections are not applied to this draft.</p>}
         {job.expiresAtMillis && <p className="text-xs text-stone-500">Private draft expires {new Date(job.expiresAtMillis).toLocaleString()}. Your import keeps running when you close this dialog or visit another page.</p>}
         {Array.isArray(job.warnings) && job.warnings.map((warning, index) => <p key={index} className="rounded-lg bg-amber-50 p-2 text-xs text-amber-900">{typeof warning === "string" ? warning : warning.message || warning.code || "Document extraction needs review."}</p>)}
         {job.error && <p role="alert" className="text-sm text-red-800">{job.error.message || String(job.error)}</p>}
         {pollError && <p role="alert" className="text-sm text-amber-800">{pollError.message} The original import reference is retained.</p>}
         <button type="button" onClick={refreshJob} disabled={busy} className="ht-button-secondary">Refresh import status</button>
         {reviewable.has(job.status) && <>
+          <SupplierAiImportFindings summary={summaryStale ? null : job.summary ?? null} counts={summaryStale ? null : job.counts ?? null} loading={summaryRefreshing} />
           <div className="border-t pt-3"><h2 className="font-semibold">Product review</h2><p className="mt-1 text-xs text-stone-500">{totalRows} rows · {Object.keys(selected).length} selected across review pages. Errors must be corrected; unchanged rows do not rewrite products. Product revisions are checked again on confirmation.</p></div>
           <button type="button" onClick={() => loadRows(cursor)} disabled={busy || reviewLoading || uncertainCommit} className="ht-button-secondary">Refresh review rows</button>
           {reviewLoading ? <p role="status" className="animate-pulse text-sm">Loading review rows…</p> : rows.map((row) => <SupplierAiImportRow key={`${job.jobId}:${row.rowId}`} hotelUid={hotelUid} jobId={job.jobId} row={row} selected={Boolean(selected[row.rowId])} onSelect={select} onCorrected={corrected} locked={busy || uncertainCommit} current={() => current() && generation.current === renderedGeneration && latestJob.current?.jobId === job.jobId} />)}
