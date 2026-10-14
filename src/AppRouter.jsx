@@ -28,6 +28,7 @@ const ProductCreatePage = lazy(() => import("./components/pages/ProductCreatePag
 const ProductDetailPage = lazy(() => import("./components/pages/ProductDetailPage.jsx"));
 const ProductEditPage = lazy(() => import("./components/pages/ProductEditPage.jsx"));
 const SupplierProductsPage = lazy(() => import("./components/pages/SupplierProductsPage.jsx"));
+const SupplierAiImportReviewPage = lazy(() => import("./components/pages/SupplierAiImportReviewPage.jsx"));
 const SupplierProductCreatePage = lazy(() => import("./components/pages/SupplierProductCreatePage.jsx"));
 const SupplierProductDetailPage = lazy(() => import("./components/pages/SupplierProductDetailPage.jsx"));
 const SupplierProductEditPage = lazy(() => import("./components/pages/SupplierProductEditPage.jsx"));
@@ -183,6 +184,14 @@ export default function AppRouter() {
         element={
           <ProtectedRoute feature="supplierproducts" action="read">
             <SupplierProductsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/catalog/supplier-products/imports/:jobId"
+        element={
+          <ProtectedRoute feature="supplierproducts" action="read">
+            <SupplierAiImportReviewPage />
           </ProtectedRoute>
         }
       />

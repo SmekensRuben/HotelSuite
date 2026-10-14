@@ -2,15 +2,15 @@ import { webcrypto } from "node:crypto";
 import { beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ auth: { currentUser: null }, fetch: vi.fn(), callable: vi.fn() }));
 vi.mock("../firebaseConfig", () => ({ auth: mocks.auth, functions: { app: { options: { projectId: "demo-hotel-suite-a00" } } }, httpsCallable: (_, name) => (input) => mocks.callable(name, input) }));
-import { getSupplierAiImportAvailability, startSupplierAiImport, getSupplierAiImport, validateSupplierAiImportFile, getSupplierAiImportReview, saveSupplierAiImportReview, confirmSupplierAiImport, normalizeSupplierAiImportSettings, normalizeSupplierAiImportSummary, supplierAiImportVatFraction } from "./firebaseSupplierAiImports";
+import { getSupplierAiImportAvailability, startSupplierAiImport, getSupplierAiImport, validateSupplierAiImportFile, getSupplierAiImportReview, saveSupplierAiImportReview, confirmSupplierAiImport, getPendingSupplierAiImportCommit, normalizeSupplierAiImportSettings, normalizeSupplierAiImportSummary, supplierAiImportVatFraction } from "./firebaseSupplierAiImports";
 import { invalidateProcurementReads } from "./procurementReadPool";
 const response = (data) => ({ ok: true, json: async () => data });
-const availability = { available: true, importPolicyVersion: 2, reason: null, defaults: { currency: "EUR" } };
+const availability = { available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, reason: null, defaults: { currency: "EUR" } };
 const postCalls = () => mocks.fetch.mock.calls.filter(([, input]) => input?.method === "POST");
 const acknowledgeUpload = (value) => mocks.fetch.mockResolvedValueOnce(response(availability)).mockResolvedValueOnce(response(value));
 const loseUpload = (error) => mocks.fetch.mockResolvedValueOnce(response(availability)).mockRejectedValueOnce(error);
 const settings = { policyVersion: 2, priceBasis: "net", currency: "EUR", vatRate: null };
-const saved = { hotelUid: "hotel-a", supplierId: "supplier", ownerUid: "manager", jobId: "job", status: "queued", importSettings: settings, summary: null };
+const saved = { hotelUid: "hotel-a", supplierId: "supplier", ownerUid: "manager", jobId: "job", status: "queued", importSettings: settings, summary: null, importReviewVersion: 1, mappingProfileId: "default" };
 const file = (content = "SKU,Name\n001,Coffee") => new File([content], "supplier.csv", { type: "text/csv" });
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 beforeEach(() => { vi.clearAllMocks(); sessionStorage.clear(); invalidateProcurementReads(); mocks.auth.currentUser = { uid: "manager", getIdToken: vi.fn(async () => "fictional-token") }; vi.stubGlobal("crypto", webcrypto); vi.stubGlobal("fetch", mocks.fetch); mocks.fetch.mockImplementation(async (url, input) => response(input?.method === "GET" && !new URL(url).searchParams.has("jobId") ? availability : saved)); });
@@ -72,7 +72,7 @@ it("rejects unreviewed selections and incomplete acknowledgements without losing
 
 it("projects customer job and availability data even when an older server sends financial details", async () => {
   mocks.fetch.mockResolvedValueOnce(response({ available: true, importPolicyVersion: 2, reason: null, model: "gpt-6-luna", fallbackEnabled: true, configuration: { maxMonthlyCostPerHotelUsd: 10 }, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000, maxCostPerImportUsd: 0.25 } }));
-  expect(await getSupplierAiImportAvailability("hotel-a")).toEqual({ available: true, importPolicyVersion: 2, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 }, defaults: { currency: null } });
+  expect(await getSupplierAiImportAvailability("hotel-a")).toEqual({ available: false, importPolicyVersion: 2, reviewWorkspaceVersion: null, reason: "upgrade-required", limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 }, defaults: { currency: null } });
   mocks.fetch.mockResolvedValueOnce(response({ ...saved, model: "gpt-6-luna", usage: { actualCostUsd: 0.01, reservedCostUsd: 0.1 }, configuration: { maxCostPerImportUsd: 0.25 }, progress: { completedChunks: 2, totalChunks: 4 }, source: { fileName: "supplier.csv", size: 20, mimeType: "text/csv", privatePath: "private-source", costUsd: 4 }, error: { code: "resource-exhausted", message: "USD 0.25 budget exhausted", costUsd: 2 }, warnings: [{ code: "limit", message: "Token budget reached", costUsd: 2 }] }));
   const received = await getSupplierAiImport("hotel-a", "job"), serialized = JSON.stringify(received);
   expect(received.progress).toEqual({ completedChunks: 2, totalChunks: 4 });
@@ -180,4 +180,63 @@ it("does not overwrite another pending document's settings when concurrent capab
   const originalUrl = postCalls()[0][0], originalRecord = Object.values(sessionStorage).join(" "), changed = expect(second).rejects.toMatchObject({ code: "import-settings-changed", importSettings: settings }); secondCapability.resolve(response(availability)); await changed;
   expect(postCalls()).toHaveLength(1); expect(Object.values(sessionStorage).join(" ")).toBe(originalRecord);
   acknowledgeUpload(saved); await startSupplierAiImport("hotel-a", "supplier", file(), settings); expect(postCalls()[1][0]).toBe(originalUrl);
+});
+
+it("requires the dedicated review capability before allocating a new paid upload command", async () => {
+  mocks.fetch.mockResolvedValueOnce(response({ available: true, importPolicyVersion: 2 }));
+  await expect(startSupplierAiImport("hotel-a", "supplier", file(), settings)).rejects.toMatchObject({ code: "failed-precondition" });
+  expect(postCalls()).toHaveLength(0); expect(sessionStorage.length).toBe(0);
+});
+it("pins the supplier profile and review protocol and retains malformed acknowledgements for recovery", async () => {
+  acknowledgeUpload({ ...saved, mappingProfileId: undefined });
+  await expect(startSupplierAiImport("hotel-a", "supplier", file(), settings)).rejects.toThrow(/review settings/);
+  const original = postCalls()[0][0], query = new URL(original).searchParams;
+  expect(query.get("reviewWorkspaceVersion")).toBe("1"); expect(query.get("mappingProfileId")).toBe("default");
+  await expect(startSupplierAiImport("hotel-a", "supplier", file(), settings, { mappingProfileId: "other" })).rejects.toMatchObject({ code: "import-profile-changed" });
+  expect(postCalls()).toHaveLength(1);
+  acknowledgeUpload(saved); await startSupplierAiImport("hotel-a", "supplier", file(), settings); expect(postCalls()[1][0]).toBe(original);
+});
+it("replays an earlier policy-v2 upload without silently adding a review version or profile", async () => {
+  const bytes = new TextEncoder().encode("SKU,Name\n001,Coffee"), fingerprint = Array.from(new Uint8Array(await webcrypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  sessionStorage.setItem(`supplier-ai-upload:manager:hotel-a:supplier:${fingerprint}`, JSON.stringify({ requestId: "old-v2", fileName: "old.csv", mimeType: "text/csv", importSettings: settings }));
+  mocks.fetch.mockResolvedValueOnce(response({ available: true, importPolicyVersion: 2 })).mockResolvedValueOnce(response({ ...saved, importReviewVersion: undefined, mappingProfileId: undefined }));
+  await startSupplierAiImport("hotel-a", "supplier", file(), settings);
+  const query = new URL(postCalls()[0][0]).searchParams;
+  expect(query.get("requestId")).toBe("old-v2"); expect(query.has("reviewWorkspaceVersion")).toBe(false); expect(query.has("mappingProfileId")).toBe(false);
+});
+it("recovers original confirmation batches after reload without trusting stored browser progress", async () => {
+  const rows = Array.from({ length: 30 }, (_, index) => ({ rowId: `r-${index}`, reviewRevision: 2, acknowledged: true }));
+  const result = (input) => ({ data: { hotelUid: "hotel-a", jobId: "job", complete: true, outcomes: input.rows.map((row) => ({ rowId: row.rowId, status: "created", productId: row.rowId, revision: 1 })) } });
+  mocks.callable.mockImplementationOnce(async (_, input) => result(input)).mockRejectedValueOnce(new Error("Acknowledgement lost"));
+  await expect(confirmSupplierAiImport("hotel-a", "job", rows)).rejects.toThrow("Acknowledgement lost");
+  const original = mocks.callable.mock.calls.map(([, input]) => input), key = "supplier-ai-confirm:manager:hotel-a:job";
+  const stored = JSON.parse(sessionStorage.getItem(key)); expect(stored.batches).toHaveLength(2); expect(stored.outcomes).toBeUndefined();
+  sessionStorage.setItem(key, JSON.stringify({ ...stored, offset: 2, outcomes: [{ status: "created", productId: "forged" }] }));
+  mocks.auth.currentUser = { uid: "manager", getIdToken: vi.fn(async () => "fresh-session") };
+  expect(getPendingSupplierAiImportCommit("hotel-a", "job").rows).toEqual(rows);
+  mocks.callable.mockImplementation(async (_, input) => result(input));
+  expect((await confirmSupplierAiImport("hotel-a", "job", rows)).outcomes).toHaveLength(30);
+  expect(mocks.callable.mock.calls.slice(2).map(([, input]) => input)).toEqual(original); expect(sessionStorage.getItem(key)).toBeNull();
+});
+it("prevents a changed selection from replacing an unresolved confirmation", async () => {
+  const rows = [{ rowId: "r-1", reviewRevision: 1, acknowledged: true }]; mocks.callable.mockRejectedValueOnce(new Error("Acknowledgement lost"));
+  await expect(confirmSupplierAiImport("hotel-a", "job", rows)).rejects.toThrow("Acknowledgement lost");
+  await expect(confirmSupplierAiImport("hotel-a", "job", [{ ...rows[0], reviewRevision: 2 }])).rejects.toMatchObject({ code: "import-confirmation-pending", rows });
+  expect(mocks.callable).toHaveBeenCalledTimes(1);
+});
+it("joins simultaneous confirmation retries instead of advancing the batch twice", async () => {
+  const rows = [{ rowId: "r-1", reviewRevision: 1, acknowledged: true }], wait = deferred(); mocks.callable.mockReturnValueOnce(wait.promise);
+  const first = confirmSupplierAiImport("hotel-a", "job", rows), second = confirmSupplierAiImport("hotel-a", "job", rows);
+  expect(mocks.callable).toHaveBeenCalledTimes(1);
+  wait.resolve({ data: { hotelUid: "hotel-a", jobId: "job", complete: true, outcomes: [{ rowId: "r-1", status: "created", productId: "offer", revision: 1 }] } });
+  expect((await first).outcomes).toHaveLength(1); expect((await second).outcomes).toHaveLength(1);
+});
+it("rejects corrupt confirmation references and fences unknown acknowledgements after actor replacement", async () => {
+  sessionStorage.setItem("supplier-ai-confirm:manager:hotel-a:job", "broken");
+  expect(() => getPendingSupplierAiImportCommit("hotel-a", "job")).toThrow(/could not be recovered/);
+  sessionStorage.clear(); const wait = deferred(); mocks.callable.mockReturnValueOnce(wait.promise);
+  const rows = [{ rowId: "r-1", reviewRevision: 1, acknowledged: true }], operation = confirmSupplierAiImport("hotel-a", "job", rows);
+  mocks.auth.currentUser = { uid: "manager", getIdToken: vi.fn(async () => "new-session") };
+  wait.resolve({ data: { hotelUid: "hotel-a", jobId: "job", complete: true, outcomes: [{ rowId: "r-1", status: "created", productId: "offer", revision: 1 }] } });
+  await expect(operation).rejects.toThrow(/access changed/); expect(sessionStorage.getItem("supplier-ai-confirm:manager:hotel-a:job")).toContain("requestId");
 });

@@ -273,6 +273,13 @@ function ScopedSupplierProductsPage({ hotelUid }) {
             </button>
           </div>
         </div>
+        {canCreateProducts && canReadSuppliers && aiImportProgress?.jobs.length > 0 && <section aria-label="Recent supplier imports" className="rounded-xl border border-stone-200 bg-white p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">Recent imports</h2><p className="text-xs text-stone-500">Private drafts from this session. Your review decisions are saved as you work.</p></div>
+          <ul className="mt-3 space-y-2">{[...aiImportProgress.jobs].reverse().map((job) => <li key={job.jobId} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg bg-stone-50 px-3 py-2">
+            <div className="min-w-0"><p className="break-words text-sm font-medium">{job.source?.fileName || "Supplier document"}</p><p className="text-xs text-stone-500">{["uploading", "queued", "processing", "recovering"].includes(job.status) ? "Processing in the background" : job.status === "completed" ? "Import complete" : ["failed", "expired", "response_unknown"].includes(job.status) ? "Needs attention" : "Ready for review"}</p></div>
+            <button type="button" className="ht-button-secondary shrink-0" onClick={() => aiImportProgress.openJob(job.jobId)}>Resume {job.source?.fileName || "import"}</button>
+          </li>)}</ul>
+        </section>}
         <input
           ref={fileInputRef}
           type="file"
@@ -389,7 +396,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
           <button type="button" className="ht-button-secondary w-full" onClick={() => { setShowImportChoice(false); fileInputRef.current?.click(); }} disabled={busy || !canCreateProducts}>Template Import</button>
           <button type="button" className="ht-button-primary w-full" onClick={() => { setShowImportChoice(false); if (aiImportProgress) aiImportProgress.openNew({ suppliers: supplierFilters, suppliersLoading: supplierQuery.loading, initialSupplierId: selectedSupplierId, onImported: () => { if (!current()) return; setPageStartCursors({ 0: null }); loadProductsPage(0, null); } }); else { setAiImportOpened(true); setShowAiImport(true); } }} disabled={!canCreateProducts || !canReadSuppliers}>AI Import</button>
           {!canReadSuppliers && <p className="text-xs text-stone-500">AI import also requires access to this hotel's suppliers.</p>}
-          <p className="text-xs text-stone-500">AI prepares a draft. Review and confirm every included product before anything is saved.</p>
+          <p className="text-xs text-stone-500">AI prepares a draft. Approve the products you want to include, then confirm the import on its review page.</p>
         </div>
       </Modal>
       {!aiImportProgress && aiImportOpened && <SupplierAiImportDialog open={showAiImport} onClose={() => setShowAiImport(false)} hotelUid={hotelUid} suppliers={supplierFilters} suppliersLoading={supplierQuery.loading} initialSupplierId={selectedSupplierId} onImported={() => { if (!current()) return; setPageStartCursors({ 0: null }); loadProductsPage(0, null); }} />}
