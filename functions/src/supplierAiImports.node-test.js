@@ -53,7 +53,7 @@ function memoryBucket() {
 }
 const request = () => ({ auth: { uid: "buyer", token: { email_verified: true, auth_time: 9999 } } });
 const importSettings = (patch = {}) => ({ policyVersion: 2, priceBasis: "net", currency: "EUR", vatRate: null, ...patch });
-const data = (patch = {}) => ({ hotelUid: "hotel-a", supplierId: "dairy", requestId: "import-one", fileName: "supplier.csv", mimeType: "text/csv", importSettings: JSON.stringify(importSettings()), ...patch });
+const data = (patch = {}) => ({ hotelUid: "hotel-a", supplierId: "dairy", requestId: "import-one", fileName: "supplier.csv", mimeType: "text/csv", importSettings: JSON.stringify(importSettings()), reviewWorkspaceVersion: "1", ...patch });
 const bytes = Buffer.from("SKU,Name\n001,Milk\n");
 const response = (patch = {}) => ({ id: "fictional-response", model: "gpt-6-luna", status: "completed",
   usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30, output_tokens_details: { reasoning_tokens: 5 } },
@@ -64,7 +64,7 @@ function fixture(configuration = {}) {
     "hotels/hotel-a": { hotelName: "Fictional hotel", currency: "EUR" },
     "platformConfiguration/saasProcurement": { enabled: true, rulesVersion: SAAS_RULES_VERSION },
     "platformConfiguration/aiSupplierProductImport": { ...DEFAULT_AI_CONFIGURATION, enabled: true, ...configuration },
-    "hotels/hotel-a/members/buyer": { permissions: ["supplierproducts.read", "supplierproducts.create", "supplierproducts.update"] },
+    "hotels/hotel-a/members/buyer": { permissions: ["supplierproducts.read", "supplierproducts.create", "supplierproducts.update", "suppliers.read"] },
     "hotelSubscriptions/hotel-a": { status: "active", modules: ["procurement"], modulePolicyVersion: 1 },
     "hotels/hotel-a/suppliers/dairy": { supplierName: "Fictional dairy" },
   });
@@ -88,12 +88,12 @@ async function legacyUploaded(s) {
   const old = jobOf(s, uploaded.jobId), fingerprint = digest(old.supplierId, old.fileName, old.mimeType, old.sha256);
   const jobId = digest(old.hotelUid, old.requestId, old.ownerUid, fingerprint);
   const legacy = { ...old, jobId, fingerprint, source: { ...old.source, path: `private/supplier-ai-imports/hotel-a/${jobId}/source` } };
-  delete legacy.importSettings; delete legacy.importPolicyVersion;
+  delete legacy.importSettings; delete legacy.importPolicyVersion; delete legacy.importReviewVersion; delete legacy.mappingProfileId; delete legacy.purchaseUnitMappingSnapshot;
   s.bucket.objects.set(legacy.source.path, s.bucket.objects.get(old.source.path)); s.bucket.objects.delete(old.source.path);
   s.firestore.records.delete(`hotels/hotel-a/supplierAiImportJobs/${uploaded.jobId}`);
   s.firestore.records.set(`hotels/hotel-a/supplierAiImportJobs/${jobId}`, legacy);
   const receipt = { ...s.firestore.records.get("hotels/hotel-a/supplierAiImportRequests/import-one"), jobId, fingerprint };
-  delete receipt.importSettings; delete receipt.importPolicyVersion;
+  delete receipt.importSettings; delete receipt.importPolicyVersion; delete receipt.importReviewVersion; delete receipt.mappingProfileId; delete receipt.purchaseUnitMappingSnapshot;
   s.firestore.records.set("hotels/hotel-a/supplierAiImportRequests/import-one", receipt);
   s.firestore.records.delete(`hotels/hotel-a/supplierAiImportWork/${uploaded.jobId}`);
   s.firestore.records.set(`hotels/hotel-a/supplierAiImportWork/${jobId}`, { hotelUid: "hotel-a", jobId });
@@ -123,7 +123,7 @@ test("normal hotel buyer creates an isolated job, receives complete review and s
 test("customer availability and job DTOs cannot serialize operator accounting or provider configuration", async () => {
   const s = fixture();
   const availability = await readSupplierAiImport(request(), { hotelUid: "hotel-a" }, s);
-  assert.deepEqual(availability, { available: true, importPolicyVersion: 2, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 }, defaults: { currency: "EUR" } });
+  assert.deepEqual(availability, { available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 }, defaults: { currency: "EUR" } });
   assertCustomerPrivacy(availability);
   const created = await uploadSupplierAiImport(request(), data(), bytes, s);
   const stored = jobOf(s, created.jobId);
@@ -170,6 +170,53 @@ test("business settings are an immutable replay contract including key-order ind
   }
   assert.equal(s.firestore.records.size, recordCount); assert.equal(monthOf(s).importsStarted, 1); assert.equal(s.bucket.objects.size, 1);
   assert.deepEqual(jobOf(s, created.jobId).importSettings, importSettings());
+});
+test("new imports require the reviewed workspace protocol before reserving quota or uploading source", async () => {
+  const s = fixture();
+  await assert.rejects(uploadSupplierAiImport(request(), data({ reviewWorkspaceVersion: undefined }), bytes, s), { code: "failed-precondition" });
+  await assert.rejects(uploadSupplierAiImport(request(), data({ reviewWorkspaceVersion: "2" }), bytes, s), { code: "invalid-argument" });
+  assert.equal(s.bucket.objects.size, 0); assert.equal(monthOf(s), undefined); assert.equal(s.calls.response, 0);
+  assert.equal([...s.firestore.records.keys()].some((key) => key.includes("supplierAiImportRequests")), false);
+});
+test("purchase-unit profiles are frozen at the first upload receipt across lost acknowledgement and paid continuation", async () => {
+  const s = fixture(), scope = { supplierId: "dairy", sourceFormat: "csv", profileId: "default" };
+  const ref = require("./supplierImportMappings").mappingProfileRef(s.firestore, "hotel-a", scope);
+  s.firestore.records.set(ref.path, { version: 1, ...scope, revision: 1, mappings: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }] });
+  let captured;
+  s.normalizeRow = (row, context) => { captured = structuredClone(context.purchaseUnitMappingSnapshot); return row; };
+  s.bucket.failSave = true;
+  await assert.rejects(uploadSupplierAiImport(request(), data(), bytes, s), /save unavailable/);
+  const receipt = structuredClone(s.firestore.records.get("hotels/hotel-a/supplierAiImportRequests/import-one"));
+  s.firestore.records.set(ref.path, { version: 1, ...scope, revision: 2, mappings: [{ sourceUnit: "FL", purchaseUnit: "Jar" }] });
+  const created = await uploadSupplierAiImport(request(), data(), bytes, s);
+  assert.equal(created.importReviewVersion, 1); assert.deepEqual(created.purchaseUnitMappingSnapshot, receipt.purchaseUnitMappingSnapshot);
+  assert.equal(created.mappingProfileId, "default"); assert.equal(created.sourceFormat, "csv");
+  assert.equal(publicJob(jobOf(s, created.jobId)).mappingProfileId, created.purchaseUnitMappingSnapshot.profileId,
+    "The actual public upload acknowledgement must match the client-pinned mapping scope");
+  assert.equal(created.purchaseUnitMappingSnapshot.revision, 1);
+  await runSupplierAiImportJob("hotel-a", created.jobId, s);
+  assert.deepEqual(captured, receipt.purchaseUnitMappingSnapshot); assert.equal(s.calls.response, 1);
+  const frozen = jobOf(s, created.jobId).fingerprint;
+  assert.equal((await uploadSupplierAiImport(request(), data(), bytes, s)).jobId, created.jobId);
+  assert.equal(jobOf(s, created.jobId).fingerprint, frozen); assert.equal(monthOf(s).importsStarted, 1);
+  await assert.rejects(uploadSupplierAiImport(request(), data({ mappingProfileId: "different-layout" }), bytes, s), { code: "already-exists" });
+});
+test("owned business-policy-2 receipts replay with their original fingerprint and no newly learned mappings", async () => {
+  const s = fixture(), created = await uploadSupplierAiImport(request(), data(), bytes, s), old = jobOf(s, created.jobId);
+  const fingerprint = digest(old.supplierId, old.fileName, old.mimeType, old.sha256, 2, old.importSettings);
+  const jobId = digest(old.hotelUid, old.requestId, old.ownerUid, fingerprint);
+  const legacy = { ...old, jobId, fingerprint, source: { ...old.source, path: `private/supplier-ai-imports/hotel-a/${jobId}/source` } };
+  for (const field of ["importReviewVersion", "mappingProfileId", "purchaseUnitMappingSnapshot"]) delete legacy[field];
+  s.bucket.objects.set(legacy.source.path, s.bucket.objects.get(old.source.path)); s.bucket.objects.delete(old.source.path);
+  s.firestore.records.delete(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}`);
+  s.firestore.records.set(`hotels/hotel-a/supplierAiImportJobs/${jobId}`, legacy);
+  const receipt = { ...s.firestore.records.get("hotels/hotel-a/supplierAiImportRequests/import-one"), jobId, fingerprint };
+  for (const field of ["importReviewVersion", "mappingProfileId", "purchaseUnitMappingSnapshot"]) delete receipt[field];
+  s.firestore.records.set("hotels/hotel-a/supplierAiImportRequests/import-one", receipt);
+  s.normalizeRow = (row, context) => { assert.equal(context.purchaseUnitMappingSnapshot, undefined); return row; };
+  const replay = await uploadSupplierAiImport(request(), data({ reviewWorkspaceVersion: undefined }), bytes, s);
+  assert.equal(replay.jobId, jobId); assert.equal(replay.importReviewVersion, null); assert.equal(replay.purchaseUnitMappingSnapshot, null);
+  await runSupplierAiImportJob("hotel-a", jobId, s); assert.equal(s.calls.response, 1); assert.equal(monthOf(s).importsStarted, 1);
 });
 test("changed settings after an uncertain response cannot initiate a second charged import", async () => {
   const s = fixture(); s.provider.respond = async () => { s.calls.response++; throw Error("Lost acknowledgement after send"); };
@@ -219,6 +266,8 @@ test("normalization runs only after source validation and is frozen in the confi
 test("the real worker pipeline validates, normalizes, reconciles and freezes policy 2 products with one paid request", async () => {
   const s = fixture();
   for (const override of ["schema", "validateRows", "normalizeRow", "extractSource", "splitSource", "reconcileRows"]) delete s[override];
+  const mappingScope = { supplierId: "dairy", sourceFormat: "csv", profileId: "default" };
+  s.firestore.records.set(require("./supplierImportMappings").mappingProfileRef(s.firestore, "hotel-a", mappingScope).path, { version: 1, ...mappingScope, revision: 1, mappings: [{ sourceUnit: "PK", purchaseUnit: "Pack" }] });
   const source = Buffer.from("SKU,Name,Net price per Pack,Currency,Price basis,Purchase unit,Package content\nMEEL400,MEEL TARWE 400 GR,2.40,EUR,net,PK,400 GR\n");
   let sentSchema;
   s.provider.respond = async (body) => {
@@ -264,26 +313,34 @@ test("legacy queued and historical jobs keep their original source interpretatio
   const read = await readSupplierAiImport(request(), { hotelUid: "hotel-a", jobId: created.jobId }, s);
   assert.equal(read.importSettings, null); assert.equal(read.summary, null); assertCustomerPrivacy(read); assert.equal(s.calls.response, 1);
 });
+test("completed review jobs remain immutable when a duplicate worker delivery arrives", async () => {
+  const s = fixture(), created = await uploadSupplierAiImport(request(), data(), bytes, s);
+  await runSupplierAiImportJob("hotel-a", created.jobId, s);
+  const saved = jobOf(s, created.jobId); saved.status = "completed";
+  const before = JSON.stringify(saved), calls = { ...s.calls };
+  assert.deepEqual(await runSupplierAiImportJob("hotel-a", created.jobId, s), { ignored: true });
+  assert.equal(JSON.stringify(jobOf(s, created.jobId)), before); assert.deepEqual(s.calls, calls);
+});
 test("legacy lost acknowledgements recover only the owned original receipt without creating a new import", async () => {
   const s = fixture(); const original = await legacyUploaded(s);
   s.provider.respond = async () => { s.calls.response++; throw Error("Lost paid response"); };
   await runSupplierAiImportJob("hotel-a", original.jobId, s);
   const fingerprint = jobOf(s, original.jobId).fingerprint, reservation = monthOf(s).reservedCostMicros;
-  const replay = await uploadSupplierAiImport(request(), data({ importSettings: undefined }), bytes, s);
+  const replay = await uploadSupplierAiImport(request(), data({ reviewWorkspaceVersion: undefined, importSettings: undefined }), bytes, s);
   assert.equal(replay.jobId, original.jobId); assert.equal(replay.status, "response_unknown"); assert.equal(replay.importSettings, null); assert.equal(replay.summary, null);
   assert.equal(jobOf(s, original.jobId).fingerprint, fingerprint); assert.equal(s.calls.response, 1); assert.equal(s.calls.normalize, 0);
   assert.equal(monthOf(s).reservedCostMicros, reservation); assert.equal(monthOf(s).importsStarted, 1); assertCustomerPrivacy(replay);
-  await assert.rejects(uploadSupplierAiImport(request(), data({ importSettings: undefined, requestId: "new-legacy" }), bytes, s), { code: "invalid-argument" });
-  await assert.rejects(uploadSupplierAiImport(request(), data({ importSettings: undefined }), Buffer.from("different source"), s), { code: "already-exists" });
+  await assert.rejects(uploadSupplierAiImport(request(), data({ reviewWorkspaceVersion: undefined, importSettings: undefined, requestId: "new-legacy" }), bytes, s), { code: "invalid-argument" });
+  await assert.rejects(uploadSupplierAiImport(request(), data({ reviewWorkspaceVersion: undefined, importSettings: undefined }), Buffer.from("different source"), s), { code: "already-exists" });
   await assert.rejects(uploadSupplierAiImport(request(), data(), bytes, s), { code: "already-exists" });
-  await assert.rejects(uploadSupplierAiImport({ auth: { ...request().auth, uid: "another-buyer" } }, data({ importSettings: undefined }), bytes, s), { code: "permission-denied" });
+  await assert.rejects(uploadSupplierAiImport({ auth: { ...request().auth, uid: "another-buyer" } }, data({ reviewWorkspaceVersion: undefined, importSettings: undefined }), bytes, s), { code: "permission-denied" });
   assert.equal(monthOf(s).importsStarted, 1); assert.equal(s.calls.response, 1);
 });
 test("legacy unfinished uploads finalize their original business policy rather than taking new defaults", async () => {
   const s = fixture(), original = await legacyUploaded(s);
   s.firestore.records.delete(`hotels/hotel-a/supplierAiImportJobs/${original.jobId}`);
   s.firestore.records.delete(`hotels/hotel-a/supplierAiImportWork/${original.jobId}`);
-  const resumed = await uploadSupplierAiImport(request(), data({ importSettings: undefined }), bytes, s);
+  const resumed = await uploadSupplierAiImport(request(), data({ reviewWorkspaceVersion: undefined, importSettings: undefined }), bytes, s);
   assert.equal(resumed.jobId, original.jobId); assert.equal(resumed.status, "queued"); assert.equal(resumed.importSettings, null); assert.equal(resumed.summary, null);
   assert.equal(monthOf(s).importsStarted, 1); assert.equal(monthOf(s).activeJobs, 1); assert.equal(s.bucket.objects.size, 1);
   assert.equal(jobOf(s, original.jobId).importPolicyVersion, undefined); assert.equal(s.calls.response, 0);
@@ -438,12 +495,19 @@ test("maintenance releases orphan/stranded jobs and erases expired source plus p
   const s = fixture(), created = await uploadSupplierAiImport(request(), data(), bytes, s);
   await runSupplierAiImportJob("hotel-a", created.jobId, s);
   s.firestore.records.set(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}/rows/row-1`, { raw: "private supplier source", sourceAnchors: [{ quote: "private supplier source" }] });
+  const root = `hotels/hotel-a/supplierAiImportJobs/${created.jobId}`;
+  s.firestore.records.set(`${root}/reviewIndex/row-1`, { name: "Private source product", sku: "Private source SKU" });
+  s.firestore.records.set(`${root}/reviewOperations/decision-one`, { fingerprint: "immutable review fence", result: { approved: 1 }, rowIds: ["row-1"] });
+  s.firestore.records.set(`${root}/reviewOperations/decision-one/rows/row-1`, { row: { sourceAnchors: [{ quote: "private supplier source" }] } });
   jobOf(s, created.jobId).summary = { version: 2, totalRows: 1, findings: [{ message: "Private source-derived finding" }] };
   jobOf(s, created.jobId).reconciliation = { fingerprint: "retained source fingerprint", groups: [{ message: "Private source-derived finding" }] };
   s.advance(8 * 86400000);
   const result = await cleanupSupplierAiSourcesHandler({}, s);
   assert.equal(result.checked, 1); assert.equal(result.deleted, 2); assert.equal(s.bucket.objects.size, 0);
   assert.equal(s.firestore.records.has(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}/rows/row-1`), false);
+  assert.equal(s.firestore.records.has(`${root}/reviewIndex/row-1`), false);
+  assert.equal(s.firestore.records.has(`${root}/reviewOperations/decision-one/rows/row-1`), false);
+  assert.equal(s.firestore.records.has(`${root}/reviewOperations/decision-one`), true, "Aggregate command fence survives private row-snapshot expiry");
   assert.equal(jobOf(s, created.jobId).source, undefined);
   assert.equal(jobOf(s, created.jobId).summary, undefined); assert.equal(jobOf(s, created.jobId).reconciliation, undefined);
   assert.equal(publicJob(jobOf(s, created.jobId)).summary, null, "Expired source-derived findings must never become false empty totals");
@@ -461,6 +525,30 @@ test("source preparation limits give actionable safe errors and wholly empty pro
   empty.provider.respond = async () => response({ output: [{ type: "message", content: [{ type: "output_text", text: '{"rows":[]}' }] }] });
   assert.match((await runSupplierAiImportJob("hotel-a", next.jobId, empty)).error.message, /No supplier product/);
   assert.equal(empty.calls.reconcile, 0);
+});
+test("private review receipt cleanup resumes after a bounded operation page without deleting financial or command fences", async () => {
+  const s = fixture(), created = await uploadSupplierAiImport(request(), data(), bytes, s);
+  await runSupplierAiImportJob("hotel-a", created.jobId, s);
+  jobOf(s, created.jobId).status = "completed";
+  const root = `hotels/hotel-a/supplierAiImportJobs/${created.jobId}`;
+  for (let index = 0; index < 51; index++) {
+    const path = `${root}/reviewOperations/decision-${String(index).padStart(4, "0")}`;
+    s.firestore.records.set(path, { fingerprint: `durable-${index}`, result: { approved: 1 }, rowIds: ["r-000001"] });
+    s.firestore.records.set(`${path}/rows/r-000001`, { row: { originalInput: { supplierProductName: "Private supplier source" }, sourceAnchors: [{ quote: "Private supplier source quote" }] } });
+  }
+  s.advance(8 * 86400000);
+  const financialBefore = monthOf(s).knownCostMicros;
+  await cleanupSupplierAiSourcesHandler({}, s);
+  const requestPath = "hotels/hotel-a/supplierAiImportRequests/import-one";
+  assert.equal(s.firestore.records.get(requestPath).cleanupPending, true);
+  assert.equal(s.firestore.records.get(requestPath).cleanupReviewAfter, "decision-0049");
+  assert.equal([...s.firestore.records.keys()].filter((path) => path.startsWith(`${root}/reviewOperations/`) && path.includes("/rows/")).length, 1);
+  await cleanupSupplierAiSourcesHandler({}, s);
+  assert.equal(s.firestore.records.get(requestPath).cleanupPending, false); assert.equal(s.firestore.records.get(requestPath).cleanupReviewAfter, undefined);
+  assert.equal([...s.firestore.records.keys()].filter((path) => path.startsWith(`${root}/reviewOperations/`) && path.includes("/rows/")).length, 0);
+  assert.equal([...s.firestore.records.keys()].filter((path) => path.startsWith(`${root}/reviewOperations/`)).length, 51);
+  assert.equal(jobOf(s, created.jobId).status, "completed"); assert.equal(monthOf(s).knownCostMicros, financialBefore);
+  assert.equal(s.firestore.records.get(`${root}/attempts/chunk-0000`).status, "succeeded"); assert.equal(s.calls.response, 1);
 });
 test("a successful concurrent source write reacquires quota released by an identical failed upload", async () => {
   const s = fixture(); let failFirst, secondEntered, firstReleased;

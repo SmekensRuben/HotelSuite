@@ -55,6 +55,10 @@ const { recordHotelSupplierConfirmationHandler, reviewHotelSupplierConfirmationH
 const { recordHotelOrderReceiptHandler: recordConfirmedReceipt } = require("../../functions/src/orderReceiving");
 const { DEFAULT_AI_CONFIGURATION } = require("../../functions/src/supplierAiPolicy");
 const { uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob } = require("../../functions/src/supplierAiImports");
+const { readHotelSupplierAiImportRowsHandler } = require("../../functions/src/supplierAiProposal");
+const { readHotelSupplierAiImportWorkspaceHandler, decideHotelSupplierAiImportRowsHandler } = require("../../functions/src/supplierAiReview");
+const { readHotelSupplierPurchaseUnitMappingsHandler, saveHotelSupplierPurchaseUnitMappingHandler,
+  mappingScope, mappingProfileRef } = require("../../functions/src/supplierImportMappings");
 const inventoryFixtures = [
   { hotelUid: "restore-hotel-a", currency: "EUR", actorUid: "restore-a", platform: false },
   { hotelUid: "restore-hotel-b", currency: "GBP", actorUid: "restore-b-counter", platform: false },
@@ -67,7 +71,7 @@ const inventoryServices = { firestore: database, auth, now: () => revisionTime.t
 const procurementServices = { firestore: database, auth, now: () => Date.parse("2026-10-12T10:00:00Z") };
 const imageServices = { firestore: database, auth, bucket };
 const aiServices = { firestore: database, auth, bucket };
-const aiUpload = { hotelUid: "restore-hotel-a", supplierId: "restore-dairy", requestId: "restore-ai-unknown", fileName: "offers.csv", mimeType: "text/csv", importSettings: JSON.stringify({ policyVersion: 2, priceBasis: "net", currency: "EUR", vatRate: null }) };
+const aiUpload = { hotelUid: "restore-hotel-a", supplierId: "restore-dairy", requestId: "restore-ai-unknown", fileName: "offers.csv", mimeType: "text/csv", reviewWorkspaceVersion: "1", importSettings: JSON.stringify({ policyVersion: 2, priceBasis: "net", currency: "EUR", vatRate: null }) };
 const aiBytes = Buffer.from("SKU,Name,Price\nRESTORE-MILK6,Fictional milk,15\n");
 const aiRequest = (authTime) => ({ auth: { uid: "restore-a", token: { email_verified: true, auth_time: authTime } } });
 const jsonData = (value) => JSON.parse(JSON.stringify(value));
@@ -106,6 +110,91 @@ async function verifyUnknownAiImport(proof) {
   assert.equal(replay.jobId, proof.jobId); assert.equal(replay.status, "response_unknown"); assert.equal(calls, 0);
   for (const [path, data] of Object.entries(proof.records)) assert.deepEqual(jsonData((await database.doc(path).get()).data()), data, `Restore replay changed AI receipt: ${path}`);
 }
+const aiMappingScope = { hotelUid: "restore-hotel-a", supplierId: "restore-dairy", sourceFormat: "csv", profileId: "default" };
+const aiMappingCommand = { ...aiMappingScope, requestId: "restore-purchase-units", expectedRevision: 0,
+  mappings: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }, { sourceUnit: "TR", purchaseUnit: "Tray" }] };
+const reviewedAiUpload = { ...aiUpload, requestId: "restore-ai-reviewed", reviewWorkspaceVersion: "1" };
+const reviewedAiBytes = Buffer.from("SKU,Name,Net Purchase Price,Currency,Purchase Unit,Package Content\nRESTORE-MILK6,Fictional milk six-pack,18,EUR,FL,6 L\n");
+async function reviewRecords(jobId) {
+  const root = `hotels/${aiUpload.hotelUid}`, jobRef = database.doc(`${root}/supplierAiImportJobs/${jobId}`);
+  const records = {};
+  async function collect(reference) {
+    const snapshot = await reference.get(); if (snapshot.exists) records[reference.path] = jsonData(snapshot.data());
+    for (const collection of await reference.listCollections()) for (const row of (await collection.get()).docs) await collect(row.ref);
+  }
+  await collect(jobRef);
+  await collect(database.doc(`${root}/supplierAiImportRequests/${reviewedAiUpload.requestId}`));
+  await collect(mappingProfileRef(database, aiUpload.hotelUid, mappingScope(aiMappingScope)));
+  const operationId = `m-${digest("restore-a", aiMappingCommand.requestId).slice(0, 48)}`;
+  for (const collection of ["supplierImportMappingOperations", "supplierImportMappingAudit"]) await collect(database.doc(`${root}/${collection}/${operationId}`));
+  return records;
+}
+async function seedReviewedAiImport() {
+  const authTime = Math.floor(Date.now() / 1000), actor = aiRequest(authTime); let paid = 0;
+  const mappings = await saveHotelSupplierPurchaseUnitMappingHandler({ ...actor, data: aiMappingCommand }, aiServices);
+  assert.equal(mappings.revision, 1);
+  const services = { ...aiServices, provider: { countInput: async () => 500, respond: async (body) => {
+    paid++;
+    const source = JSON.parse(body.input[0].content[0].text).units.find((unit) => unit.text.includes("RESTORE-MILK6"));
+    assert.ok(source);
+    const row = { supplierSku: "RESTORE-MILK6", supplierProductName: "Fictional milk six-pack", currency: "EUR", pricingModel: "Per Purchase Unit",
+      purchaseUnit: "FL", baseUnit: "ml", priceBasis: "net", gtin: null, priceValidFrom: null, priceValidUntil: null,
+      pricePerBaseUnit: null, pricePerPurchaseUnit: 18, baseUnitsPerPurchaseUnit: 6000, vatRate: null,
+      sourceAnchors: [{ sourceId: source.sourceId, quote: "RESTORE-MILK6" }] };
+    return { id: "fictional-restore-reviewed-response", model: "gpt-6-luna", status: "completed",
+      usage: { input_tokens: 500, output_tokens: 100, total_tokens: 600 },
+      output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ rows: [row] }) }] }] };
+  } } };
+  const job = await uploadSupplierAiImport(actor, reviewedAiUpload, reviewedAiBytes, services);
+  assert.equal((await runSupplierAiImportJob(aiUpload.hotelUid, job.jobId, services)).status, "review"); assert.equal(paid, 1);
+  const row = (await readHotelSupplierAiImportRowsHandler({ ...actor, data: { hotelUid: aiUpload.hotelUid, jobId: job.jobId } }, aiServices)).rows[0];
+  assert.equal(row.product.purchaseUnit, "Bottle"); assert.equal(row.product.baseUnitsPerPurchaseUnit, 6000);
+  const decision = { hotelUid: aiUpload.hotelUid, jobId: job.jobId, requestId: "restore-approve-product", bulk: false,
+    rows: [{ rowId: row.rowId, reviewRevision: row.reviewRevision, action: "approve", acknowledged: true }] };
+  const outcome = await decideHotelSupplierAiImportRowsHandler({ ...actor, data: decision }, aiServices);
+  const stored = (await database.doc(`hotels/${aiUpload.hotelUid}/supplierAiImportJobs/${job.jobId}`).get()).data();
+  assert.equal(stored.importReviewVersion, 1);
+  assert.equal((await database.doc(`hotels/${aiUpload.hotelUid}/supplierAiImportJobs/${job.jobId}/rows/${row.rowId}`).get()).data().review.status, "approved");
+  const [metadata] = await bucket.file(stored.source.path).getMetadata();
+  const resultObjects = [];
+  for (const attempt of (await database.collection(`hotels/${aiUpload.hotelUid}/supplierAiImportJobs/${job.jobId}/attempts`).get()).docs) {
+    const result = attempt.data().result;
+    if (result?.path) {
+      const [resultMetadata] = await bucket.file(result.path).getMetadata();
+      resultObjects.push({ path: result.path, generation: resultMetadata.generation,
+        sha256: bytesHash((await bucket.file(result.path).download())[0]) });
+    }
+  }
+  return { jobId: job.jobId, decision, outcome, records: await reviewRecords(job.jobId),
+    source: { path: stored.source.path, generation: metadata.generation, sha256: bytesHash(reviewedAiBytes) }, resultObjects };
+}
+async function verifyReviewedAiImport(proof) {
+  assert.deepEqual(await reviewRecords(proof.jobId), proof.records, "Restored mapping snapshots, approved rows, decision receipts and original paid attempts must match exported evidence.");
+  const user = await auth.getUser("restore-a"), authTime = Math.ceil(Math.max(Date.now(), Date.parse(user.tokensValidAfterTime) || 0) / 1000), actor = aiRequest(authTime);
+  let calls = 0; const services = { ...aiServices, provider: {
+    countInput: async () => { calls++; throw new Error("Restore must not initiate provider work"); },
+    respond: async () => { calls++; throw new Error("Restore must not repeat paid work"); } } };
+  const rowRef = database.doc(`hotels/${aiUpload.hotelUid}/supplierAiImportJobs/${proof.jobId}/rows/${proof.decision.rows[0].rowId}`);
+  const before = await rowRef.get();
+  const profile = await readHotelSupplierPurchaseUnitMappingsHandler({ ...actor, data: aiMappingScope }, services);
+  assert.equal(profile.revision, 1); assert.deepEqual(profile.mappings, aiMappingCommand.mappings);
+  assert.deepEqual(await saveHotelSupplierPurchaseUnitMappingHandler({ ...actor, data: aiMappingCommand }, services),
+    proof.records[`hotels/${aiUpload.hotelUid}/supplierImportMappingOperations/m-${digest("restore-a", aiMappingCommand.requestId).slice(0, 48)}`].result);
+  const workspace = await readHotelSupplierAiImportWorkspaceHandler({ ...actor, data: { hotelUid: aiUpload.hotelUid, jobId: proof.jobId, filter: "approved", includeIndex: true } }, services);
+  assert.equal(workspace.rows.length, 1); assert.equal(workspace.rows[0].review.status, "approved");
+  assert.deepEqual(await decideHotelSupplierAiImportRowsHandler({ ...actor, data: proof.decision }, services), proof.outcome);
+  assert.equal((await rowRef.get()).updateTime.isEqual(before.updateTime), true);
+  await runSupplierAiImportJob(aiUpload.hotelUid, proof.jobId, services);
+  const replay = await uploadSupplierAiImport(actor, reviewedAiUpload, reviewedAiBytes, services); assert.equal(replay.jobId, proof.jobId); assert.equal(calls, 0);
+  const [metadata] = await bucket.file(proof.source.path).getMetadata(); assert.equal(metadata.generation, proof.source.generation);
+  assert.equal(bytesHash((await bucket.file(proof.source.path).download())[0]), proof.source.sha256);
+  assert.ok(proof.resultObjects.length > 0, "A restored reviewed import must preserve its successful original AI result bytes.");
+  for (const result of proof.resultObjects) {
+    const [resultMetadata] = await bucket.file(result.path).getMetadata(); assert.equal(resultMetadata.generation, result.generation);
+    assert.equal(bytesHash((await bucket.file(result.path).download())[0]), result.sha256);
+  }
+  assert.deepEqual(await reviewRecords(proof.jobId), proof.records, "An exact restored approval or mapping replay must not rewrite original source, review, mapping or billing receipts.");
+}
 let imageRulesEnvironment;
 // A temporary test proof survives the two emulator processes; it is not hotel
 // data, and contains only fictional fixture payloads and timestamp evidence.
@@ -142,7 +231,7 @@ const documents = {
   "users/restore-a": { firstName: "Fictional", lastName: "A", hotelUid: ["restore-hotel-a"], accessRevision: 2 },
   "users/restore-b": { firstName: "Fictional", lastName: "B", hotelUid: ["restore-hotel-b"], accessRevision: 1 },
   "users/restore-b-counter": { firstName: "Fictional", lastName: "Counter B", hotelUid: ["restore-hotel-b"], accessRevision: 1 },
-  "hotels/restore-hotel-a/members/restore-a": { permissions: ["orders.read", "orders.receive", "orders.finalize", "stockcounts.read", "users.read", "users.create", "users.update", "users.delete"], hotelAdmin: true, moduleRoles: { procurement: ["receiving-supervisor"] }, additionalPermissions: [], rolePolicyVersion: 1, revision: 2 },
+  "hotels/restore-hotel-a/members/restore-a": { permissions: ["orders.read", "orders.receive", "orders.finalize", "stockcounts.read", "catalogproducts.read", "users.read", "users.create", "users.update", "users.delete"], hotelAdmin: true, moduleRoles: { procurement: ["receiving-supervisor"] }, additionalPermissions: [], rolePolicyVersion: 1, revision: 2 },
   "hotels/restore-hotel-a/memberAdministration/state": { revision: 4, updatedAt: revisionTime, updatedBy: "restore-a" },
   "hotels/restore-hotel-a/accessAudit/member-a": { action: "update-member", uid: "restore-a", actorUid: "restore-a", hotelAdmin: true, revision: 2, createdAt: revisionTime },
   "hotels/restore-hotel-a/settings/bootstrap": { hotelName: "Fictional hotel A", currency: "EUR" },
@@ -204,7 +293,7 @@ for (const fixture of inventoryFixtures) {
     kind: "receipt", hotelUid, locationId: "store", orderId: "fixture-inventory-order", receiptId: "fixture-inventory-receipt",
     receivedOn: "2026-10-05", sequence: 2, actorUid, coverageGaps: [], backdatedAgainstCheckpoint: false, postedAt: revisionTime,
     lines: [{ catalogProductId: "milk", catalogProductName: "Fictional milk", baseUnit: "l", quantity: 30, netUnitCost: 3, netValue: 90, currency }] };
-  documents[`${root}/members/${actorUid}`].permissions.push("supplierproducts.read", "supplierproducts.create", "supplierproducts.update", "inventorymovements.read", "inventorymovements.create", "inventorymovements.reverse", "orders.read", "orders.recordconfirmation", "orders.reviewconfirmation", "orders.receive");
+  documents[`${root}/members/${actorUid}`].permissions.push("supplierproducts.read", "supplierproducts.create", "supplierproducts.update", "suppliers.read", "inventorymovements.read", "inventorymovements.create", "inventorymovements.reverse", "orders.read", "orders.recordconfirmation", "orders.reviewconfirmation", "orders.receive");
   documents[`${root}/suppliers/restore-dairy`] = { name: "Fictional dairy supplier", active: true };
   for (const location of ["movements-store", "movements-bar"]) documents[`${root}/locations/${location}`] = { name: `Fictional ${location}`, active: true };
 }
@@ -456,10 +545,19 @@ try {
       await finishAdjustmentCheckpoints(fixture, "closing");
       for (const locationId of ["movements-store", "movements-bar"]) verifyV2(await getHotelInventoryPeriodHandler(periodV2Request(fixture, locationId), procurementServices), fixture, locationId);
       await seedSupplierConfirmation(fixture);
+    }
+    proof.reviewedAiImport = await seedReviewedAiImport();
+    proof.unknownAiImport = await seedUnknownAiImport();
+    // AI review decisions share productAudit with procurement commands. Capture
+    // all evidence after every seed mutation, immediately before export, so the
+    // immutable restore proof includes those decisions and their timestamps.
+    for (const fixture of inventoryFixtures) {
       proof[fixture.hotelUid] = Object.fromEntries(Object.entries(await procurementEvidence(fixture)).map(([path, row]) => [path, row.data]));
     }
-    proof.unknownAiImport = await seedUnknownAiImport();
+    assert.ok(Object.values(proof[aiUpload.hotelUid]).some((record) => record.action === "ai-import-review-decision"
+      && record.jobId === proof.reviewedAiImport.jobId), "The final procurement evidence must include the original AI review audit.");
     await writeFile(procurementProofPath, JSON.stringify(proof), { mode: 0o600 });
+    console.log("Seeded a confirmed supplier purchase-unit profile and a reviewed AI draft with persisted approval, original paid attempt/result bytes and pinned source generations.");
     console.log("Seeded fictional two-hotel data, supplier responses and approved-price receipts, protected supplier price changes, paired manual transfer/reversal/waste/return evidence, immutable v1/v2 reports, Auth users/claims, private Storage bytes and real managed product-image sources/derivatives with pinned generations.");
   } else if (process.argv[2] === "verify") {
     for (const [path, expected] of Object.entries(documents)) {
@@ -504,7 +602,9 @@ try {
       assert.deepEqual(countsAfter, countsBefore, "Report retries must not create additional inventory evidence.");
     }
     const proof = JSON.parse(await readFile(procurementProofPath, "utf8"));
+    await verifyReviewedAiImport(proof.reviewedAiImport);
     await verifyUnknownAiImport(proof.unknownAiImport);
+    console.log("Verified confirmed mapping profiles, frozen upload snapshots, persisted approvals and original AI source/result hashes after restore; exact mapping/decision/upload/worker replay made zero provider calls and preserved all review receipts.");
     for (const fixture of inventoryFixtures) await verifyManagedImage(fixture, proof.managedImages[fixture.hotelUid]);
     for (const fixture of inventoryFixtures) await verifyProcurementReplay(fixture, proof[fixture.hotelUid]);
     await assert.rejects(recordHotelInventoryAdjustmentHandler({ auth: { uid: "restore-a", token: { email_verified: true } },

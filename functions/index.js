@@ -100,7 +100,7 @@ exports.syncPlatformImportTelemetry = require("./src/importTelemetry").syncPlatf
 exports.manageHotelDemoData = require("./src/demoData").manageHotelDemoData;
 
 // Private supplier-import jobs and explicit human review use separate boundaries.
-for (const module of ["supplierAiImports", "supplierAiProposal"]) {
+for (const module of ["supplierAiImports", "supplierAiProposal", "supplierImportMappings", "supplierAiReview"]) {
   for (const [name, value] of Object.entries(require(`./src/${module}`))) {
     if (value?.__endpoint) exports[name] = value;
   }
