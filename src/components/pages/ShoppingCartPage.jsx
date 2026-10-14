@@ -9,6 +9,7 @@ import Modal from "../shared/Modal";
 import DataListTable from "../shared/DataListTable";
 import PendingCartCommand from "../catalog/PendingCartCommand";
 import SupplierProductImage from "../catalog/SupplierProductImage";
+import CartQuantityInput from "../catalog/CartQuantityInput";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { createOrdersFromShoppingCart } from "../../services/firebaseOrders";
@@ -218,17 +219,8 @@ function ScopedShoppingCartPage() {
       label: "Quantity",
       sortable: false,
       render: (row) => (
-        <input
-          type="number"
-          min="1"
-          disabled={cartBlocked}
-          value={row.qtyPurchaseUnits}
-          onChange={async (event) => {
-            const value = event.target.value;
-            await performMutation(() => updateShoppingCartItemQty(hotelUid, cartId, row.supplierProductId, value, row.purchaseOptionId, shoppingCart.revision ?? 0));
-          }}
-          className="w-16 border border-gray-300 rounded px-2 py-1"
-        />
+        <CartQuantityInput key={`${hotelUid}:${cartId}:${row.id}`} quantity={row.qtyPurchaseUnits} purchaseUnit={row.purchaseUnit} revision={shoppingCart.revision ?? 0} disabled={cartBlocked}
+          onCommit={(value, expectedRevision) => performMutation(() => updateShoppingCartItemQty(hotelUid, cartId, row.supplierProductId, value, row.purchaseOptionId, expectedRevision))} />
       ),
     },
     { key: "unitPrice", label: "Package price" },

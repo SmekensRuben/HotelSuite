@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useId, useState } from "react";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSuppliers } from "../../services/firebaseSuppliers";
 import { getCatalogProducts } from "../../services/firebaseProducts";
@@ -6,7 +6,8 @@ import { useScopedAsync } from "../../hooks/useScopedAsync";
 import AsyncError from "../shared/AsyncError";
 import { Combobox } from "../ui/combobox";
 import { PRODUCT_BASE_UNITS } from "../../utils/productPurchaseOptions";
-import { packageConversionLabel, productUnitLabel } from "../../utils/productUnitDisplay";
+import { packageConversionLabel, productUnitLabel, isMeasuredPurchaseUnit, measuredPurchaseContent } from "../../utils/productUnitDisplay";
+import purchaseUnits from "../../../functions/src/supplierPurchaseUnits.json";
 import { currencyChoices } from "../../utils/propertySettingChoices";
 import { useSupplierProductAuthority } from "../../hooks/useSupplierProductAuthority";
 import { usePermission } from "../../hooks/usePermission";
@@ -48,6 +49,7 @@ function ScopedSupplierProductFormFields({ initialData, onSubmit, savingLabel, s
   const [error, setError] = useState("");
   const [imageFile, setImageFile] = useState(null), [imageError, setImageError] = useState(null);
   const canUpload = usePermission("supplierproducts", "update");
+  const purchaseUnitsId = useId();
   const [legacyReviewed, setLegacyReviewed] = useState(false);
   const legacyVariants = initialData?.hasVariants && !initialData?.purchaseOptions?.length;
   const loadSources = useCallback(async () => {
@@ -70,6 +72,10 @@ function ScopedSupplierProductFormFields({ initialData, onSubmit, savingLabel, s
     event.preventDefault(); setError("");
     if (saving || disabled || imageError) return;
     if (!PRODUCT_BASE_UNITS.includes(form.baseUnit)) { setError("Select a supported base unit."); return; }
+    if ([form, ...form.purchaseOptions].some((option) => isMeasuredPurchaseUnit(option.purchaseUnit)
+      && (measuredPurchaseContent(option.purchaseUnit, form.baseUnit) === null || Number(option.baseUnitsPerPurchaseUnit) !== measuredPurchaseContent(option.purchaseUnit, form.baseUnit)))) {
+      setError("A kg purchase unit requires exactly 1 kg or 1000 g of content. Pieces and volume cannot define this conversion."); return;
+    }
     if (!currencies.some((currency) => currency.id === form.currency)) { setError("Select a supported supplier contract currency."); return; }
     if (legacyVariants && !legacyReviewed) { setError("Review the old variants and replace them with explicit purchase options before saving."); return; }
     if (!sources.data?.suppliers.some((supplier) => supplier.id === form.supplierId)) { setError("Select an existing supplier from this hotel."); return; }
@@ -131,7 +137,7 @@ function ScopedSupplierProductFormFields({ initialData, onSubmit, savingLabel, s
       <p className="sm:col-span-2 text-xs text-gray-500">Enter dates only when provided by the supplier's price contract. Blank bounds remain unknown. Dates apply to all purchase options and qualify current price comparisons; they do not rewrite existing orders or receipts.</p>
       <div className="border-t border-stone-200 pt-5 sm:col-span-2"><h2 className="font-display text-xl text-brand-950">Purchase packages</h2><p className="mt-1 text-sm font-normal text-stone-500">Give each case, bottle or other purchase option its own contents, price and optional package barcode.</p></div>
       <Field title="Default pricing model"><select value={form.pricingModel} onChange={(event) => change("pricingModel", event.target.value)} className={inputClass}><option>Per Purchase Unit</option><option>Per Base Unit</option></select></Field>
-      <Field title="Default purchase unit *"><input required maxLength={100} value={form.purchaseUnit} onChange={(event) => change("purchaseUnit", event.target.value)} placeholder="e.g. case of 24 bottles" className={inputClass} /></Field>
+      <Field title="Default purchase unit *"><input required maxLength={100} list={purchaseUnitsId} value={form.purchaseUnit} onChange={(event) => change("purchaseUnit", event.target.value)} placeholder="e.g. kg or case of 24 bottles" className={inputClass} /><datalist id={purchaseUnitsId}>{purchaseUnits.map((unit) => <option key={unit} value={unit} />)}</datalist>{isMeasuredPurchaseUnit(form.purchaseUnit) && <span className="text-xs font-normal text-gray-500">For kg purchases, set content to 1 kg or 1000 g. Order quantities represent kilograms; piece weights remain separate.</span>}</Field>
       <Field title="Default package GTIN (optional)"><input inputMode="numeric" pattern="(?:[0-9]{8}|[0-9]{12,14})" maxLength={14} value={form.gtin} onChange={(event) => change("gtin", event.target.value)} placeholder="e.g. supplier case barcode" className={inputClass} /><span className="text-xs font-normal text-gray-500">The barcode identifies this purchase package. Keep leading zeroes; validity is checked when saving. It does not identify a recipe ingredient or a POS dish.</span></Field>
       <Field title={`Default package content (${form.baseUnit || "base units"}) *`}><input required type="number" min="0.000001" max="1000000" step="0.000001" value={form.baseUnitsPerPurchaseUnit} onChange={(event) => change("baseUnitsPerPurchaseUnit", event.target.value)} className={inputClass} /></Field>
       <div className="sm:col-span-2 rounded-xl border border-brand-200 bg-brand-50 p-4 text-sm">

@@ -108,7 +108,10 @@ export async function addSupplierProductToShoppingCart(hotelUid, cartId, product
   return mutateCart(hotelUid, { cartId, action: "add", productId: product.id, purchaseOptionId, value: qty, expectedRevision });
 }
 export async function updateShoppingCartItemQty(hotelUid, cartId, productId, value, purchaseOptionId = "default", expectedRevision = 0) {
-  return mutateCart(hotelUid, { cartId, action: "quantity", productId, purchaseOptionId, value, expectedRevision });
+  const numeric = typeof value === "string" && value.trim() ? Number(value) : value;
+  if (typeof numeric !== "number" || !Number.isFinite(numeric) || numeric < 0 || numeric > 100000
+    || Math.abs(numeric * 1000 - Math.round(numeric * 1000)) > 1e-8) throw new Error("Enter an explicit purchase quantity from 0 to 100000 with up to three decimals.");
+  return mutateCart(hotelUid, { cartId, action: "quantity", productId, purchaseOptionId, value: numeric, expectedRevision });
 }
 export async function updateShoppingCartItemNote(hotelUid, cartId, productId, value, purchaseOptionId = "default", expectedRevision = 0) {
   return mutateCart(hotelUid, { cartId, action: "note", productId, purchaseOptionId, value, expectedRevision });

@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { packageConversionLabel, previewCatalogPackageQuantity } from "./productUnitDisplay";
+import { packageConversionLabel, previewCatalogPackageQuantity, measuredPurchaseContent, isMeasuredPurchaseUnit } from "./productUnitDisplay";
 
 describe("supplier package display in catalog stock units", () => {
+  it("defines a kilogram purchase measure without inferring a piece or volume conversion", () => {
+    expect(isMeasuredPurchaseUnit("KG")).toBe(true); expect(isMeasuredPurchaseUnit("Box")).toBe(false);
+    expect(measuredPurchaseContent("kg", "kg")).toBe(1); expect(measuredPurchaseContent("kg", "g")).toBe(1000);
+    expect(measuredPurchaseContent("kg", "each")).toBeNull(); expect(measuredPurchaseContent("kg", "l")).toBeNull();
+    expect(measuredPurchaseContent("constructor", "g")).toBeNull();
+  });
   it("explains orange juice in millilitres and physical counts in litres", () => {
     expect(previewCatalogPackageQuantity(1000, "ml", "l")).toBe(1);
     expect(packageConversionLabel(1000, "ml", "l")).toBe("1000 ml = 1 l per purchase unit for stock counts.");
