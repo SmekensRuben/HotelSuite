@@ -107,6 +107,32 @@ describe("persistent supplier import progress", () => {
     expect(value.counts.changed).toBe(2); expect(value.progress.completedChunks).toBe(2);
     render(tree()); fireEvent.click(screen.getByRole("button", { name: "Track first job" })); expect(sessionStorage.getItem("supplier-ai-progress:user-a:hotel-a")).not.toMatch(/fileName|\.csv|source|usage|cost|tokens|model/i);
   });
+  it("projects immutable commercial settings and all-row normalization findings while keeping browser recovery opaque", () => {
+    const summary = { version: 2, totalRows: 250, normalizedRows: 230, assumptionRows: 75, unknownPriceRows: 40, blockedNormalizationRows: 5, inferredPieceRows: 20, missingRequiredRows: 8, findings: [{ field: "pricingModel", code: "pricing-model-needs-review", severity: "warning", message: "Purchase pricing needs review.", count: 5, rowIds: ["r-000001"] }] };
+    const counts = { new: 200, changed: 30, unchanged: 12, blocked: 8 }, importSettings = { policyVersion: 2, priceBasis: "gross", currency: "EUR", vatRate: null };
+    const incoming = job("one", "review", { totalRows: 250, counts, summary: { ...summary, usage: { costUsd: 999 } }, importSettings: { ...importSettings, model: "secret" }, originalInput: { rawSourceText: "private document" } });
+    const value = supplierAiProgressMetadata(incoming, "hotel-a", "user-a");
+    expect(value.summary).toEqual(summary); expect(value.importSettings).toEqual(importSettings); expect(value).not.toHaveProperty("originalInput"); expect(JSON.stringify(value)).not.toMatch(/costUsd|secret|private document/);
+    render(tree()); act(() => mocks.progress.watchJob(incoming));
+    expect(JSON.parse(screen.getByTestId("safe-jobs").textContent)[0].summary.totalRows).toBe(250);
+    const saved = sessionStorage.getItem("supplier-ai-progress:user-a:hotel-a"); expect(saved).not.toMatch(/summary|findings|currency|priceBasis|vatRate|normalization|fileName|source/i);
+  });
+  it("keeps legacy summaries unavailable and rejects inconsistent full-document totals", () => {
+    expect(supplierAiProgressMetadata(job("one", "review"), "hotel-a", "user-a").summary).toBeNull();
+    expect(supplierAiProgressMetadata(job("one", "review"), "hotel-a", "user-a").importSettings).toBeNull();
+    const summary = { version: 2, totalRows: 250, normalizedRows: 0, assumptionRows: 0, unknownPriceRows: 250, blockedNormalizationRows: 0, inferredPieceRows: 0, missingRequiredRows: 0, findings: [] };
+    const value = supplierAiProgressMetadata(job("one", "review", { totalRows: 100, counts: { new: 250, changed: 0, unchanged: 0, blocked: 0 }, summary }), "hotel-a", "user-a");
+    expect(value.summary).toBeNull(); expect(value.counts).toBeNull();
+  });
+  it("ignores a stale poll, accepts a fresh unavailable overview and never regresses processed sections", async () => {
+    const pending = deferred(); mocks.get.mockReturnValue(pending.promise); render(tree()); fireEvent.click(screen.getByRole("button", { name: "Track first job" })); await advance(3000);
+    const summary = { version: 2, totalRows: 250, normalizedRows: 230, assumptionRows: 75, unknownPriceRows: 40, blockedNormalizationRows: 5, inferredPieceRows: 20, missingRequiredRows: 8, findings: [] };
+    act(() => mocks.progress.watchJob(job("one", "review", { totalRows: 250, counts: { new: 250, changed: 0, unchanged: 0, blocked: 0 }, summary }), { fromDialog: true }));
+    await act(async () => pending.resolve(job("one", "review"))); expect(JSON.parse(screen.getByTestId("safe-jobs").textContent)[0].summary).toEqual(summary);
+    act(() => mocks.progress.watchJob(job("one", "review", { totalRows: 250, counts: { new: 250, changed: 0, unchanged: 0, blocked: 0 }, summary: null }))); expect(JSON.parse(screen.getByTestId("safe-jobs").textContent)[0].summary).toBeNull();
+    act(() => { mocks.progress.watchJob(job("two", "processing", { progress: { completedChunks: 5, totalChunks: 8 } })); mocks.progress.watchJob(job("two", "processing", { progress: { completedChunks: 2, totalChunks: 8 } })); });
+    expect(JSON.parse(screen.getByTestId("safe-jobs").textContent).find((value) => value.jobId === "two").progress.completedChunks).toBe(5);
+  });
   it("bounds long-session references and notification markers and lets the user dismiss a settled card", () => {
     render(tree());
     act(() => {

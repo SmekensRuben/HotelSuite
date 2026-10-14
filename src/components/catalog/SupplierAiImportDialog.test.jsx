@@ -6,19 +6,20 @@ vi.mock("../../firebaseConfig", () => ({ auth: { get currentUser() { return mock
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, permissions: mocks.permissions, subscriptionActive: true, subscription: { modules: ["procurement"], modulePolicyVersion: 1, status: "active", validUntil: null } }) }));
 vi.mock("../../services/firebaseSuppliers", () => ({ getSuppliers: mocks.suppliers }));
 vi.mock("../../services/firebaseProducts", () => ({ getCatalogProducts: mocks.catalog }));
-vi.mock("../../services/firebaseSupplierAiImports", () => ({ SUPPLIER_AI_IMPORT_ACCEPT: ".csv,.xlsx,.pdf,.docx,.eml,.txt", validateSupplierAiImportFile: (file) => { if (!file?.size || file.size > 10485760) throw new Error("Choose a file between 1 byte and 10 MiB."); if (!/\.(csv|xlsx|pdf|docx|eml|txt)$/i.test(file.name)) throw new Error("Unsupported file."); }, getSupplierAiImportAvailability: mocks.availability, startSupplierAiImport: mocks.start, getSupplierAiImport: mocks.get, getSupplierAiImportReview: mocks.review, saveSupplierAiImportReview: mocks.correction, confirmSupplierAiImport: mocks.confirm }));
+vi.mock("../../services/firebaseSupplierAiImports", () => ({ SUPPLIER_AI_IMPORT_ACCEPT: ".csv,.xlsx,.pdf,.docx,.eml,.txt", validateSupplierAiImportFile: (file) => { if (!file?.size || file.size > 10485760) throw new Error("Choose a file between 1 byte and 10 MiB."); if (!/\.(csv|xlsx|pdf|docx|eml|txt)$/i.test(file.name)) throw new Error("Unsupported file."); }, getSupplierAiImportAvailability: mocks.availability, startSupplierAiImport: mocks.start, getSupplierAiImport: mocks.get, getSupplierAiImportReview: mocks.review, saveSupplierAiImportReview: mocks.correction, confirmSupplierAiImport: mocks.confirm, supplierAiImportVatFraction: (value) => { if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value) || (value.split(".")[1] || "").replace(/0+$/, "").length > 4 || Number(value) > 100) throw new Error("Invalid VAT"); return Number((Number(value) / 100).toFixed(6)); }, normalizeSupplierAiImportSettings: (value) => { if (value.policyVersion !== 2 || !["net", "gross", "unknown"].includes(value.priceBasis) || !/^[A-Z]{3}$/.test(value.currency) || (value.vatRate !== null && (value.vatRate < 0 || value.vatRate > 1))) throw new Error("Invalid import price settings"); return value; } }));
 import SupplierAiImportDialog from "./SupplierAiImportDialog";
 const product = { supplierSku: "001", supplierProductName: "Coffee", baseUnit: "kg", purchaseUnit: "bag", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 12, priceBasis: "net", currency: "EUR", pricingModel: "Per Purchase Unit", purchaseOptions: [], active: false, catalogProductId: null };
 const row = (rowId = "r1", patch = {}) => ({ rowId, category: "new", product: { ...product }, previousProduct: null, reviewRevision: 1, issues: [], changes: [], sourceAnchors: [{ sourceId: "page-1", anchor: "Page 1, row 2", quote: "001 Coffee 1kg EUR12", verified: true }], committed: null, ...patch });
-const job = { hotelUid: "hotel-a", jobId: "job", supplierId: "supplier", ownerUid: "manager", status: "review", source: { fileName: "supplier.csv" }, usage: { attempts: 1, actualCostUsd: 0.001, unknownCalls: 0 }, expiresAtMillis: 1900000000000 };
+const settings = { policyVersion: 2, priceBasis: "net", currency: "EUR", vatRate: null };
+const job = { hotelUid: "hotel-a", jobId: "job", supplierId: "supplier", ownerUid: "manager", status: "review", importSettings: settings, summary: null, source: { fileName: "supplier.csv" }, usage: { attempts: 1, actualCostUsd: 0.001, unknownCalls: 0 }, expiresAtMillis: 1900000000000 };
 const props = () => ({ open: true, onClose: vi.fn(), hotelUid: mocks.hotel, suppliers: [{ id: "supplier", name: "Coffee Supplier" }], initialSupplierId: "supplier", onImported: vi.fn() });
-const upload = (file = new File(["Supplier data"], "supplier.csv", { type: "text/csv" })) => fireEvent.change(screen.getByLabelText("Supplier document"), { target: { files: [file] } });
+const upload = (file = new File(["Supplier data"], "supplier.csv", { type: "text/csv" })) => { const basis = screen.getByLabelText("Document price basis"); if (!basis.value) fireEvent.change(basis, { target: { value: "net" } }); return fireEvent.change(screen.getByLabelText("Supplier document"), { target: { files: [file] } }); };
 const prepare = async (properties = props()) => { const view = render(<SupplierAiImportDialog {...properties} />); await screen.findByLabelText("Supplier document"); upload(); fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" })); await screen.findByRole("article", { name: "Import row r1" }); return { view, properties }; };
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 beforeEach(() => {
   vi.clearAllMocks(); sessionStorage.clear(); mocks.hotel = "hotel-a"; mocks.actor = { uid: "manager" };
   mocks.permissions = ["supplierproducts.read", "supplierproducts.create", "supplierproducts.update", "suppliers.read", "catalogproducts.read"];
-  mocks.availability.mockResolvedValue({ available: true, fallbackEnabled: false, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000, maxCostPerImportUsd: 0.25 } });
+  mocks.availability.mockResolvedValue({ available: true, importPolicyVersion: 2, fallbackEnabled: false, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000, maxCostPerImportUsd: 0.25 }, defaults: { currency: "EUR" } });
   mocks.start.mockResolvedValue(job); mocks.get.mockResolvedValue(job); mocks.review.mockResolvedValue({ hotelUid: "hotel-a", jobId: "job", rows: [row()], totalRows: 1, nextCursor: null });
   mocks.suppliers.mockResolvedValue([{ id: "supplier", name: "Coffee Supplier" }]);
   mocks.catalog.mockResolvedValue({ products: [{ id: "ingredient", name: "Coffee beans", baseUnit: "kg" }], cursor: null, hasMore: false });
@@ -207,4 +208,68 @@ it("keeps the accepted background state when a delayed status read returns an ol
   mocks.get.mockResolvedValue({ ...job, status: "queued" }); render(<SupplierAiImportDialog {...properties} trackedJobId="job" trackedJob={accepted} />); await screen.findByRole("article", { name: "Import row r1" });
   fireEvent.click(screen.getByRole("button", { name: "Refresh import status" })); await waitFor(() => expect(properties.onJobChange).toHaveBeenCalled());
   expect(screen.getByText("Review the proposed products before importing.")).toBeInTheDocument(); expect(screen.queryByText("Your document is queued.")).not.toBeInTheDocument();
+});
+
+describe("document price policy", () => {
+  it("requires a price-basis choice while using only the validated hotel currency default", async () => {
+    render(<SupplierAiImportDialog {...props()} />); await screen.findByLabelText("Supplier document");
+    fireEvent.change(screen.getByLabelText("Supplier document"), { target: { files: [new File(["supplier rows"], "prices.csv")] } });
+    expect(screen.getByLabelText("Document price basis")).toHaveValue(""); expect(screen.getByRole("combobox", { name: "Document currency" }).value).toMatch(/^EUR/); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeDisabled(); expect(mocks.start).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Document price basis"), { target: { value: "net" } }); fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" }));
+    await waitFor(() => expect(mocks.start).toHaveBeenCalledWith("hotel-a", "supplier", expect.any(File), settings));
+  });
+  it("keeps missing or invalid hotel currency unknown and requires a searched currency choice", async () => {
+    mocks.availability.mockResolvedValue({ available: true, importPolicyVersion: 2, defaults: { currency: "ZZZ" } }); render(<SupplierAiImportDialog {...props()} />); await screen.findByLabelText("Supplier document"); upload();
+    const currency = screen.getByRole("combobox", { name: "Document currency" }); expect(currency).toHaveValue(""); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeDisabled();
+    fireEvent.focus(currency); fireEvent.change(currency, { target: { value: "EUR" } }); fireEvent.click(await screen.findByRole("option", { name: /^EUR/ })); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeEnabled();
+  });
+  it("supports gross prices without guessing VAT and snapshots an explicitly supplied uniform percentage", async () => {
+    render(<SupplierAiImportDialog {...props()} />); await screen.findByLabelText("Supplier document"); fireEvent.change(screen.getByLabelText("Document price basis"), { target: { value: "gross" } }); upload();
+    expect(screen.getByText(/No tax rate is guessed/)).toBeInTheDocument(); expect(screen.queryByLabelText("Shared VAT rate (%)")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Use one shared VAT rate/ })); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeDisabled(); fireEvent.change(screen.getByLabelText("Shared VAT rate (%)"), { target: { value: "106" } }); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Shared VAT rate (%)"), { target: { value: "6" } }); fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" }));
+    await waitFor(() => expect(mocks.start).toHaveBeenCalledWith("hotel-a", "supplier", expect.any(File), { policyVersion: 2, priceBasis: "gross", currency: "EUR", vatRate: 0.06 }));
+  });
+  it("permits explicit unknown basis and optional unknown VAT without presenting purchase prices as reliable", async () => {
+    mocks.start.mockResolvedValue({ ...job, importSettings: { ...settings, priceBasis: "unknown" } }); render(<SupplierAiImportDialog {...props()} />); await screen.findByLabelText("Supplier document"); fireEvent.change(screen.getByLabelText("Document price basis"), { target: { value: "unknown" } }); upload();
+    expect(screen.getByText(/Prices without a documented net or gross basis/)).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" })); await screen.findByRole("article", { name: "Import row r1" });
+    expect(mocks.start).toHaveBeenCalledWith("hotel-a", "supplier", expect.any(File), { ...settings, priceBasis: "unknown" }); expect(screen.getByText(/Unknown price basis — requires review/)).toBeInTheDocument();
+  });
+  it("locks and restores the original settings for an unknown upload acknowledgement", async () => {
+    const original = { policyVersion: 2, priceBasis: "gross", currency: "EUR", vatRate: 0.06 };
+    mocks.start.mockRejectedValueOnce(Object.assign(new Error("Original price settings restored"), { code: "import-settings-changed", importSettings: original })).mockResolvedValueOnce({ ...job, importSettings: original });
+    render(<SupplierAiImportDialog {...props()} />); await screen.findByLabelText("Supplier document"); upload(); fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" })); await screen.findByText("Original price settings restored");
+    expect(screen.getByLabelText("Document price basis")).toHaveValue("gross"); expect(screen.getByLabelText("Document price basis")).toBeDisabled(); expect(screen.getByRole("combobox", { name: "Document currency" })).toBeDisabled(); expect(screen.getByLabelText("Shared VAT rate (%)")).toHaveValue(6); expect(screen.getByLabelText("Shared VAT rate (%)")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Recover original upload" })); await screen.findByRole("article", { name: "Import row r1" }); expect(mocks.start.mock.calls[1][3]).toEqual(original);
+  });
+  it("shows the complete all-page findings before individual products and keeps old imports unchanged", async () => {
+    const summary = { version: 2, totalRows: 210, normalizedRows: 150, assumptionRows: 140, unknownPriceRows: 210, blockedNormalizationRows: 1, inferredPieceRows: 30, missingRequiredRows: 15, findings: [{ field: "pricePerPurchaseUnit", code: "missing-purchase-price", severity: "warning", message: "No documented supplier purchase price was found.", count: 210, rowIds: ["r-000001", "r-000200"] }] };
+    const properties = { ...props(), backgroundManaged: true }, latest = { ...job, totalRows: 210, counts: { new: 209, changed: 0, unchanged: 0, blocked: 1 }, summary };
+    const view = render(<SupplierAiImportDialog {...properties} trackedJobId="job" trackedJob={latest} />); await screen.findByRole("article", { name: "Import row r1" });
+    const overview = screen.getByRole("region", { name: "Complete import overview" }); expect(within(overview).getByRole("heading", { name: "Overview of all 210 extracted products" })).toBeInTheDocument(); expect(within(overview).getByText("Unknown purchase prices")).toBeInTheDocument(); expect(within(overview).getByText("No documented supplier purchase price was found.")).toBeInTheDocument(); expect(overview.compareDocumentPosition(screen.getByRole("article", { name: "Import row r1" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    view.rerender(<SupplierAiImportDialog {...properties} trackedJobId="old-job" trackedJob={{ ...job, jobId: "old-job", importSettings: null, summary: null }} />);
+    expect(screen.getByText(/This earlier import has no saved document price settings/)).toBeInTheDocument(); expect(screen.getByText(/A complete overview is unavailable/)).toBeInTheDocument(); expect(mocks.start).not.toHaveBeenCalled(); expect(mocks.confirm).not.toHaveBeenCalled();
+  });
+});
+
+it("snapshots fractional VAT percentages canonically and blocks unsupported precision before an AI request", async () => {
+  render(<SupplierAiImportDialog {...props()} />); await screen.findByLabelText("Supplier document"); fireEvent.change(screen.getByLabelText("Document price basis"), { target: { value: "gross" } }); upload(); fireEvent.click(screen.getByRole("checkbox", { name: /Use one shared VAT rate/ }));
+  fireEvent.change(screen.getByLabelText("Shared VAT rate (%)"), { target: { value: "5.60001" } }); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeDisabled(); expect(mocks.start).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("Shared VAT rate (%)"), { target: { value: "5.6" } }); fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" })); await waitFor(() => expect(mocks.start.mock.calls[0][3].vatRate).toBe(0.056));
+});
+
+it("refreshes all 250 product findings after a row correction without paid extraction or manual status refresh", async () => {
+  const summary = { version: 2, totalRows: 250, normalizedRows: 0, assumptionRows: 0, unknownPriceRows: 250, blockedNormalizationRows: 1, inferredPieceRows: 0, missingRequiredRows: 1, findings: [{ field: "baseUnitsPerPurchaseUnit", code: "required", severity: "error", message: "Package contents need correction.", count: 1, rowIds: ["r1"] }] };
+  const initial = { ...job, totalRows: 250, counts: { new: 249, changed: 0, unchanged: 0, blocked: 1 }, summary }, correction = row("r1", { reviewRevision: 2, product: { ...product, baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 12 } }), refreshed = deferred();
+  mocks.review.mockResolvedValue({ rows: [row("r1", { category: "blocked", product: { ...product, baseUnitsPerPurchaseUnit: null, pricePerPurchaseUnit: null }, issues: [{ field: "baseUnitsPerPurchaseUnit", message: "Package content is missing", severity: "error" }] })], totalRows: 250, nextCursor: "r1" }); mocks.correction.mockResolvedValue({ hotelUid: "hotel-a", jobId: "job", row: correction }); mocks.get.mockReturnValue(refreshed.promise);
+  render(<SupplierAiImportDialog {...props()} backgroundManaged trackedJobId="job" trackedJob={initial} />); await screen.findByRole("article", { name: "Import row r1" });
+  const before = screen.getByRole("region", { name: "Complete import overview" }); expect(within(before).getByText("Unknown purchase prices").parentElement.querySelector("dd")).toHaveTextContent("250"); expect(within(before).getByText("Blocked").parentElement.querySelector("dd")).toHaveTextContent("1");
+  fireEvent.click(screen.getByRole("button", { name: "Review details" })); fireEvent.change(screen.getByLabelText("Package content"), { target: { value: "1" } }); fireEvent.change(screen.getByLabelText("Package price"), { target: { value: "12" } }); fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+  await screen.findByText("Preparing the overview of every extracted product…"); expect(screen.queryByText("Package contents need correction.")).not.toBeInTheDocument(); expect(mocks.get).toHaveBeenCalledTimes(1);
+  await act(async () => refreshed.resolve({ ...initial, counts: { new: 250, changed: 0, unchanged: 0, blocked: 0 }, summary: { ...summary, unknownPriceRows: 249, blockedNormalizationRows: 0, missingRequiredRows: 0, findings: [] } }));
+  const after = screen.getByRole("region", { name: "Complete import overview" }); expect(within(after).getByText("Unknown purchase prices").parentElement.querySelector("dd")).toHaveTextContent("249"); expect(within(after).getByText("Blocked").parentElement.querySelector("dd")).toHaveTextContent("0"); expect(within(after).getByRole("heading", { name: "Overview of all 250 extracted products" })).toBeInTheDocument(); expect(mocks.start).not.toHaveBeenCalled(); expect(mocks.confirm).not.toHaveBeenCalled();
+});
+it("shows a service upgrade notice and offers retry without exposing the new-upload form against an older backend", async () => {
+  mocks.availability.mockResolvedValueOnce({ available: true, limits: { maxProducts: 1000 } }); render(<SupplierAiImportDialog {...props()} />); await screen.findByText("Import service update is in progress. Try again after it finishes."); expect(screen.queryByLabelText("Supplier document")).not.toBeInTheDocument(); expect(mocks.start).not.toHaveBeenCalled();
+  mocks.availability.mockResolvedValueOnce({ available: true, importPolicyVersion: 2, defaults: { currency: "EUR" } }); fireEvent.click(screen.getByRole("button", { name: "Retry access check" })); await screen.findByLabelText("Supplier document");
 });

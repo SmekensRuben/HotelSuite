@@ -6,6 +6,7 @@ import { useSupplierProductAuthority } from "../hooks/useSupplierProductAuthorit
 import { featureIsLicensed } from "../constants/moduleCatalog";
 import { hasPermission } from "../utils/permissions";
 import { getSupplierAiImport } from "../services/firebaseSupplierAiImports";
+import { supplierAiImportSummary, supplierAiImportSettings, supplierAiImportCategoryCounts } from "../utils/supplierAiImportSummary";
 import SupplierAiImportProgress from "../components/catalog/SupplierAiImportProgress";
 import SupplierAiImportDialog from "../components/catalog/SupplierAiImportDialog";
 
@@ -19,8 +20,6 @@ const validId = (value) => typeof value === "string" && value.length > 0 && valu
 const safeText = (value, maximum = 500) => typeof value === "string" ? value.replace(/[\u0000-\u001f]/g, " ").slice(0, maximum) : undefined;
 const privateDetail = /\b(?:budget|bill(?:ed|ing)?|costs?|pricing|USD|tokens?|gpt[-\s]?[\w.-]+|openai|reasoning|fallback|model)\b|(?:US\$|\$)\s*\d/i;
 const safeMessage = (value) => privateDetail.test(String(value || "")) ? "This import needs administrator assistance before it can continue." : safeText(value);
-const completeCounts = (counts) => counts && ["new", "changed", "unchanged", "blocked"].every((key) => Number.isSafeInteger(counts[key]) && counts[key] >= 0 && counts[key] <= 1000)
-  ? Object.fromEntries(["new", "changed", "unchanged", "blocked"].map((key) => [key, counts[key]])) : null;
 
 // Customer progress deliberately keeps no provider, pricing, token or budget data.
 export function supplierAiProgressMetadata(value, hotelUid, ownerUid) {
@@ -31,7 +30,9 @@ export function supplierAiProgressMetadata(value, hotelUid, ownerUid) {
     ...(value.source?.fileName ? { source: { fileName: safeText(value.source.fileName, 180) } } : {}),
     ...(Number.isSafeInteger(value.expiresAtMillis) && value.expiresAtMillis > 0 ? { expiresAtMillis: value.expiresAtMillis } : {}),
     ...(Number.isSafeInteger(value.totalRows) && value.totalRows >= 0 && value.totalRows <= 1000 ? { totalRows: value.totalRows } : {}),
-    counts: completeCounts(value.counts),
+    counts: supplierAiImportCategoryCounts(value.counts, value.totalRows),
+    importSettings: supplierAiImportSettings(value.importSettings),
+    summary: supplierAiImportSummary(value.summary, { totalRows: value.totalRows, counts: value.counts }),
     progress: {
       completedChunks: Number.isSafeInteger(value.progress?.completedChunks) && value.progress.completedChunks >= 0 && value.progress.completedChunks <= 32 ? value.progress.completedChunks : null,
       totalChunks: Number.isSafeInteger(value.progress?.totalChunks) && value.progress.totalChunks > 0 && value.progress.totalChunks <= 32 ? value.progress.totalChunks : null,
@@ -139,6 +140,7 @@ function ScopedSupplierAiImportProgressProvider({ children, hotelUid, actor, per
     if (prior && FAILURE.has(prior.status) && SUCCESS.has(value.status)) return prior;
     if (prior?.status === "completed" && ["review", "partially_committed"].includes(value.status)) return prior;
     if (prior?.status === "partially_committed" && value.status === "review") return prior;
+    if (prior && ACTIVE.has(prior.status) && ACTIVE.has(value.status) && Number.isSafeInteger(prior.progress?.completedChunks) && Number.isSafeInteger(value.progress?.completedChunks) && value.progress.completedChunks < prior.progress.completedChunks) return prior;
     if (prior && ACTIVE.has(prior.status) && ACTIVE.has(value.status) && ["uploading", "queued", "processing"].indexOf(value.status) < ["uploading", "queued", "processing"].indexOf(prior.status)) return prior;
     if (ACTIVE.has(value.status)) observedActive.current.add(value.jobId);
     const next = jobsRef.current.filter((job) => job.jobId !== value.jobId);
@@ -166,7 +168,7 @@ function ScopedSupplierAiImportProgressProvider({ children, hotelUid, actor, per
     control.inFlight = true;
     try {
       const result = await getSupplierAiImport(hotelUid, jobId);
-      if (!current()) return;
+      if (!current() || controls.current.get(jobId) !== control || !jobsRef.current.some((job) => job.jobId === jobId)) return;
       const value = supplierAiProgressMetadata(result, hotelUid, actor.uid);
       if (!value || value.jobId !== jobId) throw new Error("The import status could not be verified.");
       control.failures = 0;
