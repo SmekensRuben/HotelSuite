@@ -350,6 +350,10 @@ Request suggestions lazily with **Suggest unit cost** and inspect the displayed 
 
 ## Coherent template loading
 
+Catalog sync and configurable internal SKU numbering are described in
+[Catalog product sync](catalog-product-sync.md). The workflow keeps stable
+physical identities and historical operational snapshots intact.
+
 Stock Template Detail reads its template revision, location and ordered included-article names through one bounded locations.read projection. Additional catalog choices load only when opened, in debounced 25-item pages with cursor checks and a 500-item browsing cap. Search narrows larger directories. No settled operational cache or eager complete catalog export is used.
 
 Reduced-motion-aware skeletons cover initial loading. Same-authority refresh keeps verified names visible and locks edits; unsuccessful verification clears stale names and exposes Retry. Hotel, actual Auth identity, subscription or permission changes clear previous data immediately. Location template lists and outlet/location settings lists reuse the loading presentation. Actual deployed cold-start/network latency still requires production measurement.

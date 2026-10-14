@@ -255,6 +255,7 @@ export default function ProductFormFields({
             onChange={(event) => updateField("internalSku", event.target.value)}
             className="rounded border border-gray-300 px-3 py-2 text-sm"
           />
+          {!initialData && <span className="text-xs font-normal text-gray-500">Leave blank to use your hotel's automatic SKU settings.</span>}
         </label>
       </SectionCard>
 

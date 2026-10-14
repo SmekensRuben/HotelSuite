@@ -49,6 +49,11 @@ exports.listHotelSubscriptions = listHotelSubscriptions;
 exports.searchHotelProducts = searchHotelProducts;
 const products = require("./src/products");
 for (const name of ["mutateHotelCatalogProduct", "mutateHotelSupplierProduct", "importHotelProducts"]) exports[name] = products[name];
+const catalogSync = require("./src/catalogSync");
+for (const name of ["readHotelCatalogSyncWorkspace", "applyHotelCatalogSync"]) exports[name] = catalogSync[name];
+exports.refineHotelCatalogSyncSuggestions = require("./src/catalogSyncAi").refineHotelCatalogSyncSuggestions;
+const catalogSkuSettings = require("./src/catalogSkuSettings");
+for (const name of ["getHotelCatalogSkuSettings", "saveHotelCatalogSkuSettings", "assignHotelCatalogSkus"]) exports[name] = catalogSkuSettings[name];
 const supplierProductImages = require("./src/supplierProductImages");
 for (const name of ["supplierProductImage", "processSupplierProductImage"]) exports[name] = supplierProductImages[name];
 

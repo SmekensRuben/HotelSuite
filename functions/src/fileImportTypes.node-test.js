@@ -33,6 +33,12 @@ test("generic imports cannot forge confirmed supplier mappings or their command 
     for (const path of [`hotels/hotel-a/${collection}/record`, `hotels/hotel-a/${collection}/record/entries/nested`])
       assert.throws(() => requireHotelImportTarget(path, "hotel-a"), /protected AI/);
 });
+test("generic imports cannot forge catalog synchronization, SKU settings, reservations or command evidence", () => {
+  for (const collection of ["catalogSyncJobs", "catalogSyncOperations", "catalogSyncAudit", "catalogSkuConfiguration", "catalogSkuKeys", "catalogSkuLegacyIndex", "catalogSkuOperations", "catalogSkuAudit"])
+    for (const path of [`hotels/hotel-a/${collection}/record`, `hotels/hotel-a/${collection}/record/entries/nested`])
+      assert.throws(() => requireHotelImportTarget(path, "hotel-a"), /catalog synchronization/);
+  requireHotelImportTarget("hotels/hotel-a/reports/arrivals/2026-10-14/guest", "hotel-a");
+});
 
 test("mapped import columns cannot override the trusted template tenant", () => {
   const context = buildTemplateContext({ hotelUid: "hotel-a", fileType: "arrivals", fileImportType: {},

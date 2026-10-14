@@ -70,6 +70,9 @@ function ScopedProductsPage({ hotelUid }) {
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const fileInputRef = useRef(null);
   const canCreateProducts = usePermission("catalogproducts", "create");
+  const canReadSupplierProducts = usePermission("supplierproducts", "read");
+  const canUpdateSupplierProducts = usePermission("supplierproducts", "update");
+  const canReadSuppliers = usePermission("suppliers", "read");
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
@@ -131,6 +134,7 @@ function ScopedProductsPage({ hotelUid }) {
 
   const columns = [
     { key: "name", label: t("products.columns.name") },
+    { key: "internalSku", label: "Internal SKU" },
     { key: "brand", label: t("products.columns.brand") },
     { key: "category", label: t("products.columns.category") },
     { key: "subcategory", label: t("products.columns.subcategory") },
@@ -326,6 +330,7 @@ function ScopedProductsPage({ hotelUid }) {
             <p className="text-gray-600 mt-1">{t("products.subtitle")}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {canReadSupplierProducts && canUpdateSupplierProducts && canReadSuppliers && <button type="button" className="ht-button-secondary" disabled={busy} onClick={() => navigate("/catalog/sync")}>Catalog sync</button>}
             <button
               type="button"
               onClick={handleImportButton}

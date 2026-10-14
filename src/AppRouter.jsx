@@ -24,6 +24,7 @@ const RoomTypesPage = lazy(() => import("./components/pages/RoomTypesPage.jsx"))
 const RateCodesPage = lazy(() => import("./components/pages/RateCodesPage.jsx"));
 const MarketSegmentsPage = lazy(() => import("./components/pages/MarketSegmentsPage.jsx"));
 const ProductsPage = lazy(() => import("./components/pages/ProductsPage.jsx"));
+const CatalogSyncPage = lazy(() => import("./components/pages/CatalogSyncPage.jsx"));
 const ProductCreatePage = lazy(() => import("./components/pages/ProductCreatePage.jsx"));
 const ProductDetailPage = lazy(() => import("./components/pages/ProductDetailPage.jsx"));
 const ProductEditPage = lazy(() => import("./components/pages/ProductEditPage.jsx"));
@@ -155,6 +156,7 @@ export default function AppRouter() {
           </ProtectedRoute>
         }
       />
+      <Route path="/catalog/sync" element={<ProtectedRoute feature="catalogproducts" action="read"><CatalogSyncPage /></ProtectedRoute>} />
       <Route
         path="/catalog/products/new"
         element={

@@ -449,7 +449,8 @@ async function searchCatalogProductsWithFirestore(hotelUid, criteria, pageSize, 
   };
 }
 
-const PRODUCT_METADATA = new Set(["documentId", "id", "revision", "productPolicyVersion", "createdAt", "updatedAt", "createdBy", "updatedBy", "priceUpdatedOn", "supplierName", "archivedAt", "archivedBy", "image", "imageRevision"]);
+const PRODUCT_METADATA = new Set(["documentId", "id", "revision", "productPolicyVersion", "createdAt", "updatedAt", "createdBy", "updatedBy", "priceUpdatedOn", "supplierName", "archivedAt", "archivedBy", "image", "imageRevision",
+  "internalSkuCanonical", "currentPriceVersionId", "latestApprovedPriceVersionId", "latestApprovedPurchaseTerms", "priceConfirmedOn", "priceSourceReference", "priceSourceIssuedOn", "latestPriceSourceIssuedOn", "priceConfirmationSourceReference", "priceOptionReliability"]);
 function productPayload(product = {}) {
   return Object.fromEntries(Object.entries(product).filter(([key, value]) => !PRODUCT_METADATA.has(key) && value !== undefined));
 }

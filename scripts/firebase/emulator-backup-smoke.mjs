@@ -48,6 +48,9 @@ const require = createRequire(import.meta.url);
 const { checkpointId, prepareCheckpoint, readLocationSequence } = require("../../functions/src/inventoryMovements");
 const { getHotelInventoryPeriodHandler } = require("../../functions/src/inventoryReports");
 const { mutateHotelSupplierProductHandler } = require("../../functions/src/products");
+const { readHotelCatalogSyncWorkspaceHandler, applyHotelCatalogSyncHandler } = require("../../functions/src/catalogSync");
+const { getHotelCatalogSkuSettingsHandler, saveHotelCatalogSkuSettingsHandler, assignHotelCatalogSkusHandler } = require("../../functions/src/catalogSkuSettings");
+const { refineHotelCatalogSyncSuggestionsHandler } = require("../../functions/src/catalogSyncAi");
 const { resolveSupplierPriceVersion } = require("../../functions/src/supplierPriceVersions");
 const { uploadSupplierProductImage, readSupplierProductImage, sourcePath } = require("../../functions/src/supplierProductImages");
 const sharp = requireFunctions("sharp");
@@ -339,7 +342,7 @@ for (const fixture of inventoryFixtures) {
     kind: "receipt", hotelUid, locationId: "store", orderId: "fixture-inventory-order", receiptId: "fixture-inventory-receipt",
     receivedOn: "2026-10-05", sequence: 2, actorUid, coverageGaps: [], backdatedAgainstCheckpoint: false, postedAt: revisionTime,
     lines: [{ catalogProductId: "milk", catalogProductName: "Fictional milk", baseUnit: "l", quantity: 30, netUnitCost: 3, netValue: 90, currency }] };
-  documents[`${root}/members/${actorUid}`].permissions.push("supplierproducts.read", "supplierproducts.create", "supplierproducts.update", "suppliers.read", "inventorymovements.read", "inventorymovements.create", "inventorymovements.reverse", "orders.read", "orders.recordconfirmation", "orders.reviewconfirmation", "orders.receive");
+  documents[`${root}/members/${actorUid}`].permissions.push("catalogproducts.read", "catalogproducts.create", "catalogproducts.update", "catalogsettings.read", "catalogsettings.update", "supplierproducts.read", "supplierproducts.create", "supplierproducts.update", "suppliers.read", "inventorymovements.read", "inventorymovements.create", "inventorymovements.reverse", "orders.read", "orders.recordconfirmation", "orders.reviewconfirmation", "orders.receive");
   documents[`${root}/suppliers/restore-dairy`] = { name: "Fictional dairy supplier", active: true };
   for (const location of ["movements-store", "movements-bar"]) documents[`${root}/locations/${location}`] = { name: `Fictional ${location}`, active: true };
 }
@@ -418,6 +421,104 @@ async function procurementEvidence(fixture) {
 const imageRequest = (fixture) => ({ auth: { uid: fixture.actorUid, token: { email_verified: true, auth_time: Math.floor(Date.now() / 1000) } } });
 const imageReadInput = (fixture, assetId, variant) => ({ hotelUid: fixture.hotelUid, productId: "restore-priced-milk", assetId, variant });
 const bytesHash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const catalogSyncActor = (fixture, authTime = Math.floor(Date.now() / 1000)) => ({ auth: {
+  uid: fixture.actorUid, token: { email_verified: true, auth_time: authTime },
+} });
+async function catalogSyncEvidence(fixture) {
+  const root = `hotels/${fixture.hotelUid}`, records = {};
+  async function collect(reference) {
+    const snapshot = await reference.get();
+    if (snapshot.exists) records[reference.path] = { data: jsonData(snapshot.data()), updateTime: jsonData(snapshot.updateTime) };
+    for (const collection of await reference.listCollections()) for (const document of (await collection.get()).docs) await collect(document.ref);
+  }
+  for (const name of ["catalogSyncJobs", "catalogSyncOperations", "catalogSyncAudit", "catalogSkuConfiguration", "catalogSkuKeys", "catalogSkuLegacyIndex", "catalogSkuOperations", "catalogSkuAudit", "aiUsageMonths", "aiImportAdministration"]) {
+    for (const document of (await database.collection(`${root}/${name}`).get()).docs) await collect(document.ref);
+  }
+  for (const id of ["restore-sync-six", "restore-sync-three", "restore-sync-unknown"]) await collect(database.doc(`${root}/supplierproducts/${id}`));
+  for (const document of (await database.collection(`${root}/catalogproducts`).get()).docs) await collect(document.ref);
+  return records;
+}
+async function seedCatalogSync(fixture) {
+  const hotelUid = fixture.hotelUid, root = `hotels/${hotelUid}`, actor = catalogSyncActor(fixture);
+  const services = { ...procurementServices, provider: { countInput: async () => 500, respond: async (body) => {
+    const rows = JSON.parse(body.input[0].content[0].text).rows;
+    return { id: "fictional-catalog-restore-suggestions", model: "gpt-6-luna", status: "completed", usage: { input_tokens: 500, output_tokens: 100, total_tokens: 600 },
+      output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ suggestions: rows.map((row) => ({
+        rowId: row.rowId, catalogProductId: null, reason: "Review the same physical milk before linking it.", specificDifferences: [],
+      })) }) }] }] };
+  } } };
+  const settingsCommand = { hotelUid, requestId: "restore-catalog-numbering", expectedRevision: 0,
+    settings: { enabled: true, prefix: fixture.hotelUid.endsWith("-a") ? "R-A-" : "R-B-", padding: 6, nextNumber: 100 } };
+  const settingsResult = await saveHotelCatalogSkuSettingsHandler({ ...actor, data: settingsCommand }, services);
+  await database.doc(`${root}/suppliers/restore-sync-vendor`).set({ name: "Fictional catalog sync vendor", active: true });
+  for (const [id, quantity] of [["restore-sync-six", 6000], ["restore-sync-three", 3000]]) {
+    await database.doc(`${root}/supplierproducts/${id}`).set({ supplierId: "restore-sync-vendor", supplierSku: id,
+      supplierProductName: "Fictional milk", baseUnit: "ml", baseUnitsPerPurchaseUnit: quantity, purchaseUnit: "Case", purchaseOptions: [],
+      active: true, catalogProductId: null, productPolicyVersion: 1, revision: 1, pricePerPurchaseUnit: 12, pricePerBaseUnit: null,
+      currency: fixture.currency, priceBasis: "net", vatRate: null, pricingModel: "Per Purchase Unit", localCorrection: "Retained local package note",
+      priceConfirmedOn: revisionTime, priceUpdatedOn: revisionTime, imageRevision: 5 });
+  }
+  await database.doc(`${root}/catalogproducts/restore-blank-sku`).set({ name: "Locally corrected legacy article", baseUnit: "each", active: true,
+    internalSku: "", revision: 7, localCorrection: { description: "Keep local detail" }, productPolicyVersion: 0 });
+  const previewCommand = { hotelUid, requestId: "restore-catalog-preview", supplierId: "restore-sync-vendor", limit: 25 };
+  let workspace = await readHotelCatalogSyncWorkspaceHandler({ ...actor, data: previewCommand }, services);
+  assert.equal(workspace.rows.length, 2);
+  const aiCommand = { hotelUid, jobId: workspace.jobId, requestId: "restore-catalog-ai", expectedRevision: workspace.revision,
+    rowIds: [workspace.rows[0].rowId] };
+  const aiResult = await refineHotelCatalogSyncSuggestionsHandler({ ...actor, data: aiCommand }, services);
+  assert.equal(aiResult.status, "ready");
+  workspace = await readHotelCatalogSyncWorkspaceHandler({ ...actor, data: { hotelUid, jobId: workspace.jobId } }, services);
+  const applyCommand = { hotelUid, jobId: workspace.jobId, requestId: "restore-catalog-apply", choices: workspace.rows.map((row) => ({
+    rowId: row.rowId, reviewRevision: row.reviewRevision, expectedSupplierRevision: row.expectedSupplierRevision, acknowledged: true,
+    target: { kind: "new", createGroupId: "shared-milk", product: { name: "Fictional milk", baseUnit: "l", active: true, inventoryTracked: true, allergens: [], internalSku: "" } },
+  })) };
+  const applyResult = await applyHotelCatalogSyncHandler({ ...actor, data: applyCommand }, services);
+  const configuration = await getHotelCatalogSkuSettingsHandler({ ...actor, data: { hotelUid } }, services);
+  const assignCommand = { hotelUid, requestId: "restore-adopt-blank-sku", expectedSettingsRevision: configuration.revision,
+    products: [{ productId: "restore-blank-sku", expectedRevision: 7 }] };
+  const assignResult = await assignHotelCatalogSkusHandler({ ...actor, data: assignCommand }, services);
+  assert.equal(assignResult.assigned.length, 1);
+  const catalogIds = await Promise.all(["restore-sync-six", "restore-sync-three"].map(async (id) => (await database.doc(`${root}/supplierproducts/${id}`).get()).data().catalogProductId));
+  assert.ok(catalogIds[0]); assert.equal(catalogIds[0], catalogIds[1]);
+  assert.equal((await getHotelCatalogSkuSettingsHandler({ ...actor, data: { hotelUid } }, services)).nextNumber, 102);
+  const unknownPreviewCommand = { hotelUid, requestId: "restore-catalog-unknown-preview", supplierId: "restore-dairy", limit: 25 };
+  // A separate unlinked source gives recovery a real frozen row without altering
+  // the successfully applied group or its original immutable receipt.
+  await database.doc(`${root}/supplierproducts/restore-sync-unknown`).set({ supplierId: "restore-sync-vendor", supplierSku: "RESTORE-UNKNOWN",
+    supplierProductName: "Fictional milk", baseUnit: "ml", baseUnitsPerPurchaseUnit: 1000, purchaseUnit: "Bottle", purchaseOptions: [],
+    active: true, catalogProductId: null, productPolicyVersion: 1, revision: 1 });
+  unknownPreviewCommand.supplierId = "restore-sync-vendor";
+  const unknownWorkspace = await readHotelCatalogSyncWorkspaceHandler({ ...actor, data: unknownPreviewCommand }, services);
+  const unknownCommand = { hotelUid, jobId: unknownWorkspace.jobId, requestId: "restore-catalog-lost-response", expectedRevision: unknownWorkspace.revision,
+    rowIds: [unknownWorkspace.rows[0].rowId] };
+  const unknownResult = await refineHotelCatalogSyncSuggestionsHandler({ ...actor, data: unknownCommand }, { ...services,
+    provider: { countInput: async () => 500, respond: async () => { throw new Error("Fictional lost paid catalog response"); } } });
+  assert.equal(unknownResult.status, "response-unknown");
+  const records = await catalogSyncEvidence(fixture);
+  return { settingsCommand, settingsResult, previewCommand, aiCommand, aiResult, applyCommand, applyResult, assignCommand, assignResult,
+    unknownPreviewCommand, unknownCommand, unknownResult, records: Object.fromEntries(Object.entries(records).map(([path, value]) => [path, value.data])) };
+}
+async function verifyCatalogSync(fixture, proof) {
+  const before = await catalogSyncEvidence(fixture);
+  assert.deepEqual(Object.fromEntries(Object.entries(before).map(([path, value]) => [path, value.data])), proof.records,
+    "Restored catalog synchronization, numbering, reservations and pinned AI attempts must match exported evidence.");
+  const account = await auth.getUser(fixture.actorUid), freshAuthTime = Math.ceil(Math.max(Date.now(), Date.parse(account.tokensValidAfterTime) || 0) / 1000);
+  const actor = catalogSyncActor(fixture, freshAuthTime); let calls = 0;
+  const services = { ...procurementServices, provider: { countInput: async () => { calls++; throw new Error("Restore must not count another catalog request."); },
+    respond: async () => { calls++; throw new Error("Restore must not repeat paid catalog work."); } } };
+  assert.deepEqual(await saveHotelCatalogSkuSettingsHandler({ ...actor, data: proof.settingsCommand }, services), proof.settingsResult);
+  await readHotelCatalogSyncWorkspaceHandler({ ...actor, data: proof.previewCommand }, services);
+  assert.deepEqual(await refineHotelCatalogSyncSuggestionsHandler({ ...actor, data: proof.aiCommand }, services), proof.aiResult);
+  assert.deepEqual(await applyHotelCatalogSyncHandler({ ...actor, data: proof.applyCommand }, services), proof.applyResult);
+  assert.deepEqual(await assignHotelCatalogSkusHandler({ ...actor, data: proof.assignCommand }, services), proof.assignResult);
+  await readHotelCatalogSyncWorkspaceHandler({ ...actor, data: proof.unknownPreviewCommand }, services);
+  assert.deepEqual(await refineHotelCatalogSyncSuggestionsHandler({ ...actor, data: proof.unknownCommand }, services), proof.unknownResult);
+  assert.equal(calls, 0);
+  assert.deepEqual(await catalogSyncEvidence(fixture), before, "Exact restored catalog and SKU replay must preserve original update times and all private evidence.");
+  const other = inventoryFixtures.find((candidate) => candidate.hotelUid !== fixture.hotelUid);
+  await assert.rejects(readHotelCatalogSyncWorkspaceHandler({ ...catalogSyncActor(other), data: { hotelUid: fixture.hotelUid, jobId: proof.applyCommand.jobId } }, services), { code: "permission-denied" });
+  await assert.rejects(getHotelCatalogSkuSettingsHandler({ ...catalogSyncActor(other), data: { hotelUid: fixture.hotelUid } }, services), { code: "permission-denied" });
+}
 async function seedManagedImage(fixture) {
   const productRef = database.doc(`hotels/${fixture.hotelUid}/supplierproducts/restore-priced-milk`), before = (await productRef.get()).data();
   const bytes = await sharp({ create: { width: 640, height: 480, channels: 3,
@@ -577,7 +678,7 @@ try {
       assert.equal(snapshot.exists, true);
       assert.deepEqual(snapshot.data(), expectedStoredInventoryReport(fixture));
     }
-    const proof = { managedImages: {} };
+    const proof = { managedImages: {}, catalogSync: {} };
     for (const fixture of inventoryFixtures) {
       for (const action of ["create", "update"]) await mutateHotelSupplierProductHandler(procurementRequest(fixture, offerCommand(fixture, action)), procurementServices);
       const history = await database.collection(`hotels/${fixture.hotelUid}/supplierPriceHistory/restore-priced-milk/entries`).orderBy("revision").get();
@@ -596,6 +697,7 @@ try {
       await finishAdjustmentCheckpoints(fixture, "closing");
       for (const locationId of ["movements-store", "movements-bar"]) verifyV2(await getHotelInventoryPeriodHandler(periodV2Request(fixture, locationId), procurementServices), fixture, locationId);
       await seedSupplierConfirmation(fixture);
+      proof.catalogSync[fixture.hotelUid] = await seedCatalogSync(fixture);
     }
     proof.reviewedAiImport = await seedReviewedAiImport();
     proof.unknownAiImport = await seedUnknownAiImport();
@@ -604,12 +706,14 @@ try {
     // immutable restore proof includes those decisions and their timestamps.
     for (const fixture of inventoryFixtures) {
       proof[fixture.hotelUid] = Object.fromEntries(Object.entries(await procurementEvidence(fixture)).map(([path, row]) => [path, row.data]));
+      proof.catalogSync[fixture.hotelUid].records = Object.fromEntries(Object.entries(await catalogSyncEvidence(fixture)).map(([path, row]) => [path, row.data]));
     }
     assert.ok(Object.values(proof[aiUpload.hotelUid]).some((record) => record.action === "ai-import-review-decision"
       && record.jobId === proof.reviewedAiImport.jobId), "The final procurement evidence must include the original AI review audit.");
     await writeFile(procurementProofPath, JSON.stringify(proof), { mode: 0o600 });
     console.log("Seeded confirmed recurring file formats, an audited first-file interpretation, reviewed AI approval, original paid attempt/result bytes and pinned source/format generations.");
     console.log("Seeded fictional two-hotel data, supplier responses and approved-price receipts, protected supplier price changes, paired manual transfer/reversal/waste/return evidence, immutable v1/v2 reports, Auth users/claims, private Storage bytes and real managed product-image sources/derivatives with pinned generations.");
+    console.log("Seeded two-hotel automatic SKU settings, reserved sequences, selective legacy adoption, atomic catalog synchronization receipts and known/unknown pinned optional suggestion attempts.");
   } else if (process.argv[2] === "verify") {
     for (const [path, expected] of Object.entries(documents)) {
       const snapshot = await database.doc(path).get();
@@ -658,6 +762,8 @@ try {
     console.log("Verified confirmed recurring formats, audited format application, frozen upload snapshots, persisted approvals and original AI source/format/result hashes after restore; exact format/mapping/decision/upload/worker replay made zero provider calls and preserved all review receipts.");
     for (const fixture of inventoryFixtures) await verifyManagedImage(fixture, proof.managedImages[fixture.hotelUid]);
     for (const fixture of inventoryFixtures) await verifyProcurementReplay(fixture, proof[fixture.hotelUid]);
+    for (const fixture of inventoryFixtures) await verifyCatalogSync(fixture, proof.catalogSync[fixture.hotelUid]);
+    console.log("Verified two-hotel catalog/SKU restore, exact allocation/adoption/synchronization replay, immutable private attempt accounting and reservations, current authorization and zero optional suggestion calls.");
     await assert.rejects(recordHotelInventoryAdjustmentHandler({ auth: { uid: "restore-a", token: { email_verified: true } },
       data: { hotelUid: "restore-hotel-b", ...adjustmentCommand(inventoryFixtures[0], "transfer") } }, procurementServices),
     (error) => error.code === "permission-denied");
