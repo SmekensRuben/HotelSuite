@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({ packages: vi.fn(), save: vi.fn(), finish: vi.f
 vi.mock("../../firebaseConfig", () => ({ auth: { currentUser: { uid: "counter" } } }));
 vi.mock("../../hooks/usePermission", () => ({ usePermission: (feature, action) => feature === "stockcounts" && ["read", "update"].includes(action) }));
 vi.mock("../../services/firebaseProducts", () => ({ getCatalogProducts: mocks.catalog }));
-vi.mock("../../services/firebaseStockCounts", () => ({ getStockCountPackageOptions: mocks.packages, updateStockCountLocationCounts: mocks.save, finishStockCountLocation: mocks.finish }));
+vi.mock("../../services/firebaseStockCounts", () => ({ getStockCountPackageOptions: mocks.packages, updateStockCountLocationCounts: mocks.save, finishStockCountLocation: mocks.finish, getStockCountProductChoices: vi.fn() }));
 import CatalogStockCountLocationPanel from "./CatalogStockCountLocationPanel";
 const location = { locationId: "store", locationName: "Main store", status: "In Progress", stockTemplate: { items: [{ catalogProductId: "juice", catalogProductName: "Orange juice", baseUnit: "l" }] },
   countedItems: [{ catalogProductId: "juice", catalogProductName: "Orange juice", baseUnit: "l", quantity: 1, unitCost: 2, isCounted: true }] };

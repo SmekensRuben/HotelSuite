@@ -3,234 +3,174 @@ import { useNavigate } from "react-router-dom";
 import PendingStockCommand from "../inventory/PendingStockCommand";
 import HeaderBar from "../layout/HeaderBar";
 import ProcurementPage from "../layout/ProcurementPage";
-import { Combobox } from "../ui/combobox";
 import { Card } from "../layout/Card";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { createStockCount, getStockCountSources, STOCK_COUNT_TYPES } from "../../services/firebaseStockCounts";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { usePermission } from "../../hooks/usePermission";
+import { procurementReadScope } from "../../services/procurementReadPool";
 
-const initialValues = {
-  name: "",
-  type: "Ad Hoc",
+const fieldClass = "mt-1 block min-h-[44px] w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-base";
+const lastCompletedMonth = () => {
+  const now = new Date();
+  return { month: now.getMonth() === 0 ? 12 : now.getMonth(), year: now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear() };
 };
+const months = Array.from({ length: 12 }, (_, index) => ({ value: index + 1,
+  label: new Intl.DateTimeFormat("en", { month: "long" }).format(new Date(2000, index, 1)) }));
+
+function groupSources(sources) {
+  const groups = new Map();
+  for (const source of sources || []) {
+    const key = source.outletId ? `outlet:${source.outletId}` : `location:${source.locationId}`;
+    if (!groups.has(key)) groups.set(key, { id: key, outletId: source.outletId || null, name: source.outletName || source.locationName,
+      central: source.inventoryRole === "central_storage", selected: true, detail: false, sources: [] });
+    groups.get(key).sources.push({ ...source, selected: true, stockTemplateId: "" });
+  }
+  return [...groups.values()];
+}
 
 export default function StockCountCreatePage() {
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
-  const activeScope = useRef({ key: hotelUid });
-  if (activeScope.current.key !== hotelUid) activeScope.current = { key: hotelUid };
+  const canCreate = usePermission("stockcounts", "create");
+  const scopeKey = `${hotelUid}:${auth.currentUser?.uid}:${canCreate}`;
+  const sourcesScope = useRef(null);
+  const activeScope = useRef({ key: scopeKey });
+  if (activeScope.current.key !== scopeKey) activeScope.current = { key: scopeKey };
+  const [type, setType] = useState("Ad Hoc"), [reason, setReason] = useState("");
   const [businessDate, setBusinessDate] = useState("");
-  const [formValues, setFormValues] = useState(initialValues);
-  const [locationRows, setLocationRows] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  const today = useMemo(
-    () =>
-      new Date().toLocaleDateString(undefined, {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }),
-    []
-  );
-
-  const selectedRows = useMemo(
-    () => locationRows.filter((row) => row.selected),
-    [locationRows]
-  );
-
-  const hasSelectedLocationWithoutTemplate = selectedRows.some(
-    (row) => row.templates.length === 0 || !row.stockTemplateId
-  );
-
-  const handleLogout = async () => {
-    await signOut(auth);
-    sessionStorage.clear();
-    window.location.href = "/login";
-  };
-
-  const loadSources = useCallback(() => getStockCountSources(hotelUid), [hotelUid]);
+  const [periodMonth, setPeriodMonth] = useState(() => lastCompletedMonth().month);
+  const [periodYear, setPeriodYear] = useState(() => lastCompletedMonth().year);
+  const [groupState, setGroupState] = useState({ scopeKey: null, values: [] });
+  const groups = groupState.scopeKey === scopeKey ? groupState.values : [];
+  const setGroups = (update) => setGroupState((previous) => ({ scopeKey,
+    values: typeof update === "function" ? update(previous.scopeKey === scopeKey ? previous.values : []) : update }));
+  const [saving, setSaving] = useState(false), [error, setError] = useState("");
+  const today = useMemo(() => new Date().toLocaleDateString(undefined,
+    { weekday: "long", month: "long", day: "numeric" }), []);
+  const loadSources = useCallback(async () => {
+    const scope = procurementReadScope(hotelUid);
+    const result = await getStockCountSources(hotelUid);
+    if (!scope?.current() || activeScope.current.key !== scopeKey) throw new Error("Your hotel access changed. Reload before starting a count.");
+    sourcesScope.current = { key: scopeKey, actor: auth.currentUser, scope };
+    return result;
+  }, [hotelUid, scopeKey]);
   const { data: sources, loading, error: sourceError, retry } = useScopedAsync({
-    scopeKey: hotelUid, enabled: Boolean(hotelUid), load: loadSources,
+    scopeKey, enabled: Boolean(hotelUid && canCreate), load: loadSources,
   });
   useEffect(() => {
-    setLocationRows((sources || []).map((location) => ({ ...location, selected: true,
-      stockTemplateId: location.templates[0]?.id || "" })));
-  }, [sources]);
-
+    const requestedOutlet = new URLSearchParams(window.location.search).get("outletId");
+    const next = groupSources(sources);
+    if (requestedOutlet && next.some((group) => group.outletId === requestedOutlet)) {
+      next.forEach((group) => { group.selected = group.outletId === requestedOutlet; });
+    }
+    setGroups(next);
+  }, [sources, scopeKey]);
   useEffect(() => {
-    activeScope.current = { key: hotelUid };
-    setSaving(false); setError(""); setBusinessDate("");
+    activeScope.current = { key: scopeKey };
+    setSaving(false); setError(""); setBusinessDate(""); setReason(""); setType("Ad Hoc");
+    setPeriodMonth(lastCompletedMonth().month); setPeriodYear(lastCompletedMonth().year);
     return () => { activeScope.current = { key: null }; };
-  }, [hotelUid]);
+  }, [scopeKey]);
 
-  const handleFieldChange = (field) => (event) => {
-    setFormValues((prev) => ({ ...prev, [field]: event.target.value }));
-  };
-
-  const toggleLocation = (locationId) => {
-    setLocationRows((prev) =>
-      prev.map((row) =>
-        row.locationId === locationId ? { ...row, selected: !row.selected } : row
-      )
-    );
-  };
-
-  const handleTemplateChange = (locationId, stockTemplateId) => {
-    setLocationRows((prev) =>
-      prev.map((row) =>
-        row.locationId === locationId ? { ...row, stockTemplateId } : row
-      )
-    );
-  };
+  const selectedRows = groups.filter((group) => group.selected).flatMap((group) => {
+    const defaultPoint = group.sources.find((source) => source.isOutletDefault || source.locationId === `outlet:${source.outletId}`);
+    return defaultPoint && !group.detail ? [defaultPoint] : group.sources.filter((source) => source.selected && source !== defaultPoint);
+  });
+  const changeGroup = (groupId, update) => setGroups((previous) => previous.map((group) =>
+    group.id === groupId ? { ...group, ...update } : group));
+  const changeSource = (groupId, locationId, update) => setGroups((previous) => previous.map((group) => group.id === groupId
+    ? { ...group, sources: group.sources.map((source) => source.locationId === locationId ? { ...source, ...update } : source) } : group));
+  const validPeriod = Number.isInteger(periodYear) && periodYear >= 2000 && periodYear <= 9999;
 
   const handleSubmit = async (event) => {
-    event.preventDefault();
-    setError("");
-
-    if (!hotelUid || !formValues.name.trim()) return;
-    if (!selectedRows.length) {
-      setError("Select at least one location.");
-      return;
+    event.preventDefault(); setError("");
+    if (!hotelUid || !canCreate || saving) return;
+    if (sourcesScope.current?.key !== scopeKey || sourcesScope.current.actor !== auth.currentUser || !sourcesScope.current.scope.current()) {
+      setError("Your hotel access changed. Reload stock points before starting a count."); return;
     }
-    if (selectedRows.length > 50) {
-      setError("Select at most 50 locations per stock count.");
-      return;
-    }
-    if (hasSelectedLocationWithoutTemplate) {
-      setError("Every selected location needs a stock count template.");
-      return;
-    }
-
-    const requestedScope = activeScope.current;
-    setSaving(true);
+    if (!selectedRows.length || selectedRows.length > 50) { setError("Select between 1 and 50 stock points."); return; }
+    if (type === "Month-End" && !validPeriod) { setError("Enter a valid year."); return; }
+    const requested = activeScope.current, actor = auth.currentUser; setSaving(true);
     try {
-      const locations = selectedRows.map((row) => ({ locationId: row.locationId, stockTemplateId: row.stockTemplateId }));
-
-      await createStockCount(hotelUid, {
-        ...formValues,
-        ...(businessDate ? { businessDate } : {}),
-        locations,
-      });
-      if (activeScope.current === requestedScope) navigate("/catalog/stock-counts");
-    } catch (submitError) {
-      if (activeScope.current === requestedScope) setError(submitError?.message || "Unable to create stock count.");
-    } finally {
-      if (activeScope.current === requestedScope) setSaving(false);
-    }
+      const input = { type,
+        ...(type === "Month-End" ? { periodMonth, periodYear } : businessDate ? { businessDate } : {}),
+        ...(type === "Ad Hoc" && reason.trim() ? { reason: reason.trim() } : {}),
+        locations: selectedRows.map((row) => ({
+          ...(!row.isOutletDefault && row.locationId !== `outlet:${row.outletId}` ? { locationId: row.locationId } : {}),
+          ...(row.outletId ? { outletId: row.outletId } : {}),
+          ...(row.stockTemplateId ? { stockTemplateId: row.stockTemplateId } : {}) })) };
+      const result = await createStockCount(hotelUid, input);
+      if (activeScope.current === requested && auth.currentUser === actor) navigate(`/catalog/stock-counts/${result.id}`);
+    } catch (failure) { if (activeScope.current === requested) setError(failure.message || "Unable to start stock count."); }
+    finally { if (activeScope.current === requested) setSaving(false); }
   };
 
-  return (
-    <div className="min-h-screen bg-canvas text-gray-900">
-      <HeaderBar today={today} onLogout={handleLogout} />
-      <ProcurementPage width="form" className="space-y-6">
-        <div>
-          <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
-          <h1 className="text-3xl font-semibold">Create Stock Count</h1>
-          <p className="text-gray-600 mt-1">
-            Select physical locations and templates. New counts use catalog base units; legacy supplier template links are validated and deduplicated.
-          </p>
+  return <div className="min-h-screen bg-canvas text-gray-900">
+    <HeaderBar today={today} onLogout={async () => { await signOut(auth); sessionStorage.clear(); window.location.href = "/login"; }} />
+    <ProcurementPage width="form" className="space-y-6">
+      <div><p className="text-sm uppercase tracking-wide text-gray-500">Purchasing & inventory</p>
+        <h1 className="text-3xl font-semibold">Start a stock count</h1>
+        <p className="mt-1 text-gray-600">Choose where to count, then search or scan products and enter quantities.</p></div>
+      <PendingStockCommand kind="count" hotelUid={hotelUid} disabled={saving}
+        onComplete={(result) => navigate(`/catalog/stock-counts/${result.id || result.stockCountId}`)} />
+      {sourceError && <div role="alert"><p>{sourceError.message || "Unable to load stock points."}</p><button type="button" onClick={retry}>Retry</button></div>}
+      <Card><form onSubmit={handleSubmit} className="space-y-6">
+        <fieldset disabled={saving} className="space-y-5">
+          <legend className="mb-3 text-lg font-semibold">1. When are you counting?</legend>
+          <label className="block text-sm font-medium">Count type<select aria-label="Count type" className={fieldClass} value={type}
+            onChange={(event) => setType(event.target.value)}>{STOCK_COUNT_TYPES.map((value) => <option key={value}>{value}</option>)}</select></label>
+          {type === "Month-End" ? <div className="grid grid-cols-2 gap-3">
+            <label className="text-sm font-medium">Month<select aria-label="Month" className={fieldClass} value={periodMonth}
+              onChange={(event) => setPeriodMonth(Number(event.target.value))}>{months.map((month) => <option value={month.value} key={month.value}>{month.label}</option>)}</select></label>
+            <label className="text-sm font-medium">Year<input aria-label="Year" type="number" inputMode="numeric" min="2000" max="9999" required
+              className={fieldClass} value={periodYear} onChange={(event) => setPeriodYear(Number(event.target.value))} /></label>
+            <p className="col-span-2 text-xs text-gray-500">The business date is the last day of the selected month.</p>
+          </div> : <label className="block text-sm font-medium">Business date (optional)<input aria-label="Business date" type="date"
+            className={fieldClass} value={businessDate} onChange={(event) => setBusinessDate(event.target.value)} />
+            <span className="mt-1 block text-xs text-gray-500">Leave blank for today in the hotel's time zone.</span></label>}
+          {type === "Ad Hoc" && <label className="block text-sm font-medium">Reason (optional)<input aria-label="Reason (optional)" maxLength={500}
+            className={fieldClass} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="For example: handover or spot check" /></label>}
+        </fieldset>
+        <fieldset disabled={!canCreate || saving || loading || Boolean(sourceError)} className="space-y-3">
+          <legend className="mb-3 text-lg font-semibold">2. Where are you counting?</legend>
+          <p className="text-sm text-gray-600">Count an outlet as a whole, or split it into locations. Central stores can be counted in the same way.</p>
+          {loading ? <p>Loading stock points...</p> : !groups.length ? <p className="rounded-lg border border-dashed p-4 text-sm text-gray-500">No stock points available. Configure an outlet or central store in Settings.</p>
+            : groups.map((group) => {
+              const defaultPoint = group.sources.find((source) => source.isOutletDefault || source.locationId === `outlet:${source.outletId}`);
+              const detailPoints = group.sources.filter((source) => source !== defaultPoint);
+              const visible = defaultPoint && !group.detail ? [defaultPoint] : detailPoints;
+              return <div key={group.id} className="space-y-3 rounded-xl border border-gray-200 p-4">
+                <label className="flex min-h-[44px] items-center gap-3 font-semibold"><input type="checkbox" checked={group.selected}
+                  onChange={(event) => changeGroup(group.id, { selected: event.target.checked })} className="h-5 w-5" />
+                  {group.name}{group.central && <span className="rounded bg-indigo-50 px-2 py-1 text-xs text-indigo-700">Central store</span>}</label>
+                {group.selected && <>
+                  {defaultPoint && detailPoints.length > 0 && <label className="flex min-h-[44px] items-center gap-3 text-sm"><input type="checkbox" checked={group.detail}
+                    onChange={(event) => changeGroup(group.id, { detail: event.target.checked })} className="h-5 w-5" />Count separate locations</label>}
+                  {visible.map((source) => <div key={source.locationId} className="space-y-2 border-t border-gray-100 pt-3">
+                    {group.detail && <label className="flex min-h-[44px] items-center gap-3 text-sm font-medium"><input type="checkbox" checked={source.selected}
+                      onChange={(event) => changeSource(group.id, source.locationId, { selected: event.target.checked })} className="h-5 w-5" />{source.locationName}</label>}
+                    <label className="block text-sm text-gray-600">Template (optional)<select aria-label={`Template for ${source.locationName}`}
+                      value={source.stockTemplateId} disabled={group.detail && !source.selected} className={fieldClass}
+                      onChange={(event) => changeSource(group.id, source.locationId, { stockTemplateId: event.target.value })}>
+                      <option value="">Start with an empty list</option>{(source.templates || []).map((template) => <option value={template.id} key={template.id}>{template.name}</option>)}
+                    </select></label>
+                  </div>)}
+                </>}
+              </div>;
+            })}
+          <p className="text-sm text-gray-500">Templates are a starting checklist. You can add products while counting. Blank quantities remain uncounted; enter 0 when no stock is present.</p>
+        </fieldset>
+        {error && <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700"><p>{error}</p>
+          <button type="button" disabled={saving} onClick={retry} className="mt-2 min-h-[44px] underline">Reload stock points</button></div>}
+        <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t bg-white py-3">
+          <span className="text-sm text-gray-600">{selectedRows.length} stock {selectedRows.length === 1 ? "point" : "points"} selected</span>
+          <div className="flex gap-2"><button type="button" disabled={saving} onClick={() => navigate("/catalog/stock-counts")} className="min-h-[44px] rounded-lg border px-4">Cancel</button>
+            <button type="submit" disabled={!canCreate || saving || loading || Boolean(sourceError) || !selectedRows.length || selectedRows.length > 50 || (type === "Month-End" && !validPeriod)}
+              className="min-h-[44px] rounded-lg bg-brand-800 px-4 font-semibold text-white disabled:opacity-50">{saving ? "Starting..." : "Start counting"}</button></div>
         </div>
-
-        <PendingStockCommand kind="count" hotelUid={hotelUid} disabled={saving} onComplete={() => navigate("/catalog/stock-counts")} />
-        {sourceError && <div role="alert"><p>{sourceError.message || "Unable to load stock sources."}</p><button type="button" onClick={retry}>Retry</button></div>}
-        <Card>
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="text-sm font-medium">Business date (optional)<input aria-label="Business date" type="date" value={businessDate} onChange={(event) => setBusinessDate(event.target.value)} className="mt-1 block w-full rounded border px-3 py-2" /><span className="block text-xs text-gray-500">Blank uses today in the hotel time zone. Posting checkpoints determine receipt comparisons.</span></label>
-              <div>
-                <label htmlFor="stock-count-name" className="block text-sm font-medium text-gray-700 mb-1">
-                  Name
-                </label>
-                <input
-                  id="stock-count-name"
-                  type="text"
-                  value={formValues.name}
-                  onChange={handleFieldChange("name")}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                  required
-                />
-              </div>
-
-              <div>
-                <label htmlFor="stock-count-type" className="block text-sm font-medium text-gray-700 mb-1">
-                  Type
-                </label>
-                <select
-                  id="stock-count-type"
-                  value={formValues.type}
-                  onChange={handleFieldChange("type")}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-                >
-                  {STOCK_COUNT_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-3 rounded-xl bg-slate-50 p-4 sm:p-5">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Locations</h2>
-                <p className="text-sm text-gray-600">
-                  All locations are selected by default. Change the template where needed.
-                </p>
-              </div>
-
-              {loading ? (
-                <p className="text-gray-600">Loading locations...</p>
-              ) : locationRows.length === 0 ? (
-                <p className="rounded-lg border border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500">
-                  No locations found.
-                </p>
-              ) : (
-                <div className="rounded-xl border border-gray-200">
-                  <div className="divide-y divide-gray-100 bg-white">
-                    {locationRows.map((row) => (
-                      <div key={row.locationId} className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_minmax(220px,320px)] md:items-center">
-                        <label className="inline-flex items-center gap-3 text-sm font-medium text-gray-800">
-                          <input
-                            type="checkbox"
-                            checked={row.selected}
-                            onChange={() => toggleLocation(row.locationId)}
-                            className="h-4 w-4 rounded border-gray-300 text-brand-800 focus:ring-brand-800"
-                          />
-                          <span>{row.locationName}</span>
-                        </label>
-
-                        <Combobox aria-label={`Template for ${row.locationName}`} options={row.templates} value={row.templates.find((template) => template.id === row.stockTemplateId) || null} onChange={(template) => handleTemplateChange(row.locationId, template?.id || "")} displayValue={(template) => template.name} getOptionValue={(template) => template.id} disabled={!row.selected || row.templates.length === 0 || saving} placeholder={row.templates.length ? "Select a template" : "No templates available"} className="ht-field" />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
-
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => navigate("/catalog/stock-counts")}
-                className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium hover:bg-gray-100"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={saving || loading || Boolean(sourceError) || selectedRows.length === 0 || selectedRows.length > 50 || hasSelectedLocationWithoutTemplate}
-                className="px-4 py-2 rounded-lg bg-brand-800 text-white text-sm font-semibold hover:bg-brand-950 disabled:opacity-60"
-              >
-                {saving ? "Saving..." : "Save Stock Count"}
-              </button>
-            </div>
-          </form>
-        </Card>
-      </ProcurementPage>
-    </div>
-  );
+      </form></Card>
+    </ProcurementPage>
+  </div>;
 }

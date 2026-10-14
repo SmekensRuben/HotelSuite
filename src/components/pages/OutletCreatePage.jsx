@@ -4,9 +4,11 @@ import HeaderBar from "../layout/HeaderBar";
 import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import OutletApproverPicker from "./OutletApproverPicker";
+import OutletInventoryRoleField from "../inventory/OutletInventoryRoleField";
+import PendingProcurementResourceMutation, { usePendingProcurementResourceMutation } from "../inventory/PendingProcurementResourceMutation";
 import { auth, signOut } from "../../firebaseConfig";
 import { usePermission } from "../../hooks/usePermission";
-import { useHotelContext } from "../../contexts/HotelContext";
+import { useProcurementSettingsScope } from "../../hooks/useProcurementSettingsScope";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { listHotelUsers } from "../../services/firebaseOnboarding";
 import {
@@ -16,17 +18,18 @@ import {
 
 export default function OutletCreatePage() {
   const navigate = useNavigate(),
-    { hotelUid } = useHotelContext();
+    { hotelUid, scopeKey: settingsScopeKey } = useProcurementSettingsScope();
   const canCreate = usePermission("outlets", "create"),
     canManageApprovers = usePermission("outlets", "approvers");
   const [name, setName] = useState(""),
+    [inventoryRole, setInventoryRole] = useState("outlet"),
     [selectedIds, setSelectedIds] = useState([]),
     [saving, setSaving] = useState(false),
     [error, setError] = useState(""),
     [createdOutlet, setCreatedOutlet] = useState(null);
-  const scopeKey = `${hotelUid}:${canManageApprovers}`;
-  const active = useRef({ key: scopeKey });
-  if (active.current.key !== scopeKey) active.current = { key: scopeKey };
+  const scopeKey = `${settingsScopeKey}:${canCreate}:${canManageApprovers}`;
+  const active = useRef({ key: scopeKey, actor: auth.currentUser });
+  if (active.current.key !== scopeKey || active.current.actor !== auth.currentUser) active.current = { key: scopeKey, actor: auth.currentUser };
   const loadUsers = useCallback(
     async () =>
       (await listHotelUsers(hotelUid)).filter((user) => user.canApprove),
@@ -37,9 +40,11 @@ export default function OutletCreatePage() {
     enabled: Boolean(hotelUid && canManageApprovers),
     load: loadUsers,
   });
+  const recovery = usePendingProcurementResourceMutation({ hotelUid, collection: "outlets", onComplete: (result) => navigate(`/settings/outlets/${result.resourceId}`) });
   useEffect(() => {
-    active.current = { key: scopeKey };
+    active.current = { key: scopeKey, actor: auth.currentUser };
     setName("");
+    setInventoryRole("outlet");
     setSelectedIds([]);
     setSaving(false);
     setError("");
@@ -53,8 +58,10 @@ export default function OutletCreatePage() {
     if (
       !canCreate ||
       !hotelUid ||
+      auth.currentUser !== active.current.actor ||
       !name.trim() ||
       saving ||
+      recovery.blocked ||
       (canManageApprovers && (users.loading || users.error))
     )
       return;
@@ -66,9 +73,10 @@ export default function OutletCreatePage() {
         createdOutlet ||
         (await createOutlet(hotelUid, {
           name: name.trim(),
+          inventoryRole,
           createdBy: auth.currentUser?.uid || null,
         }));
-      if (active.current !== requested) return;
+      if (active.current !== requested || auth.currentUser !== requested.actor) return;
       setCreatedOutlet(outlet);
       if (canManageApprovers)
         await setOutletApprovers(
@@ -76,12 +84,14 @@ export default function OutletCreatePage() {
           outlet.id,
           (users.data || []).filter((user) => selectedIds.includes(user.id)),
         );
-      if (active.current === requested) navigate("/settings/outlets");
+      if (active.current === requested && auth.currentUser === requested.actor) navigate("/settings/outlets");
     } catch (failure) {
-      if (active.current === requested)
+      if (active.current === requested && auth.currentUser === requested.actor) {
         setError(failure.message || "Unable to save the outlet.");
+        recovery.refresh();
+      }
     } finally {
-      if (active.current === requested) setSaving(false);
+      if (active.current === requested && auth.currentUser === requested.actor) setSaving(false);
     }
   };
   return (
@@ -101,10 +111,11 @@ export default function OutletCreatePage() {
           </p>
           <h1 className="mt-1 text-3xl font-semibold">Add Outlet</h1>
           <p className="mt-2 text-sm text-gray-600">
-            Create an operational purchasing outlet, then assign eligible order
-            approvers.
+            Create an outlet or central stock point for purchasing and counting.
+            Locations and order approvers can be added when needed.
           </p>
         </div>
+        <PendingProcurementResourceMutation recovery={recovery} noun="outlet" disabled={saving} />
         <Card>
           <form onSubmit={submit} className="space-y-5">
             <div>
@@ -118,20 +129,21 @@ export default function OutletCreatePage() {
                 id="outlet-name"
                 maxLength={200}
                 value={name}
-                disabled={Boolean(createdOutlet) || saving || !canCreate}
+                disabled={Boolean(createdOutlet) || saving || !canCreate || recovery.blocked}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="Outlet name"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 required
               />
             </div>
+            <OutletInventoryRoleField value={inventoryRole} onChange={setInventoryRole} disabled={Boolean(createdOutlet) || saving || !canCreate || recovery.blocked} />
             {canManageApprovers && (
               <>
                 <OutletApproverPicker
                   users={users.data || []}
                   selectedIds={selectedIds}
                   onChange={setSelectedIds}
-                  disabled={saving || users.loading || Boolean(users.error)}
+                  disabled={saving || recovery.blocked || users.loading || Boolean(users.error)}
                   loading={users.loading}
                 />
                 {users.error && (
@@ -175,7 +187,9 @@ export default function OutletCreatePage() {
                 disabled={
                   !canCreate ||
                   !hotelUid ||
+                  auth.currentUser !== active.current.actor ||
                   saving ||
+                  recovery.blocked ||
                   !name.trim() ||
                   (canManageApprovers &&
                     (users.loading || Boolean(users.error)))

@@ -106,7 +106,7 @@ function normalizeStockCount(data = {}, fallbackId = "") {
     businessDate: data.businessDate || null,
     inventoryPolicyVersion: data.inventoryPolicyVersion || null,
     id: String(data.id || fallbackId || "").trim() || fallbackId,
-    name: String(data.name || "").trim(),
+    name: String(data.name || `${data.type || "Ad Hoc"} · ${data.businessDate || "Stock count"}`).trim(),
     type: STOCK_COUNT_TYPES.includes(data.type) ? data.type : "Ad Hoc",
     status: deriveStockCountStatus(data, normalizedLocations),
     revision: Number.isSafeInteger(data.revision) ? data.revision : 0,
@@ -264,10 +264,15 @@ export async function retryPendingCountCreation(hotelUid) {
 }
 export async function createStockCount(hotelUid, input) {
   if (!hotelUid) throw new Error("hotelUid is required");
-  const payload = { hotelUid, name: input?.name, type: input?.type,
+  const payload = { hotelUid, ...(input?.name ? { name: input.name } : {}), type: input?.type,
     ...(input?.businessDate ? { businessDate: input.businessDate } : {}),
-    locations: (input?.locations || []).map((location) => ({ locationId: location.locationId,
-      stockTemplateId: location.stockTemplateId || location.stockTemplate?.id })) };
+    ...(input?.reason ? { reason: input.reason } : {}),
+    ...(input?.periodMonth != null ? { periodMonth: input.periodMonth } : {}),
+    ...(input?.periodYear != null ? { periodYear: input.periodYear } : {}),
+    locations: (input?.locations || []).map((location) => ({
+      ...(location.outletId ? { outletId: location.outletId } : {}),
+      ...(location.locationId ? { locationId: location.locationId } : {}),
+      ...(location.stockTemplateId || location.stockTemplate?.id ? { stockTemplateId: location.stockTemplateId || location.stockTemplate.id } : {}) })) };
   if (!auth.currentUser?.uid) throw new Error("Sign in before creating a stock count.");
   const storageKey = countCreationStorageKey(hotelUid);
   const fingerprint = JSON.stringify(payload);
@@ -303,6 +308,28 @@ export async function finishStockCount(hotelUid, stockCountId, _updatedBy, expec
 }
 export async function updateStockCountLocationStatus(hotelUid, stockCountId, locationId, status, _updatedBy, expectedRevision) {
   return mutateStockCount(hotelUid, stockCountId, { action: "set-location-status", locationId, status }, expectedRevision);
+}
+
+export async function getStockCountProductChoices(hotelUid, stockCountId, locationId,
+  { afterProductId = null, search = "", barcode = "" } = {}) {
+  const identifier = (value) => typeof value === "string" && value.length > 0 && value.length <= 128 && !value.includes("/");
+  const cursor = (value) => identifier(value) || typeof value === "string" && /^barcode:[A-Za-z0-9_-]+$/.test(value) && value.length <= 512;
+  if (![hotelUid, stockCountId, locationId].every(identifier) || afterProductId !== null && !cursor(afterProductId)) throw new Error("Stock count product scope or pagination is invalid.");
+  if (typeof search !== "string" || search.length > 200 || typeof barcode !== "string" || barcode.length > 100) throw new Error("Stock count product search is invalid.");
+  const input = { hotelUid, stockCountId, locationId, afterProductId, search, barcode };
+  return poolProcurementRead(hotelUid, "stock-count-products", async () => {
+    const result = await httpsCallable(functions, "listHotelStockCountProducts")(input), data = result.data;
+    const units = new Set(["g", "kg", "ml", "l", "each"]);
+    if (!data || data.hotelUid !== hotelUid || data.stockCountId !== stockCountId || data.locationId !== locationId || data.inventoryPolicyVersion !== 1
+      || !Array.isArray(data.products) || data.products.length > 25 || new Set(data.products.map((product) => product?.id)).size !== data.products.length
+      || data.nextCursor !== null && (!cursor(data.nextCursor) || data.nextCursor === afterProductId)
+      || data.products.some((product) => !product || !identifier(product.id) || typeof product.name !== "string" || !product.name || product.name.length > 200
+        || !units.has(product.baseUnit) || !Array.isArray(product.barcodes) || product.barcodes.length > 100
+        || product.barcodes.some((value) => typeof value !== "string" || !value || value.length > 100))) {
+      throw new Error("Stock count product response has invalid scope, products or pagination. Reload before adding products.");
+    }
+    return data;
+  }, JSON.stringify(input));
 }
 
 

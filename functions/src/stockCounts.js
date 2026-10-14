@@ -9,7 +9,7 @@ const movements = require("./inventoryMovements");
 const { compatibleUnits } = require("./productPolicy");
 const { validTimeZone } = require("./hotelSetupPolicy");
 const { localDate } = require("./importMonitoringPolicy");
-const { isArchived } = require("./procurementResources");
+const { isArchived, inventoryRole, assertOutletStockPoint, prepareInventoryStockPoint } = require("./procurementResources");
 
 const TYPES = ["Ad Hoc", "Daily", "Weekly", "Month-End"];
 const MAX_LOCATIONS = 50;
@@ -52,6 +52,9 @@ function countsInput(value) {
 }
 function summary(location) {
   return { locationId: location.locationId, locationName: location.locationName,
+    ...(location.outletId ? { outletId: location.outletId, outletName: location.outletName,
+      isOutletDefault: location.isOutletDefault === true, stockPointType: location.stockPointType,
+      inventoryRole: location.inventoryRole } : {}),
     stockTemplateId: location.stockTemplateId, stockTemplateName: location.stockTemplateName,
     status: location.status, ...(location.inventoryPolicyVersion === 1 ? { inventoryPolicyVersion: 1,
       currency: location.currency, ...inventory.valuation(location.countedItems || []),
@@ -122,39 +125,70 @@ async function listHotelStockCountSourcesHandler(request, services = {}) {
   const afterLocationId = input.afterLocationId == null ? null : requireDocumentId(input.afterLocationId, "afterLocationId");
   const db = services.firestore || admin.firestore();
   await authorize(db, undefined, request, hotelUid, "create", services);
+  const outletsSnapshot = await db.collection(`hotels/${hotelUid}/outlets`).orderBy(admin.firestore.FieldPath.documentId()).limit(MAX_ITEMS + 1).get();
+  if (outletsSnapshot.docs.length > MAX_ITEMS) throw new HttpsError("resource-exhausted", "More than 250 outlets require a paged stock-point configuration.");
+  const outlets = new Map(outletsSnapshot.docs.filter((outlet) => !isArchived(outlet.data())).map((outlet) => [outlet.id, outlet.data()]));
+  const loadTemplates = async (locationId) => {
+    const templates = await db.collection(`hotels/${hotelUid}/locations/${locationId}/stockTemplates`).orderBy(admin.firestore.FieldPath.documentId()).limit(MAX_ITEMS + 1).get();
+    if (templates.docs.length > MAX_ITEMS) throw new HttpsError("resource-exhausted", "A stock point has more than 250 templates; operator review is required.");
+    return templates.docs.filter((template) => template.data().archived !== true).map((template) => ({ id: template.id, name: text(template.data().name, "Template name", 200, true) }));
+  };
   let query = db.collection(`hotels/${hotelUid}/locations`).orderBy(admin.firestore.FieldPath.documentId());
   if (afterLocationId) query = query.startAfter(afterLocationId);
   const snapshot = await query.limit(MAX_LOCATIONS + 1).get();
   const page = snapshot.docs.slice(0, MAX_LOCATIONS);
-  const locations = await Promise.all(page.filter((location) => !isArchived(location.data())).map(async (location) => {
-    const templates = await db.collection(`${location.ref.path}/stockTemplates`).orderBy(admin.firestore.FieldPath.documentId()).limit(MAX_ITEMS + 1).get();
-    if (templates.docs.length > MAX_ITEMS) throw new HttpsError("resource-exhausted", "A location has more than 250 templates; operator review is required.");
-    return { locationId: location.id, locationName: text(location.data().name, "Location name", 200, true),
-      templates: templates.docs.filter((template) => template.data().archived !== true).map((template) => ({ id: template.id, name: text(template.data().name, "Template name", 200, true) })) };
+  const locations = await Promise.all(page.filter((location) => !isArchived(location.data()) && !location.id.startsWith("outlet:")
+    && (!location.data().outletId || outlets.has(location.data().outletId))).map(async (location) => {
+    const outletId = location.data().outletId || null, outlet = outlets.get(outletId);
+    return { locationId: location.id, physicalLocationId: location.id, locationName: text(location.data().name, "Location name", 200, true),
+      outletId, outletName: outlet ? text(outlet.name, "Outlet name", 200, true) : null,
+      isOutletDefault: false, stockPointType: "location", inventoryRole: inventoryRole(outlet?.inventoryRole),
+      templates: await loadTemplates(location.id) };
   }));
+  if (!afterLocationId) locations.unshift(...(await Promise.all([...outlets].map(async ([outletId, outlet]) => {
+    const locationId = requireDocumentId(`outlet:${outletId}`, "Outlet stock point ID");
+    const materialized = await db.doc(`hotels/${hotelUid}/locations/${locationId}`).get();
+    assertOutletStockPoint(locationId, materialized.exists ? materialized.data() : null, outletId);
+    if (materialized.exists && isArchived(materialized.data())) return null;
+    return { locationId, physicalLocationId: null, locationName: text(outlet.name, "Outlet name", 200, true),
+      outletId, outletName: text(outlet.name, "Outlet name", 200, true), isOutletDefault: true, stockPointType: "outlet",
+      inventoryRole: inventoryRole(outlet.inventoryRole), templates: await loadTemplates(locationId) };
+  }))).filter(Boolean));
   return { locations, nextCursor: snapshot.docs.length > MAX_LOCATIONS ? page.at(-1).id : null };
 }
 async function createHotelStockCountHandler(request, services = {}) {
-  const input = strictObject(request.data, ["hotelUid", "name", "type", "locations", "requestId", "businessDate"], "Stock count");
+  const input = strictObject(request.data, ["hotelUid", "name", "type", "reason", "periodMonth", "periodYear", "locations", "requestId", "businessDate"], "Stock count");
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid");
-  const name = text(input.name, "Name", 200, true);
+  const requestedName = text(input.name ?? "", "Name", 200);
   if (!TYPES.includes(input.type)) throw new HttpsError("invalid-argument", "Choose a supported stock count type.");
+  const reason = text(input.reason ?? "", "Reason", 500);
+  if (reason && input.type !== "Ad Hoc") throw new HttpsError("invalid-argument", "A reason is available only for an Ad Hoc count.");
+  const hasPeriod = input.periodMonth != null || input.periodYear != null;
+  if (hasPeriod && (input.type !== "Month-End" || !Number.isInteger(input.periodMonth) || input.periodMonth < 1 || input.periodMonth > 12
+    || !Number.isInteger(input.periodYear) || input.periodYear < 2000 || input.periodYear > 9999)) {
+    throw new HttpsError("invalid-argument", "Choose a valid month and year for a Month-End count.");
+  }
   const requested = boundedArray(input.locations, "locations", 1, MAX_LOCATIONS).map((value) => {
-    strictObject(value, ["locationId", "stockTemplateId"], "locations");
-    return { locationId: requireDocumentId(value.locationId, "locationId"),
-      stockTemplateId: requireDocumentId(value.stockTemplateId, "stockTemplateId") };
+    strictObject(value, ["outletId", "locationId", "stockTemplateId"], "locations");
+    const outletId = value.outletId ? requireDocumentId(value.outletId, "outletId") : null;
+    const locationId = value.locationId ? requireDocumentId(value.locationId, "locationId") : outletId ? `outlet:${outletId}` : null;
+    if (!locationId) throw new HttpsError("invalid-argument", "Choose an outlet or a physical location.");
+    requireDocumentId(locationId, "Stock point ID");
+    return { locationId, outletId, stockTemplateId: value.stockTemplateId ? requireDocumentId(value.stockTemplateId, "stockTemplateId") : null };
   });
   if (new Set(requested.map((location) => location.locationId)).size !== requested.length) throw new HttpsError("invalid-argument", "Select each location once.");
   const requestId = requireDocumentId(input.requestId, "requestId");
   const stockCountId = digest(request.auth?.uid || "", hotelUid, requestId).slice(0, 40);
-  const fingerprint = digest(name, input.type, requested, input.businessDate ?? null);
+  const fingerprint = digest(requestedName, input.type, requested, input.businessDate ?? null, reason, input.periodMonth ?? null, input.periodYear ?? null);
+  const legacyFingerprint = input.name && !input.reason && !hasPeriod && requested.every((location) => !location.outletId && location.stockTemplateId)
+    ? digest(requestedName, input.type, requested.map(({ locationId, stockTemplateId }) => ({ locationId, stockTemplateId })), input.businessDate ?? null) : null;
   const db = services.firestore || admin.firestore();
   const countRef = db.doc(`hotels/${hotelUid}/stockCounts/${stockCountId}`);
   return db.runTransaction(async (tx) => {
     await authorize(db, tx, request, hotelUid, "create", services);
     const existing = await tx.get(countRef);
     if (existing.exists) {
-      if (existing.data().creationFingerprint !== fingerprint) throw new HttpsError("already-exists", "This request ID was already used with different count details.");
+      if (existing.data().creationFingerprint !== fingerprint && existing.data().creationFingerprint !== legacyFingerprint) throw new HttpsError("already-exists", "This request ID was already used with different count details.");
       return { hotelUid, inventoryPolicyVersion: existing.data().inventoryPolicyVersion || null, stockCountId, revision: existing.data().revision, status: existing.data().status };
     }
     try {
@@ -163,6 +197,11 @@ async function createHotelStockCountHandler(request, services = {}) {
     const hotelCurrency = inventory.currency(bootstrap.exists ? bootstrap.data().currency : hotel.data().currency);
     if (bootstrap.exists && hotel.data().currency != null && hotel.data().currency !== hotelCurrency) throw new HttpsError("failed-precondition", "Hotel currency settings disagree. Reconcile them before starting a count.");
     let businessDate = input.businessDate;
+    if (hasPeriod) {
+      const endOfMonth = `${input.periodYear}-${String(input.periodMonth).padStart(2, "0")}-${new Date(Date.UTC(input.periodYear, input.periodMonth, 0)).getUTCDate()}`;
+      if (businessDate != null && businessDate !== endOfMonth) throw new HttpsError("invalid-argument", "A Month-End count business date must match the selected month's final day.");
+      businessDate = endOfMonth;
+    }
     if (businessDate == null) {
       if (!validTimeZone(hotel.data().timeZone)) throw new HttpsError("failed-precondition", "Set the hotel time zone or provide an explicit inventory business date.");
       businessDate = localDate(services.now?.() ?? Date.now(), hotel.data().timeZone);
@@ -170,18 +209,24 @@ async function createHotelStockCountHandler(request, services = {}) {
     businessDate = inventory.businessDate(businessDate);
     const today = validTimeZone(hotel.data().timeZone) ? localDate(services.now?.() ?? Date.now(), hotel.data().timeZone) : new Date(services.now?.() ?? Date.now()).toISOString().slice(0, 10);
     if (businessDate > today) throw new HttpsError("invalid-argument", "A physical stock count cannot have a future business date.");
+    const periodMonth = input.type === "Month-End" ? Number(businessDate.slice(5, 7)) : null;
+    const periodYear = input.type === "Month-End" ? Number(businessDate.slice(0, 4)) : null;
+    const name = requestedName || `${input.type} · ${input.type === "Month-End" ? businessDate.slice(0, 7) : businessDate}`;
     const locations = [];
+    const points = [];
     let itemCount = 0;
     for (const requestedLocation of requested) {
       const { locationId, stockTemplateId } = requestedLocation;
-      const [location, template] = await Promise.all([
-        tx.get(db.doc(`hotels/${hotelUid}/locations/${locationId}`)),
-        tx.get(db.doc(`hotels/${hotelUid}/locations/${locationId}/stockTemplates/${stockTemplateId}`)),
-      ]);
-      if (!location.exists || !template.exists) throw new HttpsError("not-found", "Location or stock template not found in this hotel.");
-      if (isArchived(location.data())) throw new HttpsError("failed-precondition", "Choose an active inventory location.");
-      if (template.data().archived === true) throw new HttpsError("failed-precondition", "Choose an active stock template.");
-      const identities = boundedArray(template.data().items, "Stored template items", 1);
+      const point = await prepareInventoryStockPoint(db, tx, hotelUid, locationId);
+      if (requestedLocation.outletId && point.outletId !== requestedLocation.outletId) throw new HttpsError("invalid-argument", "Choose a location belonging to the selected outlet.");
+      if (point.outletId && points.some((previous) => previous.outletId === point.outletId && (previous.isOutletDefault || point.isOutletDefault))) {
+        throw new HttpsError("invalid-argument", "Count an outlet as a whole or choose its detailed locations; do not include both in one count.");
+      }
+      points.push(point);
+      const template = stockTemplateId ? await tx.get(db.doc(`hotels/${hotelUid}/locations/${locationId}/stockTemplates/${stockTemplateId}`)) : null;
+      if (template && !template.exists) throw new HttpsError("not-found", "Stock template not found in this hotel.");
+      if (template?.data().archived === true) throw new HttpsError("failed-precondition", "Choose an active stock template.");
+      const identities = template ? boundedArray(template.data().items, "Stored template items", 1) : [];
       itemCount += identities.length;
       if (itemCount > 1000) throw new HttpsError("resource-exhausted", "Split counts exceeding 1,000 template items into smaller counts.");
       const resolved = await Promise.all(identities.map((identity) => canonicalInventoryItem(db, tx, hotelUid, identity, hotelCurrency)));
@@ -189,16 +234,18 @@ async function createHotelStockCountHandler(request, services = {}) {
       const countingStartedSequence = await movements.readLocationSequence(db, tx, hotelUid, locationId);
       locations.push(boundDocument({ id: locationId, locationId,
         inventoryPolicyVersion: 1, currency: hotelCurrency, businessDate, countingStartedSequence,
-        locationName: text(location.data().name, "Location name", 200, true), stockTemplateId,
-        stockTemplateName: text(template.data().name, "Template name", 200, true),
-        stockTemplate: { id: stockTemplateId, name: template.data().name, items },
+        locationName: point.locationName, outletId: point.outletId || null, outletName: point.outletName || null,
+        isOutletDefault: point.isOutletDefault, stockPointType: point.stockPointType, inventoryRole: point.inventoryRole,
+        stockTemplateId, stockTemplateName: template ? text(template.data().name, "Template name", 200, true) : "",
+        stockTemplate: { id: stockTemplateId, name: template ? template.data().name : "", items },
         countedItems: [], countedValue: null, knownCountedValue: 0, costComplete: false, status: "Not Started", revision: 0,
         createdBy: request.auth.uid, createdAt: stamp() }));
     }
     tx.create(countRef, boundDocument({ id: stockCountId, name, type: input.type, status: "Started",
-      inventoryPolicyVersion: 1, currency: hotelCurrency, businessDate,
+      inventoryPolicyVersion: 1, currency: hotelCurrency, businessDate, reason, periodMonth, periodYear,
       locations: locations.map(summary), countedValue: null, revision: 0,
       creationFingerprint: fingerprint, createdBy: request.auth.uid, createdAt: stamp() }));
+    for (const point of points) point.write();
     for (const location of locations) tx.create(db.doc(`${countRef.path}/locations/${location.locationId}`), location);
     return { hotelUid, inventoryPolicyVersion: 1, stockCountId, revision: 0, status: "Started" };
     } catch (error) {

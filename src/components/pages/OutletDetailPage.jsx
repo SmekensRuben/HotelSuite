@@ -6,19 +6,23 @@ import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import ProcurementResourceArchive from "./ProcurementResourceArchive";
 import { auth, signOut } from "../../firebaseConfig";
-import { useHotelContext } from "../../contexts/HotelContext";
+import { useProcurementSettingsScope } from "../../hooks/useProcurementSettingsScope";
 import {
   getOutletApprovers,
   getOutletById,
 } from "../../services/firebaseSettings";
 import { usePermission } from "../../hooks/usePermission";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { outletInventoryRoleLabel } from "../inventory/OutletInventoryRoleField";
 
 export default function OutletDetailPage() {
   const navigate = useNavigate(),
     { outletId } = useParams(),
-    { hotelUid } = useHotelContext();
+    { hotelUid, scopeKey: settingsScopeKey } = useProcurementSettingsScope();
   const canEdit = usePermission("outlets", "update");
+  const canCount = usePermission("stockcounts", "create");
+  const canRequisition = usePermission("inventorymovements", "create");
+  const canAddLocation = usePermission("locations", "create");
   const load = useCallback(async () => {
     const [outlet, approvers] = await Promise.all([
       getOutletById(hotelUid, outletId),
@@ -27,7 +31,7 @@ export default function OutletDetailPage() {
     return { outlet, approvers };
   }, [hotelUid, outletId]);
   const query = useScopedAsync({
-    scopeKey: `${hotelUid}:${outletId}`,
+    scopeKey: `${settingsScopeKey}:${outletId}`,
     enabled: Boolean(hotelUid && outletId),
     load,
   });
@@ -88,10 +92,16 @@ export default function OutletDetailPage() {
                 <h2 className="text-2xl font-semibold">
                   {outlet.name || "Unnamed outlet"}
                 </h2>
+                <p className="mt-2 text-xs font-semibold text-brand-800">{outletInventoryRoleLabel(outlet.inventoryRole)}</p>
                 <p className="mt-2 text-sm text-gray-600">
-                  Orders use this outlet for purchasing and approval. Archiving
-                  preserves its existing order and account references.
+                  {outlet.inventoryRole === "central_storage" ? "Receive deliveries at this stock point and record requisitions when goods move to another outlet. " : "Count this outlet as a whole, or use optional locations for more detail. "}
+                  Orders use this outlet for purchasing and approval.
                 </p>
+                {outlet.archived !== true && <div className="mt-4 flex flex-wrap gap-2">
+                  {canCount && <button type="button" className="ht-button-primary" onClick={() => navigate(`/catalog/stock-counts/new?outletId=${encodeURIComponent(outletId)}`)}>Start stock count</button>}
+                  {canRequisition && outlet.inventoryRole === "central_storage" && <button type="button" className="ht-button-secondary" onClick={() => navigate(`/catalog/inventory-movements?type=requisition&sourceOutletId=${encodeURIComponent(outletId)}`)}>Record requisition</button>}
+                  {canAddLocation && <button type="button" className="ht-button-secondary" onClick={() => navigate(`/settings/locations/new?outletId=${encodeURIComponent(outletId)}`)}>Add optional location</button>}
+                </div>}
               </div>
               <ProcurementResourceArchive
                 hotelUid={hotelUid}

@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   params: { locationId: "store", templateId: "weekly", outletId: "bar" },
   navigate: vi.fn(),
   locations: vi.fn(),
+  outlets: vi.fn(),
   location: vi.fn(),
   template: vi.fn(),
   display: vi.fn(),
@@ -77,6 +78,7 @@ vi.mock("../../services/firebaseOnboarding", () => ({
 }));
 vi.mock("../../services/firebaseSettings", () => ({
   getLocations: mocks.locations,
+  getOutlets: mocks.outlets,
   getLocationById: mocks.location,
   getLocationStockTemplateById: mocks.template,
   getHotelStockTemplateDisplay: mocks.display,
@@ -151,6 +153,7 @@ beforeEach(() => {
     { id: "store", name: "Cold room" },
     { id: "old", name: "Old store", archived: true },
   ]);
+  mocks.outlets.mockResolvedValue([]);
   mocks.outlet.mockResolvedValue({ id: "bar", name: "Bar", revision: 4 });
   mocks.approvers.mockResolvedValue([]);
   mocks.pending.mockReturnValue(null);

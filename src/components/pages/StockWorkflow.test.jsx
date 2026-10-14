@@ -13,7 +13,7 @@ vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelU
 vi.mock("../../hooks/usePermission", () => ({ usePermission: (feature, action) => mocks.permissions.includes(`${feature}.${action}`) }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => mocks.navigate, useParams: () => ({ stockCountId: "stock-a", locationId: "store" }) }));
 vi.mock("../../firebaseConfig", () => ({ auth: { currentUser: { uid: "counter" } }, signOut: vi.fn() }));
-vi.mock("../../services/firebaseStockCounts", () => ({ getPendingCountCreation: () => null, retryPendingCountCreation: vi.fn(), getStockCountById: mocks.getCount, getStockCountSources: mocks.sources,
+vi.mock("../../services/firebaseStockCounts", () => ({ getPendingCountCreation: () => null, retryPendingCountCreation: vi.fn(), getStockCountById: mocks.getCount, getStockCountSources: mocks.sources, getStockCountProductChoices: mocks.catalog,
   updateStockCountLocationCounts: mocks.save, finishStockCountLocation: mocks.finish, createStockCount: mocks.create,
   finishStockCount: mocks.finishParent,
   STOCK_COUNT_TYPES: ["Ad Hoc", "Daily", "Weekly", "Month-End"] }));
@@ -60,11 +60,57 @@ describe("normal stock role workflow", () => {
   it("creates from authorized minimal source metadata without querying private catalog configuration", async () => {
     render(<StockCountCreatePage />);
     await screen.findByText("Store");
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Weekly count" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Stock Count" }));
-    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith("hotel-a", { name: "Weekly count", type: "Ad Hoc",
-      locations: [{ locationId: "store", stockTemplateId: "template" }] }));
+    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start counting" }));
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith("hotel-a", { type: "Ad Hoc",
+      locations: [{ locationId: "store" }] }));
+    expect(mocks.navigate).toHaveBeenCalledWith("/catalog/stock-counts/new-stock");
     expect(mocks.products).not.toHaveBeenCalled(); expect(mocks.outlets).not.toHaveBeenCalled();
+  });
+  it("selects an outlet without forcing a location, name or template", async () => {
+    mocks.sources.mockResolvedValue([{ outletId: "bar", outletName: "Bar", locationId: "outlet:bar", locationName: "Bar", isOutletDefault: true, templates: [] },
+      { outletId: "bar", outletName: "Bar", locationId: "fridge", locationName: "Fridge", templates: [] }]);
+    render(<StockCountCreatePage />); await screen.findByText("Bar");
+    fireEvent.change(screen.getByLabelText("Reason (optional)"), { target: { value: "Shift handover" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start counting" }));
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith("hotel-a", { type: "Ad Hoc", reason: "Shift handover", locations: [{ outletId: "bar" }] }));
+  });
+  it("counts either the entire outlet or its detail locations without overlapping stock", async () => {
+    mocks.sources.mockResolvedValue([{ outletId: "bar", outletName: "Bar", locationId: "outlet:bar", locationName: "Bar", isOutletDefault: true, templates: [] },
+      { outletId: "bar", outletName: "Bar", locationId: "fridge", locationName: "Fridge", templates: [] },
+      { outletId: "bar", outletName: "Bar", locationId: "shelf", locationName: "Shelf", templates: [] }]);
+    render(<StockCountCreatePage />); await screen.findByText("Bar");
+    fireEvent.click(screen.getByLabelText("Count separate locations"));
+    fireEvent.click(screen.getByLabelText("Shelf"));
+    fireEvent.click(screen.getByRole("button", { name: "Start counting" }));
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith("hotel-a", { type: "Ad Hoc", locations: [{ outletId: "bar", locationId: "fridge" }] }));
+  });
+  it("sends a selected month and year and omits the hidden ad hoc reason and date", async () => {
+    render(<StockCountCreatePage />); await screen.findByText("Store");
+    fireEvent.change(screen.getByLabelText("Reason (optional)"), { target: { value: "Do not carry this to month-end" } });
+    fireEvent.change(screen.getByLabelText("Count type"), { target: { value: "Month-End" } });
+    fireEvent.change(screen.getByLabelText("Month"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Year"), { target: { value: "2028" } });
+    expect(screen.queryByLabelText("Business date")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start counting" }));
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith("hotel-a", { type: "Month-End", periodMonth: 2, periodYear: 2028, locations: [{ locationId: "store" }] }));
+  });
+  it("uses a template only when the operator selects one", async () => {
+    render(<StockCountCreatePage />); await screen.findByText("Store");
+    fireEvent.change(screen.getByLabelText("Template for Store"), { target: { value: "template" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start counting" }));
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith("hotel-a", { type: "Ad Hoc", locations: [{ locationId: "store", stockTemplateId: "template" }] }));
+  });
+  it("rejects stale source choices when the actual signed-in identity changes without a rerender", async () => {
+    const { auth } = await import("../../firebaseConfig");
+    const originalActor = auth.currentUser;
+    render(<StockCountCreatePage />); await screen.findByText("Store");
+    auth.currentUser = { uid: originalActor.uid };
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Start counting" }));
+      expect(await screen.findByText(/Reload stock points before starting a count/)).toBeInTheDocument();
+      expect(mocks.create).not.toHaveBeenCalled();
+    } finally { auth.currentUser = originalActor; }
   });
   it("shows failed loading and retries the actual scoped read", async () => {
     mocks.getCount.mockRejectedValueOnce(new Error("Offline"));
@@ -174,11 +220,23 @@ describe("normal stock role workflow", () => {
   it("ignores a late creation response after the user leaves the page", async () => {
     const command = deferred(); mocks.create.mockReturnValueOnce(command.promise);
     const view = render(<StockCountCreatePage />); await screen.findByText("Store");
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Weekly count" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Stock Count" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start counting" }));
     await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1));
     view.unmount(); await act(async () => command.resolve({ id: "new-stock" }));
     expect(mocks.navigate).not.toHaveBeenCalled();
+  });
+  it("shows forgotten products separately from explicit zero in outlet progress", async () => {
+    const record = catalogCount();
+    record.locations[0].outletName = "Bar"; record.locations[0].isOutletDefault = true;
+    record.locations[0].locationName = "Bar";
+    record.locations[0].countedItems = [{ catalogProductId: "milk", quantity: 0, isCounted: true, unitCost: null }];
+    mocks.getCount.mockResolvedValue(record);
+    render(<StockCountDetailPage />);
+    expect(await screen.findByText("1 counted as zero")).toBeInTheDocument();
+    expect(screen.getByText("1 uncounted")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Bar.*1 counted.*1 uncounted.*1 counted as zero/ }));
+    expect(mocks.navigate).toHaveBeenCalledWith("/catalog/stock-counts/stock-a/locations/store");
+    expect(screen.getByRole("button", { name: "Finish Stock Count" })).toBeDisabled();
   });
   it("avoids a parent refresh after finishing a count on an unmounted detail page", async () => {
     const command = deferred(); mocks.finishParent.mockReturnValueOnce(command.promise);
@@ -197,67 +255,55 @@ const catalogCount = (label = "Milk", revision = 12) => ({ id: "stock-a", invent
   locations: [{ locationId: "store", locationName: "Store", status: "In Progress", stockTemplate: { id: "template", name: "Catalog", items: [
     { catalogProductId: "milk", catalogProductName: label, baseUnit: "l", unitCost: null }, { catalogProductId: "flour", catalogProductName: "Flour", baseUnit: "kg", unitCost: null } ] }, countedItems: [] }] });
 describe("catalog physical counts and periodic inventory", () => {
-  it("keeps the first additional-product interaction after the initial count DOM is committed", async () => {
-    mocks.permissions.push("catalogproducts.read");
+  it("keeps the first additional-product interaction after count hydration", async () => {
     const record = catalogCount();
     record.locations[0].countedItems = [{ catalogProductId: "milk", quantity: 2, unitCost: 3, isCounted: true }];
-    mocks.catalog.mockResolvedValue({ products: [{ id: "juice", catalogProductName: "Orange juice", baseUnit: "l", inventoryTracked: true }], hasMore: false });
+    mocks.catalog.mockResolvedValue({ products: [{ id: "juice", catalogProductName: "Orange juice", baseUnit: "l", barcodes: [] }], nextCursor: null });
     function FirstInteraction() {
-      React.useLayoutEffect(() => {
-        screen.getByRole("button", { name: "Add a product outside the template" }).click();
-      }, []);
+      React.useLayoutEffect(() => { screen.getByRole("button", { name: "Add product" }).click(); }, []);
       return <CatalogStockCountLocationPanel hotelUid="hotel-a" stockCount={record} location={record.locations[0]} />;
     }
     render(<FirstInteraction />);
-    expect(await screen.findByRole("button", { name: "Hide additional products" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Orange juice.*Add & count/ })).toBeInTheDocument();
     expect(screen.getByLabelText("Count Milk")).toHaveValue(2);
+    fireEvent.click(screen.getAllByText("Valuation (optional)")[0]);
     expect(screen.getByLabelText("Unit cost Milk")).toHaveValue(3);
-    await chooseCombo("Additional catalog product", "Orange juice (l)");
-    fireEvent.click(screen.getByRole("button", { name: "Add catalog product" }));
+    fireEvent.click(screen.getByRole("button", { name: /Orange juice.*Add & count/ }));
     expect(screen.getByLabelText("Count Orange juice")).toBeInTheDocument();
     expect(mocks.catalog).toHaveBeenCalledTimes(1);
   });
-  it("does not fetch optional catalog choices until requested and exposes later tracked results", async () => {
-    mocks.permissions.push("catalogproducts.read"); mocks.getCount.mockResolvedValue(catalogCount());
-    mocks.catalog.mockImplementation(async (_hotel, options) => options.cursor
-      ? { products: [{ id: "juice", catalogProductName: "Orange juice", baseUnit: "l", inventoryTracked: true }], hasMore: false }
-      : { products: [{ id: "untracked", catalogProductName: "Untracked product", baseUnit: "each", inventoryTracked: false }], hasMore: true, cursor: "next" });
+  it("lazily pages authorized count-product choices for ordinary counters", async () => {
+    mocks.getCount.mockResolvedValue(catalogCount());
+    mocks.catalog.mockImplementation(async (_hotel, _count, _location, options) => options.afterProductId
+      ? { products: [{ id: "juice", catalogProductName: "Orange juice", baseUnit: "l", barcodes: [] }], nextCursor: null }
+      : { products: [], nextCursor: "next" });
     render(<StockCountLocationPage />); await screen.findByText("Milk");
     expect(mocks.catalog).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Add a product outside the template" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Load more catalog choices" }));
-    await chooseCombo("Additional catalog product", "Orange juice (l)");
-    fireEvent.click(screen.getByRole("button", { name: "Add catalog product" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add product" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Load more product choices" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Orange juice.*Add & count/ }));
     expect(await screen.findByLabelText("Count Orange juice")).toBeInTheDocument();
-    expect(mocks.catalog).toHaveBeenNthCalledWith(1, "hotel-a", { pageSize: 100, searchTerm: "" });
-    expect(mocks.catalog).toHaveBeenNthCalledWith(2, "hotel-a", { pageSize: 100, searchTerm: "", cursor: "next" });
-    expect(screen.queryByText("Untracked product (each)")).not.toBeInTheDocument();
+    expect(mocks.catalog).toHaveBeenNthCalledWith(1, "hotel-a", "stock-a", "store", { search: "", barcode: "" });
+    expect(mocks.catalog).toHaveBeenNthCalledWith(2, "hotel-a", "stock-a", "store", { search: "", barcode: "", afterProductId: "next" });
   });
-  it("pages Firestore-style cursors without serializing their internal reference objects", async () => {
-    mocks.permissions.push("catalogproducts.read"); mocks.getCount.mockResolvedValue(catalogCount());
-    const first = { id: "one", ref: { path: "hotels/hotel-a/catalogProducts/one" } }; first.internal = first;
-    const next = { id: "two", ref: { path: "hotels/hotel-a/catalogProducts/two" } }; next.internal = next;
-    mocks.catalog.mockImplementation(async (_hotel, options) => options.cursor === first
-      ? { products: [{ id: "juice", catalogProductName: "Orange juice", baseUnit: "l", inventoryTracked: true }], hasMore: true, cursor: next }
-      : options.cursor === next ? { products: [], hasMore: false }
-      : { products: [], hasMore: true, cursor: first });
-    render(<StockCountLocationPage />); await screen.findByText("Milk");
-    fireEvent.click(screen.getByRole("button", { name: "Add a product outside the template" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Load more catalog choices" }));
-    await chooseCombo("Additional catalog product", "Orange juice (l)");
-    fireEvent.click(screen.getByRole("button", { name: "Load more catalog choices" }));
-    await waitFor(() => expect(mocks.catalog).toHaveBeenCalledTimes(3));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add catalog product" })).toBeEnabled();
-  });
-  it("keeps a catalog count editable when lazily requested product choices fail", async () => {
-    mocks.permissions.push("catalogproducts.read"); mocks.getCount.mockResolvedValue(catalogCount());
+  it("rejects repeated product-choice pagination without hiding existing quantities", async () => {
+    mocks.getCount.mockResolvedValue(catalogCount());
+    mocks.catalog.mockResolvedValue({ products: [], nextCursor: "next" });
     render(<StockCountLocationPage />); await screen.findByText("Milk");
     fireEvent.change(screen.getByLabelText("Count Milk"), { target: { value: "2" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add a product outside the template" }));
-    await screen.findByText("Catalog denied");
+    fireEvent.click(screen.getByRole("button", { name: "Add product" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Load more product choices" }));
+    await screen.findByText(/incomplete or repeated pagination/);
     expect(screen.getByLabelText("Count Milk")).toHaveValue(2);
     expect(screen.getByRole("button", { name: "Save Counts" })).toBeEnabled();
+  });
+  it("keeps quantities editable when optional product search fails", async () => {
+    mocks.getCount.mockResolvedValue(catalogCount());
+    render(<StockCountLocationPage />); await screen.findByText("Milk");
+    fireEvent.change(screen.getByLabelText("Count Milk"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add product" }));
+    await screen.findByText("Catalog denied");
+    expect(screen.getByLabelText("Count Milk")).toHaveValue(2);
     fireEvent.click(screen.getByRole("button", { name: "Save Counts" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledWith("hotel-a", "stock-a", "store", expect.arrayContaining([expect.objectContaining({ catalogProductId: "milk", quantity: 2 })]), "counter", 12));
   });
@@ -272,7 +318,7 @@ describe("catalog physical counts and periodic inventory", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save Counts" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledWith("hotel-a", "stock-a", "store", [
       { catalogProductId: "milk", quantity: 1.000001, unitCost: null, isCounted: true },
-      { catalogProductId: "flour", quantity: 0, unitCost: null, isCounted: false },
+      { catalogProductId: "flour", quantity: null, unitCost: null, isCounted: false },
     ], "counter", 12));
   });
   it("finishes only fully counted rows including explicit zero and explicit zero cost", async () => {
@@ -281,6 +327,7 @@ describe("catalog physical counts and periodic inventory", () => {
     fireEvent.change(screen.getByLabelText("Count Milk"), { target: { value: "0" } });
     expect(screen.getByRole("button", { name: "Finish Location" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Count Flour"), { target: { value: "0" } });
+    fireEvent.click(screen.getAllByText("Valuation (optional)")[0]);
     fireEvent.change(screen.getByLabelText("Unit cost Milk"), { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "Finish Location" }));
     await waitFor(() => expect(mocks.finish).toHaveBeenCalledWith("hotel-a", "stock-a", "store", [

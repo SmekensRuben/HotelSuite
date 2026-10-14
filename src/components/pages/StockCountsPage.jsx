@@ -52,7 +52,7 @@ export default function StockCountsPage() {
     { key: "name", label: "Name" },
     { key: "type", label: "Type" },
     { key: "status", label: "Status" },
-    { key: "locationSummary", label: "Locations", sortValue: (row) => row.locationCount },
+    { key: "locationSummary", label: "Stock points", sortValue: (row) => row.locationCount },
     { key: "countedValueLabel", label: "Counted Value", sortValue: (row) => row.countedValue },
     { key: "createdAtLabel", label: "Created", sortValue: (row) => row.createdAt?.getTime?.() || 0 },
   ];
@@ -65,7 +65,7 @@ export default function StockCountsPage() {
           <div>
             <p className="text-sm text-gray-500 uppercase tracking-wide">Purchasing & inventory</p>
             <h1 className="text-3xl font-semibold">Stock Counts</h1>
-            <p className="max-w-2xl text-sm text-gray-600 mt-1">Count catalog quantities per physical location. Historical supplier-based counts remain available.</p>
+            <p className="max-w-2xl text-sm text-gray-600 mt-1">Count by outlet or central store, with optional locations and templates. Blank quantities stay uncounted; zero means checked and empty.</p>
           </div>
           <button
             onClick={() => navigate("/catalog/stock-counts/new")}

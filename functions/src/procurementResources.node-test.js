@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { memoryDatabase } = require("./inventoryTestHelpers");
-const { mutateHotelProcurementResourceHandler } = require("./procurementResources");
+const { mutateHotelProcurementResourceHandler, prepareInventoryStockPoint, getHotelLocationOutletChoicesHandler } = require("./procurementResources");
 const { getHotelStockTemplateDisplayHandler, mutateHotelStockTemplateHandler } = require("./stockTemplates");
 const { createHotelStockCountHandler, mutateHotelStockCountHandler, listHotelStockCountSourcesHandler } = require("./stockCounts");
 const { listHotelInventoryLocationsHandler } = require("./inventoryReports");
@@ -74,17 +74,20 @@ test("resource command rejects changed retries, stale revisions and copied serve
   }
 });
 
-test("the old v4 release marker cannot activate archiving before the tightened v5 Rules rollout", async () => {
-  const db = fixture(); db.records.set("platformConfiguration/saasProcurement", { enabled: true, rulesVersion: "saas-platform-v4" });
-  await assert.rejects(archive(db), (error) => error.code === "failed-precondition" && !error.details?.resourceRequestUncommitted);
+test("old release markers cannot activate protected resources before the stock-point Rules rollout", async () => {
+  const db = fixture();
+  for (const rulesVersion of ["saas-platform-v4", "saas-platform-v5"]) {
+    db.records.set("platformConfiguration/saasProcurement", { enabled: true, rulesVersion });
+    await assert.rejects(archive(db), (error) => error.code === "failed-precondition" && !error.details?.resourceRequestUncommitted);
+  }
   assert.equal(db.records.get(`hotels/${hotelUid}/locations/store`).archived, undefined);
-  db.records.set("platformConfiguration/saasProcurement", { enabled: true, rulesVersion: "saas-platform-v5" });
+  db.records.set("platformConfiguration/saasProcurement", { enabled: true, rulesVersion: SAAS_RULES_VERSION });
   assert.equal((await archive(db)).archived, true);
 });
 
 test("archived locations are excluded from new sources while frozen counts finish and historical reports remain addressable", async () => {
   const db = fixture(), before = await createCount(db); await archive(db);
-  assert.deepEqual((await listHotelStockCountSourcesHandler(request({ hotelUid }), services(db))).locations, []);
+  assert.deepEqual((await listHotelStockCountSourcesHandler(request({ hotelUid }), services(db))).locations.map((location) => location.locationId), ["outlet:bar"]);
   await assert.rejects(createCount(db, "after"), { code: "failed-precondition" });
   await assert.rejects(mutateHotelStockTemplateHandler(request({ hotelUid, locationId: "store", templateId: "new", action: "create", name: "New", requestId: "template", expectedRevision: 0 }), services(db)), { code: "failed-precondition" });
   await mutateHotelStockCountHandler(request({ hotelUid, stockCountId: before.stockCountId, action: "finish-location", locationId: "store", expectedRevision: 0,
@@ -103,6 +106,18 @@ test("archived destinations reject new receiving but a historical receipt can st
   await assert.rejects(db.runTransaction(async (tx) => prepareReceiptMovement(db, tx, { ...input, movementId: "after" })), { code: "failed-precondition" });
   await db.runTransaction(async (tx) => { (await prepareReversalMovement(db, tx, { hotelUid, movementId: "reverse", originalMovementId: "receipt", orderId: "order", actorUid })).write(); });
   assert.equal(db.records.get(`hotels/${hotelUid}/inventoryMovements/reverse`).lines[0].quantity, -6);
+});
+test("receiving can choose an outlet stock point before its first count and preserves the destination context", async () => {
+  const db = fixture();
+  db.records.set(`hotels/${hotelUid}/outlets/bar`, { name: "Central cellar", inventoryRole: "central_storage" });
+  const input = { hotelUid, locationId: "outlet:bar", movementId: "outlet-receipt", orderId: "order", receiptId: "receipt", receivedOn: "2026-10-10", actorUid,
+    lines: [{ catalogProductId: "juice", catalogProductName: "Orange juice", baseUnit: "l", quantity: 6, netUnitCost: 2, netValue: 12, currency: "EUR" }] };
+  await db.runTransaction(async (tx) => { (await prepareReceiptMovement(db, tx, input)).write(); });
+  const receipt = db.records.get(`hotels/${hotelUid}/inventoryMovements/outlet-receipt`);
+  assert.equal(receipt.stockPointType, "outlet"); assert.equal(receipt.outletName, "Central cellar"); assert.equal(receipt.inventoryRole, "central_storage");
+  assert.equal(db.records.get(`hotels/${hotelUid}/locations/outlet:bar`).stockPointType, "outlet");
+  await archive(db, "outlets", "bar");
+  await assert.rejects(db.runTransaction((tx) => prepareReceiptMovement(db, tx, { ...input, movementId: "after" })), { code: "failed-precondition" });
 });
 
 test("archived outlets cannot supply a new order contract even when the selected supplier and catalog are active", async () => {
@@ -170,4 +185,54 @@ test("template display retains names but flags inactive, untracked, unsupported 
     db.records.set(`hotels/${hotelUid}/supplierproducts/juice-case`, { ...db.records.get(`hotels/${hotelUid}/supplierproducts/juice-case`), ...patch });
     const response = await lookup(db); assert.equal(response.items[0].supplierProductName, "Orange juice six-pack"); assert.equal(response.items[0].available, false);
   }
+});
+
+test("protected resource commands create outlet stock points and validate detail ownership with exact replay and revisions", async () => {
+  const db = fixture();
+  const input = { hotelUid, collection: "outlets", resourceId: "cellar", action: "create", expectedRevision: 0, requestId: "new-store",
+    resource: { name: "Central cellar", inventoryRole: "central_storage" } };
+  const first = await mutateHotelProcurementResourceHandler(request(input), services(db));
+  assert.equal(first.revision, 1); assert.equal(first.archived, false);
+  assert.deepEqual(await mutateHotelProcurementResourceHandler(request(input), services(db)), first);
+  assert.equal(db.records.get(`hotels/${hotelUid}/locations/outlet:cellar`).outletId, "cellar");
+  assert.equal(db.records.get(`hotels/${hotelUid}/locations/outlet:cellar`).stockPointType, "outlet");
+  await mutateHotelProcurementResourceHandler(request({ ...input, action: "update", expectedRevision: 1, requestId: "rename-store",
+    resource: { name: "Main cellar" } }), services(db));
+  assert.equal(db.records.get(`hotels/${hotelUid}/outlets/cellar`).inventoryRole, "central_storage");
+  assert.equal(db.records.get(`hotels/${hotelUid}/locations/outlet:cellar`).name, "Main cellar");
+  const detail = { hotelUid, collection: "locations", resourceId: "rack", action: "create", expectedRevision: 0, requestId: "new-rack", resource: { name: "Wine rack", outletId: "cellar" } };
+  await mutateHotelProcurementResourceHandler(request(detail), services(db));
+  assert.equal(db.records.get(`hotels/${hotelUid}/locations/rack`).outletId, "cellar");
+  db.records.set(`hotels/${hotelUid}/inventoryLocationStates/rack`, { sequence: 1 });
+  await assert.rejects(mutateHotelProcurementResourceHandler(request({ ...detail, action: "update", expectedRevision: 1, requestId: "move-rack",
+    resource: { name: "Wine rack", outletId: "bar" } }), services(db)), { code: "failed-precondition" });
+  await assert.rejects(mutateHotelProcurementResourceHandler(request({ ...detail, resourceId: "other", requestId: "foreign-rack",
+    resource: { name: "Other", outletId: "foreign-outlet" } }), services(db)), { code: "failed-precondition" });
+  await assert.rejects(mutateHotelProcurementResourceHandler(request({ ...detail, resourceId: "outlet:bar", requestId: "forge" }), services(db)), { code: "invalid-argument" });
+});
+
+test("outlet stock points materialize without a count, reject forged markers and remain hotel scoped", async () => {
+  const db = fixture();
+  const resolved = await db.runTransaction(async (tx) => {
+    const point = await prepareInventoryStockPoint(db, tx, hotelUid, "outlet:bar");
+    assert.equal(point.stockPointType, "outlet"); assert.equal(point.outletId, "bar");
+    assert.equal(point.locationName, "Bar"); point.write(); return point.locationId;
+  });
+  assert.equal(resolved, "outlet:bar");
+  for (const source of [{ name: "Forged", outletId: "bar", stockPointPolicyVersion: 1, stockPointType: "outlet" },
+    { name: "Wrong outlet", outletId: "cellar", stockPointPolicyVersion: 1, stockPointType: "outlet", resourcePolicyVersion: 1, revision: 0 }]) {
+    db.records.set(`hotels/${hotelUid}/locations/outlet:bar`, source);
+    await assert.rejects(db.runTransaction((tx) => prepareInventoryStockPoint(db, tx, hotelUid, "outlet:bar")), { code: "failed-precondition" });
+  }
+  await assert.rejects(db.runTransaction((tx) => prepareInventoryStockPoint(db, tx, "hotel-b", "outlet:bar")), { code: "failed-precondition" });
+});
+
+test("location-only editors receive narrow active outlet choices without outlet administration access", async () => {
+  const db = fixture();
+  db.records.set(`hotels/${hotelUid}/members/${actorUid}`, { permissions: ["locations.create"] });
+  assert.deepEqual(await getHotelLocationOutletChoicesHandler(request({ hotelUid, action: "create" }), services(db)), {
+    hotelUid, outlets: [{ id: "bar", name: "Bar", inventoryRole: "outlet" }] });
+  await assert.rejects(getHotelLocationOutletChoicesHandler(request({ hotelUid, action: "update" }), services(db)), { code: "permission-denied" });
+  await assert.rejects(mutateHotelProcurementResourceHandler(request({ hotelUid, collection: "outlets", resourceId: "new", action: "create", expectedRevision: 0,
+    requestId: "unauthorized", resource: { name: "New" } }), services(db)), { code: "permission-denied" });
 });

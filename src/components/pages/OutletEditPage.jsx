@@ -4,9 +4,11 @@ import HeaderBar from "../layout/HeaderBar";
 import ProcurementPage from "../layout/ProcurementPage";
 import { Card } from "../layout/Card";
 import OutletApproverPicker from "./OutletApproverPicker";
+import OutletInventoryRoleField from "../inventory/OutletInventoryRoleField";
+import PendingProcurementResourceMutation, { usePendingProcurementResourceMutation } from "../inventory/PendingProcurementResourceMutation";
 import { auth, signOut } from "../../firebaseConfig";
 import { usePermission } from "../../hooks/usePermission";
-import { useHotelContext } from "../../contexts/HotelContext";
+import { useProcurementSettingsScope } from "../../hooks/useProcurementSettingsScope";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { listHotelUsers } from "../../services/firebaseOnboarding";
 import {
@@ -19,16 +21,18 @@ import {
 export default function OutletEditPage() {
   const navigate = useNavigate(),
     { outletId } = useParams(),
-    { hotelUid } = useHotelContext();
+    { hotelUid, scopeKey: settingsScopeKey } = useProcurementSettingsScope();
   const canUpdate = usePermission("outlets", "update"),
     canManageApprovers = usePermission("outlets", "approvers");
   const [name, setName] = useState(""),
+    [inventoryRole, setInventoryRole] = useState("outlet"),
+    [resourceSaved, setResourceSaved] = useState(false),
     [selectedIds, setSelectedIds] = useState([]),
     [saving, setSaving] = useState(false),
     [error, setError] = useState("");
-  const scopeKey = `${hotelUid}:${outletId}:${canManageApprovers}`;
-  const active = useRef({ key: scopeKey });
-  if (active.current.key !== scopeKey) active.current = { key: scopeKey };
+  const scopeKey = `${settingsScopeKey}:${outletId}:${canUpdate}:${canManageApprovers}`;
+  const active = useRef({ key: scopeKey, actor: auth.currentUser });
+  if (active.current.key !== scopeKey || active.current.actor !== auth.currentUser) active.current = { key: scopeKey, actor: auth.currentUser };
   const load = useCallback(async () => {
     const [outlet, users, approvers] = await Promise.all([
       getOutletById(hotelUid, outletId),
@@ -47,8 +51,10 @@ export default function OutletEditPage() {
     load,
   });
   useEffect(() => {
-    active.current = { key: scopeKey };
+    active.current = { key: scopeKey, actor: auth.currentUser };
     setName("");
+    setInventoryRole("outlet");
+    setResourceSaved(false);
     setSelectedIds([]);
     setSaving(false);
     setError("");
@@ -59,18 +65,22 @@ export default function OutletEditPage() {
   useEffect(() => {
     if (query.data) {
       setName(query.data.outlet?.name || "");
+      setInventoryRole(query.data.outlet?.inventoryRole === "central_storage" ? "central_storage" : "outlet");
       setSelectedIds(query.data.approvers.map((user) => user.id));
     }
   }, [query.data]);
   const outlet = query.data?.outlet;
+  const recovery = usePendingProcurementResourceMutation({ hotelUid, collection: "outlets", resourceId: outletId, onComplete: () => navigate(`/settings/outlets/${outletId}`) });
   const submit = async (event) => {
     event.preventDefault();
     if (
       !canUpdate ||
       !hotelUid ||
+      auth.currentUser !== active.current.actor ||
       !outletId ||
       !name.trim() ||
       saving ||
+      recovery.blocked ||
       !outlet ||
       outlet.archived === true
     )
@@ -79,29 +89,35 @@ export default function OutletEditPage() {
     setSaving(true);
     setError("");
     try {
-      await updateOutlet(hotelUid, outletId, {
-        name: name.trim(),
-        updatedBy: auth.currentUser?.uid || null,
-      });
-      if (active.current !== requested) return;
+      if (!resourceSaved) await updateOutlet(hotelUid, outletId, {
+          name: name.trim(),
+          inventoryRole,
+          expectedRevision: outlet.revision ?? 0,
+          updatedBy: auth.currentUser?.uid || null,
+        });
+      if (active.current !== requested || auth.currentUser !== requested.actor) return;
+      setResourceSaved(true);
       if (canManageApprovers)
         await setOutletApprovers(
           hotelUid,
           outletId,
           query.data.users.filter((user) => selectedIds.includes(user.id)),
         );
-      if (active.current === requested)
+      if (active.current === requested && auth.currentUser === requested.actor)
         navigate(`/settings/outlets/${outletId}`);
     } catch (failure) {
-      if (active.current === requested)
+      if (active.current === requested && auth.currentUser === requested.actor) {
         setError(failure.message || "Unable to save the outlet.");
+        recovery.refresh();
+      }
     } finally {
-      if (active.current === requested) setSaving(false);
+      if (active.current === requested && auth.currentUser === requested.actor) setSaving(false);
     }
   };
   const disabled =
     !canUpdate ||
     saving ||
+    recovery.blocked ||
     query.loading ||
     Boolean(query.error) ||
     !outlet ||
@@ -123,6 +139,7 @@ export default function OutletEditPage() {
           </p>
           <h1 className="mt-1 text-3xl font-semibold">Edit Outlet</h1>
         </div>
+        <PendingProcurementResourceMutation recovery={recovery} noun="outlet" disabled={saving} />
         {query.loading ? (
           <p>Loading outlet and approvers...</p>
         ) : query.error ? (
@@ -153,13 +170,14 @@ export default function OutletEditPage() {
                   id="outlet-name"
                   maxLength={200}
                   value={name}
-                  disabled={disabled}
+                  disabled={disabled || resourceSaved}
                   onChange={(event) => setName(event.target.value)}
                   placeholder="Outlet name"
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                   required
                 />
               </div>
+              <OutletInventoryRoleField value={inventoryRole} onChange={setInventoryRole} disabled={disabled || resourceSaved} />
               {canManageApprovers && (
                 <OutletApproverPicker
                   users={query.data.users}
@@ -173,6 +191,7 @@ export default function OutletEditPage() {
                   {error}
                 </p>
               )}
+              {resourceSaved && error && canManageApprovers && <p className="text-sm text-amber-800">Outlet settings were saved. Retry saving to finish the approver configuration.</p>}
               <div className="flex justify-end gap-2 border-t border-gray-100 pt-4">
                 <button
                   type="button"
