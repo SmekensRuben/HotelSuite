@@ -3,7 +3,7 @@ const { admin } = require("./config");
 const { requireDocumentId } = require("./subscriptions");
 const { digest, text } = require("./validation");
 const policy = require("./inventoryPolicy");
-const { isArchived } = require("./procurementResources");
+const { prepareInventoryStockPoint } = require("./procurementResources");
 const stamp = () => admin.firestore.FieldValue.serverTimestamp();
 const stateRef = (db, hotelUid, locationId) => db.doc(`hotels/${hotelUid}/inventoryLocationStates/${locationId}`);
 function sequence(snapshot) {
@@ -49,9 +49,8 @@ async function prepareReceiptMovement(db, tx, input) {
   const movementId = requireDocumentId(input.movementId, "movementId");
   const movementRef = db.doc(`hotels/${hotelUid}/inventoryMovements/${movementId}`);
   const [location, state, existing] = await Promise.all([
-    tx.get(db.doc(`hotels/${hotelUid}/locations/${locationId}`)), tx.get(stateRef(db, hotelUid, locationId)), tx.get(movementRef),
+    prepareInventoryStockPoint(db, tx, hotelUid, locationId), tx.get(stateRef(db, hotelUid, locationId)), tx.get(movementRef),
   ]);
-  if (!location.exists || isArchived(location.data())) throw new HttpsError("failed-precondition", "Choose an active inventory location in this hotel.");
   if (existing.exists) throw new HttpsError("already-exists", "An inventory movement already exists for this receiving event.");
   const lines = normalizedLines(input.lines), next = sequence(state) + 1;
   if (!Array.isArray(input.coverageGaps || []) || (input.coverageGaps || []).length > 100) throw new HttpsError("invalid-argument", "Receipt coverage gaps exceed the supported bound.");
@@ -59,11 +58,13 @@ async function prepareReceiptMovement(db, tx, input) {
     supplierProductId: gap.supplierProductId == null ? null : requireDocumentId(gap.supplierProductId, "supplierProductId") }));
   const receivedOn = policy.businessDate(input.receivedOn);
   const movement = { id: movementId, inventoryPolicyVersion: 1, kind: "receipt", hotelUid, locationId,
+    stockPointType: location.stockPointType, outletId: location.outletId, outletName: location.outletName, inventoryRole: location.inventoryRole,
     orderId: requireDocumentId(input.orderId, "orderId"), receiptId: requireDocumentId(input.receiptId, "receiptId"),
     receivedOn, sequence: next, actorUid: input.actorUid, lines, coverageGaps,
     backdatedAgainstCheckpoint: Boolean(state.data()?.latestCheckpointBusinessDate && receivedOn <= state.data().latestCheckpointBusinessDate),
     postedAt: stamp() };
   return { movementId, locationId, sequence: next, inventoryPolicyVersion: 1, write: () => {
+    location.write();
     tx.create(movementRef, movement);
     tx.set(stateRef(db, hotelUid, locationId), { inventoryPolicyVersion: 1, sequence: next, updatedAt: stamp() }, { merge: true });
   } };

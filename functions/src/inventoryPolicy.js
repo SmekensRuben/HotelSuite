@@ -35,8 +35,9 @@ function countItems(value) {
       || Object.keys(item).some((field) => !["catalogProductId", "quantity", "isCounted", "unitCost"].includes(field))) {
       throw new HttpsError("invalid-argument", "Unsupported catalog count item fields.");
     }
-    const quantity = amount(item.quantity, "quantity");
-    if (typeof item.isCounted !== "boolean" || (!item.isCounted && quantity !== 0)) throw new HttpsError("invalid-argument", "Uncounted products must have zero quantity.");
+    if (typeof item.isCounted !== "boolean") throw new HttpsError("invalid-argument", "Each product needs an explicit counted state.");
+    const quantity = !item.isCounted && item.quantity === null ? null : amount(item.quantity, "quantity");
+    if (!item.isCounted && quantity !== null && quantity !== 0) throw new HttpsError("invalid-argument", "Uncounted products must have an empty or legacy zero quantity.");
     return { catalogProductId: requireDocumentId(item.catalogProductId, "catalogProductId"), quantity,
       isCounted: item.isCounted, unitCost: cost(item.unitCost) };
   });
@@ -56,8 +57,8 @@ function valuation(items) {
   if (!items.length) return { countedValue: null, knownCountedValue: 0, costComplete: false };
   let value = 0, complete = true;
   for (const item of items) {
-    const quantity = amount(item.quantity, "Stored quantity");
     if (!item.isCounted) { complete = false; continue; }
+    const quantity = amount(item.quantity, "Stored quantity");
     const unitCost = cost(item.unitCost);
     if (quantity > 0 && unitCost == null) { complete = false; continue; }
     value += quantity * (unitCost || 0);
@@ -65,6 +66,7 @@ function valuation(items) {
   return { countedValue: complete ? money(value) : null, knownCountedValue: money(value), costComplete: complete };
 }
 function completeCount(templateItems, countedItems) {
+  if (!countedItems.length) throw new HttpsError("failed-precondition", "Add and explicitly count at least one product before finishing this stock point.");
   const actual = new Map(countedItems.map((item) => [item.catalogProductId, item]));
   if (templateItems.some((item) => actual.get(item.catalogProductId)?.isCounted !== true)
     || countedItems.some((item) => item.isCounted !== true)) {

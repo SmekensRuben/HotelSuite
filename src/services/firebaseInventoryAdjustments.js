@@ -20,7 +20,7 @@ function validInput(operation, input) {
     || typeof input.note !== "string" || !input.note.trim() || input.note.length > 1000
     || typeof input.reference !== "string" || !input.reference.trim() || input.reference.length > 128) return false;
   if (operation === "reverse") return identifier(input.adjustmentId);
-  return operation === "record" && kinds.includes(input.kind) && identifier(input.catalogProductId)
+  return operation === "record" && (input.movementType == null || input.kind === "transfer" && ["transfer", "requisition"].includes(input.movementType)) && kinds.includes(input.kind) && identifier(input.catalogProductId)
     && identifier(input.sourceLocationId) && decimal(input.quantity) && input.quantity > 0
     && (input.kind !== "transfer" || identifier(input.destinationLocationId) && input.destinationLocationId !== input.sourceLocationId)
     && (input.kind !== "waste" || ["waste", "breakage"].includes(input.reasonType))

@@ -14,8 +14,9 @@ function object(input, fields) {
   return input;
 }
 function record(input) {
-  object(input, ["hotelUid", "requestId", "expectedActorUid", "kind", "catalogProductId", "quantity", "sourceLocationId", "destinationLocationId", "businessDate", "note", "reference", "reasonType", "netUnitCost", "currency"]);
+  object(input, ["hotelUid", "requestId", "expectedActorUid", "kind", "movementType", "catalogProductId", "quantity", "sourceLocationId", "destinationLocationId", "businessDate", "note", "reference", "reasonType", "netUnitCost", "currency"]);
   if (!["transfer", "waste", "physical_return"].includes(input.kind)) throw new HttpsError("invalid-argument", "Choose transfer, waste or physical return.");
+  if (input.movementType != null && (input.kind !== "transfer" || !["transfer", "requisition"].includes(input.movementType))) throw new HttpsError("invalid-argument", "Only transfers may specify a transfer or requisition movement type.");
   const quantity = inventory.amount(input.quantity, "Adjustment quantity");
   if (quantity <= 0) throw new HttpsError("invalid-argument", "Adjustment quantity must be positive.");
   const sourceLocationId = requireDocumentId(input.sourceLocationId, "sourceLocationId");
@@ -29,7 +30,7 @@ function record(input) {
   const currency = input.currency == null ? null : inventory.currency(input.currency);
   if (netUnitCost != null && currency == null) throw new HttpsError("invalid-argument", "An explicit currency is required with a net unit cost.");
   return { hotelUid: requireDocumentId(input.hotelUid, "hotelUid"), requestId: requireDocumentId(input.requestId, "requestId"), expectedActorUid: requireDocumentId(input.expectedActorUid, "expectedActorUid"),
-    kind: input.kind, catalogProductId: requireDocumentId(input.catalogProductId, "catalogProductId"), quantity,
+    kind: input.kind, ...(input.movementType == null ? {} : { movementType: input.movementType }), catalogProductId: requireDocumentId(input.catalogProductId, "catalogProductId"), quantity,
     sourceLocationId, destinationLocationId, reasonType: input.kind === "waste" ? input.reasonType : null,
     businessDate: inventory.businessDate(input.businessDate), note: text(input.note, "Note", 1000, true),
     reference: text(input.reference, "Reference", 200, true), netUnitCost, currency,

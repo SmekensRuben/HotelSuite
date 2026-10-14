@@ -111,16 +111,6 @@ service cloud.firestore {
     function optionalTimestamp(data, key) {
       return data.get(key, request.time) is timestamp;
     }
-    function procurementResourceCreate() {
-      let data = request.resource.data;
-      return !data.keys().hasAny(['archived', 'active', 'resourcePolicyVersion', 'revision', 'archivedBy', 'archivedAt'])
-        && boundedString(data.name, 200) && data.name.size() > 0;
-    }
-    function procurementResourceUpdate() {
-      return resource.data.get('archived', false) == false && resource.data.get('active', true) == true
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['archived', 'active', 'resourcePolicyVersion', 'revision', 'archivedBy', 'archivedAt', 'createdBy', 'createdAt'])
-        && boundedString(request.resource.data.name, 200) && request.resource.data.name.size() > 0;
-    }
     function numberAt(values, index, maximum) {
       return values.size() <= index || (values[index] is number && values[index] >= 0 && values[index] <= maximum);
     }
@@ -385,10 +375,8 @@ service cloud.firestore {
       }
       match /locations/{locationId} {
         allow read: if mayRead(hotelUid, 'locations');
-        allow create: if locationId.size() <= 128 && mayWrite(hotelUid, 'locations', 'create') && procurementResourceCreate();
-        allow update: if mayWrite(hotelUid, 'locations', 'update') && procurementResourceUpdate();
-        // Archive through the protected command; historical identities survive.
-        allow delete: if false;
+        // Protected commands validate outlet ownership and preserve stock identities.
+        allow write: if false;
         match /stockTemplates/{templateId} {
           allow read: if mayRead(hotelUid, 'locations');
           allow write: if false;
@@ -413,9 +401,8 @@ service cloud.firestore {
       match /procurementResourceAudit/{auditId} { allow read, write: if false; }
       match /outlets/{outletId} {
         allow read: if mayRead(hotelUid, 'outlets') || mayRead(hotelUid, 'orders');
-        allow create: if outletId.size() <= 128 && mayWrite(hotelUid, 'outlets', 'create') && procurementResourceCreate();
-        allow update: if mayWrite(hotelUid, 'outlets', 'update') && procurementResourceUpdate();
-        allow delete: if false;
+        // Inventory roles and their default stock points use authorized transactions.
+        allow write: if false;
       }
       match /outlets/{outletId}/approvers/{uid} {
         allow read: if mayRead(hotelUid, 'outlets') || mayRead(hotelUid, 'orders');

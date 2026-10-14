@@ -68,7 +68,7 @@ describe("procurement extensions with ordinary hotel users and actual Firestore 
       }
     }
     for (const path of paths.slice(0, 4)) assert.throws(() => requireHotelImportTarget(`hotels/hotel-a/${path}`, "hotel-a"));
-    assert.equal(SAAS_RULES_VERSION, "saas-platform-v5", "Existing default-deny boundary supports these server-only extensions.");
+    assert.equal(SAAS_RULES_VERSION, "saas-platform-v6", "The reviewed stock-point policy requires protected outlet and location commands.");
   });
   it("ordinary counters get exact package quantities without catalog, supplier or price access", async () => {
     const input = { hotelUid: "hotel-a", stockCountId: "count", locationId: "store", catalogProductId: "juice" };

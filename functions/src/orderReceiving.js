@@ -11,7 +11,7 @@ const { multiplyQuantities, calculateNetValue, derivedPrice } = require("./produ
 const { loadConfirmationState } = require("./supplierConfirmations");
 const { receivingTerms } = require("./supplierConfirmationPolicy");
 const { prepareReceiptMovement, prepareReversalMovement } = require("./inventoryMovements");
-const { isArchived } = require("./procurementResources");
+const { listInventoryStockPoints } = require("./procurementResources");
 const stamp = () => admin.firestore.FieldValue.serverTimestamp();
 const referenceKey = (value) => digest(value.normalize("NFKC").replace(/\s+/g, " ").toLowerCase());
 function orderRevision(data) {
@@ -127,7 +127,7 @@ async function getHotelOrderReceivingHandler(request, services = {}) {
       query = query.startAfter(after);
     }
     const events = await tx.get(query.limit(26));
-    const locations = await tx.get(db.collection(`hotels/${hotelUid}/locations`).orderBy(admin.firestore.FieldPath.documentId()).limit(101));
+    const locations = await listInventoryStockPoints(db, tx, hotelUid);
     const page = events.docs.slice(0, 25);
     const originals = page.filter((event) => event.data().kind === "receipt");
     const reversed = originals.length ? await tx.getAll(...originals.map((event) => ref.collection("receiptReversals").doc(event.id))) : [];
@@ -158,9 +158,8 @@ async function getHotelOrderReceivingHandler(request, services = {}) {
       today: validTimeZone(hotel.data()?.timeZone) ? localDate(services.now?.() ?? Date.now(), hotel.data().timeZone) : null,
       status: data.status, availability, reason, receivingState: aggregate?.state ?? null,
       releaseReady: release.data()?.enabled === true && release.data().rulesVersion === SAAS_RULES_VERSION,
-      inventoryLocations: locations.docs.slice(0, 100).filter((location) => !isArchived(location.data())).map((location) => ({ id: location.id,
-        name: typeof location.data().name === "string" ? location.data().name.slice(0, 200) : location.id })),
-      inventoryLocationsTruncated: locations.docs.length > 100,
+      inventoryLocations: locations.slice(0, 100),
+      inventoryLocationsTruncated: locations.length > 100,
       inventoryCoverageReasons: [...new Set((data.products || []).map((product) => product.inventoryTerms?.reason
         ?? (product.inventoryTerms ? null : "historical-inventory-terms-unavailable")).filter(Boolean))],
       lines: aggregate ? policy.summary(aggregate).map((line) => {

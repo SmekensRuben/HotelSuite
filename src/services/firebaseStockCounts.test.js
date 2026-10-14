@@ -57,6 +57,19 @@ describe("server-owned stock mutation adapter", () => {
 });
 
 describe("catalog count boundaries", () => {
+  it("creates whole-outlet counts without names/templates and submits only optional workflow metadata", async () => {
+    await createStockCount("hotel-a", { type: "Ad Hoc", reason: "Event reconciliation", businessDate: "2026-10-12", locations: [{ outletId: "bar", outletName: "Spoofed" }] });
+    expect(mocks.call.mock.calls[0]).toEqual(["createHotelStockCount", { hotelUid: "hotel-a", type: "Ad Hoc", reason: "Event reconciliation",
+      businessDate: "2026-10-12", locations: [{ outletId: "bar" }], requestId: expect.any(String) }]);
+    await createStockCount("hotel-a", { type: "Month-End", periodMonth: 9, periodYear: 2026, locations: [{ outletId: "bar", locationId: "fridge" }] });
+    expect(mocks.call.mock.calls[1][1]).toMatchObject({ type: "Month-End", periodMonth: 9, periodYear: 2026, locations: [{ outletId: "bar", locationId: "fridge" }] });
+  });
+  it("keeps an empty quantity distinct from explicit zero across command and read normalization", async () => {
+    await updateStockCountLocationCounts("hotel-a", "stock-a", "store", [{ catalogProductId: "milk", quantity: null, isCounted: false },
+      { catalogProductId: "coffee", quantity: 0, isCounted: true }], "spoof", 2);
+    expect(mocks.call.mock.calls[0][1].countedItems).toEqual([{ catalogProductId: "milk", quantity: null, isCounted: false, unitCost: null },
+      { catalogProductId: "coffee", quantity: 0, isCounted: true, unitCost: null }]);
+  });
   it("submits exact catalog quantities and optional estimate without supplier snapshots", async () => {
     await updateStockCountLocationCounts("hotel-a", "stock-a", "store", [{ catalogProductId: "milk", quantity: 1.000001, isCounted: true, unitCost: null, currency: "EUR", totalValue: 999 }], "spoof", 4);
     expect(mocks.call.mock.calls[0][1].countedItems).toEqual([{ catalogProductId: "milk", quantity: 1.000001, isCounted: true, unitCost: null }]);
@@ -80,6 +93,26 @@ describe("catalog count boundaries", () => {
     expect(mocks.call).toHaveBeenCalledTimes(1);
     await createStockCount("hotel-a", input);
     expect(mocks.call.mock.calls[0][1]).toEqual(mocks.call.mock.calls[1][1]);
+  });
+});
+
+describe("stock count product search projection", () => {
+  const page = () => ({ hotelUid: "hotel-a", stockCountId: "stock-a", locationId: "outlet:bar", inventoryPolicyVersion: 1,
+    nextCursor: null, products: [{ id: "milk", name: "Milk", baseUnit: "l", barcodes: ["06291041500213"] }] });
+  it("requests scoped text/barcode pages while preserving barcode leading zeroes", async () => {
+    const { getStockCountProductChoices } = await import("./firebaseStockCounts"); mocks.call.mockResolvedValue(page());
+    await expect(getStockCountProductChoices("hotel-a", "stock-a", "outlet:bar", { search: "milk", barcode: "06291041500213" })).resolves.toEqual(page());
+    expect(mocks.call).toHaveBeenCalledWith("listHotelStockCountProducts", { hotelUid: "hotel-a", stockCountId: "stock-a", locationId: "outlet:bar",
+      afterProductId: null, search: "milk", barcode: "06291041500213" });
+  });
+  it("rejects foreign or malformed responses and non-advancing cursors", async () => {
+    const { getStockCountProductChoices } = await import("./firebaseStockCounts");
+    for (const patch of [{ hotelUid: "foreign" }, { stockCountId: "other" }, { locationId: "fridge" }, { nextCursor: undefined },
+      { nextCursor: "before" }, { products: [page().products[0], page().products[0]] }, { products: [{ ...page().products[0], baseUnit: "bottle" }] },
+      { products: [{ ...page().products[0], barcodes: [6291041500213] }] }]) {
+      mocks.call.mockResolvedValue({ ...page(), ...patch });
+      await expect(getStockCountProductChoices("hotel-a", "stock-a", "outlet:bar", { afterProductId: "before" })).rejects.toThrow("invalid scope, products or pagination");
+    }
   });
 });
 

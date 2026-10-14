@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ call: vi.fn(), getDocs: vi.fn(), getDoc: vi.fn(), auth: { currentUser: { uid: "hotel-admin" } } }));
 vi.mock("../firebaseConfig", () => ({ auth: mocks.auth, functions: {}, db: {}, collection: (_db, path) => ({ path }),
-  doc: (_db, path, id) => ({ path: id ? `${path}/${id}` : path }), getDocs: mocks.getDocs, getDoc: mocks.getDoc,
+  doc: (source, path, id) => ({ path: source?.path ? `${source.path}/generated-resource` : id ? `${path}/${id}` : path,
+    id: source?.path ? "generated-resource" : id || path?.split("/").at(-1) }), getDocs: mocks.getDocs, getDoc: mocks.getDoc,
   httpsCallable: (_functions, endpoint) => async (input) => ({ data: await mocks.call(endpoint, input) }) }));
 vi.mock("firebase/firestore", () => ({ runTransaction: vi.fn() }));
-import { archiveLocation, archiveOutlet, getLocations, getOutlets, getLocationById, getOutletById, getHotelStockTemplateDisplay,
+import { archiveLocation, archiveOutlet, createOutlet, updateOutlet, createLocation, updateLocation, getLocationOutletChoices, getLocations, getOutlets, getLocationById, getOutletById, getHotelStockTemplateDisplay,
   getPendingProcurementResourceCommand, retryPendingProcurementResourceCommand } from "./firebaseSettings";
 import { invalidateProcurementReads } from "./procurementReadPool";
 
@@ -12,6 +13,47 @@ beforeEach(() => {
   vi.clearAllMocks(); sessionStorage.clear(); invalidateProcurementReads(); mocks.auth.currentUser = { uid: "hotel-admin" };
   mocks.call.mockImplementation(async (_endpoint, input) => ({ hotelUid: input.hotelUid, collection: input.collection, resourceId: input.resourceId, revision: input.expectedRevision + 1, archived: true }));
   mocks.getDocs.mockResolvedValue({ docs: [] });
+});
+
+describe("protected outlet and location setup", () => {
+  it("creates outlet and linked locations through protected commands and retains server revisions", async () => {
+    mocks.call.mockImplementation(async (_endpoint, input) => ({ hotelUid: input.hotelUid, collection: input.collection,
+      resourceId: input.resourceId, revision: input.expectedRevision + 1, archived: false }));
+    const outlet = await createOutlet("hotel-a", { name: " Cellar ", inventoryRole: "central_storage", createdBy: "spoofed" });
+    expect(outlet).toEqual({ id: "generated-resource", name: "Cellar", inventoryRole: "central_storage", revision: 1 });
+    expect(mocks.call.mock.calls[0][1]).toMatchObject({ collection: "outlets", action: "create", resource: { name: "Cellar", inventoryRole: "central_storage" } });
+    await createLocation("hotel-a", { name: "Rack", outletId: outlet.id });
+    expect(mocks.call.mock.calls[1][1]).toMatchObject({ collection: "locations", resource: { name: "Rack", outletId: outlet.id } });
+    await expect(createLocation("hotel-a", { name: "Unassigned" })).rejects.toThrow("Outlet ID");
+  });
+  it("keeps the originally loaded revision and allows exact update replay after uncertain outcomes", async () => {
+    mocks.call.mockRejectedValueOnce(new Error("Response lost")).mockImplementation(async (_endpoint, input) => ({ hotelUid: input.hotelUid,
+      collection: input.collection, resourceId: input.resourceId, archived: false, revision: input.expectedRevision + 1 }));
+    await expect(updateOutlet("hotel-a", "bar", { name: "Bar", inventoryRole: "outlet", expectedRevision: 2 })).rejects.toThrow("Response lost");
+    const original = mocks.call.mock.calls[0][1];
+    await retryPendingProcurementResourceCommand("hotel-a", "outlets", "bar");
+    expect(mocks.call.mock.calls[1][1]).toEqual(original);
+    await updateLocation("hotel-a", "rack", { name: "New rack", expectedRevision: 4 });
+    expect(mocks.call.mock.calls[2][1]).toMatchObject({ expectedRevision: 4, resource: { name: "New rack" } });
+    expect(mocks.getDoc).not.toHaveBeenCalled();
+  });
+  it("recovers a creation using its generated identity rather than creating a duplicate after remount", async () => {
+    mocks.call.mockRejectedValueOnce(new Error("Response lost")).mockImplementation(async (_endpoint, input) => ({ hotelUid: input.hotelUid,
+      collection: input.collection, resourceId: input.resourceId, archived: false, revision: 1 }));
+    await expect(createOutlet("hotel-a", { name: "Cellar" })).rejects.toThrow("Response lost");
+    const original = mocks.call.mock.calls[0][1];
+    expect(getPendingProcurementResourceCommand("hotel-a", "outlets", "new")).toMatchObject({ resourceId: "generated-resource", action: "create" });
+    const result = await retryPendingProcurementResourceCommand("hotel-a", "outlets", "new");
+    expect(result.resourceId).toBe("generated-resource"); expect(mocks.call.mock.calls[1][1]).toEqual(original);
+    expect(getPendingProcurementResourceCommand("hotel-a", "outlets", "new")).toBeNull();
+  });
+  it("requests a narrow active outlet picker using the location action", async () => {
+    const outlets = [{ id: "bar", name: "Bar", inventoryRole: "outlet" }];
+    mocks.call.mockResolvedValue({ hotelUid: "hotel-a", outlets });
+    expect(await getLocationOutletChoices("hotel-a", "update")).toEqual(outlets);
+    expect(mocks.call).toHaveBeenCalledWith("getHotelLocationOutletChoices", { hotelUid: "hotel-a", action: "update" });
+    expect(mocks.getDocs).not.toHaveBeenCalled();
+  });
 });
 
 describe("protected procurement resource archival", () => {

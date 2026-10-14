@@ -15,11 +15,16 @@ import InventoryCostProposal from "../inventory/InventoryCostProposal";
 import { procurementReadScope } from "../../services/procurementReadPool";
 
 const blankForm = () => ({ kind: "transfer", reasonType: "waste", businessDate: "", reference: "", note: "", product: null,
-  source: null, destination: null, quantity: "", netUnitCost: "", costCurrency: null, appliedEstimate: null });
-const kindName = (event) => event.kind === "transfer" ? "Internal transfer" : event.kind === "physical_return" ? "Physical supplier return"
+  source: null, destination: null, sourceDetail: false, destinationDetail: false, quantity: "", netUnitCost: "", costCurrency: null, appliedEstimate: null });
+const kindName = (event) => event.kind === "transfer" ? event.movementType === "requisition" ? "Requisition" : "Internal transfer" : event.kind === "physical_return" ? "Physical supplier return"
   : event.kind === "reversal" ? "Compensating reversal" : event.reasonType === "breakage" ? "Breakage" : "Waste";
 const dateTime = (value) => value === null ? "Unknown posting time" : new Date(value).toLocaleString("en-GB");
 const scopedOptions = (options, selected) => selected && !options.some((item) => item.id === selected.id) ? [selected, ...options] : options;
+const pointLabel = (point) => point.stockPointType === "outlet"
+  ? `${point.name} · ${point.inventoryRole === "central_storage" ? "Central stock point" : "Entire outlet"}`
+  : point.outletName ? `${point.outletName} / ${point.name} · Location` : point.name;
+const isDetailPoint = (point) => point.stockPointType === "location" && Boolean(point.outletId);
+const historicPointLabel = (name, outletName, fallback) => name ? outletName && outletName !== name ? `${outletName} / ${name}` : name : fallback;
 
 function useMovementSources(hotelUid, kind, enabled) {
   const [queryText, setQueryText] = useState(""), [prefix, setPrefix] = useState("");
@@ -49,7 +54,7 @@ function useMovementSources(hotelUid, kind, enabled) {
       setExtra((previous) => ({ scopeKey, choices: [...previous.choices, ...next.choices.filter((item) => !existing.has(item.id))], cursor: next.nextCursor, busy: false, error: null }));
     } catch (error) { if (active.current === scopeKey && request === generation.current) setExtra((previous) => ({ ...previous, busy: false, error })); }
   };
-  return { choices, currency: first.data?.hotelCurrency ?? null, currencyKnown: Boolean(first.data), loading: first.loading || current.busy || queryText.trim().toLowerCase() !== prefix,
+  return { choices, currency: first.data?.hotelCurrency ?? null, today: first.data?.today || null, currencyKnown: Boolean(first.data), loading: first.loading || current.busy || queryText.trim().toLowerCase() !== prefix,
     error: first.error || current.error, cursor: current.cursor, loadMore, retry: first.retry, search: setQueryText };
 }
 
@@ -57,7 +62,7 @@ function MovementHistoryItem({ hotelUid, event, canReverse, disabled, onReverse 
   const names = useStaffDisplayNames({ hotelUid, scopeKey: `movement:${event.adjustmentId}`, record: { createdBy: event.actorUid } });
   return <li className="rounded-xl border border-slate-200 p-4">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{kindName(event)} · {event.catalogProductName || "Unknown catalog product"}</p>
-      <p className="mt-1 text-sm text-slate-600">{formatInventoryQuantity(event.quantity)} {event.baseUnit} · {event.sourceLocationName || "Unknown location"}{event.destinationLocationId ? ` → ${event.destinationLocationName || "Unknown destination"}` : ""}</p></div>
+      <p className="mt-1 text-sm text-slate-600">{formatInventoryQuantity(event.quantity)} {event.baseUnit} · {historicPointLabel(event.sourceLocationName, event.sourceOutletName, "Unknown stock point")}{event.destinationLocationId ? ` → ${historicPointLabel(event.destinationLocationName, event.destinationOutletName, "Unknown destination")}` : ""}</p></div>
       <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium">{event.reversedByAdjustmentId ? "Reversed · original retained" : event.kind === "reversal" ? "Reversal evidence" : "Completed event"}</span></div>
     <dl className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2"><div><dt>Business date / reference</dt><dd className="mt-1 text-sm text-slate-700">{event.businessDate} · {event.reference}</dd></div>
       <div><dt>Posted by / time</dt><dd className="mt-1 text-sm text-slate-700">{names.createdByName} · {dateTime(event.postedAtMillis)}</dd></div>
@@ -79,7 +84,9 @@ export default function InventoryMovementsPage() {
 }
 function ScopedMovements({ hotelUid, canRead, canCreate, canReverse, canReadCounts }) {
   const actor = useRef(auth.currentUser).current, actorUid = actor?.uid || "";
-  const [form, setForm] = useState(blankForm);
+  const initialRequest = useMemo(() => new URLSearchParams(window.location.search), []);
+  const [form, setForm] = useState(() => ({ ...blankForm(), kind: initialRequest.get("type") === "requisition" ? "requisition" : "transfer" }));
+  const sourcePrefillHandled = useRef(false);
   const [reverse, setReverse] = useState(null), [reverseForm, setReverseForm] = useState({ businessDate: "", reference: "", note: "" });
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(null), [pending, setPending] = useState(null), [pendingError, setPendingError] = useState("");
   const [older, setOlder] = useState([]), [cursor, setCursor] = useState(null), [moreBusy, setMoreBusy] = useState(false), [moreError, setMoreError] = useState(null);
@@ -96,6 +103,18 @@ function ScopedMovements({ hotelUid, canRead, canCreate, canReverse, canReadCoun
   const choicesEnabled = Boolean(hotelUid && actorUid && canCreate);
   const productSources = useMovementSources(hotelUid, "catalogproducts", choicesEnabled);
   const locationSources = useMovementSources(hotelUid, "locations", choicesEnabled);
+  const isRequisition = form.kind === "requisition";
+  const isTransfer = form.kind === "transfer" || isRequisition;
+  const sourceChoices = locationSources.choices.filter((point) => (!isRequisition || point.inventoryRole === "central_storage") && (form.sourceDetail || !isDetailPoint(point)));
+  const destinationChoices = locationSources.choices.filter((point) => point.id !== form.source?.id && (!isRequisition || point.outletId && point.outletId !== form.source?.outletId && point.inventoryRole === "outlet") && (form.destinationDetail || !isDetailPoint(point)));
+  useEffect(() => {
+    if (sourcePrefillHandled.current || !initialRequest.get("sourceOutletId")) return;
+    const point = locationSources.choices.find((choice) => choice.stockPointType === "outlet" && choice.outletId === initialRequest.get("sourceOutletId") && (initialRequest.get("type") !== "requisition" || choice.inventoryRole === "central_storage"));
+    if (point) { sourcePrefillHandled.current = true; setForm((previous) => ({ ...previous, source: point })); }
+  }, [initialRequest, locationSources.choices]);
+  useEffect(() => {
+    if (productSources.today) setForm((previous) => previous.businessDate ? previous : { ...previous, businessDate: productSources.today });
+  }, [productSources.today]);
   const blocked = busy || Boolean(pending || pendingError) || !actorUid;
   const setField = (key, value) => setForm((previous) => ({ ...previous, [key]: value }));
   const currency = productSources.currency;
@@ -110,7 +129,7 @@ function ScopedMovements({ hotelUid, canRead, canCreate, canReverse, canReadCoun
     try {
       await action();
       if (!isCurrent()) return;
-      setPending(null); setForm(blankForm()); setReverse(null); setReverseForm({ businessDate: "", reference: "", note: "" });
+      setPending(null); setForm((previous) => ({ ...blankForm(), kind: previous.kind, source: previous.source, destination: previous.destination, sourceDetail: previous.sourceDetail, destinationDetail: previous.destinationDetail, businessDate: previous.businessDate || productSources.today || "" })); setReverse(null); setReverseForm({ businessDate: "", reference: "", note: "" });
       setMessage({ text: "Movement evidence recorded. Historical events remain immutable." });
       await history.run();
     } catch (error) {
@@ -127,10 +146,12 @@ function ScopedMovements({ hotelUid, canRead, canCreate, canReverse, canReadCoun
       if (form.appliedEstimate && (form.appliedEstimate.context !== estimateContext || !form.appliedEstimate.scope?.current())) throw new Error("The applied cost estimate no longer matches this draft or recorded evidence. Refresh and apply it, clear it or explicitly enter a reviewed manual estimate before recording.");
       const quantity = parseInventoryDecimal(form.quantity), netUnitCost = parseInventoryDecimal(form.netUnitCost, { optional: true });
       if (quantity <= 0) throw new Error("Enter a positive movement quantity in the catalog base unit.");
-      if (form.kind === "transfer" && (!form.destination || form.destination.id === form.source.id)) throw new Error("Choose two different active physical locations.");
+      if (isTransfer && (!form.destination || form.destination.id === form.source.id)) throw new Error("Choose two different active stock points.");
+      if (isRequisition && (form.source.inventoryRole !== "central_storage" || !form.destination?.outletId || form.destination.outletId === form.source.outletId || form.destination.inventoryRole !== "outlet")) throw new Error("Choose a central stock point and a different receiving outlet for this requisition.");
       if (netUnitCost !== null && (!form.costCurrency || form.costCurrency !== currency || form.costCurrency !== locationSources.currency)) throw new Error("The estimated cost's explicit currency no longer matches the hotel sources. Clear and review the estimate, or leave cost blank if it is unknown.");
-      const input = { hotelUid, kind: form.kind, catalogProductId: form.product.id, quantity, sourceLocationId: form.source.id,
-        ...(form.kind === "transfer" ? { destinationLocationId: form.destination.id } : {}),
+      const input = { hotelUid, kind: isTransfer ? "transfer" : form.kind, catalogProductId: form.product.id, quantity, sourceLocationId: form.source.id,
+        ...(isTransfer ? { destinationLocationId: form.destination.id } : {}),
+        ...(isRequisition ? { movementType: "requisition" } : {}),
         ...(form.kind === "waste" ? { reasonType: form.reasonType } : {}), businessDate: form.businessDate,
         reference: form.reference.trim(), note: form.note.trim(), netUnitCost, currency: netUnitCost === null ? null : form.costCurrency };
       execute(() => recordInventoryAdjustment(input));
@@ -154,7 +175,7 @@ function ScopedMovements({ hotelUid, canRead, canCreate, canReverse, canReadCoun
     <HeaderBar today={today} onLogout={async () => { await signOut(auth); sessionStorage.clear(); window.location.href = "/login"; }} />
     <ProcurementPage className="space-y-6">
       <div><p className="text-xs uppercase tracking-wider text-slate-500">Purchasing & inventory</p><h1 className="text-3xl font-semibold">Inventory movements</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Register physical transfers, waste, breakage and supplier returns to help explain differences between counts. These immutable events do not create a live on-hand balance.</p></div>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Requisition goods from central storage to an outlet, or record transfers, waste and supplier returns. These immutable events do not create a live on-hand balance.</p></div>
       {busy && <p role="status" className="rounded-xl bg-brand-50 p-4 text-sm">Recording movement evidence…</p>}
       {message && <p role={message.error ? "alert" : "status"} className={`rounded-xl border p-4 text-sm ${message.error ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>{message.text}</p>}
       {pendingError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">{pendingError}</p>}
@@ -164,29 +185,47 @@ function ScopedMovements({ hotelUid, canRead, canCreate, canReverse, canReadCoun
         {!retrySavedAllowed && <p>Your current permissions do not allow replaying this saved action. A hotel administrator must review access.</p>}</div>}
       {!canCreate && !canRead && <p role="alert">Inventory movement read or create permission is required.</p>}
       {canCreate && <Card className="space-y-5">
-        <div><h2 className="text-xl font-semibold">Record a physical event</h2><p className="mt-1 text-sm text-slate-600">Choose an article and the physical locations involved. Enter the quantity in its catalog unit; a cost estimate is optional.</p></div>
+        <div><h2 className="text-xl font-semibold">Record a physical event</h2><p className="mt-1 text-sm text-slate-600">Choose the stock points, find an article and enter the quantity moved. Use entire outlets or optional locations; a cost estimate is optional.</p></div>
         {(productSources.loading || locationSources.loading) && <p role="status" className="text-sm text-slate-600">Loading articles and locations…</p>}
         <form aria-label="Record a physical event" className="space-y-4" onSubmit={submit}>
-          <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium">Event type<select aria-label="Event type" className="ht-field mt-1" disabled={blocked} value={form.kind} onChange={(event) => { setField("kind", event.target.value); setField("destination", null); }}><option value="transfer">Internal transfer</option><option value="waste">Waste or breakage</option><option value="physical_return">Physical supplier return</option></select></label>
+          <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium">Event type<select aria-label="Event type" className="ht-field mt-1" disabled={blocked} value={form.kind} onChange={(event) => {
+            const kind = event.target.value;
+            sourcePrefillHandled.current = true;
+            setForm((previous) => ({ ...previous, kind, source: kind === "requisition" && previous.source?.inventoryRole !== "central_storage" ? null : previous.source, destination: null }));
+          }}><option value="requisition">Requisition from central storage</option><option value="transfer">Internal transfer</option><option value="waste">Waste or breakage</option><option value="physical_return">Physical supplier return</option></select></label>
             {form.kind === "waste" && <label className="text-sm font-medium">Waste classification<select aria-label="Waste classification" className="ht-field mt-1" value={form.reasonType} disabled={blocked} onChange={(event) => setField("reasonType", event.target.value)}><option value="waste">Waste</option><option value="breakage">Breakage</option></select></label>}</div>
+          {initialRequest.get("sourceOutletId") && !sourcePrefillHandled.current && !locationSources.loading && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm leading-6">The linked source has not been found in the loaded stock points. Search or load more stock points, then select a source to continue.</p>}
+          {isRequisition && <p className="rounded-xl bg-brand-50 p-3 text-sm leading-6">Record a requisition when goods physically move from a central stock point to an outlet. The same quantity leaves the source and enters the destination together.</p>}
           {form.kind === "physical_return" && <p className="rounded-xl bg-slate-50 p-3 text-xs leading-5">Record goods that physically left this location. This is separate from rejected goods at receiving and does not record a supplier credit, payment or invoice adjustment.</p>}
+          <fieldset className="space-y-3"><legend className="text-sm font-semibold text-slate-700">1. Choose stock points</legend>
+            <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><label className="block text-sm font-medium">{isRequisition ? "From central stock point" : "From outlet or stock point"}<Combobox aria-label="From stock point" required value={form.source} options={scopedOptions(sourceChoices, form.source)} onChange={(location) => {
+              sourcePrefillHandled.current = true;
+              setForm((previous) => ({ ...previous, source: location, destination: location?.id === previous.destination?.id || isRequisition && location?.outletId === previous.destination?.outletId ? null : previous.destination }));
+            }} displayValue={pointLabel} getOptionValue={(location) => location.id} className="ht-field mt-1" placeholder={isRequisition ? "Search central stock points" : "Search outlets and stock points"} onQueryChange={locationSources.search} filterOptions={false} loading={locationSources.loading} disabled={blocked} emptyMessage={isRequisition ? "No central stock point found. Set its type in Outlet settings, or load more stock points." : "No matching stock points."} /></label>
+              <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={form.sourceDetail} disabled={blocked} onChange={(event) => setForm((previous) => ({ ...previous, sourceDetail: event.target.checked, source: !event.target.checked && isDetailPoint(previous.source || {}) ? null : previous.source }))} />Use a detailed source location</label>
+            </div>
+            {isTransfer && <div className="space-y-2"><label className="block text-sm font-medium">To outlet or stock point<Combobox aria-label="To stock point" required value={form.destination} options={scopedOptions(destinationChoices, form.destination)} onChange={(location) => setField("destination", location)} displayValue={pointLabel} getOptionValue={(location) => location.id} className="ht-field mt-1" placeholder="Search a different outlet" onQueryChange={locationSources.search} filterOptions={false} loading={locationSources.loading} disabled={blocked || isRequisition && !form.source} /></label>
+              <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={form.destinationDetail} disabled={blocked} onChange={(event) => setForm((previous) => ({ ...previous, destinationDetail: event.target.checked, destination: !event.target.checked && isDetailPoint(previous.destination || {}) ? null : previous.destination }))} />Use a detailed destination location</label>
+            </div>}</div>
+            {locationSources.cursor && <button type="button" className="ht-button-secondary" disabled={blocked || locationSources.loading} onClick={locationSources.loadMore}>Load more stock points</button>}
+          </fieldset>
+          <p className="border-t border-slate-100 pt-4 text-sm font-semibold text-slate-700">2. Article and quantity</p>
           <label className="block text-sm font-medium">Catalog article<Combobox aria-label="Catalog article" required options={scopedOptions(productSources.choices, form.product)} value={form.product} onChange={(product) => { setField("product", product); setField("quantity", ""); setField("netUnitCost", ""); setField("costCurrency", null); setField("appliedEstimate", null); }} displayValue={(product) => `${product.name} · ${product.baseUnit}`} getOptionValue={(product) => product.id} className="ht-field mt-1" placeholder="Search by article name" onQueryChange={productSources.search} filterOptions={false} loading={productSources.loading} disabled={blocked} description="Type the beginning of an article name to search. Use Load more catalog articles to see more results." /></label>
           {productSources.cursor && <button type="button" className="ht-button-secondary" disabled={blocked || productSources.loading} onClick={productSources.loadMore}>Load more catalog articles</button>}
-          <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium">From physical location<Combobox aria-label="From physical location" required value={form.source} options={scopedOptions(locationSources.choices, form.source)} onChange={(location) => { setField("source", location); if (location?.id === form.destination?.id) setField("destination", null); }} displayValue={(location) => location.name} getOptionValue={(location) => location.id} className="ht-field mt-1" placeholder="Search physical locations" onQueryChange={locationSources.search} filterOptions={false} loading={locationSources.loading} disabled={blocked} /></label>
-            {form.kind === "transfer" && <label className="text-sm font-medium">To physical location<Combobox aria-label="To physical location" required value={form.destination} options={scopedOptions(locationSources.choices.filter((location) => location.id !== form.source?.id), form.destination)} onChange={(location) => setField("destination", location)} displayValue={(location) => location.name} getOptionValue={(location) => location.id} className="ht-field mt-1" placeholder="Search a different location" onQueryChange={locationSources.search} filterOptions={false} loading={locationSources.loading} disabled={blocked} /></label>}</div>
-          {locationSources.cursor && <button type="button" className="ht-button-secondary" disabled={blocked || locationSources.loading} onClick={locationSources.loadMore}>Load more physical locations</button>}
           {sourceError && <div role="alert" className="space-y-2 text-sm text-amber-900"><p>Articles or locations could not be loaded. {sourceError.message}</p><button type="button" className="ht-button-secondary" disabled={blocked} onClick={() => { productSources.retry(); locationSources.retry(); }}>Retry articles and locations</button></div>}
-          <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium">Quantity ({form.product?.baseUnit || "catalog base unit"})<input aria-label="Movement quantity" className="ht-field mt-1" required type="number" min="0.000001" max="1000000" step="0.000001" disabled={blocked || !form.product} value={form.quantity} onChange={(event) => setField("quantity", event.target.value)} /></label>
+          <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium">Quantity ({form.product?.baseUnit || "catalog base unit"})<input aria-label="Movement quantity" className="ht-field mt-1" required type="number" inputMode="decimal" min="0.000001" max="1000000" step="0.000001" disabled={blocked || !form.product} value={form.quantity} onChange={(event) => setField("quantity", event.target.value)} /></label>
             <label className="text-sm font-medium">Estimated net cost per {form.product?.baseUnit || "catalog unit"} ({(form.netUnitCost !== "" ? form.costCurrency : currency) || "currency unavailable"}) · Optional<input aria-label="Estimated net unit cost" aria-describedby="movement-cost-help" className="ht-field mt-1" type="number" min="0" max="1000000" step="0.000001" placeholder="Unknown — optional" disabled={blocked || !form.product || !currency && form.netUnitCost === ""} value={form.netUnitCost} onChange={(event) => { setField("netUnitCost", event.target.value); setField("costCurrency", event.target.value === "" ? null : currency); setField("appliedEstimate", null); }} /></label></div>
           <div id="movement-cost-help" className="space-y-1 text-xs leading-5 text-slate-500"><p>A catalog article may have several supplier prices, so selecting it does not fill a stock cost. Request and review a weighted estimate from actual recorded evidence, or enter a manual estimate for the stock being moved{form.product ? `, per ${form.product.baseUnit}` : ""}, excluding VAT. Leave blank if unknown; quantity is still recorded and its value remains unavailable. Enter 0 only for a known zero cost.</p>
             {productSources.currencyKnown && !currency && <p>The hotel's currency is unavailable. You can record the quantity, but cannot enter a cost estimate.</p>}</div>
-          <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium">Business date<input aria-label="Business date" type="date" required className="ht-field mt-1" disabled={blocked} value={form.businessDate} onChange={(event) => setField("businessDate", event.target.value)} /></label><label className="text-sm font-medium">Reference<input aria-label="Reference" required maxLength={128} className="ht-field mt-1" disabled={blocked} value={form.reference} onChange={(event) => setField("reference", event.target.value)} placeholder="Transfer note, waste record or return reference" /></label></div>
+          <p className="border-t border-slate-100 pt-4 text-sm font-semibold text-slate-700">3. Confirm the movement</p>
+          <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium">Business date<input aria-label="Business date" type="date" required className="ht-field mt-1" disabled={blocked} value={form.businessDate} onChange={(event) => setField("businessDate", event.target.value)} /></label><label className="text-sm font-medium">Reference<input aria-label="Reference" required maxLength={128} className="ht-field mt-1" disabled={blocked} value={form.reference} onChange={(event) => setField("reference", event.target.value)} placeholder={isRequisition ? "Requisition reference" : "Transfer note, waste record or return reference"} /></label></div>
           {canReadCounts ? <InventoryCostProposal request={{ hotelUid, purpose: "movement", locationId: form.source?.id, catalogProductId: form.product?.id, businessDate: form.businessDate }} baseUnit={form.product?.baseUnit} currency={currency} businessDate={form.businessDate} articleName={form.product?.name} disabled={blocked || productSources.loading || locationSources.loading || Boolean(sourceError) || currency !== locationSources.currency}
             onApply={(number, proposal) => setForm((previous) => ({ ...previous, netUnitCost: String(number), costCurrency: proposal.currency, appliedEstimate: { context: estimateContext, scope: procurementReadScope(hotelUid) } }))} />
             : <p className="text-xs leading-5 text-slate-500">Stock count read permission is required to request weighted stock-cost estimates. A reviewed manual cost or unknown cost remains available.</p>}
           {form.appliedEstimate && <div role={staleEstimate ? "alert" : "status"} className="flex flex-wrap items-center gap-2 text-xs text-slate-600"><p>{staleEstimate ? "This applied estimate is stale after a context or evidence change. Refresh and apply it, clear it or explicitly enter a reviewed manual value before recording." : "Weighted estimate applied to this draft. Recording freezes it as an operator-reviewed estimate."}</p><button type="button" className="ht-button-secondary" disabled={blocked} onClick={() => setForm((previous) => ({ ...previous, netUnitCost: "", costCurrency: null, appliedEstimate: null }))}>Clear applied estimate</button></div>}
           <label className="block text-sm font-medium">Reason / evidence<textarea aria-label="Reason / evidence" required maxLength={1000} rows={3} className="ht-field mt-1" disabled={blocked} value={form.note} onChange={(event) => setField("note", event.target.value)} /></label>
-          <div className="flex justify-end"><button type="submit" className="ht-button-primary" disabled={blocked || staleEstimate || productSources.loading || locationSources.loading || Boolean(sourceError) || !form.product || !form.source || form.kind === "transfer" && !form.destination}>Record movement</button></div>
+          {isTransfer && form.source && form.destination && form.product && form.quantity && <p className="rounded-xl bg-slate-50 p-3 text-sm leading-6">{form.quantity} {form.product.baseUnit} of {form.product.name}: {pointLabel(form.source)} → {pointLabel(form.destination)}</p>}
+          <div className="sticky bottom-0 flex justify-end border-t border-slate-100 bg-white py-3"><button type="submit" className="ht-button-primary w-full sm:w-auto" disabled={blocked || staleEstimate || productSources.loading || locationSources.loading || Boolean(sourceError) || !form.product || !form.source || isTransfer && !form.destination}>{isRequisition ? "Record requisition" : "Record movement"}</button></div>
         </form>
       </Card>}
       {reverse && canReverse && <Card><form aria-label="Reverse a physical event" className="space-y-4" onSubmit={(event) => { event.preventDefault(); if (!blocked) execute(() => reverseInventoryAdjustment({ hotelUid, adjustmentId: reverse.adjustmentId, ...reverseForm, reference: reverseForm.reference.trim(), note: reverseForm.note.trim() })); }}>

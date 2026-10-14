@@ -9,7 +9,6 @@ import {
   getDocs,
   setDoc,
   updateDoc,
-  writeBatch,
 } from "../firebaseConfig";
 import { runTransaction } from "firebase/firestore";
 import { invalidateProcurementReads, poolProcurementRead, requireServerSnapshot } from "./procurementReadPool";
@@ -182,83 +181,14 @@ export async function getOutlets(hotelUid, options = {}) {
   });
 }
 
-export async function setOutlets(hotelUid, outlets) {
-  if (!hotelUid) return [];
-
-  const outletsCol = collection(db, `hotels/${hotelUid}/outlets`);
-  const existingSnapshot = await getDocs(outletsCol);
-
-  const batch = writeBatch(db);
-  const incomingIds = new Set();
-  const normalizedOutlets = outlets.map(outlet => {
-    const cleaned = {
-      ...outlet,
-      subOutlets: Array.isArray(outlet.subOutlets)
-        ? outlet.subOutlets.map(sub => ({
-            ...sub,
-            subType: sub?.subType || "",
-          }))
-        : [],
-      menuCategories: Array.isArray(outlet.menuCategories)
-        ? outlet.menuCategories
-        : [],
-      costCenterIds: Array.isArray(outlet.costCenterIds)
-        ? outlet.costCenterIds
-            .map(id => (id === null || id === undefined ? "" : String(id).trim()))
-            .filter(Boolean)
-        : [],
-    };
-
-    let docId = String(cleaned.id || cleaned.name || "").trim();
-    let docRef;
-    if (docId) {
-      docRef = doc(db, `hotels/${hotelUid}/outlets`, docId);
-    } else {
-      docRef = doc(outletsCol);
-      docId = docRef.id;
-    }
-
-    cleaned.id = docId;
-    incomingIds.add(docId);
-    batch.set(docRef, cleaned);
-
-    return cleaned;
-  });
-
-  existingSnapshot.forEach(docSnap => {
-    if (!incomingIds.has(docSnap.id)) {
-      batch.delete(docSnap.ref);
-    }
-  });
-
-  await batch.commit();
-  invalidateProcurementReads(hotelUid);
-
-  return normalizedOutlets;
+export async function setOutlets() {
+  throw new Error("Bulk outlet replacement is no longer supported. Create, update or archive each outlet individually.");
 }
-
 
 export async function createOutlet(hotelUid, outletInput) {
   if (!hotelUid) return null;
-
-  const cleanedName = String(outletInput?.name || "").trim();
-  if (!cleanedName) return null;
-
-  const outletsCol = collection(db, `hotels/${hotelUid}/outlets`);
-  const outletRef = doc(outletsCol);
-
-  const payload = {
-    id: outletRef.id,
-    name: cleanedName,
-    subOutlets: [],
-    menuCategories: [],
-    costCenterIds: [],
-    createdBy: outletInput?.createdBy || null,
-  };
-
-  await setDoc(outletRef, payload);
-  invalidateProcurementReads(hotelUid);
-  return payload;
+  const resource = { name: requireName(outletInput?.name, "Outlet name"), inventoryRole: outletInput?.inventoryRole ?? "outlet" };
+  return saveNewProcurementResource(hotelUid, "outlets", resource);
 }
 
 export async function getOutletById(hotelUid, outletId) {
@@ -277,18 +207,11 @@ export async function getOutletById(hotelUid, outletId) {
 }
 
 export async function updateOutlet(hotelUid, outletId, outletInput) {
-  if (!hotelUid || !outletId) throw new Error("hotelUid en outletId zijn verplicht");
-
-  const cleanedName = String(outletInput?.name || "").trim();
-  if (!cleanedName) throw new Error("Outlet name is verplicht");
-
-  const outletRef = doc(db, `hotels/${hotelUid}/outlets`, outletId);
-  await updateDoc(outletRef, {
-    name: cleanedName,
-    updatedAt: new Date(),
-    updatedBy: outletInput?.updatedBy || null,
-  });
-  invalidateProcurementReads(hotelUid);
+  const source = outletInput?.expectedRevision === undefined ? await getOutletById(hotelUid, outletId) : null;
+  if (outletInput?.expectedRevision === undefined && !source) throw new Error("Outlet not found.");
+  const resource = { name: requireName(outletInput?.name, "Outlet name") };
+  if (outletInput?.inventoryRole !== undefined) resource.inventoryRole = outletInput.inventoryRole;
+  return saveProcurementResource(hotelUid, "outlets", outletId, "update", resource, outletInput?.expectedRevision ?? source?.revision ?? 0);
 }
 
 export async function getOutletApprovers(hotelUid, outletId) {
@@ -343,22 +266,18 @@ export async function getLocations(hotelUid, options = {}) {
 
 export async function createLocation(hotelUid, locationInput) {
   if (!hotelUid) return null;
+  const resource = { name: requireName(locationInput?.name, "Location name"), outletId: requireId(locationInput?.outletId, "Outlet ID") };
+  return saveNewProcurementResource(hotelUid, "locations", resource);
+}
 
-  const cleanedName = String(locationInput?.name || "").trim();
-  if (!cleanedName) return null;
-
-  const locationsCol = collection(db, `hotels/${hotelUid}/locations`);
-  const locationRef = doc(locationsCol);
-
-  const payload = {
-    id: locationRef.id,
-    name: cleanedName,
-    createdBy: locationInput?.createdBy || null,
-  };
-
-  await setDoc(locationRef, payload);
-  invalidateProcurementReads(hotelUid);
-  return payload;
+export async function getLocationOutletChoices(hotelUid, action = "create") {
+  requireId(hotelUid, "Hotel ID");
+  if (!["create", "update"].includes(action)) throw new Error("Choose a location create or update action.");
+  const { data } = await httpsCallable(functions, "getHotelLocationOutletChoices")({ hotelUid, action });
+  if (data?.hotelUid !== hotelUid || !Array.isArray(data.outlets) || data.outlets.length > 200
+    || data.outlets.some((outlet) => !outlet || requireId(outlet.id) !== outlet.id || requireName(outlet.name) !== outlet.name
+      || !["outlet", "central_storage"].includes(outlet.inventoryRole))) throw new Error("Outlet selection response could not be verified.");
+  return data.outlets;
 }
 
 export async function getLocationById(hotelUid, locationId) {
@@ -377,18 +296,54 @@ export async function getLocationById(hotelUid, locationId) {
 }
 
 export async function updateLocation(hotelUid, locationId, locationInput) {
-  if (!hotelUid || !locationId) throw new Error("hotelUid en locationId zijn verplicht");
+  const source = locationInput?.expectedRevision === undefined ? await getLocationById(hotelUid, locationId) : null;
+  if (locationInput?.expectedRevision === undefined && !source) throw new Error("Location not found.");
+  const resource = { name: requireName(locationInput?.name, "Location name") };
+  if (locationInput?.outletId !== undefined) resource.outletId = locationInput.outletId == null ? null : requireId(locationInput.outletId, "Outlet ID");
+  return saveProcurementResource(hotelUid, "locations", locationId, "update", resource, locationInput?.expectedRevision ?? source?.revision ?? 0);
+}
 
-  const cleanedName = String(locationInput?.name || "").trim();
-  if (!cleanedName) throw new Error("Location name is verplicht");
+async function saveNewProcurementResource(hotelUid, resourceCollection, resource) {
+  const key = resourceCommandKey(hotelUid, resourceCollection, "new");
+  let pending;
+  const raw = sessionStorage.getItem(key);
+  if (raw) {
+    try { pending = JSON.parse(raw); }
+    catch { throw new Error("The saved resource creation cannot be read. Review its outcome before retrying; no replacement request was created."); }
+    if (pending?.input?.hotelUid !== hotelUid || pending.input.collection !== resourceCollection || pending.input.action !== "create"
+      || JSON.stringify(pending.input.resource) !== JSON.stringify(resource)) throw new Error("Retry the original resource creation before creating another resource.");
+  }
+  const id = pending?.input?.resourceId ?? doc(collection(db, `hotels/${hotelUid}/${resourceCollection}`)).id;
+  const result = await saveProcurementResource(hotelUid, resourceCollection, id, "create", resource, 0, key);
+  return { id, ...resource, revision: result.revision };
+}
 
-  const locationRef = doc(db, `hotels/${hotelUid}/locations`, locationId);
-  await updateDoc(locationRef, {
-    name: cleanedName,
-    updatedAt: new Date(),
-    updatedBy: locationInput?.updatedBy || null,
-  });
-  invalidateProcurementReads(hotelUid);
+async function saveProcurementResource(hotelUid, resourceCollection, resourceId, action, resource, expectedRevision, storageKey = null) {
+  const key = storageKey ?? resourceCommandKey(hotelUid, resourceCollection, resourceId);
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error("The current resource revision is required.");
+  const input = { hotelUid, collection: resourceCollection, resourceId, action, expectedRevision, ...(resource ? { resource } : {}) };
+  let pending = null;
+  const raw = sessionStorage.getItem(key);
+  if (raw) {
+    try { pending = JSON.parse(raw); } catch { throw new Error("The saved resource request cannot be read. Review its outcome before retrying; no replacement request was created."); }
+    if (!/^[a-f0-9-]{36}$/i.test(pending?.requestId || "") || JSON.stringify(pending.input) !== JSON.stringify(input)) throw new Error("The previous resource result is uncertain. Retry the original request first.");
+  }
+  if (!pending) {
+    pending = { input, requestId: crypto.randomUUID() };
+    sessionStorage.setItem(key, JSON.stringify(pending));
+  }
+  try {
+    const { data } = await httpsCallable(functions, "mutateHotelProcurementResource")({ ...pending.input, requestId: pending.requestId });
+    if (data?.hotelUid !== hotelUid || data.collection !== resourceCollection || data.resourceId !== resourceId
+      || data.archived !== (action === "archive") || data.revision !== expectedRevision + 1) throw new Error("Resource response could not be validated. Retry the original request.");
+    sessionStorage.removeItem(key);
+    invalidateProcurementReads(hotelUid);
+    return data;
+  } catch (error) {
+    if (error?.details?.resourceRequestUncommitted === true) sessionStorage.removeItem(key);
+    invalidateProcurementReads(hotelUid);
+    throw error;
+  }
 }
 
 function resourceCommandKey(hotelUid, resourceCollection, resourceId) {
@@ -409,44 +364,24 @@ function savedResourceCommand(hotelUid, resourceCollection, resourceId) {
   if (!raw) return null;
   try {
     const pending = JSON.parse(raw), input = pending?.input;
-    if (!input || input.hotelUid !== hotelUid || input.collection !== resourceCollection || input.resourceId !== resourceId
-      || input.action !== "archive" || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0
+    if (!input || input.hotelUid !== hotelUid || input.collection !== resourceCollection || (resourceId === "new" && input.action === "create" ? !input.resourceId : input.resourceId !== resourceId)
+      || !["create", "update", "archive"].includes(input.action) || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0
       || typeof pending.requestId !== "string" || !/^[a-f0-9-]{36}$/i.test(pending.requestId)) throw new Error("Invalid command");
     return pending;
   } catch {
-    throw new Error("The saved archive request cannot be read. Its outcome needs review; no replacement request was created.");
+    throw new Error("The saved resource request cannot be read. Its outcome needs review; no replacement request was created.");
   }
 }
 
 export async function retryPendingProcurementResourceCommand(hotelUid, resourceCollection, resourceId) {
   const input = getPendingProcurementResourceCommand(hotelUid, resourceCollection, resourceId);
-  if (!input) throw new Error("No pending archive request is available.");
-  return archiveProcurementResource(hotelUid, resourceCollection, resourceId, input.expectedRevision);
+  if (!input) throw new Error("No pending resource request is available.");
+  return saveProcurementResource(hotelUid, resourceCollection, input.resourceId, input.action, input.resource, input.expectedRevision,
+    resourceId === "new" && input.action === "create" ? resourceCommandKey(hotelUid, resourceCollection, "new") : null);
 }
 
-async function archiveProcurementResource(hotelUid, resourceCollection, resourceId, expectedRevision) {
-  const key = resourceCommandKey(hotelUid, resourceCollection, resourceId);
-  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error("The current resource revision is required.");
-  const input = { hotelUid, collection: resourceCollection, resourceId, action: "archive", expectedRevision };
-  let pending = savedResourceCommand(hotelUid, resourceCollection, resourceId);
-  if (pending && JSON.stringify(pending.input) !== JSON.stringify(input)) throw new Error("The previous archive result is uncertain. Retry the original request first.");
-  if (!pending) {
-    pending = { input, requestId: crypto.randomUUID() };
-    sessionStorage.setItem(key, JSON.stringify(pending));
-  }
-  try {
-    const { data } = await httpsCallable(functions, "mutateHotelProcurementResource")({ ...pending.input, requestId: pending.requestId });
-    if (data?.hotelUid !== hotelUid || data.collection !== resourceCollection || data.resourceId !== resourceId
-      || data.archived !== true || !Number.isSafeInteger(data.revision) || data.revision !== expectedRevision + 1) throw new Error("Archive response could not be validated. Retry the original request.");
-    sessionStorage.removeItem(key);
-    invalidateProcurementReads(hotelUid);
-    return data;
-  } catch (error) {
-    if (error?.details?.resourceRequestUncommitted === true) sessionStorage.removeItem(key);
-    invalidateProcurementReads(hotelUid);
-    throw error;
-  }
-}
+const archiveProcurementResource = (hotelUid, resourceCollection, resourceId, expectedRevision) =>
+  saveProcurementResource(hotelUid, resourceCollection, resourceId, "archive", null, expectedRevision);
 
 export const archiveLocation = (hotelUid, locationId, expectedRevision = 0) => archiveProcurementResource(hotelUid, "locations", locationId, expectedRevision);
 export const archiveOutlet = (hotelUid, outletId, expectedRevision = 0) => archiveProcurementResource(hotelUid, "outlets", outletId, expectedRevision);

@@ -108,7 +108,11 @@ export default function StockCountDetailPage() {
         return {
           id: location.locationId,
           locationId: location.locationId,
-          locationName: location.locationName || "-",
+          locationName: location.outletName && !location.isOutletDefault
+            ? `${location.outletName} · ${location.locationName}` : location.locationName || "-",
+          central: location.inventoryRole === "central_storage",
+          uncountedCount: Math.max(0, totalCountableItems - countedCount),
+          zeroCount: countedItems.filter((item) => item.isCounted !== false && item.quantity === 0).length,
           countedCount,
           countedCountLabel: `${countedCount} / ${totalCountableItems}`,
           countedValue,
@@ -190,7 +194,7 @@ export default function StockCountDetailPage() {
             <p className="text-sm text-gray-500 uppercase tracking-wide">Catalog</p>
             <h1 className="text-3xl font-semibold">Stock Count Detail</h1>
             <p className="text-gray-600 mt-1">
-              {stockCount?.name || "Review the selected stock count locations."}
+              {stockCount?.name || "Choose an outlet or location to start counting."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -227,13 +231,15 @@ export default function StockCountDetailPage() {
               <div>
                 <p className="text-sm text-gray-500">Type</p>
                 <p className="font-semibold">{stockCount.type}</p>
+                {stockCount.periodMonth && <p className="text-sm text-gray-600">{new Intl.DateTimeFormat("en", { month: "long" }).format(new Date(2000, stockCount.periodMonth - 1, 1))} {stockCount.periodYear}</p>}
+                {stockCount.reason && <p className="text-sm text-gray-600">{stockCount.reason}</p>}
               </div>
               <div>
                 <p className="text-sm text-gray-500">Status</p>
                 <p className="font-semibold">{stockCount.status}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-500">Locations</p>
+                <p className="text-sm text-gray-500">Stock points</p>
                 <p className="font-semibold">{stockCount.locationSummary}</p>
               </div>
               <div>
@@ -244,8 +250,19 @@ export default function StockCountDetailPage() {
 
             <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-500"><p>Created by <span className="font-medium text-slate-700">{createdByName}</span></p><p>Updated by <span className="font-medium text-slate-700">{updatedByName}</span></p></div>
             <Card className="space-y-4">
-              <p className="text-sm text-gray-600">{stockCount.inventoryPolicyVersion === 1 ? `Catalog quantities by physical location · ${stockCount.businessDate || "business date unavailable"}. Values are operator cost estimates; missing costs stay unavailable. This is not live stock.` : "Historical supplier-based count. Original packaging and price snapshots are retained; currency was not captured by the legacy policy."}</p>
-              <DataListTable
+              <p className="text-sm text-gray-600">{stockCount.inventoryPolicyVersion === 1 ? `Count date: ${stockCount.businessDate || "unavailable"}. Uncounted articles need a quantity before finishing; explicit zero means checked and empty.` : "Historical supplier-based count. Original packaging and price snapshots are retained; currency was not captured by the legacy policy."}</p>
+              {stockCount.inventoryPolicyVersion === 1 ? <div className="grid gap-3 sm:grid-cols-2">
+                {rows.map((row) => <button key={row.id} type="button"
+                  onClick={() => navigate(`/catalog/stock-counts/${stockCountId}/locations/${row.locationId}`)}
+                  className="space-y-3 rounded-xl border border-gray-200 p-4 text-left hover:border-brand-800 focus-visible:ring-2 focus-visible:ring-brand-800">
+                  <div className="flex flex-wrap justify-between gap-2"><span className="font-semibold">{row.locationName}</span><span className="text-xs text-gray-500">{row.status}</span></div>
+                  {row.central && <span className="block text-xs text-indigo-700">Central store</span>}
+                  <div className="flex flex-wrap gap-2 text-xs"><span className="rounded bg-slate-100 px-2 py-1">{row.countedCount} counted</span>
+                    <span className={`rounded px-2 py-1 ${row.uncountedCount ? "bg-amber-100 text-amber-900" : "bg-slate-100"}`}>{row.uncountedCount} uncounted</span>
+                    <span className="rounded bg-emerald-50 px-2 py-1 text-emerald-800">{row.zeroCount} counted as zero</span></div>
+                  <span className="block text-sm font-medium text-brand-800">{row.status === "Finished" ? "Review count" : row.countedCount ? "Continue counting" : "Start counting"} →</span>
+                </button>)}
+              </div> : <DataListTable
                 columns={[
                   { key: "locationName", label: "Location" },
                   { key: "countedCountLabel", label: stockCount.inventoryPolicyVersion === 1 ? "Counted Catalog Products" : "Counted Supplier Products", sortValue: (row) => row.countedCount },
@@ -255,7 +272,7 @@ export default function StockCountDetailPage() {
                 rows={rows}
                 emptyMessage="No stock count locations found."
                 onRowClick={(row) => navigate(`/catalog/stock-counts/${stockCountId}/locations/${row.locationId}`)}
-              />
+              />}
 
               {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 
@@ -276,7 +293,7 @@ export default function StockCountDetailPage() {
                   {saving ? "Finishing..." : "Finish Stock Count"}
                 </button>
                 {!allLocationsFinished && !isStockCountFinished && (
-                  <p className="text-sm text-gray-500">All Stock Count Locations must be Finished before this button is clickable.</p>
+                  <p className="text-sm text-gray-500">Finish each selected outlet or location before finishing the complete stock count.</p>
                 )}
               </div>
             </Card>

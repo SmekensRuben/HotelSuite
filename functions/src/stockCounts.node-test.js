@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createHotelStockCountHandler, mutateHotelStockCountHandler, countsInput } = require("./stockCounts");
+const { createHotelStockCountHandler, mutateHotelStockCountHandler, listHotelStockCountSourcesHandler, countsInput } = require("./stockCounts");
 const { getHotelUserDisplayNameHandler } = require("./staffDisplay");
 const { requireCurrentVerifiedUser } = require("./validation");
 const { requirePlatformAdministrator } = require("./subscriptions");
@@ -94,6 +94,61 @@ test("creation retries are idempotent and bound to exact input; unresolved catal
   const missing = fixture(); missing.records.set(`hotels/${hotel}/supplierproducts/coffee`, { name: "Coffee" });
   await assert.rejects(create(missing), (error) => error.code === "failed-precondition");
   assert.equal([...missing.records.keys()].some((path) => path.includes("/stockCounts/")), false);
+});
+test("outlet counts start without names or templates and preserve uncounted null separately from explicit zero", async () => {
+  const db = fixture(["stockcounts.create", "stockcounts.read", "stockcounts.update"]);
+  const created = await create(db, { name: undefined, type: "Ad Hoc", reason: "Check after event", businessDate: "2026-10-12",
+    locations: [{ outletId: "bar" }] });
+  const ref = `hotels/${hotel}/stockCounts/${created.stockCountId}`, locationId = "outlet:bar";
+  assert.equal(db.records.get(ref).name, "Ad Hoc · 2026-10-12");
+  assert.equal(db.records.get(ref).reason, "Check after event");
+  assert.equal(db.records.get(`${ref}/locations/${locationId}`).stockTemplateId, null);
+  assert.deepEqual(db.records.get(`${ref}/locations/${locationId}`).stockTemplate.items, []);
+  assert.equal(db.records.get(`hotels/${hotel}/locations/${locationId}`).outletId, "bar");
+  await assert.rejects(mutate(db, created.stockCountId, { action: "finish-location", locationId, countedItems: [] }), { code: "failed-precondition" });
+  const uncounted = counted({ quantity: null, isCounted: false, unitCost: null });
+  await mutate(db, created.stockCountId, { locationId, countedItems: [uncounted] });
+  assert.equal(db.records.get(`${ref}/locations/${locationId}`).countedItems[0].quantity, null);
+  assert.equal(db.records.get(ref).countedValue, null);
+  await assert.rejects(mutate(db, created.stockCountId, { action: "finish-location", locationId, expectedRevision: 1, countedItems: [uncounted] }), { code: "failed-precondition" });
+  await mutate(db, created.stockCountId, { action: "finish-location", locationId, expectedRevision: 1,
+    countedItems: [counted({ quantity: 0, unitCost: null })] });
+  assert.equal(db.records.get(ref).countedValue, 0);
+  assert.equal(db.records.get(`${ref}/locations/${locationId}`).countedItems[0].quantity, 0);
+});
+test("month-end selection freezes the exact last business day including leap years and replay metadata", async () => {
+  const db = fixture();
+  const result = await create(db, { name: undefined, type: "Month-End", periodMonth: 2, periodYear: 2024, locations: [{ outletId: "bar" }] });
+  const data = db.records.get(`hotels/${hotel}/stockCounts/${result.stockCountId}`);
+  assert.equal(data.businessDate, "2024-02-29"); assert.equal(data.name, "Month-End · 2024-02");
+  assert.equal(data.periodMonth, 2); assert.equal(data.periodYear, 2024);
+  await assert.rejects(create(db, { name: undefined, type: "Month-End", periodMonth: 3, periodYear: 2024, locations: [{ outletId: "bar" }] }), { code: "already-exists" });
+  for (const patch of [{ periodMonth: 13, periodYear: 2024 }, { periodMonth: 2, periodYear: "2024" }, { periodMonth: 2 },
+    { periodMonth: 2, periodYear: 2024, businessDate: "2024-02-28" }, { reason: "Monthly" }]) {
+    await assert.rejects(create(fixture(), { name: undefined, type: "Month-End", locations: [{ outletId: "bar" }], ...patch }), { code: "invalid-argument" });
+  }
+});
+test("stock destinations validate outlet ownership, active central stores and mutually exclusive whole/detail counting", async () => {
+  const db = fixture();
+  db.records.set(`hotels/${hotel}/locations/fridge`, { name: "Fridge", outletId: "bar" });
+  db.records.set(`hotels/${hotel}/outlets/central`, { name: "Central drinks store", inventoryRole: "central_storage" });
+  const central = await create(db, { requestId: "central", locations: [{ outletId: "central" }] });
+  assert.equal(db.records.get(`hotels/${hotel}/stockCounts/${central.stockCountId}/locations/outlet:central`).inventoryRole, "central_storage");
+  await assert.rejects(create(db, { requestId: "both", locations: [{ outletId: "bar" }, { outletId: "bar", locationId: "fridge" }] }), { code: "invalid-argument" });
+  await assert.rejects(create(db, { requestId: "wrong", locations: [{ outletId: "central", locationId: "fridge" }] }), { code: "invalid-argument" });
+  const detail = await create(db, { requestId: "detail", locations: [{ outletId: "bar", locationId: "fridge" }] });
+  assert.equal(db.records.get(`hotels/${hotel}/stockCounts/${detail.stockCountId}/locations/fridge`).outletId, "bar");
+  db.records.set(`hotels/${hotel}/outlets/central`, { name: "Central", archived: true });
+  await assert.rejects(create(db, { requestId: "archived", locations: [{ outletId: "central" }] }), { code: "failed-precondition" });
+});
+test("count source projection excludes archived stock points and rejects forged reserved outlet identities", async () => {
+  const db = fixture();
+  const load = () => listHotelStockCountSourcesHandler(request({ hotelUid: hotel }), { firestore: db, auth: currentAuth });
+  assert.equal((await load()).locations[0].locationId, "outlet:bar");
+  db.records.set(`hotels/${hotel}/locations/outlet:bar`, { name: "Bar", outletId: "bar", stockPointType: "outlet", stockPointPolicyVersion: 1, resourcePolicyVersion: 1, revision: 0, archived: true });
+  assert.equal((await load()).locations.some((point) => point.locationId === "outlet:bar"), false);
+  db.records.set(`hotels/${hotel}/locations/outlet:bar`, { name: "Forged", outletId: "bar", stockPointType: "outlet", stockPointPolicyVersion: 1 });
+  await assert.rejects(load(), { code: "failed-precondition" });
 });
 test("template additions require independent location authority and preserve live template changes", async () => {
   const db = fixture(); const { stockCountId } = await create(db);

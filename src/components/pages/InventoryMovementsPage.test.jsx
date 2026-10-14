@@ -19,6 +19,7 @@ const event = (hotel = "hotel-a") => ({ adjustmentId: "movement-1", kind: "waste
   sourceLocationId: "store", sourceLocationName: "Storeroom", destinationLocationId: null, netUnitCost: null, netValue: null, currency: null, actorUid: "operator", postedAtMillis: 1234, businessDate: "2026-10-12", reference: "WASTE-1", note: "Bottle broke", reversedByAdjustmentId: null });
 const deferred = () => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; };
 beforeEach(() => {
+  window.history.replaceState({}, "", "/");
   vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.auth.currentUser = { uid: "operator" }; mocks.permissions = { read: true, create: true, reverse: false }; mocks.countRead = true;
   mocks.proposal.mockResolvedValue(costProposal);
   mocks.pending.mockReturnValue(null); mocks.record.mockResolvedValue({}); mocks.reverse.mockResolvedValue({}); mocks.retry.mockResolvedValue({});
@@ -27,7 +28,7 @@ beforeEach(() => {
 });
 async function choose(name, option) { const input = await screen.findByRole("combobox", { name }); fireEvent.focus(input); fireEvent.click(await screen.findByRole("option", { name: option })); }
 async function prepareTransfer() {
-  await choose("Catalog article", "Orange juice · l"); await choose("From physical location", "Storeroom"); await choose("To physical location", "Lobby bar");
+  await choose("Catalog article", "Orange juice · l"); await choose("From stock point", "Storeroom"); await choose("To stock point", "Lobby bar");
   fireEvent.change(screen.getByRole("spinbutton", { name: "Movement quantity" }), { target: { value: "12.5" } });
   fireEvent.change(screen.getByLabelText("Business date"), { target: { value: "2026-10-12" } });
   fireEvent.change(screen.getByRole("textbox", { name: "Reference" }), { target: { value: "TRANSFER-7" } });
@@ -115,7 +116,7 @@ it("does not reinterpret an entered estimate when a refreshed source reports ano
   render(<InventoryMovementsPage />); await prepareTransfer();
   fireEvent.change(screen.getByRole("spinbutton", { name: "Estimated net unit cost" }), { target: { value: "5" } });
   mocks.choices.mockImplementation(async (hotelUid, kind) => ({ hotelUid, kind, hotelCurrency: "USD", choices: kind === "locations" ? [{ id: "store", name: "Storeroom" }, { id: "bar", name: "Lobby bar" }] : [{ id: "juice", name: "Orange juice", baseUnit: "l" }], nextCursor: null }));
-  fireEvent.change(screen.getByRole("combobox", { name: "To physical location" }), { target: { value: "Lobby" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "To stock point" }), { target: { value: "Lobby" } });
   await waitFor(() => expect(mocks.choices).toHaveBeenCalledWith("hotel-a", "locations", null, "lobby"));
   await waitFor(() => expect(screen.getByRole("button", { name: "Record movement" })).not.toBeDisabled());
   expect(screen.getByRole("spinbutton", { name: "Estimated net unit cost" }).closest("label")).toHaveTextContent("(EUR)");
@@ -223,7 +224,7 @@ it("blocks an applied suggestion after its date or physical source changes until
   fireEvent.click(screen.getByRole("button", { name: "Clear applied estimate" }));
   expect(screen.getByRole("spinbutton", { name: "Estimated net unit cost" })).toHaveValue(null); expect(screen.getByRole("button", { name: "Record movement" })).not.toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Suggest unit cost for Orange juice" })); fireEvent.click(await screen.findByRole("button", { name: "Apply cost estimate for Orange juice" }));
-  await choose("From physical location", "Lobby bar");
+  await choose("From stock point", "Lobby bar");
   expect(screen.getByText(/This applied estimate is stale/)).toBeInTheDocument();
   fireEvent.change(screen.getByRole("spinbutton", { name: "Estimated net unit cost" }), { target: { value: "4" } });
   expect(screen.queryByText(/This applied estimate is stale/)).not.toBeInTheDocument();
@@ -243,4 +244,77 @@ it("keeps quantities and manual recording usable when the weighted evidence is u
   expect(screen.getByRole("spinbutton", { name: "Movement quantity" })).toHaveValue(12.5); expect(screen.getByRole("button", { name: "Record movement" })).not.toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Record movement" }));
   await waitFor(() => expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ netUnitCost: null, currency: null })));
+});
+
+const stockPointChoices = [
+  { id: "outlet:cellar", name: "Drinks cellar", stockPointType: "outlet", outletId: "cellar", outletName: "Drinks cellar", inventoryRole: "central_storage" },
+  { id: "cellar-fridge", name: "Cold store", stockPointType: "location", outletId: "cellar", outletName: "Drinks cellar", inventoryRole: "central_storage" },
+  { id: "outlet:lobby", name: "Lobby bar", stockPointType: "outlet", outletId: "lobby", outletName: "Lobby bar", inventoryRole: "outlet" },
+  { id: "lobby-fridge", name: "Back-bar fridge", stockPointType: "location", outletId: "lobby", outletName: "Lobby bar", inventoryRole: "outlet" },
+  { id: "outlet:restaurant", name: "Restaurant", stockPointType: "outlet", outletId: "restaurant", outletName: "Restaurant", inventoryRole: "outlet" },
+];
+function useStockPointChoices() {
+  mocks.choices.mockImplementation(async (hotelUid, kind) => ({ hotelUid, kind, hotelCurrency: "EUR", today: "2026-10-12", choices: kind === "catalogproducts" ? [{ id: "juice", name: "Orange juice", baseUnit: "l" }] : stockPointChoices, nextCursor: null }));
+}
+it("requisitions central stock to another entire outlet with balanced transfer intent", async () => {
+  useStockPointChoices(); render(<InventoryMovementsPage />);
+  fireEvent.change(screen.getByRole("combobox", { name: "Event type" }), { target: { value: "requisition" } });
+  await choose("From stock point", "Drinks cellar · Central stock point");
+  await choose("To stock point", "Lobby bar · Entire outlet");
+  await choose("Catalog article", "Orange juice · l");
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Movement quantity" }), { target: { value: "12" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Reference" }), { target: { value: "REQ-12" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Reason / evidence" }), { target: { value: "Restock lobby bar" } });
+  expect(screen.getByLabelText("Business date")).toHaveValue("2026-10-12");
+  fireEvent.click(screen.getByRole("button", { name: "Record requisition" }));
+  await waitFor(() => expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ kind: "transfer", movementType: "requisition", sourceLocationId: "outlet:cellar", destinationLocationId: "outlet:lobby", quantity: 12 })));
+  expect(await screen.findByText(/Movement evidence recorded/)).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "From stock point" })).toHaveValue("Drinks cellar · Central stock point");
+  expect(screen.getByRole("combobox", { name: "To stock point" })).toHaveValue("Lobby bar · Entire outlet");
+  expect(screen.getByRole("spinbutton", { name: "Movement quantity" })).toHaveValue(null);
+});
+it("reveals detailed stock locations only when explicitly requested", async () => {
+  useStockPointChoices(); render(<InventoryMovementsPage />);
+  fireEvent.change(screen.getByRole("combobox", { name: "Event type" }), { target: { value: "requisition" } });
+  const source = screen.getByRole("combobox", { name: "From stock point" });
+  fireEvent.focus(source);
+  expect(await screen.findByRole("option", { name: "Drinks cellar · Central stock point" })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: /Cold store/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "Lobby bar · Entire outlet" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Use a detailed source location" }));
+  await choose("From stock point", "Drinks cellar / Cold store · Location");
+  fireEvent.focus(screen.getByRole("combobox", { name: "To stock point" }));
+  expect(await screen.findByRole("option", { name: "Lobby bar · Entire outlet" })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: /Drinks cellar/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: /Back-bar fridge/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Use a detailed destination location" }));
+  await choose("To stock point", "Lobby bar / Back-bar fridge · Location");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Use a detailed destination location" }));
+  expect(screen.getByRole("combobox", { name: "To stock point" })).toHaveValue("");
+});
+it("clears an ordinary outlet source when changing a transfer to a requisition", async () => {
+  useStockPointChoices(); render(<InventoryMovementsPage />);
+  await choose("From stock point", "Lobby bar · Entire outlet");
+  fireEvent.change(screen.getByRole("combobox", { name: "Event type" }), { target: { value: "requisition" } });
+  expect(screen.getByRole("combobox", { name: "From stock point" })).toHaveValue("");
+  expect(screen.getByRole("combobox", { name: "To stock point" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Record requisition" })).toBeDisabled();
+});
+it("preserves requisition classification in immutable movement history", async () => {
+  mocks.history.mockResolvedValue({ hotelUid: "hotel-a", adjustments: [{ ...event(), kind: "transfer", movementType: "requisition", sourceLocationName: "Drinks cellar", destinationLocationId: "outlet:lobby", destinationLocationName: "Lobby bar" }], nextCursor: null });
+  render(<InventoryMovementsPage />);
+  expect(await screen.findByText("Requisition · Orange juice")).toBeInTheDocument();
+  expect(screen.getByText(/Drinks cellar → Lobby bar/)).toBeInTheDocument();
+});
+it("keeps a linked requisition source explicit until its verified later page is loaded", async () => {
+  window.history.replaceState({}, "", "/catalog/inventory-movements?type=requisition&sourceOutletId=cellar");
+  mocks.choices.mockImplementation(async (hotelUid, kind, afterId) => ({ hotelUid, kind, hotelCurrency: "EUR", choices: kind === "catalogproducts" ? [{ id: "juice", name: "Orange juice", baseUnit: "l" }]
+    : afterId ? [stockPointChoices[0], stockPointChoices[2]] : [{ id: "outlet:backup", name: "Backup store", stockPointType: "outlet", outletId: "backup", inventoryRole: "central_storage" }], nextCursor: kind === "locations" && !afterId ? "outlet:backup" : null }));
+  render(<InventoryMovementsPage />);
+  expect(await screen.findByText(/The linked source has not been found/)).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "From stock point" })).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Record requisition" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Load more stock points" }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "From stock point" })).toHaveValue("Drinks cellar · Central stock point"));
+  expect(screen.queryByText(/The linked source has not been found/)).not.toBeInTheDocument();
 });

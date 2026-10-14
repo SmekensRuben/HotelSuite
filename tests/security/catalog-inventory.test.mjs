@@ -447,7 +447,7 @@ describe("catalog products and periodic inventory acceptance with real ordinary-
     await template({ templateId: "weekly", action: "archive", expectedRevision: 0 });
     await rejected(createHotelStockCountHandler(request({ ...payload, requestId: next() }), services), "failed-precondition");
     const sources = await listHotelStockCountSourcesHandler(request({ hotelUid: "hotel-a" }), services);
-    assert.equal(sources.locations[0].templates.some((item) => item.id === "weekly"), false);
+    assert.equal(sources.locations.find((location) => location.locationId === "store").templates.some((item) => item.id === "weekly"), false);
     await template({ templateId: "empty", name: "Empty" });
     // Empty stored template items fail the bounded input contract before writes.
     await rejected(createHotelStockCountHandler(request({ ...payload, requestId: next(), locations: [{ locationId: "store", stockTemplateId: "empty" }] }), services), "invalid-argument");

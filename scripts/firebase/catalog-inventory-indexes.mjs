@@ -53,7 +53,7 @@ export function validateReviewedInventoryIndexes(configuration) {
   return configuration.indexes.map((index) => structuredClone(index));
 }
 export function validateReviewedInventoryRulesPolicy(policy) {
-  if (policy?.saasRulesVersion !== "saas-platform-v5") throw new Error("The reviewed inventory Rules policy must be saas-platform-v5.");
+  if (policy?.saasRulesVersion !== "saas-platform-v6") throw new Error("The reviewed inventory Rules policy must be saas-platform-v6.");
   return policy.saasRulesVersion;
 }
 function requireTarget({ projectId, projectNumber, databaseId, operator, releaseSha }) {

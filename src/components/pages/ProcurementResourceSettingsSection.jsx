@@ -8,7 +8,7 @@ import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { ArticleRowsSkeleton } from "../ui/ResourceLoading";
 
 /** One active settings section; resource reads retain their own permission boundary. */
-export default function ProcurementResourceSettingsSection({ scope, feature, singular, title, description, loadRecords }) {
+export default function ProcurementResourceSettingsSection({ scope, feature, singular, title, description, loadRecords, detailColumns = [] }) {
   const { hotelUid, scopeKey, current } = scope;
   const navigate = useNavigate();
   const canRead = usePermission(feature, "read");
@@ -53,6 +53,7 @@ export default function ProcurementResourceSettingsSection({ scope, feature, sin
           <button type="button" className="mt-2 underline" onClick={query.retry}>Retry {feature}</button>
         </div> : <DataListTable columns={[
           { key: "name", label: "Name", render: (item) => <Link to={`/settings/${feature}/${item.id}`} onClick={(event) => event.stopPropagation()} className="font-medium text-brand-900 underline-offset-4 hover:underline focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-800">{item.name}</Link> },
+          ...detailColumns,
           { key: "archived", label: "Status", render: (item) => <span className={`rounded-full px-2.5 py-1 text-xs ${item.archived === true ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-800"}`}>{item.archived === true ? "Archived" : "Active"}</span> },
           { key: "open", label: "", sortable: false, render: () => <ArrowRight className="ml-auto h-4 w-4 text-gray-400" aria-hidden="true" /> },
         ]} rows={rows} emptyMessage={`No ${feature} found.`} onRowClick={(row) => navigate(`/settings/${feature}/${row.id}`)} />}

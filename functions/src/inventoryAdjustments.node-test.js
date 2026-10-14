@@ -64,6 +64,36 @@ test("transfers atomically conserve exact canonical quantities and net values in
   for (const location of ["store", "bar"]) assert.equal(db.records.get(`hotels/${HOTEL}/inventoryLocationStates/${location}`).sequence, 1);
   assert.equal(legs[0].lines[0].baseUnit, "l"); assert.equal(db.records.get(`hotels/${HOTEL}/inventoryAdjustments/${result.adjustmentId}`).netValue, 15.000003);
 });
+test("central storage requisitions resolve outlet stock points without templates or previous counts", async () => {
+  const db = fixture();
+  db.records.set(`hotels/${HOTEL}/outlets/cellar`, { name: "Central cellar", inventoryRole: "central_storage", resourcePolicyVersion: 1, revision: 1 });
+  db.records.set(`hotels/${HOTEL}/outlets/restaurant`, { name: "Restaurant" });
+  const choices = await choicesHandler(request({ hotelUid: HOTEL, kind: "locations" }), services(db));
+  assert.deepEqual(choices.choices.find((choice) => choice.id === "outlet:cellar"), { id: "outlet:cellar", name: "Central cellar",
+    outletId: "cellar", outletName: "Central cellar", stockPointType: "outlet", inventoryRole: "central_storage" });
+  assert.equal(db.records.has(`hotels/${HOTEL}/locations/outlet:cellar`), false);
+  const input = { sourceLocationId: "outlet:cellar", destinationLocationId: "outlet:restaurant", movementType: "requisition" };
+  const first = await record(db, input), before = db.records.size;
+  assert.deepEqual(await record(db, input), first); assert.equal(db.records.size, before);
+  const saved = db.records.get(`hotels/${HOTEL}/inventoryAdjustments/${first.adjustmentId}`);
+  assert.equal(saved.movementType, "requisition"); assert.equal(saved.sourceOutletId, "cellar");
+  for (const id of first.movementIds) assert.equal(db.records.get(`hotels/${HOTEL}/inventoryMovements/${id}`).movementType, "requisition");
+  assert.equal(db.records.get(`hotels/${HOTEL}/locations/outlet:restaurant`).stockPointPolicyVersion, 1);
+  db.records.set(`hotels/${HOTEL}/outlets/cellar`, { name: "Closed", archived: true });
+  await assert.rejects(record(db, { ...input, requestId: "closed-requisition" }), { code: "failed-precondition" });
+  const reversed = await reverse(db, first.adjustmentId);
+  assert.equal(db.records.get(`hotels/${HOTEL}/inventoryAdjustments/${reversed.reversalAdjustmentId}`).movementType, "requisition");
+});
+test("requisition intent cannot be forged for regular outlet or same-outlet detail transfers", async () => {
+  const db = fixture();
+  db.records.set(`hotels/${HOTEL}/outlets/restaurant`, { name: "Restaurant" });
+  await assert.rejects(record(db, { sourceLocationId: "outlet:restaurant", destinationLocationId: "bar", movementType: "requisition" }), { code: "failed-precondition" });
+  db.records.set(`hotels/${HOTEL}/outlets/cellar`, { name: "Cellar", inventoryRole: "central_storage" });
+  db.records.set(`hotels/${HOTEL}/locations/rack`, { name: "Rack", outletId: "cellar" });
+  await assert.rejects(record(db, { sourceLocationId: "outlet:cellar", destinationLocationId: "rack", movementType: "requisition" }), { code: "failed-precondition" });
+  assert.equal([...db.records.keys()].some((path) => path.includes("/inventoryMovements/")), false);
+  assert.throws(() => policy.record(recordInput({ kind: "waste", destinationLocationId: null, reasonType: "waste", movementType: "requisition" })), { code: "invalid-argument" });
+});
 test("uncertain exact request replay is idempotent while changed details and record/reverse reuse are rejected", async () => {
   const db = fixture(), first = await record(db), before = db.records.size;
   assert.deepEqual(await record(db), first); assert.equal(db.records.size, before);

@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Pencil, Plus } from "lucide-react";
 import PendingStockCommand from "../inventory/PendingStockCommand";
 import HeaderBar from "../layout/HeaderBar";
@@ -8,11 +8,13 @@ import ProcurementResourceArchive from "./ProcurementResourceArchive";
 import { Card } from "../layout/Card";
 import Modal from "../shared/Modal";
 import { auth, signOut } from "../../firebaseConfig";
-import { useHotelContext } from "../../contexts/HotelContext";
+import { useProcurementSettingsScope } from "../../hooks/useProcurementSettingsScope";
+import { useScopedAsync } from "../../hooks/useScopedAsync";
 import {
   createLocationStockTemplate,
   getLocationById,
   getLocationStockTemplates,
+  getOutletById,
 } from "../../services/firebaseSettings";
 import DataListTable from "../shared/DataListTable";
 import { usePermission } from "../../hooks/usePermission";
@@ -21,8 +23,9 @@ import { ArticleRowsSkeleton } from "../ui/ResourceLoading";
 export default function LocationDetailPage() {
   const navigate = useNavigate();
   const { locationId } = useParams();
-  const { hotelUid } = useHotelContext();
-  const scopeKey = `${hotelUid}:${locationId}`;
+  const scope = useProcurementSettingsScope();
+  const { hotelUid, current } = scope;
+  const scopeKey = `${scope.scopeKey}:${locationId}`;
   const activeScope = useRef({ key: scopeKey });
   if (activeScope.current.key !== scopeKey)
     activeScope.current = { key: scopeKey };
@@ -30,6 +33,8 @@ export default function LocationDetailPage() {
     [templateError, setTemplateError] = useState("");
   const canEditLocations = usePermission("locations", "update");
   const canCreateTemplates = usePermission("locations", "create");
+  const canReadLocations = usePermission("locations", "read");
+  const canReadOutlets = usePermission("outlets", "read");
   const [location, setLocation] = useState(null);
   const [loadedScope, setLoadedScope] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -59,7 +64,8 @@ export default function LocationDetailPage() {
       !canCreateTemplates ||
       templateSaving ||
       location?.archived === true ||
-      loadedScope !== scopeKey
+      loadedScope !== scopeKey ||
+      !current()
     )
       return;
     const requested = activeScope.current;
@@ -67,17 +73,17 @@ export default function LocationDetailPage() {
     setTemplateError("");
     try {
       await createLocationStockTemplate(hotelUid, locationId, cleanedName);
-      if (activeScope.current !== requested) return;
+      if (activeScope.current !== requested || !current()) return;
       const templates = await getLocationStockTemplates(hotelUid, locationId);
-      if (activeScope.current !== requested) return;
+      if (activeScope.current !== requested || !current()) return;
       setStockTemplates(templates);
       setNewTemplateName("");
       setShowNewTemplateModal(false);
     } catch (error) {
-      if (activeScope.current === requested)
+      if (activeScope.current === requested && current())
         setTemplateError(error.message || "Unable to create stock template.");
     } finally {
-      if (activeScope.current === requested) setTemplateSaving(false);
+      if (activeScope.current === requested && current()) setTemplateSaving(false);
     }
   };
 
@@ -90,34 +96,42 @@ export default function LocationDetailPage() {
     setNewTemplateName("");
     setLocation(null);
     setStockTemplates([]);
-    setLoading(Boolean(hotelUid && locationId));
+    setLoading(Boolean(hotelUid && locationId && canReadLocations));
     const loadLocation = async () => {
-      if (!hotelUid || !locationId) return;
+      if (!hotelUid || !locationId || !canReadLocations) return;
       try {
         const [locationData, templates] = await Promise.all([
           getLocationById(hotelUid, locationId),
           getLocationStockTemplates(hotelUid, locationId),
         ]);
-        if (activeScope.current !== requested) return;
+        if (activeScope.current !== requested || !current()) return;
         setLocation(locationData);
         setStockTemplates(templates);
         setLoadedScope(scopeKey);
       } catch (error) {
-        if (activeScope.current === requested)
+        if (activeScope.current === requested && current())
           setTemplateError(
             error.message || "Unable to load location templates.",
           );
       } finally {
-        if (activeScope.current === requested) setLoading(false);
+        if (activeScope.current === requested && current()) setLoading(false);
       }
     };
     loadLocation();
     return () => {
       activeScope.current = { key: null };
     };
-  }, [hotelUid, locationId, scopeKey]);
+  }, [hotelUid, locationId, scopeKey, canReadLocations, current]);
 
   const currentLocation = loadedScope === scopeKey ? location : null;
+  const isOutletStockPoint = currentLocation?.stockPointType === "outlet" || String(locationId || "").startsWith("outlet:");
+  const parentOutletId = currentLocation?.outletId;
+  const loadParentOutlet = useCallback(async () => {
+    const outlet = await getOutletById(hotelUid, parentOutletId);
+    if (!current()) throw new Error("Hotel access changed. Reload locations.");
+    return outlet;
+  }, [hotelUid, parentOutletId, current]);
+  const parentOutlet = useScopedAsync({ scopeKey: `${scopeKey}:${parentOutletId || ""}:${canReadOutlets}`, enabled: Boolean(parentOutletId && canReadOutlets), load: loadParentOutlet });
   const templateRows = (loadedScope === scopeKey ? stockTemplates : []).map(
     (template) => ({
       ...template,
@@ -146,6 +160,7 @@ export default function LocationDetailPage() {
               disabled={
                 !canEditLocations ||
                 currentLocation?.archived === true ||
+                isOutletStockPoint ||
                 !currentLocation
               }
               className={`inline-flex items-center justify-center rounded border p-2 ${canEditLocations ? "border-gray-300 text-gray-700 hover:bg-gray-100" : "border-gray-200 text-gray-500 cursor-not-allowed"}`}
@@ -168,16 +183,22 @@ export default function LocationDetailPage() {
                 {currentLocation.name || "Unnamed location"}
               </h2>
               <p className="mt-2 text-sm text-gray-600">
-                Physical storage and counting location. Stock templates choose
-                the catalog articles included in a count.
+                {isOutletStockPoint ? "This stock point represents the whole outlet. Manage its name and status in Outlet settings. Stock templates are optional shortcuts."
+                  : "Optional detail within an outlet. Count the outlet directly or use this location when more detail helps. Stock templates are optional shortcuts."}
               </p>
+              <div className="mt-3 text-sm text-gray-600">
+                <span className="font-medium text-gray-900">Outlet: </span>
+                {!parentOutletId ? "Unassigned location" : !canReadOutlets ? "Linked outlet" : parentOutlet.loading ? "Loading outlet..." : parentOutlet.data ?
+                  <Link to={`/settings/outlets/${parentOutletId}`} className="font-medium text-brand-900 underline underline-offset-2">{parentOutlet.data.name}{parentOutlet.data.archived === true ? " (archived)" : ""}</Link> : "Outlet unavailable"}
+                {parentOutlet.error && <button type="button" onClick={parentOutlet.retry} className="ml-2 underline">Retry outlet</button>}
+              </div>
             </div>
-            <ProcurementResourceArchive
+            {!isOutletStockPoint && <ProcurementResourceArchive
               hotelUid={hotelUid}
               collection="locations"
               resource={currentLocation}
-              onArchived={() => navigate("/settings/locations")}
-            />
+              onArchived={() => { if (current()) navigate("/settings/locations"); }}
+            />}
           </Card>
         )}
 
@@ -191,12 +212,13 @@ export default function LocationDetailPage() {
             currentLocation?.archived === true
           }
           onComplete={async () => {
+            if (!current()) return;
             const requested = activeScope.current;
             const templates = await getLocationStockTemplates(
               hotelUid,
               locationId,
             );
-            if (activeScope.current === requested) {
+            if (activeScope.current === requested && current()) {
               setStockTemplates(templates);
               setNewTemplateName("");
               setShowNewTemplateModal(false);
@@ -223,13 +245,14 @@ export default function LocationDetailPage() {
                 New Stock Template
               </button>
             </div>
+            <p className="mb-4 text-sm text-gray-600">Optional starting lists for repeat counts. You can also add products while counting.</p>
             <DataListTable
               columns={[
                 { key: "name", label: "Name" },
                 { key: "itemCount", label: "Stock Template Items" },
               ]}
               rows={templateRows}
-              emptyMessage="No stock templates yet."
+              emptyMessage="No templates yet. You can count without a template."
               onRowClick={(row) =>
                 navigate(
                   `/settings/locations/${locationId}/stock-templates/${row.id}`,

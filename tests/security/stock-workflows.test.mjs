@@ -11,6 +11,8 @@ process.env.FIREBASE_CONFIG = JSON.stringify({ projectId, storageBucket: `${proj
 const require = createRequire(import.meta.url);
 const { admin } = require("../../functions/src/config");
 const { createHotelStockCountHandler, mutateHotelStockCountHandler, listHotelStockCountSourcesHandler } = require("../../functions/src/stockCounts");
+const { listHotelStockCountProductsHandler } = require("../../functions/src/stockCountProducts");
+const { SAAS_RULES_VERSION } = require("../../functions/src/saasRollout");
 const { getHotelUserDisplayNameHandler } = require("../../functions/src/staffDisplay");
 const { createHotelHandler } = require("../../functions/src/onboarding");
 const db = admin.firestore(), auth = admin.auth();
@@ -46,7 +48,7 @@ beforeEach(async () => {
     db.doc("hotels/hotel-a/locations/store").set({ name: "Store" }),
     db.doc("hotels/hotel-a/locations/store/stockTemplates/template").set({ name: "Weekly", items: [{ supplierProductId: "coffee", outletId: "bar" }] }),
     db.doc("hotels/hotel-a/settings/bootstrap").set({ currency: "EUR" }),
-    db.doc("hotels/hotel-a/catalogproducts/coffee").set({ name: "Coffee", baseUnit: "kg", inventoryTracked: true, active: true }),
+    db.doc("hotels/hotel-a/catalogproducts/coffee").set({ name: "Coffee", nameLower: "coffee", baseUnit: "kg", inventoryTracked: true, active: true }),
     db.doc("hotels/hotel-a/supplierproducts/coffee").set({ name: "Coffee", pricePerPurchaseUnit: 12.5, catalogProductId: "coffee", baseUnit: "kg" }),
     db.doc("hotels/hotel-a/outlets/bar").set({ name: "Bar" }),
   ]);
@@ -55,7 +57,10 @@ after(async () => environment.cleanup());
 describe("stock commands and staff display with real Auth and Firestore emulators", () => {
   it("stock creation source list returns bounded same-hotel metadata without unrelated read grants", async () => {
     const source = await listHotelStockCountSourcesHandler(request(counter, { hotelUid: "hotel-a" }), services);
-    assert.deepEqual(source, { locations: [{ locationId: "store", locationName: "Store", templates: [{ id: "template", name: "Weekly" }] }], nextCursor: null });
+    assert.deepEqual(source.locations.map((point) => ({ locationId: point.locationId, outletId: point.outletId, isOutletDefault: point.isOutletDefault, templates: point.templates })), [
+      { locationId: "outlet:bar", outletId: "bar", isOutletDefault: true, templates: [] },
+      { locationId: "store", outletId: null, isOutletDefault: false, templates: [{ id: "template", name: "Weekly" }] },
+    ]); assert.equal(source.nextCursor, null);
     await denied(listHotelStockCountSourcesHandler(request(counter, { hotelUid: "hotel-b" }), services), "permission-denied");
     await db.doc(`hotels/hotel-a/members/${counter.uid}`).update({ permissions: ["stockcounts.read", "stockcounts.update"] });
     await denied(listHotelStockCountSourcesHandler(request(counter, { hotelUid: "hotel-a" }), services), "permission-denied");
@@ -64,9 +69,27 @@ describe("stock commands and staff display with real Auth and Firestore emulator
     for (let index = 0; index < 50; index++) batch.set(db.doc(`hotels/hotel-a/locations/location-${String(index).padStart(3, "0")}`), { name: `Location ${index}` });
     await batch.commit();
     const first = await listHotelStockCountSourcesHandler(request(counter, { hotelUid: "hotel-a" }), services);
-    assert.equal(first.locations.length, 50); assert.equal(first.nextCursor, "location-049");
+    assert.equal(first.locations.length, 51); assert.equal(first.nextCursor, "location-049");
     const second = await listHotelStockCountSourcesHandler(request(counter, { hotelUid: "hotel-a", afterLocationId: first.nextCursor }), services);
     assert.deepEqual(second.locations.map((location) => location.locationId), ["store"]); assert.equal(second.nextCursor, null);
+  });
+  it("outlet counts support ordinary counter search and explicit zero without making forgotten items zero", async () => {
+    await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion: SAAS_RULES_VERSION });
+    const created = await createHotelStockCountHandler(request(counter, { hotelUid: "hotel-a", type: "Ad Hoc", requestId: "outlet-count",
+      businessDate: "2026-10-10", locations: [{ outletId: "bar" }] }), services);
+    const productInput = { hotelUid: "hotel-a", stockCountId: created.stockCountId, locationId: "outlet:bar", search: "coffee", barcode: "", afterProductId: null };
+    assert.deepEqual((await listHotelStockCountProductsHandler(request(counter, productInput), services)).products,
+      [{ id: "coffee", name: "Coffee", baseUnit: "kg", barcodes: [] }]);
+    await denied(listHotelStockCountProductsHandler(request(counter, { ...productInput, hotelUid: "hotel-b" }), services), "permission-denied");
+    await mutateHotelStockCountHandler(request(counter, { hotelUid: "hotel-a", stockCountId: created.stockCountId, locationId: "outlet:bar", action: "save-location",
+      expectedRevision: 0, countedItems: [{ catalogProductId: "coffee", quantity: null, isCounted: false }] }), services);
+    assert.equal((await db.doc(`${path(created.stockCountId)}/locations/outlet:bar`).get()).data().countedItems[0].quantity, null);
+    await denied(mutateHotelStockCountHandler(request(counter, { hotelUid: "hotel-a", stockCountId: created.stockCountId, locationId: "outlet:bar", action: "finish-location",
+      expectedRevision: 1, countedItems: [{ catalogProductId: "coffee", quantity: null, isCounted: false }] }), services), "failed-precondition");
+    await mutateHotelStockCountHandler(request(counter, { hotelUid: "hotel-a", stockCountId: created.stockCountId, locationId: "outlet:bar", action: "finish-location",
+      expectedRevision: 1, countedItems: [{ catalogProductId: "coffee", quantity: 0, isCounted: true }] }), services);
+    assert.equal((await db.doc(path(created.stockCountId)).get()).data().countedValue, 0);
+    await denied(listHotelStockCountProductsHandler(request(counter, productInput), services), "failed-precondition");
   });
   it("normal stock user completes protected commands while all direct stock mutation paths stay denied", async () => {
     const { stockCountId } = await create();

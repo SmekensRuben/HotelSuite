@@ -3,7 +3,7 @@
 ## Scope and policies
 
 This release implements product/unit policy v1 and periodic inventory policy v1.
-The current Rules contract is `saas-platform-v5`. It does not implement recipes, POS
+The current Rules contract is `saas-platform-v6` (outlet stock-point configuration is server-owned). It does not implement recipes, POS
 integrations or a continuously calculated on-hand inventory. No physical stock
 is increased by ordering goods. The Inventory periods page reports evidence
 between two completed physical counts, not guaranteed sales consumption.
@@ -60,21 +60,26 @@ retroactively recalculated. Missing historical currency is shown as unknown.
    tracking. Link the appropriate Supplier Products to the same hotel catalog.
    Review purchase packages, prices, currency and price basis. Old ambiguous
    `hasVariants` records require reviewed explicit options before ordering.
-2. Configure physical locations and their stock templates. New rows are catalog
+2. Configure outlets and optional physical locations. Outlets may be central
+   stores supplying other outlets. A template is an optional starting checklist;
+   counters may start empty and add catalog articles while counting. See
+   [Outlet inventory workflows](outlet-inventory-workflows.md). New rows are catalog
    identities. Existing supplier/outlet template identities remain visible and
    can be removed deliberately; count creation resolves valid links and combines
    multiple offers/outlets for the same physical catalog article. Unresolvable
    entries fail explicitly rather than disappearing. Empty/archived templates
    are not usable for new counts. Template changes use protected commands.
-3. Create a physical count and choose its business date. Quantity inputs are in
+3. Start a physical count per outlet or optional location. No name is required;
+   Ad Hoc offers an optional reason and Month-End selects a month and year.
+   Choose its business date for other count types. Quantity inputs are in
    catalog base units (six decimals), so one bottle can be entered as one each
    instead of a rounded fraction of a supplier case. Enter the physical base
    quantity directly or apply a validated package/loose-content total. The helper
    uses current reviewed package contents with the frozen count unit, loads only
    the selected article's choices and never imports prices into the count. Apply
-   changes the quantity explicitly; Save Counts persists it. Barcode recognition
-   remains a later stage. Explicit zero and uncounted are
-   different. Every included item must be counted before a location can finish,
+   changes the quantity explicitly; Save Counts persists it. Search and supported
+   barcode scanning identify articles without automatically recording quantities.
+   Explicit zero and uncounted are different. Every included item must be counted before a location can finish,
    including unfinished historical counts. Completed counts stay immutable.
 4. Place orders using a selected supplier package. Cart and order line identities
    include purchase-option identity. Creation groups by supplier/outlet and rejects
@@ -245,7 +250,7 @@ it does not certify the entire application or a production deployment.
 
 Do not merge or deploy this implementation automatically. Main activates production
 delivery. Review the complete PR and schedule a coordinated release window.
-The v5 Functions runtime intentionally blocks gated procurement while the global
+The current Functions runtime intentionally blocks gated procurement while the global
 marker still describes an older policy, including any index-build window after deployment.
 Publishing only the client or Functions does not complete the release.
 
@@ -323,8 +328,9 @@ Production acceptance remains required: inspect real legacy product links/units,
 price contracts, database/index readiness and historical snapshots; execute buyer,
 receiver and stock-counter browser workflows; verify two-hotel isolation and
 pending-request recovery. Review operator-entered opening estimates before relying
-on monetary reports. Recipe production, manual transfers/waste classification and
-POS deduction remain future modules on the same catalog identities.
+on monetary reports. Manual transfers, central-store requisitions, waste and
+breakage are recorded physical evidence. Recipe production and POS deduction
+remain future modules on the same catalog identities.
 
 ## Weighted recorded-source cost suggestions (proposal policy v1)
 

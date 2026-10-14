@@ -4,7 +4,7 @@ const { requireHotelPermission } = require("./authorization");
 const { requireDocumentId } = require("./subscriptions");
 const { digest, text } = require("./validation");
 const { gated, requireSaasRollout } = require("./saasRollout");
-const { isArchived } = require("./procurementResources");
+const { isArchived, prepareInventoryStockPoint, listInventoryStockPoints } = require("./procurementResources");
 const inventory = require("./inventoryPolicy");
 const policy = require("./inventoryAdjustmentPolicy");
 const { stateRef, sequence } = require("./inventoryMovements");
@@ -41,13 +41,10 @@ function uncommitted(error) {
   if (error instanceof HttpsError) throw new HttpsError(error.code, error.message, { inventoryAdjustmentRequestUncommitted: true });
   throw error;
 }
-function currentLocation(snapshot) {
-  if (!snapshot.exists || isArchived(snapshot.data())) throw new HttpsError("failed-precondition", "Choose active physical locations in the selected hotel.");
-  return text(snapshot.data().name, "Location name", 200, true);
-}
 function movement(db, hotelUid, id, source, locationId, kind, sign, state, actorUid, businessDate, originalMovementId = null) {
   const next = sequence(state) + 1;
   const value = { id, hotelUid, locationId, inventoryPolicyVersion: 1, inventoryAdjustmentPolicyVersion: 1,
+    ...(source.movementType == null ? {} : { movementType: source.movementType }),
     adjustmentId: source.adjustmentId, kind, originalMovementId, originalKind: originalMovementId ? source.originalKind : null,
     sequence: next, receivedOn: businessDate, businessDate, actorUid, postedAt: stamp(),
     backdatedAgainstCheckpoint: Boolean(state.data()?.latestCheckpointBusinessDate && businessDate <= state.data().latestCheckpointBusinessDate),
@@ -74,8 +71,8 @@ async function recordHotelInventoryAdjustmentHandler(request, services = {}) {
     try {
       const [settings, catalog, source, destination, sourceState, destinationState, existing] = await Promise.all([
         hotelSettings(db, tx, hotelUid), tx.get(db.doc(`hotels/${hotelUid}/catalogproducts/${input.catalogProductId}`)),
-        tx.get(db.doc(`hotels/${hotelUid}/locations/${input.sourceLocationId}`)),
-        input.destinationLocationId ? tx.get(db.doc(`hotels/${hotelUid}/locations/${input.destinationLocationId}`)) : null,
+        prepareInventoryStockPoint(db, tx, hotelUid, input.sourceLocationId),
+        input.destinationLocationId ? prepareInventoryStockPoint(db, tx, hotelUid, input.destinationLocationId) : null,
         tx.get(stateRef(db, hotelUid, input.sourceLocationId)),
         input.destinationLocationId ? tx.get(stateRef(db, hotelUid, input.destinationLocationId)) : null, tx.get(ref),
       ]);
@@ -85,9 +82,14 @@ async function recordHotelInventoryAdjustmentHandler(request, services = {}) {
         throw new HttpsError("failed-precondition", "Choose an active, inventory-tracked catalog product in the selected hotel.");
       }
       if (input.currency != null && input.currency !== settings.hotelCurrency) throw new HttpsError("failed-precondition", "Adjustment currency must match the explicit hotel currency.");
+      if (input.movementType === "requisition" && (source.inventoryRole !== "central_storage" || destination?.inventoryRole !== "outlet" || !destination?.outletId
+        || source.outletId === destination.outletId)) throw new HttpsError("failed-precondition", "A requisition must move stock from central storage to another outlet.");
       const summary = { ...input, id, adjustmentId: id, inventoryAdjustmentPolicyVersion: 1,
         catalogProductName: text(catalog.data().name, "Catalog product name", 200, true), baseUnit: inventory.unit(catalog.data().baseUnit),
-        sourceLocationName: currentLocation(source), destinationLocationName: destination ? currentLocation(destination) : null,
+        sourceLocationName: source.locationName, destinationLocationName: destination?.locationName ?? null,
+        sourceOutletId: source.outletId, sourceOutletName: source.outletName, sourceInventoryRole: source.inventoryRole,
+        destinationOutletId: destination?.outletId ?? null, destinationOutletName: destination?.outletName ?? null,
+        destinationInventoryRole: destination?.inventoryRole ?? null,
         currency: input.netUnitCost == null ? null : settings.hotelCurrency, originalAdjustmentId: null,
         actorUid: request.auth.uid, postedAt: stamp(), postedAtMillis: services.now?.() ?? Date.now() };
       const sourceKind = input.kind === "transfer" ? "transfer_out" : input.kind === "waste" ? input.reasonType : "physical_return";
@@ -96,6 +98,7 @@ async function recordHotelInventoryAdjustmentHandler(request, services = {}) {
       // Every read has completed before either transfer leg or shared state writes.
       const movementIds = postings.map((item) => item.value.id);
       const result = { hotelUid, actorUid: request.auth.uid, requestId: input.requestId, adjustmentId: id, kind: input.kind, businessDate: input.businessDate, movementIds, inventoryAdjustmentPolicyVersion: 1 };
+      source.write(); if (destination) destination.write();
       tx.create(ref, { ...summary, movementIds });
       for (const posting of postings) posting.write(tx);
       tx.create(operation, { fingerprint, result, actorUid: request.auth.uid, createdAt: stamp() });
@@ -118,6 +121,9 @@ function validateOriginalSummary(summary, hotelUid, id) {
       requireDocumentId(summary.destinationLocationId, "Stored destination location ID");
       if (summary.destinationLocationId === summary.sourceLocationId) throw new Error("transfer scope");
     } else if (summary.destinationLocationId != null) throw new Error("destination");
+    if (summary.movementType != null && (summary.kind !== "transfer" || !["transfer", "requisition"].includes(summary.movementType))) throw new Error("movement type");
+    if (summary.movementType === "requisition" && (summary.sourceInventoryRole !== "central_storage" || summary.destinationInventoryRole !== "outlet"
+      || !summary.sourceOutletId || !summary.destinationOutletId || summary.sourceOutletId === summary.destinationOutletId)) throw new Error("requisition scope");
     if (!Array.isArray(summary.movementIds) || summary.movementIds.length !== (summary.kind === "transfer" ? 2 : 1)
       || new Set(summary.movementIds).size !== summary.movementIds.length) throw new Error("posting count");
   } catch { throw new HttpsError("failed-precondition", "Original adjustment source policy, quantity, value or scope needs reconciliation."); }
@@ -133,7 +139,7 @@ function validateOriginalLeg(doc, summary) {
   const line = value.lines[0], direction = value.kind === "transfer_in" ? 1 : -1;
   const expectedLocation = direction === 1 ? summary.destinationLocationId : summary.sourceLocationId;
   const expectedKind = summary.kind === "transfer" ? direction === 1 ? "transfer_in" : "transfer_out" : summary.kind === "waste" ? summary.reasonType : "physical_return";
-  if (value.kind !== expectedKind || value.locationId !== expectedLocation || line.catalogProductId !== summary.catalogProductId || line.baseUnit !== summary.baseUnit
+  if (value.kind !== expectedKind || (value.movementType ?? null) !== (summary.movementType ?? null) || value.locationId !== expectedLocation || line.catalogProductId !== summary.catalogProductId || line.baseUnit !== summary.baseUnit
     || line.quantity !== summary.quantity * direction || line.netUnitCost !== summary.netUnitCost || line.currency !== summary.currency
     || line.netValue !== (summary.netValue == null ? null : summary.netValue * direction)) {
     throw new HttpsError("failed-precondition", "The original adjustment quantity, value or location needs reconciliation.");
@@ -240,7 +246,7 @@ async function validateManualPeriodEvidence(db, tx, hotelUid, sources) {
     let checkedLegs = originalLegs;
     if (summary.kind === "reversal") {
       const pointer = snapshots.get(pointerPath(original.id));
-      const fields = ["catalogProductId", "baseUnit", "quantity", "netUnitCost", "netValue", "currency", "sourceLocationId", "destinationLocationId", "reasonType"];
+      const fields = ["catalogProductId", "movementType", "baseUnit", "quantity", "netUnitCost", "netValue", "currency", "sourceLocationId", "destinationLocationId", "reasonType"];
       if (summary.adjustmentId !== summary.id || summary.originalKind !== original.kind || pointer.data()?.reversalAdjustmentId !== summary.id
         || fields.some((field) => summary[field] !== original[field]) || !Array.isArray(summary.movementIds)
         || summary.movementIds.length !== originalLegs.length || new Set(summary.movementIds).size !== summary.movementIds.length
@@ -270,7 +276,7 @@ function projection(snapshot, reversed) {
   const row = snapshot.data();
   if (row.inventoryAdjustmentPolicyVersion !== 1 || row.id !== snapshot.id || !Array.isArray(row.movementIds)
     || !Number.isSafeInteger(row.postedAtMillis)) throw new HttpsError("failed-precondition", "The stored inventory adjustment needs reconciliation.");
-  const fields = ["kind", "reasonType", "originalKind", "originalAdjustmentId", "businessDate", "note", "reference", "catalogProductId", "catalogProductName", "baseUnit", "quantity", "netUnitCost", "netValue", "currency", "sourceLocationId", "sourceLocationName", "destinationLocationId", "destinationLocationName", "actorUid", "postedAtMillis", "movementIds"];
+  const fields = ["kind", "movementType", "sourceOutletId", "sourceOutletName", "sourceInventoryRole", "destinationOutletId", "destinationOutletName", "destinationInventoryRole", "reasonType", "originalKind", "originalAdjustmentId", "businessDate", "note", "reference", "catalogProductId", "catalogProductName", "baseUnit", "quantity", "netUnitCost", "netValue", "currency", "sourceLocationId", "sourceLocationName", "destinationLocationId", "destinationLocationName", "actorUid", "postedAtMillis", "movementIds"];
   return { id: snapshot.id, adjustmentId: snapshot.id, inventoryAdjustmentPolicyVersion: 1,
     ...Object.fromEntries(fields.map((field) => [field, row[field] ?? null])), reversedByAdjustmentId: reversed?.reversalAdjustmentId ?? null };
 }
@@ -303,6 +309,15 @@ async function listHotelInventoryAdjustmentChoicesHandler(request, services = {}
     try { await authorize(db, tx, request, hotelUid, "read", services); }
     catch (error) { if (error.code !== "permission-denied") throw error; await authorize(db, tx, request, hotelUid, "create", services); }
     const settings = await hotelSettings(db, tx, hotelUid);
+    if (input.kind === "locations") {
+      const afterId = input.afterId == null ? null : requireDocumentId(input.afterId, "afterId");
+      const all = (await listInventoryStockPoints(db, tx, hotelUid)).filter((point) => (!afterId || point.id.localeCompare(afterId) > 0)
+        && point.name.toLowerCase().startsWith(search));
+      const choices = all.slice(0, 50);
+      return { hotelUid, inventoryAdjustmentPolicyVersion: 1, kind: input.kind, hotelCurrency: settings.hotelCurrency,
+        today: validTimeZone(settings.timeZone) ? localDate(services.now?.() ?? Date.now(), settings.timeZone) : null,
+        choices, scannedCount: choices.length, nextCursor: all.length > 50 ? choices.at(-1).id : null };
+    }
     let query = db.collection(`hotels/${hotelUid}/${input.kind}`).orderBy(admin.firestore.FieldPath.documentId());
     if (input.afterId != null) query = query.startAfter(requireDocumentId(input.afterId, "afterId"));
     const snapshot = await tx.get(query.limit(51)), page = snapshot.docs.slice(0, 50);

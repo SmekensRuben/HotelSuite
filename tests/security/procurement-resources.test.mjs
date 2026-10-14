@@ -50,21 +50,85 @@ beforeEach(async () => {
 after(async () => environment.cleanup());
 
 describe("procurement resource lifecycle and names with ordinary hotel users", () => {
-  it("normal create/rename remains permitted but client delete, archival injection and reactivation are denied", async () => {
-    const browser = client();
-    for (const collection of ["locations", "outlets"]) {
-      const ref = doc(browser, `hotels/hotel-a/${collection}/new`);
-      await assertSucceeds(setDoc(ref, { name: "New" }));
-      await assertSucceeds(updateDoc(ref, { name: "Renamed" }));
-      await assertFails(deleteDoc(ref));
-      await assertFails(updateDoc(ref, { archived: true }));
-      await assertFails(setDoc(doc(browser, `hotels/hotel-a/${collection}/forged`), { name: "Forged", archived: false, revision: 1 }));
-      await archive(collection, "new");
-      assert.equal((await assertSucceeds(getDoc(ref))).data().archived, true);
-      await assertFails(updateDoc(ref, { archived: false, active: true }));
-      await assertFails(setDoc(ref, { name: "Replacement" }));
-      await assertFails(updateDoc(ref, { name: "Archived renamed" }));
+  it("browser writes cannot create, rename or forge stock points even with all resource permissions and platform claims", async () => {
+    await db.doc(`hotels/hotel-a/members/${platform.uid}`).set({ permissions: ["locations.*", "outlets.*"] });
+    for (const actor of [staff, platform]) {
+      const browser = client(actor);
+      for (const collection of ["locations", "outlets"]) {
+        const existing = doc(browser, `hotels/hotel-a/${collection}/${collection === "locations" ? "store" : "bar"}`);
+        await assertSucceeds(getDoc(existing));
+        await assertFails(setDoc(doc(browser, `hotels/hotel-a/${collection}/new`), { name: "New" }));
+        await assertFails(updateDoc(existing, { name: "Renamed" }));
+        await assertFails(deleteDoc(existing));
+        await assertFails(updateDoc(existing, { archived: true }));
+        await assertFails(updateDoc(existing, { archived: false, active: true }));
+        await assertFails(setDoc(existing, { name: "Replacement" }));
+        await assertFails(setDoc(doc(browser, `hotels/hotel-a/${collection}/forged`), { name: "Forged", archived: false, revision: 1 }));
+      }
+      await assertFails(updateDoc(doc(browser, "hotels/hotel-a/outlets/bar"), { inventoryRole: "central_storage" }));
+      await assertFails(updateDoc(doc(browser, "hotels/hotel-a/locations/store"), { outletId: "bar" }));
+      await assertFails(setDoc(doc(browser, "hotels/hotel-a/locations/outlet:bar"), {
+        name: "Forged outlet point", stockPointPolicyVersion: 1, stockPointType: "outlet", outletId: "bar",
+      }));
     }
+  });
+  it("protected create and rename retain ownership, generate default outlet points and require current same-hotel action authority", async () => {
+    const createOutlet = { hotelUid: "hotel-a", collection: "outlets", resourceId: "central", action: "create", expectedRevision: 0,
+      requestId: next(), resource: { name: "Central store", inventoryRole: "central_storage" } };
+    const createdOutlet = await mutateHotelProcurementResourceHandler(request(createOutlet), services);
+    assert.deepEqual(await mutateHotelProcurementResourceHandler(request(createOutlet), services), createdOutlet);
+    assert.equal(createdOutlet.revision, 1);
+    const defaultRef = doc(client(), "hotels/hotel-a/locations/outlet:central");
+    const defaultPoint = (await assertSucceeds(getDoc(defaultRef))).data();
+    assert.equal(defaultPoint.stockPointPolicyVersion, 1);
+    assert.equal(defaultPoint.stockPointType, "outlet");
+    assert.equal(defaultPoint.outletId, "central");
+    await assertFails(updateDoc(defaultRef, { outletId: "bar" }));
+
+    const createLocation = { hotelUid: "hotel-a", collection: "locations", resourceId: "cellar", action: "create", expectedRevision: 0,
+      requestId: next(), resource: { name: "Cellar", outletId: "central" } };
+    await mutateHotelProcurementResourceHandler(request(createLocation), services);
+    const renamed = await mutateHotelProcurementResourceHandler(request({ ...createLocation, action: "update", expectedRevision: 1,
+      requestId: next(), resource: { name: "Wine cellar", outletId: "central" } }), services);
+    assert.equal(renamed.revision, 2);
+    const locationRef = doc(client(), "hotels/hotel-a/locations/cellar");
+    assert.equal((await assertSucceeds(getDoc(locationRef))).data().name, "Wine cellar");
+    await archive("locations", "cellar", { expectedRevision: 2 });
+    assert.equal((await assertSucceeds(getDoc(locationRef))).data().archived, true);
+    await assertFails(updateDoc(locationRef, { name: "Archived renamed" }));
+
+    for (const actor of [outsider, platform]) {
+      await denied(mutateHotelProcurementResourceHandler(request({ ...createOutlet, resourceId: next(), requestId: next() }, actor), services), "permission-denied");
+    }
+    await denied(mutateHotelProcurementResourceHandler(request({ ...createOutlet, hotelUid: "hotel-b", requestId: next() }), services), "permission-denied");
+    await db.doc(`hotels/hotel-a/members/${staff.uid}`).update({ permissions: ["locations.read", "outlets.read"] });
+    await denied(mutateHotelProcurementResourceHandler(request(createOutlet), services), "permission-denied");
+    await denied(mutateHotelProcurementResourceHandler(request({ ...createLocation, action: "update", expectedRevision: 2, requestId: next() }), services), "permission-denied");
+  });
+  it("resource reads stay scoped to hotel, feature permission and procurement entitlement", async () => {
+    const browser = client();
+    await assertSucceeds(getDoc(doc(browser, "hotels/hotel-a/locations/store")));
+    await assertSucceeds(getDoc(doc(browser, "hotels/hotel-a/outlets/bar")));
+    await assertFails(getDoc(doc(browser, "hotels/hotel-b/locations/store")));
+    await assertFails(getDoc(doc(browser, "hotels/hotel-b/outlets/bar")));
+    await assertFails(getDoc(doc(client(outsider), "hotels/hotel-a/outlets/bar")));
+    await db.doc(`hotels/hotel-a/members/${staff.uid}`).update({ permissions: ["orders.read"] });
+    await assertSucceeds(getDoc(doc(browser, "hotels/hotel-a/outlets/bar")));
+    await assertFails(getDoc(doc(browser, "hotels/hotel-a/locations/store")));
+    await db.doc("hotelSubscriptions/hotel-a").update({ modules: ["revenue"] });
+    await assertFails(getDoc(doc(browser, "hotels/hotel-a/outlets/bar")));
+  });
+  it("protected commands reject forged server fields, reserved outlet points and foreign ownership without creating records", async () => {
+    const create = { hotelUid: "hotel-a", collection: "locations", resourceId: "new", action: "create", expectedRevision: 0,
+      resource: { name: "New", outletId: "bar" } };
+    for (const fields of [{ stockPointPolicyVersion: 1 }, { stockPointType: "outlet" }, { resourcePolicyVersion: 1 }, { revision: 0 }, { archived: false }]) {
+      await denied(mutateHotelProcurementResourceHandler(request({ ...create, requestId: next(), resource: { ...create.resource, ...fields } }), services), "invalid-argument");
+    }
+    await denied(mutateHotelProcurementResourceHandler(request({ ...create, resourceId: "outlet:bar", requestId: next() }), services), "invalid-argument");
+    await db.doc("hotels/hotel-b/outlets/foreign").set({ name: "Foreign outlet" });
+    await denied(mutateHotelProcurementResourceHandler(request({ ...create, requestId: next(), resource: { name: "New", outletId: "foreign" } }), services), "failed-precondition");
+    assert.equal((await db.doc("hotels/hotel-a/locations/new").get()).exists, false);
+    assert.equal((await db.collection("hotels/hotel-a/procurementResourceOperations").get()).size, 0);
   });
   it("server archive preserves nested settings/history, exact replay and requires the hotel delete permission", async () => {
     const payload = { hotelUid: "hotel-a", collection: "outlets", resourceId: "bar", action: "archive", expectedRevision: 0, requestId: next() };
@@ -83,7 +147,8 @@ describe("procurement resource lifecycle and names with ordinary hotel users", (
   it("archiving removes a location from new counting while already frozen counts can finish", async () => {
     const existing = await createCount(); await archive();
     const sources = await listHotelStockCountSourcesHandler(request({ hotelUid: "hotel-a" }), services);
-    assert.deepEqual(sources.locations, []);
+    assert.equal(sources.locations.some((location) => location.locationId === "store"), false);
+    assert.equal(sources.locations.some((location) => location.locationId === "outlet:bar"), true);
     await denied(createCount(), "failed-precondition");
     await mutateHotelStockCountHandler(request({ hotelUid: "hotel-a", stockCountId: existing.stockCountId, action: "finish-location", locationId: "store", expectedRevision: 0,
       countedItems: [{ catalogProductId: "juice", quantity: 3, isCounted: true, unitCost: null }] }), services);
@@ -92,9 +157,14 @@ describe("procurement resource lifecycle and names with ordinary hotel users", (
     assert.equal((await db.doc("hotels/hotel-a/locations/store/stockTemplates/weekly").get()).exists, true);
   });
   it("old release gates cannot enable resource archival and private lifecycle evidence remains inaccessible", async () => {
-    await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion: "saas-platform-v4" });
-    await denied(archive(), "failed-precondition");
-    assert.equal((await db.doc("hotels/hotel-a/locations/store").get()).data().archived, undefined);
+    for (const rulesVersion of ["saas-platform-v4", "saas-platform-v5"]) {
+      await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion });
+      await denied(archive(), "failed-precondition");
+      assert.equal((await db.doc("hotels/hotel-a/locations/store").get()).data().archived, undefined);
+      await denied(mutateHotelProcurementResourceHandler(request({ hotelUid: "hotel-a", collection: "outlets", resourceId: "new", action: "create",
+        expectedRevision: 0, requestId: next(), resource: { name: "New outlet" } }), services), "failed-precondition");
+      assert.equal((await db.doc("hotels/hotel-a/outlets/new").get()).exists, false);
+    }
     await db.doc("platformConfiguration/saasProcurement").set({ enabled: true, rulesVersion: SAAS_RULES_VERSION });
     await archive();
     for (const collection of ["procurementResourceOperations", "procurementResourceAudit"]) {
