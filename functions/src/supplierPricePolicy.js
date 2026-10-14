@@ -35,6 +35,29 @@ function priceTermsChanged(previous, next, previousCatalog, nextCatalog) {
   return digest(pricingTerms(previous, previousCatalog)) !== digest(pricingTerms(next, nextCatalog));
 }
 
+function priceValueChanged(previous, next) {
+  const content = (product, quantity) => {
+    const unit = product?.baseUnit;
+    const dimension = policy.units[unit]?.dimension;
+    const canonicalUnit = { mass: "g", volume: "ml", count: "each" }[dimension];
+    if (canonicalUnit) {
+      try { return { dimension, quantity: policy.convertQuantity(quantity, unit, canonicalUnit) }; }
+      catch { /* Preserve unknown or unrepresentable contracts conservatively. */ }
+    }
+    return { unit: unit ?? null, quantity: quantity ?? null };
+  };
+  const values = (product) => ({ currency: product?.currency ?? null,
+    priceBasis: product?.priceBasis ?? null, vatRate: product?.vatRate ?? null,
+    options: [{ id: "default", content: content(product, product?.baseUnitsPerPurchaseUnit), pricePerPurchaseUnit: product?.pricePerPurchaseUnit ?? null },
+      ...(Array.isArray(product?.purchaseOptions) ? product.purchaseOptions : []).map((option) => ({ id: option.id,
+        content: content(product, option.baseUnitsPerPurchaseUnit), pricePerPurchaseUnit: option.pricePerPurchaseUnit ?? null })).sort((left, right) => String(left.id).localeCompare(String(right.id)))] });
+  const before = values(previous), after = values(next);
+  const known = (value) => value.options.some((option) => typeof option.pricePerPurchaseUnit === "number");
+  if (!previous) return known(after);
+  if (!known(before) && !known(after)) return false;
+  return digest(before) !== digest(after);
+}
+
 function canonicalPrice(terms, option) {
   const unavailable = (reason) => ({ available: false, reason, catalogUnitsPerPurchaseUnit: null,
     netPricePerPurchaseUnit: null, netPricePerCatalogUnit: null });
@@ -81,10 +104,13 @@ function historyEntry(plan, actorUid, now) {
     supplierId: plan.next.supplierId ?? null, supplierSku: plan.next.supplierSku ?? null,
     supplierProductName: plan.next.supplierProductName ?? null, supplierName: plan.next.supplierName ?? null,
     revision: plan.expected + 1, actorUid, observedAt: now,
-    observation: plan.previous ? "terms-changed" : "initial-create",
-    terms: pricingTerms(plan.next, plan.catalog), previousTerms: plan.previous ? pricingTerms(plan.previous, plan.previousCatalog) : null,
+    observation: plan.previous ? plan.priceChanged ? "terms-changed" : "price-confirmed" : "initial-create",
+    priceChanged: plan.priceValueChanged === true, priceConfirmedAt: plan.priceConfirms ? now : null,
+    approvedVersionId: plan.priceVersionId ?? null,
+    sourceReference: plan.priceEvidence?.sourceReference ?? "Manual product review", sourceIssuedOn: plan.priceEvidence?.sourceIssuedOn ?? null,
+    terms: pricingTerms(plan.approvedProduct ?? plan.next, plan.catalog), previousTerms: plan.pricePreviousTerms ?? (plan.previous ? pricingTerms(plan.previous, plan.previousCatalog) : null),
     // The earlier terms were observed in this transaction, not at an invented prior date.
-    previousObservationDate: null, contractualValidFrom: plan.next.priceValidFrom ?? null, contractualValidUntil: plan.next.priceValidUntil ?? null };
+    previousObservationDate: null, contractualValidFrom: (plan.approvedProduct ?? plan.next).priceValidFrom ?? null, contractualValidUntil: (plan.approvedProduct ?? plan.next).priceValidUntil ?? null };
 }
 
 function assessPriceValidity(product, today) {
@@ -97,4 +123,4 @@ function assessPriceValidity(product, today) {
   return "current";
 }
 
-module.exports = { SUPPLIER_PRICE_POLICY_VERSION, pricingTerms, priceTermsChanged, canonicalPrice, projectOptions, historyEntry, assessPriceValidity };
+module.exports = { SUPPLIER_PRICE_POLICY_VERSION, pricingTerms, priceTermsChanged, priceValueChanged, canonicalPrice, projectOptions, historyEntry, assessPriceValidity };

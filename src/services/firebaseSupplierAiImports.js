@@ -1,3 +1,4 @@
+import { projectSupplierFormatCandidate, projectSupplierSourceInterpretation } from "../utils/supplierImportFormat";
 import { supplierAiImportSummary, supplierAiImportSettings } from "../utils/supplierAiImportSummary";
 import { currencyChoices } from "../utils/propertySettingChoices";
 import { auth, functions, httpsCallable } from "../firebaseConfig";
@@ -25,8 +26,11 @@ const count = (value, maximum = 1000) => Number.isSafeInteger(value) && value >=
 const supportedCurrencies = new Set(currencyChoices().map((choice) => choice.id));
 export function normalizeSupplierAiImportSettings(value) {
   const keys = ["policyVersion", "priceBasis", "currency", "vatRate"];
-  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== keys.length || keys.some((key) => !Object.hasOwn(value, key)) || value.policyVersion !== 2 || !["net", "gross", "unknown"].includes(value.priceBasis) || !supportedCurrencies.has(value.currency) || (value.vatRate !== null && (typeof value.vatRate !== "number" || !Number.isFinite(value.vatRate) || value.vatRate < 0 || value.vatRate > 1 || Number(value.vatRate.toFixed(6)) !== value.vatRate))) throw new Error("Choose the document's price basis, currency and optional shared VAT rate before importing.");
-  return { policyVersion: 2, priceBasis: value.priceBasis, currency: value.currency, vatRate: value.vatRate };
+  const optional = ["assortmentMode", "documentPurpose", "sourceIssuedOn", "priceValidFrom", "priceValidUntil"];
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !keys.includes(key) && !optional.includes(key)) || keys.some((key) => !Object.hasOwn(value, key)) || value.policyVersion !== 2 || !["net", "gross", "unknown"].includes(value.priceBasis) || !supportedCurrencies.has(value.currency) || (value.vatRate !== null && (typeof value.vatRate !== "number" || !Number.isFinite(value.vatRate) || value.vatRate < 0 || value.vatRate > 1 || Number(value.vatRate.toFixed(6)) !== value.vatRate))) throw new Error("Choose the document's price basis, currency and optional shared VAT rate before importing.");
+  const settings = supplierAiImportSettings(value);
+  if (!settings) throw new Error("Review the source purpose, assortment scope and valid business dates before importing.");
+  return settings;
 }
 const publicImportSettings = (value) => { const settings = supplierAiImportSettings(value); return settings && supportedCurrencies.has(settings.currency) && (settings.vatRate === null || Number(settings.vatRate.toFixed(6)) === settings.vatRate) ? settings : null; };
 export function supplierAiImportVatFraction(percent) {
@@ -49,6 +53,9 @@ export function normalizeSupplierAiImportJob(value) {
   if (!value || !id(value.hotelUid) || !id(value.jobId) || !id(value.ownerUid) || !jobStatuses.has(value.status)) throw new Error("The import status could not be verified. Reopen the original import.");
   const result = { hotelUid: value.hotelUid, jobId: value.jobId, ...(id(value.supplierId) ? { supplierId: value.supplierId } : {}), ownerUid: value.ownerUid, status: value.status, importSettings: publicImportSettings(value.importSettings), summary: null };
   if (value.importReviewVersion === 1) result.importReviewVersion = 1;
+  if (value.recurringImportVersion === 1) result.recurringImportVersion = 1;
+  if (value.sourceInterpretation) result.sourceInterpretation = projectSupplierSourceInterpretation(value.sourceInterpretation);
+  if (value.sourceFormatCandidate) result.sourceFormatCandidate = projectSupplierFormatCandidate(value.sourceFormatCandidate);
   if (id(value.mappingProfileId)) result.mappingProfileId = value.mappingProfileId;
   if (Object.hasOwn(types, value.sourceFormat)) result.sourceFormat = value.sourceFormat;
   if (value.source && typeof value.source === "object") {
@@ -110,7 +117,10 @@ function importAvailability(result) {
   const limits = {};
   for (const [key, maximum] of [["maxFileBytes", MAX_SUPPLIER_AI_IMPORT_BYTES], ["maxPages", 50], ["maxProducts", 1000]]) if (count(result.limits?.[key], maximum) && result.limits[key] > 0) limits[key] = result.limits[key];
   const supported = result.importPolicyVersion === 2, reviewSupported = result.reviewWorkspaceVersion === 1;
-  return { available: result.available && supported && reviewSupported, importPolicyVersion: supported ? 2 : null, reviewWorkspaceVersion: reviewSupported ? 1 : null, reason: result.available && (!supported || !reviewSupported) ? "upgrade-required" : result.reason ?? null, limits, defaults: { currency: supportedCurrencies.has(result.defaults?.currency) ? result.defaults.currency : null } };
+  return { available: result.available && supported && reviewSupported,
+    ...(Object.hasOwn(result, "aiAvailable") ? { aiAvailable: result.aiAvailable === true } : {}),
+    ...(Object.hasOwn(result, "recurringImportVersion") ? { recurringImportVersion: result.recurringImportVersion === 1 ? 1 : null } : {}),
+    ...(Object.hasOwn(result, "sourceFormatProfileVersion") ? { sourceFormatProfileVersion: result.sourceFormatProfileVersion === 1 ? 1 : null } : {}), importPolicyVersion: supported ? 2 : null, reviewWorkspaceVersion: reviewSupported ? 1 : null, reason: result.available && (!supported || !reviewSupported) ? "upgrade-required" : result.reason ?? null, limits, defaults: { currency: supportedCurrencies.has(result.defaults?.currency) ? result.defaults.currency : null } };
 }
 export function getSupplierAiImportAvailability(hotelUid) {
   return poolProcurementRead(hotelUid, "supplier-ai-import-availability", async () => importAvailability(await request("GET", { hotelUid }, context(hotelUid))));
@@ -123,7 +133,7 @@ async function fileFingerprint(file) {
   return Array.from(new Uint8Array(hash), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 export async function startSupplierAiImport(hotelUid, supplierId, file, settings, { mappingProfileId = "default" } = {}) {
-  const importSettings = normalizeSupplierAiImportSettings(settings);
+  let importSettings = normalizeSupplierAiImportSettings(settings);
   const mimeType = validateSupplierAiImportFile(file), captured = context(hotelUid);
   if (!id(supplierId)) throw new Error("Choose an existing hotel supplier.");
   if (typeof mappingProfileId !== "string" || !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(mappingProfileId)) throw new Error("Choose a valid supplier import profile.");
@@ -136,16 +146,24 @@ export async function startSupplierAiImport(hotelUid, supplierId, file, settings
   let recovered; try { recovered = JSON.parse(sessionStorage.getItem(recoveryKey) || "null"); } catch { /* Local recovery is optional. */ }
   let pending = commands.get(key) || recovered;
   const legacyRecovery = Boolean(pending?.requestId && !Object.hasOwn(pending, "importSettings"));
+  const isRecurringInput = ["assortmentMode", "documentPurpose", "sourceIssuedOn", "priceValidFrom", "priceValidUntil"].some((field) => Object.hasOwn(importSettings, field));
+  if (pending?.recurringImportVersion !== undefined && Number(pending.recurringImportVersion) !== 1) throw new Error("The saved recurring import version could not be verified. Recover the original upload.");
   if (pending?.requestId && (typeof pending.requestId !== "string" || !/^[a-z0-9-]{1,128}$/i.test(pending.requestId))) throw new Error("The original upload reference could not be verified. Contact your hotel administrator.");
   if (pending?.requestId && Object.hasOwn(pending, "reviewWorkspaceVersion") && Number(pending.reviewWorkspaceVersion) !== 1) throw new Error("The original import review version could not be verified. Contact your hotel administrator.");
   if (pending?.requestId && Number(pending.reviewWorkspaceVersion) === 1 && pending.mappingProfileId !== mappingProfileId) throw Object.assign(new Error("Recover the original document with its saved supplier import profile."), { code: "import-profile-changed", mappingProfileId: pending.mappingProfileId });
   if (pending?.requestId && !legacyRecovery) {
     const original = publicImportSettings(typeof pending.importSettings === "string" ? (() => { try { return JSON.parse(pending.importSettings); } catch { return null; } })() : pending.importSettings);
     if (!original) throw Object.assign(new Error("An earlier upload must be checked before importing this document again. Contact your hotel administrator."), { code: "import-settings-unavailable" });
+    // New controls must not alter an unresolved pre-upgrade upload's saved command.
+    const optionalDefaults = { assortmentMode: "partial", documentPurpose: "price-list", sourceIssuedOn: null, priceValidFrom: null, priceValidUntil: null };
+    const displayedLegacyDefaults = Object.entries(optionalDefaults).every(([field, fallback]) =>
+      Object.hasOwn(original, field) ? original[field] === importSettings[field] : !Object.hasOwn(importSettings, field) || importSettings[field] === fallback);
+    if (displayedLegacyDefaults && ["policyVersion", "priceBasis", "currency", "vatRate"].every((field) => original[field] === importSettings[field])) importSettings = original;
     if (!sameSettings(original, importSettings)) throw Object.assign(new Error("Recover the original upload with its saved price settings. These settings have been restored; retry the same file and supplier."), { code: "import-settings-changed", importSettings: original });
   }
   if (!legacyRecovery) {
     const availability = importAvailability(await request("GET", { hotelUid }, captured));
+    if (!pending?.requestId && isRecurringInput && (availability.recurringImportVersion !== 1 || availability.sourceFormatProfileVersion !== 1)) throw Object.assign(new Error("The recurring supplier import service update is not complete. Recover an existing upload or try again after the update."), { code: "failed-precondition" });
     if (availability.importPolicyVersion !== 2 || (!pending?.requestId || Number(pending.reviewWorkspaceVersion) === 1) && availability.reviewWorkspaceVersion !== 1) throw Object.assign(new Error("Import service update is in progress. Try again after it finishes."), { code: pending?.requestId ? "unavailable" : "failed-precondition" });
     if (!pending?.requestId && !availability.available) throw Object.assign(new Error("AI supplier imports are currently unavailable. Ask your hotel administrator for assistance."), { code: "failed-precondition" });
   }
@@ -166,16 +184,18 @@ export async function startSupplierAiImport(hotelUid, supplierId, file, settings
   const recoveredName = typeof recovered?.fileName === "string" && recovered.fileName.length <= 180 && recovered.fileName.length > 0 && !/[\u0000-\u001f\\/]/.test(recovered.fileName) ? recovered.fileName : file.name;
   const recoveredType = Object.values(types).includes(recovered?.mimeType) ? recovered.mimeType : mimeType;
   const reviewWorkspaceVersion = pending?.requestId ? pending.reviewWorkspaceVersion : 1;
+  const recurringImportVersion = pending?.requestId ? pending.recurringImportVersion : isRecurringInput ? 1 : undefined;
   if (reviewWorkspaceVersion !== undefined && Number(reviewWorkspaceVersion) !== 1) throw new Error("The original import review version could not be verified. Contact your hotel administrator.");
   if (pending?.requestId && reviewWorkspaceVersion !== undefined && pending.mappingProfileId !== mappingProfileId) throw Object.assign(new Error("Recover the original document with its saved supplier import profile."), { code: "import-profile-changed", mappingProfileId: pending.mappingProfileId });
-  const command = commands.get(key) || { hotelUid, supplierId, fileName: recoveredName, mimeType: recoveredType, requestId, ...(legacyRecovery ? {} : { importSettings: JSON.stringify(importSettings) }), ...(reviewWorkspaceVersion === undefined ? {} : { reviewWorkspaceVersion: "1", mappingProfileId: pending?.mappingProfileId || mappingProfileId }) };
+  const command = commands.get(key) || { hotelUid, supplierId, fileName: recoveredName, mimeType: recoveredType, requestId, ...(recurringImportVersion === undefined ? {} : { recurringImportVersion: "1" }), ...(legacyRecovery ? {} : { importSettings: JSON.stringify(importSettings) }), ...(reviewWorkspaceVersion === undefined ? {} : { reviewWorkspaceVersion: "1", mappingProfileId: pending?.mappingProfileId || mappingProfileId }) };
   commands.set(key, command);
-  try { sessionStorage.setItem(recoveryKey, JSON.stringify({ requestId: command.requestId, fileName: command.fileName, mimeType: command.mimeType, ...(legacyRecovery ? {} : { importSettings }), ...(command.reviewWorkspaceVersion ? { reviewWorkspaceVersion: 1, mappingProfileId: command.mappingProfileId } : {}) })); } catch { /* In-view retries retain the original request. */ }
+  try { sessionStorage.setItem(recoveryKey, JSON.stringify({ requestId: command.requestId, fileName: command.fileName, mimeType: command.mimeType, ...(command.recurringImportVersion ? { recurringImportVersion: 1 } : {}), ...(legacyRecovery ? {} : { importSettings }), ...(command.reviewWorkspaceVersion ? { reviewWorkspaceVersion: 1, mappingProfileId: command.mappingProfileId } : {}) })); } catch { /* In-view retries retain the original request. */ }
   try {
     const result = await request("POST", command, captured, file);
     if (result.hotelUid !== hotelUid || result.supplierId !== supplierId || result.ownerUid !== captured.actor.uid || !id(result.jobId)) throw new Error("The import acknowledgement could not be verified. Retry the same file and supplier.");
     const confirmed = normalizeSupplierAiImportJob(result);
     if (!sameSettings(confirmed.importSettings, legacyRecovery ? null : importSettings)) throw new Error("The import price settings could not be verified. Recover the original upload.");
+    if (command.recurringImportVersion && confirmed.recurringImportVersion !== 1) throw new Error("The recurring supplier import acknowledgement could not be verified. Recover the original upload.");
     if (command.reviewWorkspaceVersion && (confirmed.importReviewVersion !== 1 || confirmed.mappingProfileId !== command.mappingProfileId)) throw new Error("The import review settings could not be verified. Recover the original upload.");
     commands.delete(key);
     try { sessionStorage.setItem(`supplier-ai-import:${hotelUid}:${captured.actor.uid}`, JSON.stringify({ jobId: result.jobId })); } catch { /* The open view can still recover the job. */ }

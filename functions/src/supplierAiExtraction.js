@@ -269,7 +269,11 @@ async function extractXlsx(bytes, members, result) {
     if (/^xl\/media\//.test(name)) result.warn("WORKBOOK_IMAGES_IGNORED", "Workbook images are not interpreted. Upload a PDF or document separately if the images contain product data.");
   }
   const parsed = await boundedWorkbook(bytes);
-  parsed.units.forEach((unit) => result.add(unit.sourceId, unit.anchor, unit.text));
+  parsed.units.forEach((unit) => {
+    result.add(unit.sourceId, unit.anchor, unit.text);
+    Object.assign(result.units.at(-1), { sheetName: unit.sheetName,
+      ...(unit.uncertainColumns?.length ? { uncertainColumns: unit.uncertainColumns } : {}) });
+  });
   parsed.warnings.forEach((warning) => result.warn(warning.code, warning.message, warning.sourceId));
 }
 
@@ -287,6 +291,7 @@ async function parseWorkbookForWorker(bytes) {
       if (ordinal > 1) rows += 1;
       if (rows > LIMITS.rows) fail("ROW_LIMIT", "The workbook exceeds 1,000 data rows across its worksheets; split it.");
       const values = [];
+      const uncertainColumns = [];
       for (let column = 1; column <= row.cellCount; column += 1) {
         if (column > LIMITS.columns) fail("COLUMN_LIMIT", "The workbook contains more than 128 columns.");
         const cell = row.getCell(column);
@@ -294,6 +299,7 @@ async function parseWorkbookForWorker(bytes) {
         if (value instanceof Date) value = value.toISOString();
         else if (value && typeof value === "object") {
           if ("formula" in value || "sharedFormula" in value) {
+            uncertainColumns.push(column - 1);
             result.warn("CACHED_FORMULAS", "Formulas are never executed. Their cached values may be stale; review affected prices and quantities.");
             value = value.result ?? null;
             if (value instanceof Date) value = value.toISOString();
@@ -311,6 +317,7 @@ async function parseWorkbookForWorker(bytes) {
       const sourceId = `xlsx-sheet-${sheetIndex + 1}-row-${rowNumber}`;
       const context = ordinal === 1 ? " (possible header)" : "";
       result.add(sourceId, `Worksheet ${sheetIndex + 1} ${JSON.stringify(sheet.name)}, row ${rowNumber}${context}`, cellsText(values));
+      Object.assign(result.units.at(-1), { sheetName: sheet.name, ...(uncertainColumns.length ? { uncertainColumns } : {}) });
       if (row.hidden || sheet.state !== "visible") result.warn("HIDDEN_ROWS_INCLUDED", "Hidden worksheets and rows are included in the review; they are not silently skipped.");
     });
   });

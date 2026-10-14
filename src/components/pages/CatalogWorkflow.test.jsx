@@ -38,6 +38,13 @@ describe("catalog loading, taxonomy and complete export", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(mocks.supplier).toHaveBeenCalledWith("hotel-a", expect.objectContaining({ supplierId: "" }));
   });
+  it("qualifies raw supplier catalog prices as indicative before an effective-date order preview", async () => {
+    mocks.supplier.mockResolvedValue(page([{ id: "product", supplierProductName: "Orange juice", pricePerPurchaseUnit: 12, currency: "EUR", purchaseUnit: "case", priceBasis: "net" }]));
+    render(<SupplierProductsPage />);
+    expect(await screen.findByText("12 EUR/case")).toBeInTheDocument();
+    expect(screen.getByText("Indicative price")).toBeInTheDocument();
+    expect(screen.getByText("Order preview checks applicable approved prices.")).toBeInTheDocument();
+  });
   it("removes a selected supplier filter when supplier read permission is revoked", async () => {
     mocks.supplier.mockResolvedValue(page([{ id: "product", supplierProductName: "Available product" }]));
     const view = render(<SupplierProductsPage />);

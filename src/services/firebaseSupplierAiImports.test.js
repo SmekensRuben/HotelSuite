@@ -240,3 +240,23 @@ it("rejects corrupt confirmation references and fences unknown acknowledgements 
   wait.resolve({ data: { hotelUid: "hotel-a", jobId: "job", complete: true, outcomes: [{ rowId: "r-1", status: "created", productId: "offer", revision: 1 }] } });
   await expect(operation).rejects.toThrow(/access changed/); expect(sessionStorage.getItem("supplier-ai-confirm:manager:hotel-a:job")).toContain("requestId");
 });
+
+it("gates fresh recurring uploads and freezes their opt-in version and business source context", async () => {
+  const recurring = { ...settings, assortmentMode: "full", documentPurpose: "price-list", sourceIssuedOn: "2026-10-14", priceValidFrom: "2026-11-01", priceValidUntil: null };
+  await expect(startSupplierAiImport("hotel-a", "supplier", file(), recurring)).rejects.toThrow(/service update/);
+  expect(postCalls()).toHaveLength(0);
+  mocks.fetch.mockResolvedValueOnce(response({ ...availability, recurringImportVersion: 1, sourceFormatProfileVersion: 1, aiAvailable: false }))
+    .mockResolvedValueOnce(response({ ...saved, recurringImportVersion: 1, importSettings: recurring }));
+  await startSupplierAiImport("hotel-a", "supplier", file(), recurring);
+  const parameters = new URL(postCalls()[0][0]).searchParams;
+  expect(parameters.get("recurringImportVersion")).toBe("1");
+  expect(JSON.parse(parameters.get("importSettings"))).toEqual(recurring);
+});
+it("recovers a pre-upgrade uncertain upload with its original bytes when new controls display defaults", async () => {
+  loseUpload(new Error("Original acknowledgement lost"));
+  await expect(startSupplierAiImport("hotel-a", "supplier", file(), settings)).rejects.toThrow();
+  const original = postCalls()[0][0];
+  await startSupplierAiImport("hotel-a", "supplier", file(), { ...settings, assortmentMode: "partial", documentPurpose: "price-list", sourceIssuedOn: null, priceValidFrom: null, priceValidUntil: null });
+  expect(postCalls()[1][0]).toBe(original);
+  expect(new URL(postCalls()[1][0]).searchParams.has("recurringImportVersion")).toBe(false);
+});

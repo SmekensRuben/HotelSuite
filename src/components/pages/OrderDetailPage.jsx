@@ -20,6 +20,7 @@ import { usePermission } from "../../hooks/usePermission";
 import OrderReceivingPanel from "../orders/OrderReceivingPanel";
 import SupplierConfirmationPanel from "../orders/SupplierConfirmationPanel";
 import { formatOrderMoney, formatOrderSubtotal, formatOrderPriceBasis } from "../../utils/orderPricing";
+import { orderPriceReliability, orderPriceSource, orderPriceEvidence } from "../../utils/orderPriceReliability";
 
 function formatContent(item) {
   const amount = Number(item?.baseUnitsPerPurchaseUnit || 0);
@@ -185,6 +186,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
       qty,
       price: formatOrderMoney(unitPrice, item.currency || order.currency),
       priceBasisLabel: formatOrderPriceBasis(item.priceBasis),
+      priceReliability: orderPriceReliability(item), priceSource: orderPriceSource(item), priceEvidence: orderPriceEvidence(item),
       subtotal: formatOrderSubtotal(unitPrice, item.qtyPurchaseUnits, item.currency || order.currency),
       note: String(item.note || "").trim(),
     };
@@ -274,7 +276,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
     { key: "purchaseUnit", label: "Purchase Unit" },
     { key: "content", label: "Package content", render: (row) => <div><p>{row.content}</p><p className="mt-1 max-w-[15rem] text-xs text-slate-500">{row.stockContent}</p></div> },
     { key: "qty", label: "Qty" },
-    { key: "price", label: "Package price" },
+    { key: "price", label: "Package price", render: (row) => <div><p>{row.price}</p><p className="mt-1 max-w-[18rem] text-xs text-slate-600">{row.priceReliability}</p><p className="mt-1 max-w-[18rem] break-words text-xs text-slate-500">{row.priceSource}</p><p className="mt-1 max-w-[18rem] text-xs text-slate-500">{row.priceEvidence}</p></div> },
     { key: "priceBasisLabel", label: "Price basis" },
     { key: "subtotal", label: "Quoted subtotal" },
   ];

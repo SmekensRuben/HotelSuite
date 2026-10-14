@@ -124,3 +124,15 @@ describe("compact supplier product review", () => {
     render(<SupplierImportProductReview {...props(row({ model: "expensive-provider-model", usage: { actualCostUsd: 12 }, originalInput: { ...product, tokenCount: 100 } }))} />); const article = screen.getByRole("article"); expect(article).not.toHaveTextContent("expensive-provider-model"); expect(article).not.toHaveTextContent("actualCostUsd");
   });
 });
+
+it("exposes a physical unit increase caused by a smaller package at the same purchase price", () => {
+  const previous = { ...product, baseUnitsPerPurchaseUnit: 1.25 }, changed = row({ category: "changed", previousProduct: previous, changes: [{ field: "baseUnitsPerPurchaseUnit", before: 1.25, after: 1 }], recurringReview: { category: "packaging-change", confirmsUnitPrice: true, sourceIssuedOn: "2026-10-01", formatStatus: "confirmed", physicalPriceComparison: { before: 6.4, after: 8, percentChange: 25, unit: "kg", currency: "EUR", comparable: true }, assortmentMode: "partial" } });
+  render(<SupplierImportProductReview {...props(changed)} />);
+  const comparison = screen.getByRole("region", { name: "Recurring price review" });
+  expect(comparison).toHaveTextContent("6.4"); expect(comparison).toHaveTextContent("8 EUR/kg"); expect(comparison).toHaveTextContent("+25%"); expect(comparison).toHaveTextContent("An unchanged box price");
+  expect(comparison).toHaveTextContent("Validity is unknown");
+});
+it("does not present a statistics source as confirming the preserved unit price", () => {
+  render(<SupplierImportProductReview {...props(row({ category: "unchanged", previousProduct: product, recurringReview: { category: "unchanged", confirmsUnitPrice: false, sourceIssuedOn: null, formatStatus: "confirmed", physicalPriceComparison: { comparable: false, before: null, after: null, unit: "kg", currency: "EUR", reason: "No source-backed purchase price." } } }))} />);
+  expect(screen.getByRole("region", { name: "Recurring price review" })).toHaveTextContent("Existing price confirmation dates remain unchanged"); expect(screen.getByText(/No source-backed purchase price/)).toBeInTheDocument();
+});

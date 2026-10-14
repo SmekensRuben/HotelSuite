@@ -27,6 +27,28 @@ function validateOptions(options) {
     }
   }
 }
+const validityStates = new Set(["current", "unknown", "future", "expired", "unavailable", "invalid"]);
+function validateReliability(value) {
+  if (value === undefined || value === null) return;
+  if (!value || typeof value !== "object" || typeof value.needsReview !== "boolean" || typeof value.hasScheduledVersions !== "boolean"
+    || !validityStates.has(value.priceValidity) || !["order-date", "delivery-date"].includes(value.pricingDateBasis)
+    || typeof value.pricingAgreementKnown !== "boolean" || !Array.isArray(value.reasons) || value.reasons.length > 25
+    || value.reasons.some((reason) => typeof reason !== "string" || reason.length > 160)
+    || !nullableString(value.currentVersionId) || !nullableString(value.lastPriceChangeAt) || !nullableString(value.lastPriceConfirmedAt)
+    || !nullableString(value.sourceReference) || !nullableDate(value.sourceIssuedOn) || !nullableDate(value.latestSourceIssuedOn)) throw new Error("Supplier price reliability response is invalid.");
+}
+function validateVersions(versions, assessmentDate) {
+  if (versions === undefined) return;
+  if (!Array.isArray(versions) || versions.length > 100 || new Set(versions.map((version) => version?.id)).size !== versions.length) throw new Error("Approved supplier price versions are invalid.");
+  for (const version of versions) {
+    if (!documentId(version?.id) || !Number.isSafeInteger(version.revision) || version.revision < 0
+      || !nullableString(version.approvedAt) || !nullableString(version.sourceReference) || !nullableDate(version.sourceIssuedOn)
+      || !nullableString(version.currency) || !nullableString(version.catalogBaseUnit)
+      || !nullableDate(version.contractualValidFrom) || !nullableDate(version.contractualValidUntil)
+      || !validityStates.has(version.priceValidity) || version.priceValidity !== expectedValidity(version, assessmentDate)) throw new Error("Approved supplier price period could not be verified.");
+    validateOptions(version.options);
+  }
+}
 async function load(hotelUid, payload, options) {
   if (!documentId(hotelUid)) throw new Error("hotelUid is required.");
   const pageSize = options.pageSize ?? 25;
@@ -47,6 +69,7 @@ async function load(hotelUid, payload, options) {
           || product.priceValidity === "current" && (!data.assessmentDate || product.contractualValidFrom === null && product.contractualValidUntil === null)
           || product.priceValidity !== "invalid" && product.priceValidity !== expectedValidity(product, data.assessmentDate)) throw new Error("Supplier comparison record is invalid.");
         validateOptions(product.options);
+        validateReliability(product.reliability);
       }
       if (data.nextProductId !== null && data.nextProductId !== data.products.at(-1)?.id) throw new Error("Supplier comparison cursor is invalid.");
     } else {
@@ -65,6 +88,8 @@ async function load(hotelUid, payload, options) {
         }
       }
       if (data.nextRevision !== null && data.nextRevision !== data.entries.at(-1)?.revision) throw new Error("Supplier history cursor is invalid.");
+      validateReliability(data.reliability);
+      validateVersions(data.versions, data.assessmentDate);
     }
     return data;
   }, options.scopeKey);

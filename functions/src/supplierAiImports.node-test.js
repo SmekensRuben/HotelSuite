@@ -123,7 +123,7 @@ test("normal hotel buyer creates an isolated job, receives complete review and s
 test("customer availability and job DTOs cannot serialize operator accounting or provider configuration", async () => {
   const s = fixture();
   const availability = await readSupplierAiImport(request(), { hotelUid: "hotel-a" }, s);
-  assert.deepEqual(availability, { available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 }, defaults: { currency: "EUR" } });
+  assert.deepEqual(availability, { available: true, aiAvailable: true, recurringFormatsAvailable: true, recurringImportVersion: 1, sourceFormatProfileVersion: 1, importPolicyVersion: 2, reviewWorkspaceVersion: 1, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 }, defaults: { currency: "EUR" } });
   assertCustomerPrivacy(availability);
   const created = await uploadSupplierAiImport(request(), data(), bytes, s);
   const stored = jobOf(s, created.jobId);
@@ -263,7 +263,7 @@ test("normalization runs only after source validation and is frozen in the confi
   assert.equal(s.calls.normalize, 1); await runSupplierAiImportJob("hotel-a", created.jobId, s);
   assert.equal(s.calls.response, 1); assert.equal(s.calls.normalize, 1);
 });
-test("the real worker pipeline validates, normalizes, reconciles and freezes policy 2 products with one paid request", async () => {
+test("the recurring worker validates, normalizes, reconciles and freezes policy 2 products behind format review with one paid request", async () => {
   const s = fixture();
   for (const override of ["schema", "validateRows", "normalizeRow", "extractSource", "splitSource", "reconcileRows"]) delete s[override];
   const mappingScope = { supplierId: "dairy", sourceFormat: "csv", profileId: "default" };
@@ -280,7 +280,7 @@ test("the real worker pipeline validates, normalizes, reconciles and freezes pol
     s.advance(370000); // Force the real reconciliation to continue in another work invocation.
     return response({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ rows: [row] }) }] }] });
   };
-  const created = await uploadSupplierAiImport(request(), data(), source, s);
+  const created = await uploadSupplierAiImport(request(), data({ recurringImportVersion: "1" }), source, s);
   assert.deepEqual(await runSupplierAiImportJob("hotel-a", created.jobId, s), { queued: true });
   const receiptPath = `hotels/hotel-a/supplierAiImportJobs/${created.jobId}/attempts/chunk-0000`, receipt = s.firestore.records.get(receiptPath);
   const pinnedReceipt = { ...receipt }, pinnedBytes = Buffer.from(s.bucket.objects.get(receipt.result.path).bytes);
@@ -296,7 +296,10 @@ test("the real worker pipeline validates, normalizes, reconciles and freezes pol
   assert.equal(confirmed.originalInput.supplierProductName, "MEEL TARWE 400 GR");
   const reviewRow = s.firestore.records.get(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}/rows/r-000001`);
   assert.equal(reviewRow.product.purchaseUnit, "Pack"); assert.equal(reviewRow.product.baseUnitsPerPurchaseUnit, 400);
-  assert.equal(reviewRow.product.pricePerPurchaseUnit, 2.4); assert.equal(reviewRow.category, "new");
+  assert.equal(reviewRow.product.pricePerPurchaseUnit, 2.4); assert.equal(reviewRow.category, "blocked");
+  assert.ok(reviewRow.normalizationFindings.some((finding) => finding.code === "source-format-review-required"));
+  assert.equal(ready.sourceInterpretation.status, "unconfirmed");
+  assert.deepEqual(ready.sourceFormatCandidate.header, ["SKU", "Name", "Net price per Pack", "Currency", "Price basis", "Purchase unit", "Package content"]);
   assert.deepEqual(await runSupplierAiImportJob("hotel-a", created.jobId, s), { ignored: true });
   assert.equal(s.calls.response, 1); assert.equal(s.calls.count, 1); assert.deepEqual(s.firestore.records.get(receiptPath), pinnedReceipt);
   assert.deepEqual(s.bucket.objects.get(receipt.result.path).bytes, pinnedBytes); assert.equal(monthOf(s).attemptedCalls, 1);
@@ -469,7 +472,8 @@ test("malformed existing accounting cannot gain a fresh zero budget and HTTP nev
   await supplierProductAiImportHandler({ method: "POST", headers: { "content-type": "application/octet-stream" }, rawBody: bytes, query: data() }, res, s);
   assert.equal(res.statusCode, 401); assert.equal(s.bucket.objects.size, 0);
   s.firestore.records.delete("platformConfiguration/aiSupplierProductImport");
-  assert.equal((await readSupplierAiImport(request(), { hotelUid: "hotel-a" }, s)).available, false);
+  const availability = await readSupplierAiImport(request(), { hotelUid: "hotel-a" }, s);
+  assert.equal(availability.available, true); assert.equal(availability.aiAvailable, false); assert.equal(availability.recurringFormatsAvailable, true);
 });
 test("provider calls are billed to the UTC month at send time, while source creation counters stay in the original month", async () => {
   const s = fixture(); s.advance(Date.parse("2026-10-31T23:59:59.000Z") - s.now());
@@ -672,4 +676,74 @@ test("an unconfirmed reconciliation result cannot mark an incomplete proposal re
   const created = await uploadSupplierAiImport(request(), data(), bytes, s);
   const result = await runSupplierAiImportJob("hotel-a", created.jobId, s);
   assert.equal(result.status, "failed"); assert.equal(s.calls.response, 1); assert.equal(monthOf(s).importsReviewReady, 0); assertCustomerPrivacy(result);
+});
+test("confirmed recurring formats work without AI credentials, response calls or available AI budget", async () => {
+  for (const disabled of [true, false]) {
+    const s = fixture({ enabled: !disabled });
+    for (const override of ["schema", "validateRows", "normalizeRow", "extractSource", "splitSource", "reconcileRows"]) delete s[override];
+    const scope = { supplierId: "dairy", sourceFormat: "csv", profileId: "default" }, mappings = require("./supplierImportMappings");
+    const header = ["SKU", "Name", "Purchase unit", "Content", "Unit price", "Valid from", "Issued on"];
+    const profile = { version: 1, ...scope, revision: 2, mappings: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }], interpretation: {
+      version: 1, header, sheetName: null, columns: { supplierSku: 0, supplierProductName: 1, purchaseUnit: 2, baseUnitsPerPurchaseUnit: 3,
+        pricePerPurchaseUnit: 4, priceValidFrom: 5, sourceIssuedOn: 6 }, defaults: { baseUnit: "l", currency: "EUR", priceBasis: "net" },
+      assortmentMode: "partial", documentPurpose: "price-list", decimalSeparator: ",", dateFormat: "YYYY-MM-DD" } };
+    s.firestore.records.set(mappings.mappingProfileRef(s.firestore, "hotel-a", scope).path, profile);
+    const source = Buffer.from(header.join(";") + '\n00012;Sparkling water;FL;0,75;2,40;2026-11-01;2026-10-14\n');
+    const first = await uploadSupplierAiImport(request(), data({ recurringImportVersion: "1" }), source, s), frozen = jobOf(s, first.jobId).purchaseUnitMappingSnapshot;
+    monthOf(s).knownCostMicros = 10000000;
+    profile.interpretation = { ...profile.interpretation, decimalSeparator: "." }; profile.revision = 3;
+    const ready = await runSupplierAiImportJob("hotel-a", first.jobId, s);
+    assert.equal(ready.status, "review", JSON.stringify(ready)); assert.equal(ready.sourceInterpretation.status, "confirmed");
+    assert.equal(ready.sourceInterpretation.profileRevision, 2); assert.equal(ready.counts.new, 1);
+    const saved = s.firestore.records.get(`hotels/hotel-a/supplierAiImportJobs/${first.jobId}/rows/r-000001`);
+    assert.equal(saved.product.supplierSku, "00012"); assert.equal(saved.product.purchaseUnit, "Bottle"); assert.equal(saved.product.pricePerPurchaseUnit, 2.4);
+    assert.equal(saved.sourceInterpretation.unitPriceEstablished, true); assert.equal(saved.product.priceValidFrom, "2026-11-01");
+    assert.equal(s.calls.response, 0); assert.equal(s.calls.count, 0); assert.equal(monthOf(s).attemptedCalls, 0); assert.equal(monthOf(s).reservedCostMicros, 0);
+    assert.equal(monthOf(s).activeJobs, 0); assert.equal(monthOf(s).knownCostMicros, 10000000); assertCustomerPrivacy(ready);
+    assert.deepEqual(await uploadSupplierAiImport(request(), data({ recurringImportVersion: "1" }), source, s), ready);
+    assert.deepEqual(jobOf(s, first.jobId).purchaseUnitMappingSnapshot, frozen);
+    const second = await uploadSupplierAiImport(request(), data({ requestId: "price-update-two", recurringImportVersion: "1" }), source, s);
+    assert.equal(jobOf(s, second.jobId).processingMode, "deterministic"); assert.equal(jobOf(s, second.jobId).purchaseUnitMappingSnapshot.revision, 3);
+    if (disabled) await assert.rejects(uploadSupplierAiImport(request(), data({ requestId: "format-changed", recurringImportVersion: "1" }), Buffer.from(source.toString().replace("Unit price", "New price")), s), { code: "failed-precondition" });
+  }
+});
+test("explicit per-source metadata is validated and pinned without changing legacy import-setting keys", async () => {
+  assert.deepEqual(parseImportSettings(JSON.stringify(importSettings())), importSettings());
+  const context = importSettings({ assortmentMode: "full", documentPurpose: "price-list", sourceIssuedOn: "2026-10-14", priceValidFrom: "2027-01-01", priceValidUntil: null });
+  assert.deepEqual(parseImportSettings(JSON.stringify(context)), context);
+  for (const patch of [{ sourceIssuedOn: "2026-02-30" }, { assortmentMode: "complete" }, { documentPurpose: "invoice" }, { priceValidFrom: "2027-02-01", priceValidUntil: "2027-01-01" }])
+    assert.throws(() => parseImportSettings(JSON.stringify(importSettings(patch))), { code: "invalid-argument" });
+  const s = fixture(), created = await uploadSupplierAiImport(request(), data({ importSettings: JSON.stringify(context) }), bytes, s);
+  assert.deepEqual(created.importSettings, context);
+  await assert.rejects(uploadSupplierAiImport(request(), data(), bytes, s), { code: "already-exists" });
+});
+test("two hundred recurring source rows reconcile durably with exact identities and no provider work", async () => {
+  const s = fixture({ enabled: false });
+  for (const override of ["schema", "validateRows", "normalizeRow", "extractSource", "splitSource", "reconcileRows", "provider"]) delete s[override];
+  const scope = { supplierId: "dairy", sourceFormat: "csv", profileId: "default" }, mappings = require("./supplierImportMappings");
+  const header = ["SKU", "Name", "Purchase unit", "Content", "Unit price"];
+  const profile = { version: 1, ...scope, revision: 1, mappings: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }], interpretation: {
+    version: 1, header, sheetName: null, columns: { supplierSku: 0, supplierProductName: 1, purchaseUnit: 2, baseUnitsPerPurchaseUnit: 3, pricePerPurchaseUnit: 4 },
+    defaults: { baseUnit: "l", currency: "EUR", priceBasis: "net" }, assortmentMode: "full", documentPurpose: "price-list", decimalSeparator: ".", dateFormat: "YYYY-MM-DD" } };
+  s.firestore.records.set(mappings.mappingProfileRef(s.firestore, "hotel-a", scope).path, profile);
+  const text = header.join(",") + "\n" + Array.from({ length: 200 }, (_, index) => `${String(index).padStart(5, "0")},Water ${index},FL,0.75,2.4`).join("\n");
+  const created = await uploadSupplierAiImport(request(), data({ recurringImportVersion: "1" }), Buffer.from(text), s);
+  let result;
+  for (let turn = 0; turn < 3; turn++) { result = await runSupplierAiImportJob("hotel-a", created.jobId, s); if (result.status === "review") break; assert.deepEqual(result, { queued: true }); }
+  assert.equal(result.status, "review"); assert.equal(result.totalRows, 200); assert.equal(result.counts.new, 200); assert.equal(result.summary.totalRows, 200);
+  const root = `hotels/hotel-a/supplierAiImportJobs/${created.jobId}`;
+  assert.equal(s.firestore.records.get(root + "/rows/r-000001").product.supplierSku, "00000");
+  assert.equal(s.firestore.records.get(root + "/rows/r-000200").product.supplierSku, "00199");
+  assert.equal(s.firestore.records.get(root).reconciliation.nextRowIndex, 200); assert.equal(monthOf(s).attemptedCalls, 0);
+  assert.equal(monthOf(s).knownCostMicros, 0); assert.equal(monthOf(s).reservedCostMicros, 0); assert.equal(monthOf(s).activeJobs, 0);
+  assert.deepEqual(await runSupplierAiImportJob("hotel-a", created.jobId, s), { ignored: true });
+});
+test("unflagged prior workspace commands retain their exact fingerprint and do not learn new source interpretations", async () => {
+  const s = fixture(); delete s.extractSource; delete s.splitSource;
+  const created = await uploadSupplierAiImport(request(), data(), bytes, s), job = jobOf(s, created.jobId);
+  const expected = digest("dairy", "supplier.csv", "text/csv", require("node:crypto").createHash("sha256").update(bytes).digest("hex"), 2, importSettings(), { reviewWorkspaceVersion: 1, mappingProfileId: "default" });
+  assert.equal(job.fingerprint, expected); assert.equal(job.recurringImportVersion, undefined);
+  const ready = await runSupplierAiImportJob("hotel-a", created.jobId, s);
+  assert.equal(ready.status, "review"); assert.equal(ready.sourceFormatCandidate, undefined); assert.equal(jobOf(s, created.jobId).sourceFormatObject, undefined);
+  await assert.rejects(uploadSupplierAiImport(request(), data({ recurringImportVersion: 1 }), bytes, s), { code: "already-exists" });
 });

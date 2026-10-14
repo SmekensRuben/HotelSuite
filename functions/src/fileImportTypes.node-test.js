@@ -22,8 +22,8 @@ test("imports cannot write global data, another hotel or authorization/queue rec
     assert.throws(() => requireHotelImportTarget(path, "hotel-a"));
   }
 });
-test("generic imports cannot forge supplier price history or manual movement evidence", () => {
-  for (const collection of ["supplierPriceHistory", "inventoryAdjustments", "inventoryAdjustmentOperations", "inventoryAdjustmentReversals"])
+test("generic imports cannot forge approved supplier prices, confirmations, history or manual movement evidence", () => {
+  for (const collection of ["supplierPriceVersions", "supplierPriceConfirmations", "supplierPriceHistory", "inventoryAdjustments", "inventoryAdjustmentOperations", "inventoryAdjustmentReversals"])
     for (const path of [`hotels/hotel-a/${collection}/record`, `hotels/hotel-a/${collection}/record/entries/nested`])
       assert.throws(() => requireHotelImportTarget(path, "hotel-a"));
   requireHotelImportTarget("hotels/hotel-a/reports/arrivals/2026-10-12/guest", "hotel-a");

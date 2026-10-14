@@ -7,6 +7,7 @@ it("omits every credential field for an editor without credential-management acc
   const save = vi.fn().mockResolvedValue(undefined);
   render(<SupplierFormFields initialValues={{ name: "Supplier", username: "fictional-private-name" }} onSubmit={save} />);
   expect(screen.queryByLabelText("Username")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Price agreement date"), { target: { value: "order-date" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(save).toHaveBeenCalled());
   for (const key of ["username", "password", "sftpPassword", "sftpUser", "sftpHostKey"]) expect(save.mock.calls[0][0][key]).toBeUndefined();
@@ -16,8 +17,18 @@ it("keeps password characters intact and makes a failed save retryable", async (
   const save = vi.fn().mockRejectedValue(new Error("Supplier changed. Reload before saving."));
   render(<SupplierFormFields canManageCredentials initialValues={{ name: "Supplier" }} onSubmit={save} />);
   fireEvent.change(screen.getByLabelText("Password · leave blank to keep"), { target: { value: " fictional-password " } });
+  fireEvent.change(screen.getByLabelText("Price agreement date"), { target: { value: "order-date" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await screen.findByRole("alert");
   expect(save.mock.calls[0][0].password).toBe(" fictional-password ");
   expect(screen.getByRole("button", { name: "Save" }).disabled).toBe(false);
+});
+
+it("records a delivery-date agreement explicitly and leaves an unknown agreement unselected", async () => {
+  const save = vi.fn().mockResolvedValue(undefined);
+  render(<SupplierFormFields initialValues={{ name: "Supplier" }} onSubmit={save} />);
+  expect(screen.getByLabelText("Price agreement date")).toHaveValue("");
+  fireEvent.change(screen.getByLabelText("Price agreement date"), { target: { value: "delivery-date" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ priceDateBasis: "delivery-date" })));
 });

@@ -12,6 +12,7 @@ import SupplierAiImportDialog from "./SupplierAiImportDialog";
 const product = { supplierSku: "001", supplierProductName: "Coffee", baseUnit: "kg", purchaseUnit: "bag", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 12, priceBasis: "net", currency: "EUR", pricingModel: "Per Purchase Unit", purchaseOptions: [], active: false, catalogProductId: null };
 const row = (rowId = "r1", patch = {}) => ({ rowId, category: "new", product: { ...product }, previousProduct: null, reviewRevision: 1, issues: [], changes: [], sourceAnchors: [{ sourceId: "page-1", anchor: "Page 1, row 2", quote: "001 Coffee 1kg EUR12", verified: true }], committed: null, ...patch });
 const settings = { policyVersion: 2, priceBasis: "net", currency: "EUR", vatRate: null };
+const recurringSettings = { assortmentMode: "partial", documentPurpose: "price-list", sourceIssuedOn: null, priceValidFrom: null, priceValidUntil: null };
 const job = { hotelUid: "hotel-a", jobId: "job", supplierId: "supplier", ownerUid: "manager", status: "review", importSettings: settings, summary: null, source: { fileName: "supplier.csv" }, usage: { attempts: 1, actualCostUsd: 0.001, unknownCalls: 0 }, expiresAtMillis: 1900000000000 };
 const props = () => ({ open: true, onClose: vi.fn(), hotelUid: mocks.hotel, suppliers: [{ id: "supplier", name: "Coffee Supplier" }], initialSupplierId: "supplier", onImported: vi.fn() });
 const upload = (file = new File(["Supplier data"], "supplier.csv", { type: "text/csv" })) => { const basis = screen.getByLabelText("Document price basis"); if (!basis.value) fireEvent.change(basis, { target: { value: "net" } }); return fireEvent.change(screen.getByLabelText("Supplier document"), { target: { files: [file] } }); };
@@ -20,7 +21,7 @@ const deferred = () => { let resolve; const promise = new Promise((done) => { re
 beforeEach(() => {
   vi.clearAllMocks(); sessionStorage.clear(); mocks.hotel = "hotel-a"; mocks.actor = { uid: "manager" };
   mocks.permissions = ["supplierproducts.read", "supplierproducts.create", "supplierproducts.update", "suppliers.read", "catalogproducts.read"];
-  mocks.availability.mockResolvedValue({ available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, fallbackEnabled: false, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000, maxCostPerImportUsd: 0.25 }, defaults: { currency: "EUR" } });
+  mocks.availability.mockResolvedValue({ available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, recurringImportVersion: 1, sourceFormatProfileVersion: 1, fallbackEnabled: false, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000, maxCostPerImportUsd: 0.25 }, defaults: { currency: "EUR" } });
   mocks.start.mockResolvedValue(job); mocks.get.mockResolvedValue(job); mocks.review.mockResolvedValue({ hotelUid: "hotel-a", jobId: "job", rows: [row()], totalRows: 1, nextCursor: null });
   mocks.suppliers.mockResolvedValue([{ id: "supplier", name: "Coffee Supplier" }]);
   mocks.catalog.mockResolvedValue({ products: [{ id: "ingredient", name: "Coffee beans", baseUnit: "kg" }], cursor: null, hasMore: false });
@@ -128,10 +129,10 @@ describe("supplier AI upload and navigation", () => {
     fireEvent.change(screen.getByLabelText("Supplier document"), { target: { files: [new File(["supplier rows"], "prices.csv")] } });
     expect(screen.getByLabelText("Document price basis")).toHaveValue(""); expect(screen.getByRole("combobox", { name: "Document currency" }).value).toMatch(/^EUR/); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeDisabled(); expect(mocks.start).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Document price basis"), { target: { value: "net" } }); fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" }));
-    await waitFor(() => expect(mocks.start).toHaveBeenCalledWith("hotel-a", "supplier", expect.any(File), settings));
+    await waitFor(() => expect(mocks.start).toHaveBeenCalledWith("hotel-a", "supplier", expect.any(File), { ...settings, ...recurringSettings }));
   });
   it("keeps missing or invalid hotel currency unknown and requires a searched currency choice", async () => {
-    mocks.availability.mockResolvedValue({ available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, defaults: { currency: "ZZZ" } }); render(wrap(<SupplierAiImportDialog {...props()} />)); await screen.findByLabelText("Supplier document"); upload();
+    mocks.availability.mockResolvedValue({ available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, recurringImportVersion: 1, sourceFormatProfileVersion: 1, defaults: { currency: "ZZZ" } }); render(wrap(<SupplierAiImportDialog {...props()} />)); await screen.findByLabelText("Supplier document"); upload();
     const currency = screen.getByRole("combobox", { name: "Document currency" }); expect(currency).toHaveValue(""); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeDisabled();
     fireEvent.focus(currency); fireEvent.change(currency, { target: { value: "EUR" } }); fireEvent.click(await screen.findByRole("option", { name: /^EUR/ })); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeEnabled();
   });
@@ -140,12 +141,12 @@ describe("supplier AI upload and navigation", () => {
     expect(screen.getByText(/No tax rate is guessed/)).toBeInTheDocument(); expect(screen.queryByLabelText("Shared VAT rate (%)")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: /Use one shared VAT rate/ })); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeDisabled(); fireEvent.change(screen.getByLabelText("Shared VAT rate (%)"), { target: { value: "106" } }); expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Shared VAT rate (%)"), { target: { value: "6" } }); fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" }));
-    await waitFor(() => expect(mocks.start).toHaveBeenCalledWith("hotel-a", "supplier", expect.any(File), { policyVersion: 2, priceBasis: "gross", currency: "EUR", vatRate: 0.06 }));
+    await waitFor(() => expect(mocks.start).toHaveBeenCalledWith("hotel-a", "supplier", expect.any(File), { ...settings, ...recurringSettings, priceBasis: "gross", vatRate: 0.06 }));
   });
   it("permits explicit unknown basis and optional unknown VAT without presenting purchase prices as reliable", async () => {
     mocks.start.mockResolvedValue({ ...job, importSettings: { ...settings, priceBasis: "unknown" } }); render(wrap(<SupplierAiImportDialog {...props()} />)); await screen.findByLabelText("Supplier document"); fireEvent.change(screen.getByLabelText("Document price basis"), { target: { value: "unknown" } }); upload();
     expect(screen.getByText(/Prices without a documented net or gross basis/)).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" })); await screen.findByRole("button", { name: "Open import review" });
-    expect(mocks.start).toHaveBeenCalledWith("hotel-a", "supplier", expect.any(File), { ...settings, priceBasis: "unknown" }); expect(screen.getByText(/Unknown price basis — requires review/)).toBeInTheDocument();
+    expect(mocks.start).toHaveBeenCalledWith("hotel-a", "supplier", expect.any(File), { ...settings, ...recurringSettings, priceBasis: "unknown" }); expect(screen.getByText(/Unknown price basis — requires review/)).toBeInTheDocument();
   });
   it("locks and restores the original settings for an unknown upload acknowledgement", async () => {
     const original = { policyVersion: 2, priceBasis: "gross", currency: "EUR", vatRate: 0.06 };
@@ -162,7 +163,7 @@ it("snapshots fractional VAT percentages canonically and blocks unsupported prec
 });
 it("shows a service upgrade notice and offers retry without exposing the new-upload form against an older backend", async () => {
   mocks.availability.mockResolvedValueOnce({ available: true, limits: { maxProducts: 1000 } }); render(wrap(<SupplierAiImportDialog {...props()} />)); await screen.findByText("Import service update is in progress. Try again after it finishes."); expect(screen.queryByLabelText("Supplier document")).not.toBeInTheDocument(); expect(mocks.start).not.toHaveBeenCalled();
-  mocks.availability.mockResolvedValueOnce({ available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, defaults: { currency: "EUR" } }); fireEvent.click(screen.getByRole("button", { name: "Retry access check" })); await screen.findByLabelText("Supplier document");
+  mocks.availability.mockResolvedValueOnce({ available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, recurringImportVersion: 1, sourceFormatProfileVersion: 1, defaults: { currency: "EUR" } }); fireEvent.click(screen.getByRole("button", { name: "Retry access check" })); await screen.findByLabelText("Supplier document");
 });
 
 it("keeps row details out of the upload dialog and navigates a ready legacy draft to its private review page", async () => {
@@ -200,4 +201,46 @@ it("discards a delayed private status response after a different document is ack
   await screen.findByText("second.csv"); await act(async () => pending.resolve(job));
   expect(screen.getByText("second.csv")).toBeInTheDocument(); expect(screen.queryByText("supplier.csv")).not.toBeInTheDocument();
   expect(mocks.review).not.toHaveBeenCalled(); expect(mocks.confirm).not.toHaveBeenCalled();
+});
+it("captures partial or full scope and future validity without guessing missing source dates", async () => {
+  render(wrap(<SupplierAiImportDialog {...props()} />)); await screen.findByLabelText("Supplier document"); upload();
+  expect(screen.getByLabelText("List scope")).toHaveValue("partial"); fireEvent.change(screen.getByLabelText("List scope"), { target: { value: "full" } });
+  fireEvent.click(screen.getByText("Source date and price validity"));
+  fireEvent.change(screen.getByLabelText("Prices valid from"), { target: { value: "2027-01-01" } });
+  fireEvent.change(screen.getByLabelText("Prices valid until"), { target: { value: "2026-12-31" } });
+  expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeDisabled(); expect(mocks.start).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("Prices valid until"), { target: { value: "2027-12-31" } });
+  fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" }));
+  await waitFor(() => expect(mocks.start).toHaveBeenCalledWith("hotel-a", "supplier", expect.any(File), { ...settings, ...recurringSettings, assortmentMode: "full", priceValidFrom: "2027-01-01", priceValidUntil: "2027-12-31" }));
+});
+it("identifies statistics explicitly and locks the original recurring metadata during lost upload recovery", async () => {
+  const original = { ...settings, ...recurringSettings, documentPurpose: "statistics", sourceIssuedOn: "2026-09-15" };
+  mocks.start.mockRejectedValueOnce(new Error("Acknowledgement lost")).mockResolvedValueOnce({ ...job, importSettings: original });
+  render(wrap(<SupplierAiImportDialog {...props()} />)); await screen.findByLabelText("Supplier document"); upload();
+  fireEvent.change(screen.getByLabelText("Document purpose"), { target: { value: "statistics" } }); fireEvent.click(screen.getByText("Source date and price validity")); fireEvent.change(screen.getByLabelText("Source issued on"), { target: { value: "2026-09-15" } });
+  fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" })); await screen.findByText("Acknowledgement lost");
+  expect(screen.getByLabelText("Document purpose")).toBeDisabled(); expect(screen.getByLabelText("Source issued on")).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Recover original upload" })); await screen.findByRole("button", { name: "Open import review" });
+  expect(mocks.start.mock.calls[0][3]).toEqual(original); expect(mocks.start.mock.calls[0]).toEqual(mocks.start.mock.calls[1]); expect(screen.getByText(/Purchase statistics — no price confirmation/)).toBeInTheDocument();
+});
+it("blocks fresh uploads until recurring format and pricing capabilities are available", async () => {
+  mocks.availability.mockResolvedValue({ available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, defaults: { currency: "EUR" } });
+  render(wrap(<SupplierAiImportDialog {...props()} />)); await screen.findByText(/Recurring import service update is in progress/); upload();
+  expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeDisabled(); fireEvent.click(screen.getByRole("button", { name: "Prepare AI import review" })); expect(mocks.start).not.toHaveBeenCalled();
+  mocks.availability.mockResolvedValueOnce({ available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, recurringImportVersion: 1, sourceFormatProfileVersion: 1, defaults: { currency: "EUR" } }); fireEvent.click(screen.getByRole("button", { name: "Retry access check" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeEnabled());
+});
+it("offers recovery for a retained legacy upload reference while new recurring capabilities are absent", async () => {
+  sessionStorage.setItem("supplier-ai-upload:manager:hotel-a:supplier:original-file", JSON.stringify({ requestId: "original-command" }));
+  mocks.availability.mockResolvedValue({ available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, defaults: { currency: "EUR" } });
+  const original = { policyVersion: 2, priceBasis: "gross", currency: "EUR", vatRate: 0.06 };
+  mocks.start.mockRejectedValueOnce(Object.assign(new Error("Original price settings restored"), { code: "import-settings-changed", importSettings: original })).mockResolvedValueOnce({ ...job, importSettings: original });
+  render(wrap(<SupplierAiImportDialog {...props()} />)); await screen.findByLabelText("Supplier document"); upload();
+  expect(screen.getByText(/An earlier upload reference is retained/)).toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "Recover original upload" })); await screen.findByText("Original price settings restored");
+  fireEvent.click(screen.getByRole("button", { name: "Recover original upload" })); await screen.findByRole("button", { name: "Open import review" }); expect(mocks.start.mock.calls[1][3]).toEqual(original);
+});
+it("keeps confirmed CSV and XLSX import available when new document interpretation is disabled", async () => {
+  mocks.availability.mockResolvedValue({ available: true, aiAvailable: false, recurringFormatsAvailable: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, recurringImportVersion: 1, sourceFormatProfileVersion: 1, defaults: { currency: "EUR" } });
+  render(wrap(<SupplierAiImportDialog {...props()} />)); await screen.findByText(/CSV or XLSX files matching a previously confirmed supplier format/); upload();
+  expect(screen.getByRole("button", { name: "Prepare AI import review" })).toBeEnabled(); expect(screen.queryByText(/AI supplier imports are disabled/)).not.toBeInTheDocument();
 });

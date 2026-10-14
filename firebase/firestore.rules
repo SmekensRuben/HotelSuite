@@ -390,6 +390,9 @@ service cloud.firestore {
       match /inventoryCheckpoints/{checkpointId} { allow read, write: if false; }
       match /inventoryPeriodReports/{reportId} { allow read, write: if false; }
       match /supplierPriceHistory/{document=**} { allow read, write: if false; }
+      // Approved price versions and confirmations remain immutable backend evidence.
+      match /supplierPriceVersions/{document=**} { allow read, write: if false; }
+      match /supplierPriceConfirmations/{document=**} { allow read, write: if false; }
       match /inventoryAdjustments/{document=**} { allow read, write: if false; }
       match /inventoryAdjustmentOperations/{document=**} { allow read, write: if false; }
       match /inventoryAdjustmentReversals/{document=**} { allow read, write: if false; }

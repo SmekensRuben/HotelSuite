@@ -97,3 +97,46 @@ test("current contract validity uses the configured hotel calendar date and stay
   const unknown = await call(db, { mode: "comparison", catalogProductId: "juice" }, { now });
   assert.equal(unknown.assessmentDate, null); assert.equal(unknown.products[0].priceValidity, "unavailable");
 });
+
+test("approved and scheduled source versions are scoped projections with distinct change and confirmation dates", async () => {
+  const db = fixture();
+  const { digest } = require("./validation");
+  const { purchaseTerms } = require("./supplierPriceVersions");
+  const version = (id, revision, patch, sourceReference) => {
+    const product = offer(patch), terms = pricingTerms(product, catalog);
+    return { supplierPriceVersionPolicyVersion: 1, id, supplierProductId: "one", supplierId: "s", revision,
+      termsFingerprint: digest(terms), terms, productTerms: purchaseTerms(product), sourceReference, sourceIssuedOn: "2026-10-01", sourceKind: "supplier-list",
+      approvedAt: { seconds: 1700000000 }, lastPriceChangeAt: { seconds: 1700000000 }, lastPriceConfirmedAt: { seconds: 1700000100 },
+      privateProviderConfiguration: "must-not-be-projected", confirmedOptionIds: ["default"], optionReliability: {} };
+  };
+  db.records.set("hotels/a/suppliers/s", { name: "Supplier", priceDateBasis: "delivery-date" });
+  db.records.set("hotels/a/supplierproducts/one", offer({ priceValidFrom: "2026-10-01", currentPriceVersionId: "one", priceConfirmedOn: { seconds: 1700000200 } }));
+  db.records.set("hotels/a/supplierPriceVersions/one/entries/one", version("one", 1, { priceValidFrom: "2026-10-01" }, "October.xlsx · row-8"));
+  db.records.set("hotels/a/supplierPriceVersions/one/entries/two", version("two", 2, { pricePerPurchaseUnit: 21.2, priceValidFrom: "2026-11-01" }, "November.xlsx · row-8"));
+  db.records.set("hotels/b/supplierPriceVersions/one/entries/foreign", version("foreign", 99, { pricePerPurchaseUnit: 1 }, "Foreign supplier"));
+  const result = await call(db, { mode: "history", supplierProductId: "one" }, { now: () => Date.parse("2026-10-14T12:00:00Z") });
+  assert.deepEqual(result.versions.map((entry) => entry.id), ["two", "one"]);
+  assert.equal(result.versions[0].priceValidity, "future"); assert.equal(result.versions[1].priceValidity, "current");
+  assert.equal(result.versions[0].sourceReference, "November.xlsx · row-8");
+  assert.equal(result.reliability.currentVersionId, "one"); assert.equal(result.reliability.hasScheduledVersions, true);
+  assert.equal(result.reliability.pricingDateBasis, "delivery-date"); assert.equal(result.reliability.pricingAgreementKnown, true);
+  assert.notEqual(result.reliability.lastPriceChangeAt, result.reliability.lastPriceConfirmedAt);
+  assert.ok(!JSON.stringify(result).includes("must-not-be-projected"));
+  assert.ok(!JSON.stringify(result).includes("Foreign supplier"));
+});
+
+test("comparison resolves an activated immutable price despite the retained convenience projection", async () => {
+  const db = fixture();
+  const { digest } = require("./validation");
+  const { purchaseTerms } = require("./supplierPriceVersions");
+  const future = offer({ pricePerPurchaseUnit: 21.2, baseUnitsPerPurchaseUnit: 3000, priceValidFrom: "2026-11-01" });
+  const terms = pricingTerms(future, catalog);
+  db.records.set("hotels/a/supplierPriceVersions/one/entries/next", {
+    supplierPriceVersionPolicyVersion: 1, supplierProductId: "one", supplierId: "s", revision: 2,
+    termsFingerprint: digest(terms), terms, productTerms: purchaseTerms(future), sourceReference: "November.xlsx", sourceIssuedOn: "2026-10-01", sourceKind: "supplier-list", optionReliability: {},
+  });
+  const result = await call(db, { mode: "comparison", catalogProductId: "juice" }, { now: () => Date.parse("2026-11-01T12:00:00Z") });
+  assert.equal(result.products[0].options[0].pricePerPurchaseUnit, 21.2);
+  assert.equal(result.products[0].options[0].netPricePerCatalogUnit, 6.666667);
+  assert.equal(db.records.get("hotels/a/supplierproducts/one").pricePerPurchaseUnit, 15.9, "read projection does not rewrite the public offer or historic records");
+});

@@ -16,6 +16,7 @@ const prefix = "private/supplier-ai-imports", LEASE_MS = 600000;
 const IMPORT_POLICY_VERSION = 2;
 const REVIEW_WORKSPACE_VERSION = 1;
 const IMPORT_SETTING_FIELDS = ["policyVersion", "priceBasis", "currency", "vatRate"];
+const OPTIONAL_SETTING_FIELDS = ["assortmentMode", "documentPurpose", "sourceIssuedOn", "priceValidFrom", "priceValidUntil"];
 const currencyCodes = new Set(Intl.supportedValuesOf("currency"));
 const HTTP_STATUS = { unauthenticated: 401, "permission-denied": 403, "not-found": 404, "invalid-argument": 400,
   "failed-precondition": 409, "resource-exhausted": 429, "already-exists": 409, aborted: 409, unavailable: 503 };
@@ -34,8 +35,8 @@ function validGeneration(value) {
 }
 function validateImportSettings(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype
-    || Object.keys(value).length !== IMPORT_SETTING_FIELDS.length || IMPORT_SETTING_FIELDS.some((field) => !Object.hasOwn(value, field))
-    || Object.keys(value).some((field) => !IMPORT_SETTING_FIELDS.includes(field))) throw new HttpsError("invalid-argument", "Choose the import price basis, currency and optional VAT rate before uploading.");
+    || IMPORT_SETTING_FIELDS.some((field) => !Object.hasOwn(value, field))
+    || Object.keys(value).some((field) => ![...IMPORT_SETTING_FIELDS, ...OPTIONAL_SETTING_FIELDS].includes(field))) throw new HttpsError("invalid-argument", "Choose the import price basis, currency and optional VAT rate before uploading.");
   if (value.policyVersion !== IMPORT_POLICY_VERSION) throw new HttpsError("invalid-argument", "Refresh the import form before uploading.");
   if (!["net", "gross", "unknown"].includes(value.priceBasis)) throw new HttpsError("invalid-argument", "Choose net, gross or explicitly unknown source pricing.");
   if (typeof value.currency !== "string" || !/^[A-Z]{3}$/.test(value.currency) || !currencyCodes.has(value.currency)) throw new HttpsError("invalid-argument", "Choose a supported ISO currency for this import.");
@@ -43,7 +44,17 @@ function validateImportSettings(value) {
   let vatRate = null;
   try { if (value.vatRate !== null) vatRate = decimal(value.vatRate, "VAT rate", { maximum: 1 }); }
   catch { throw new HttpsError("invalid-argument", "Choose a VAT fraction with at most six decimal places, or leave VAT unknown."); }
-  return { policyVersion: IMPORT_POLICY_VERSION, priceBasis: value.priceBasis, currency: value.currency, vatRate };
+  const optional = {};
+  for (const field of OPTIONAL_SETTING_FIELDS) if (Object.hasOwn(value, field)) {
+    const setting = value[field];
+    if (field === "assortmentMode" ? !["full", "partial", "unknown"].includes(setting)
+      : field === "documentPurpose" ? !["price-list", "product-list", "statistics"].includes(setting)
+        : setting !== null && require("./supplierImportFormat").dateCell(setting, "YYYY-MM-DD") !== setting)
+      throw new HttpsError("invalid-argument", "Choose a supported source purpose, assortment scope and explicit ISO business dates.");
+    optional[field] = setting;
+  }
+  if (optional.priceValidFrom && optional.priceValidUntil && optional.priceValidUntil < optional.priceValidFrom) throw new HttpsError("invalid-argument", "Price validity must end on or after its start date.");
+  return { policyVersion: IMPORT_POLICY_VERSION, priceBasis: value.priceBasis, currency: value.currency, vatRate, ...optional };
 }
 function parseImportSettings(value) {
   if (typeof value !== "string" || value.length > 1024 || !value.trim()) throw new HttpsError("invalid-argument", "Choose the import price basis, currency and optional VAT rate before uploading.");
@@ -64,8 +75,12 @@ function publicImportSettings(job) {
 }
 const SUMMARY_COUNT_FIELDS = ["normalizedRows", "assumptionRows", "unknownPriceRows", "blockedNormalizationRows", "inferredPieceRows", "missingRequiredRows"];
 const SUMMARY_BUSINESS_FIELDS = new Set(["supplierSku", "supplierProductName", "currency", "pricingModel", "purchaseUnit", "baseUnit", "priceBasis", "gtin", "priceValidFrom", "priceValidUntil",
-  "pricePerBaseUnit", "pricePerPurchaseUnit", "baseUnitsPerPurchaseUnit", "vatRate", "price", "contract", "active", "supplierId", "catalogProductId", "sourceAnchors", "packInference", "purchaseOptions"]);
+  "pricePerBaseUnit", "pricePerPurchaseUnit", "baseUnitsPerPurchaseUnit", "vatRate", "price", "contract", "active", "supplierId", "catalogProductId", "sourceAnchors", "packInference", "purchaseOptions", "sourceInterpretation", "sourceIssuedOn"]);
 const SUMMARY_BUSINESS_MESSAGES = Object.freeze({
+  "source-format-review-required": "Confirm this supplier file's columns, package content and price channel before importing products.",
+  "source-format-cell-invalid": "A source cell does not match the confirmed format. Review the source interpretation before approving it.",
+  "source-format-context-conflict": "The confirmed source terms differ from this import's pricing context. Review them before approval.",
+  "source-formula-unverified": "A cached spreadsheet formula needs an explicit supplier value before approval.",
   "approved-name-expansion": "An approved product abbreviation was expanded. Confirm the product identity.",
   "display-name-normalized": "Display words and SI labels were standardized; supplier SKU and GTIN were preserved.",
   "purchase-label-normalized": "The purchase-package label was standardized without creating another purchase option.",
@@ -254,11 +269,32 @@ function publicJob(job) {
   const counts = countsValid ? Object.fromEntries(countKeys.map((key) => [key, job.counts[key]])) : null;
   return { hotelUid: job.hotelUid, jobId: job.jobId, supplierId: job.supplierId, ownerUid: job.ownerUid, status: job.status,
     importReviewVersion: job.importReviewVersion === REVIEW_WORKSPACE_VERSION ? REVIEW_WORKSPACE_VERSION : null,
+    ...(job.recurringImportVersion === 1 ? { recurringImportVersion: 1, sourceFormatProfileVersion: 1 } : {}),
     mappingProfileId: purchaseUnitMappingSnapshot?.profileId ?? null, sourceFormat: purchaseUnitMappingSnapshot?.sourceFormat ?? null,
     purchaseUnitMappingSnapshot,
+    ...(job.sourceInterpretation ? { sourceInterpretation: publicSourceInterpretation(job.sourceInterpretation) } : {}),
+    ...(job.sourceFormatCandidate ? { sourceFormatCandidate: publicSourceFormatCandidate(job.sourceFormatCandidate) } : {}),
     source: { fileName: job.fileName, size: job.size, mimeType: job.mimeType }, expiresAtMillis: job.expiresAtMillis,
     counts, totalRows, importSettings: publicImportSettings(job), summary: publicSummary(job), warnings: publicWarnings(job.warnings), progress: { completedChunks, totalChunks },
     ...(job.errorCode ? { error: publicImportError({ code: job.errorCode, message: job.errorMessage }) } : {}) };
+}
+function publicSourceInterpretation(value) {
+  if (!value || value.version !== 1 || !["confirmed", "review-required", "unconfirmed"].includes(value.status)) return null;
+  return { version: 1, status: value.status, requiresFormatReview: value.requiresFormatReview === true, profileId: typeof value.profileId === "string" ? value.profileId.slice(0, 80) : "default",
+    profileRevision: Number.isSafeInteger(value.profileRevision) ? value.profileRevision : 0, formatFingerprint: /^[a-f0-9]{64}$/.test(value.formatFingerprint) ? value.formatFingerprint : null,
+    reason: ["multiple-tables", "changed-format", "unconfirmed-format"].includes(value.reason) ? value.reason : null,
+    assortmentMode: ["full", "partial", "unknown"].includes(value.assortmentMode) ? value.assortmentMode : "unknown",
+    documentPurpose: ["price-list", "product-list", "statistics"].includes(value.documentPurpose) ? value.documentPurpose : "product-list" };
+}
+function publicSourceFormatCandidate(value) {
+  if (!value || value.version !== 1 || !["csv", "xlsx"].includes(value.sourceFormat) || !Array.isArray(value.header) || value.header.length > 128
+    || value.header.some((label) => typeof label !== "string" || label.length > 8192) || !/^[a-f0-9]{64}$/.test(value.formatFingerprint)) return null;
+  const columns = Object.fromEntries(require("./supplierImportMappings").INTERPRETATION_COLUMNS.filter((field) => Number.isInteger(value.columns?.[field])
+    && value.columns[field] >= 0 && value.columns[field] < value.header.length).map((field) => [field, value.columns[field]]));
+  return { version: 1, sourceFormat: value.sourceFormat, header: [...value.header], sheetName: typeof value.sheetName === "string" ? value.sheetName.slice(0, 100) : null,
+    formatFingerprint: value.formatFingerprint, columns, defaults: {}, assortmentMode: ["full", "partial", "unknown"].includes(value.assortmentMode) ? value.assortmentMode : "unknown",
+    documentPurpose: ["price-list", "product-list", "statistics"].includes(value.documentPurpose) ? value.documentPurpose : "product-list",
+    decimalSeparator: [".", ","].includes(value.decimalSeparator) ? value.decimalSeparator : ".", dateFormat: ["YYYY-MM-DD", "DD/MM/YYYY"].includes(value.dateFormat) ? value.dateFormat : "YYYY-MM-DD" };
 }
 function publicMappingSnapshot(job) {
   if (job.importReviewVersion !== REVIEW_WORKSPACE_VERSION || !job.purchaseUnitMappingSnapshot) return null;
@@ -289,7 +325,7 @@ async function readPrivate(bucket, object, maximumBytes) {
 }
 async function configurationFor(db, job, transaction) {
   const current = await loadSupplierAiConfiguration(db, transaction);
-  if (!current.enabled) throw new HttpsError("failed-precondition", "AI supplier import is disabled by the platform operator.");
+  if (!current.enabled && job.processingMode !== "deterministic") throw new HttpsError("failed-precondition", "AI supplier import is disabled by the platform operator.");
   // An existing job cannot gain a larger budget or more powerful settings after it starts.
   return { ...current, maxCostPerImportUsd: Math.min(current.maxCostPerImportUsd, job.configuration.maxCostPerImportUsd),
     maxMonthlyCostPerHotelUsd: Math.min(current.maxMonthlyCostPerHotelUsd, job.configuration.maxMonthlyCostPerHotelUsd),
@@ -304,17 +340,29 @@ async function uploadSupplierAiImport(request, data, bytes, services = {}) {
   const mimeType = typeof data.mimeType === "string" && data.mimeType.length <= 150 ? data.mimeType : "";
   const importSettings = data.importSettings === undefined ? undefined : parseImportSettings(data.importSettings);
   const reviewRequested = data.reviewWorkspaceVersion !== undefined;
+  const recurringRequested = data.recurringImportVersion !== undefined;
+  if (recurringRequested && ![1, "1"].includes(data.recurringImportVersion)) throw new HttpsError("invalid-argument", "Refresh the supplier import page before starting a new import.");
   if (reviewRequested && ![REVIEW_WORKSPACE_VERSION, String(REVIEW_WORKSPACE_VERSION)].includes(data.reviewWorkspaceVersion)) throw new HttpsError("invalid-argument", "Refresh the supplier import page before starting a new import.");
   if (!reviewRequested && data.mappingProfileId !== undefined) throw new HttpsError("invalid-argument", "Refresh the supplier import page before starting a new import.");
+  if (recurringRequested && !reviewRequested) throw new HttpsError("invalid-argument", "Refresh the supplier import page before starting a new import.");
   const mappingProfile = reviewRequested ? mappingScope({ supplierId, sourceFormat: data.fileName.split(".").at(-1).toLowerCase(), profileId: data.mappingProfileId ?? "default" }) : null;
   const db = services.firestore || admin.firestore(), bucket = services.bucket || admin.storage().bucket();
   const now = services.now?.() ?? Date.now(), month = new Date(now).toISOString().slice(0, 7), day = new Date(now).toISOString().slice(0, 10);
   const sha256 = hashOf(bytes), fingerprint = reviewRequested ? digest(supplierId, data.fileName, mimeType, sha256, IMPORT_POLICY_VERSION, importSettings,
-    { reviewWorkspaceVersion: REVIEW_WORKSPACE_VERSION, mappingProfileId: mappingProfile.profileId }) : importSettings ? digest(supplierId, data.fileName, mimeType, sha256, IMPORT_POLICY_VERSION, importSettings)
+    { reviewWorkspaceVersion: REVIEW_WORKSPACE_VERSION, mappingProfileId: mappingProfile.profileId, ...(recurringRequested ? { recurringImportVersion: 1 } : {}) }) : importSettings ? digest(supplierId, data.fileName, mimeType, sha256, IMPORT_POLICY_VERSION, importSettings)
     : digest(supplierId, data.fileName, mimeType, sha256);
   const jobId = digest(hotelUid, requestId, request.auth?.uid, fingerprint);
   const refs = references(db, hotelUid, jobId, month, requestId);
   await authorize(db, request, hotelUid, "create", undefined, services);
+  // A confirmed recurring table is parsed without provider access. Parsing is
+  // bounded and read-only; the profile revision is still frozen transactionally.
+  let structuredSource = null;
+  const existingReceipt = await refs.request.get();
+  if (!existingReceipt.exists && recurringRequested && reviewRequested && ["csv", "xlsx"].includes(mappingProfile.sourceFormat)) {
+    await requireHotelPermission(db, { auth: request.auth }, hotelUid, "suppliers", "read", undefined, services.auth);
+    const profile = await mappingProfileRef(db, hotelUid, mappingProfile).get();
+    if (profile.exists && profile.data().interpretation) structuredSource = await (services.extractSource || require("./supplierAiExtraction").extractSupplierAiSource)({ bytes, fileName: data.fileName, mimeType });
+  }
   const pending = await db.runTransaction(async (tx) => {
     await authorize(db, request, hotelUid, "create", tx, services);
     const [stored, job, supplier, usage, state] = await Promise.all([tx.get(refs.request), tx.get(refs.job), tx.get(db.doc(`hotels/${hotelUid}/suppliers/${supplierId}`)), tx.get(refs.month), tx.get(refs.state)]);
@@ -332,7 +380,7 @@ async function uploadSupplierAiImport(request, data, bytes, services = {}) {
         const oldMonthRef = db.doc(`hotels/${hotelUid}/aiUsageMonths/${stored.data().month}`);
         const oldMonth = stored.data().month === month ? usage : await tx.get(oldMonthRef);
         const config = await loadSupplierAiConfiguration(db, tx), next = normalizeMonth(oldMonth, stored.data().month);
-        if (!config.enabled || active.activeJobs >= config.maxConcurrentJobsPerHotel) throw new HttpsError("resource-exhausted", "AI import is disabled or this hotel has reached its concurrent limit.");
+        if (!config.enabled && stored.data().processingMode !== "deterministic" || active.activeJobs >= config.maxConcurrentJobsPerHotel) throw new HttpsError("resource-exhausted", "AI import is disabled or this hotel has reached its concurrent limit.");
         tx.update(refs.request, { quotaReleased: false, pendingUntil: admin.firestore.Timestamp.fromMillis(now + LEASE_MS) });
         tx.set(oldMonthRef, { ...next, activeJobs: next.activeJobs + 1, updatedAt: stamp() });
         tx.set(refs.state, { ...active, activeJobs: active.activeJobs + 1, updatedAt: stamp() });
@@ -344,17 +392,19 @@ async function uploadSupplierAiImport(request, data, bytes, services = {}) {
     await requireHotelPermission(db, { auth: request.auth }, hotelUid, "suppliers", "read", tx, services.auth);
     const profile = await tx.get(mappingProfileRef(db, hotelUid, mappingProfile));
     const purchaseUnitMappingSnapshot = mappingSnapshot(profile.exists ? profile.data() : null, mappingProfile);
+    const processingMode = structuredSource && require("./supplierImportFormat").interpretationForSources(structuredSource, purchaseUnitMappingSnapshot, { importSettings }).sourceInterpretation.status === "confirmed" ? "deterministic" : "ai";
     const configuration = await loadSupplierAiConfiguration(db, tx);
-    if (!configuration.enabled) throw new HttpsError("failed-precondition", "AI supplier import is disabled by the platform operator.");
+    if (!configuration.enabled && processingMode !== "deterministic") throw new HttpsError("failed-precondition", "AI supplier import is disabled by the platform operator.");
     if (!supplier.exists || supplier.data().archived === true) throw new HttpsError("failed-precondition", "Choose an active supplier in this hotel.");
     const next = normalizeMonth(usage, month);
     if (active.activeJobs >= configuration.maxConcurrentJobsPerHotel || (next.days[day] || 0) >= configuration.maxImportsPerHotelPerDay
-      || next.knownCostMicros + next.reservedCostMicros >= configuration.maxMonthlyCostPerHotelUsd * 1000000) throw new HttpsError("resource-exhausted", "This hotel has reached its AI import budget or concurrent/daily limit.");
+      || processingMode !== "deterministic" && next.knownCostMicros + next.reservedCostMicros >= configuration.maxMonthlyCostPerHotelUsd * 1000000) throw new HttpsError("resource-exhausted", "This hotel has reached its AI import budget or concurrent/daily limit.");
     const authTime = request.auth.token.auth_time;
     if (!Number.isFinite(authTime)) throw new HttpsError("unauthenticated", "A current signed-in session is required.");
     const receipt = { hotelUid, jobId, requestId, supplierId, ownerUid: request.auth.uid, authTime, fingerprint,
       importPolicyVersion: IMPORT_POLICY_VERSION, importSettings,
-      importReviewVersion: REVIEW_WORKSPACE_VERSION, mappingProfileId: mappingProfile.profileId, purchaseUnitMappingSnapshot,
+      importReviewVersion: REVIEW_WORKSPACE_VERSION, mappingProfileId: mappingProfile.profileId, purchaseUnitMappingSnapshot, processingMode,
+      ...(recurringRequested ? { recurringImportVersion: 1, sourceFormatProfileVersion: 1 } : {}),
       fileName: data.fileName, mimeType, size: bytes.length, sha256, month, configuration, configVersion: configuration.revision,
       configPolicyVersion: AI_POLICY_VERSION, expiresAtMillis: now + SOURCE_RETENTION_MS, expiresAt: admin.firestore.Timestamp.fromMillis(now + SOURCE_RETENTION_MS), createdAt: stamp() };
     receipt.cleanupPending = true; receipt.quotaReleased = false; receipt.pendingUntil = admin.firestore.Timestamp.fromMillis(now + LEASE_MS);
@@ -462,7 +512,8 @@ async function readSupplierAiImport(request, data, services = {}) {
     const suggestedCurrency = typeof currency === "string" && currencyCodes.has(currency)
       && (!bootstrap.exists || bootstrap.data()?.currency === currency) ? currency : null;
     await authorize(db, request, hotelUid, "create", undefined, services);
-    return { available: config.enabled, importPolicyVersion: IMPORT_POLICY_VERSION, reviewWorkspaceVersion: REVIEW_WORKSPACE_VERSION, reason: config.enabled ? null : "disabled",
+    return { available: true, aiAvailable: config.enabled, recurringFormatsAvailable: true, recurringImportVersion: 1, sourceFormatProfileVersion: 1,
+      importPolicyVersion: IMPORT_POLICY_VERSION, reviewWorkspaceVersion: REVIEW_WORKSPACE_VERSION, reason: config.enabled ? null : "disabled",
       limits: { maxFileBytes: MAX_SOURCE_BYTES, maxPages: 50, maxProducts: 1000 }, defaults: { currency: suggestedCurrency } };
   }
   const ref = db.doc(`hotels/${hotelUid}/supplierAiImportJobs/${strictId(data.jobId, "jobId")}`), stored = await ref.get();
@@ -562,7 +613,8 @@ async function executeChunk(db, bucket, job, source, index, provider, services) 
   const sourceUnits = [...source.units, ...(source.contextUnits || []).map((unit) => ({ ...unit, contextOnly: true }))];
   const validatedRows = validate(raw, { sourceUnits });
   const normalize = services.normalizeRow || require("./supplierAiNormalization").normalizeSupplierAiProposal;
-  const rows = importSettings ? validatedRows.map((row) => normalize(row, { importSettings, sourceUnits, purchaseUnitMappingSnapshot })) : validatedRows;
+  const rows = importSettings ? validatedRows.map((row) => normalize(row, { importSettings, sourceUnits, purchaseUnitMappingSnapshot,
+    sourceInterpretation: job.sourceInterpretation })) : validatedRows;
   await authorize(db, actorRequest(job), job.hotelUid, "create", undefined, services);
   const result = await savePrivate(bucket, `${prefix}/${job.hotelUid}/${job.jobId}/${attemptId}.json`, Buffer.from(JSON.stringify(rows)), "application/json");
   await db.runTransaction(async (tx) => {
@@ -636,22 +688,41 @@ async function runSupplierAiImportJob(hotelUid, jobId, services = {}) {
     const bytes = await readPrivate(bucket, job.source, MAX_SOURCE_BYTES);
     const source = await extract({ bytes, fileName: job.fileName, mimeType: job.mimeType });
     await authorize(db, actorRequest(job), hotelUid, "create", undefined, services);
-    const chunks = await split(source, { maxUnits: 100, maxPdfPages: 5 });
+    const formatPlan = job.recurringImportVersion === 1 && source.format ? require("./supplierImportFormat").interpretationForSources(source, publicMappingSnapshot(job), { importSettings: settingsForJob(job) }) : null;
+    let sourceFormatObject;
+    if (job.recurringImportVersion === 1 && ["csv", "xlsx"].includes(source.format)) {
+      const serialized = Buffer.from(JSON.stringify({ format: source.format, sourceSha256: source.sourceSha256, units: source.units, warnings: source.warnings || [] }));
+      if (serialized.length > 2 * 1024 * 1024) throw new HttpsError("resource-exhausted", "The extracted source is too large. Split the file before importing.");
+      sourceFormatObject = await savePrivate(bucket, `${prefix}/${hotelUid}/${jobId}/source-format.json`, serialized, "application/json");
+    }
+    if (job.processingMode === "deterministic" && formatPlan?.sourceInterpretation.status !== "confirmed") throw new HttpsError("failed-precondition", "The confirmed source format no longer matches this import.");
+    const chunks = job.processingMode === "deterministic" ? [source] : await split(source, { maxUnits: 100, maxPdfPages: 5 });
     if (!Array.isArray(chunks) || !chunks.length || chunks.length > job.configuration.maxCallsPerImport) throw new HttpsError("resource-exhausted", "This source needs too many AI calls. Split the file before importing.");
     await db.runTransaction(async (tx) => {
       const current = await tx.get(jobRef);
       if (current.data()?.leaseId !== job.leaseId || current.data().status !== "processing") throw new HttpsError("aborted", "The import worker changed.");
       if (current.data().totalChunks != null && current.data().totalChunks !== chunks.length) throw new HttpsError("failed-precondition", "The complete import source no longer matches its saved progress.");
-      tx.update(jobRef, { totalChunks: chunks.length, updatedAt: stamp() });
+      tx.update(jobRef, { totalChunks: chunks.length, ...(formatPlan ? { sourceInterpretation: formatPlan.sourceInterpretation,
+        sourceFormatCandidate: formatPlan.sourceFormatCandidate } : {}), ...(sourceFormatObject ? { sourceFormatObject } : {}), updatedAt: stamp() });
     });
-    const provider = services.provider || createSupplierAiProvider({ apiKey: OPENAI_API_KEY.value() });
+    if (formatPlan) job = { ...job, sourceInterpretation: formatPlan.sourceInterpretation, sourceFormatCandidate: formatPlan.sourceFormatCandidate };
+    const provider = job.processingMode === "deterministic" ? null : services.provider || createSupplierAiProvider({ apiKey: OPENAI_API_KEY.value() });
     const rows = [];
     for (let index = 0; index < chunks.length; index++) {
       if ((services.now?.() ?? Date.now()) - started > 360000 && index >= (job.completedChunks || 0)) {
         await queueContinuation(db, job, services);
         return { queued: true };
       }
-      rows.push(...await executeChunk(db, bucket, job, chunks[index], index, provider, services));
+      if (job.processingMode === "deterministic") {
+        const parsed = require("./supplierImportFormat").interpretSupplierSourceRows(source, publicMappingSnapshot(job), { importSettings: settingsForJob(job) });
+        rows.push(...parsed.rows);
+        await db.runTransaction(async (tx) => {
+          await authorize(db, actorRequest(job), hotelUid, "create", tx, services);
+          const current = await tx.get(jobRef);
+          if (current.data()?.leaseId !== job.leaseId || current.data().status !== "processing") throw new HttpsError("aborted", "The import worker changed.");
+          tx.update(jobRef, { completedChunks: 1, updatedAt: stamp() });
+        });
+      } else rows.push(...await executeChunk(db, bucket, job, chunks[index], index, provider, services));
       if (rows.length > 1000) throw new HttpsError("resource-exhausted", "The source contains more than 1,000 proposed products. No partial proposal was accepted.");
     }
     await authorize(db, actorRequest(job), hotelUid, "create", undefined, services);
@@ -806,6 +877,7 @@ async function cleanupSupplierAiSourcesHandler(_event, services = {}) {
       }
       if (job.exists) tx.update(jobRef, { source: admin.firestore.FieldValue.delete(), fileName: "Expired source",
         warnings: admin.firestore.FieldValue.delete(), summary: admin.firestore.FieldValue.delete(), reconciliation: admin.firestore.FieldValue.delete(),
+        sourceFormatObject: admin.firestore.FieldValue.delete(), sourceFormatCandidate: admin.firestore.FieldValue.delete(), sourceInterpretation: admin.firestore.FieldValue.delete(),
         quotaReleased: true, sourceDeletedAt: stamp(), updatedAt: stamp(),
         ...(!TERMINAL.has(job.data().status) ? { status: "failed", errorCode: "expired", errorMessage: "The import source expired. Start a new import." } : {}) });
       tx.update(receipt.ref, { cleanupPending: false, quotaReleased: true, expiresAt: admin.firestore.FieldValue.delete(),

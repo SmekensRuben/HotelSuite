@@ -17,6 +17,9 @@ const reasonLabels = {
   "price-validity-expired": "Contract price has expired",
   "price-validity-unavailable": "Set a hotel time zone to assess price validity",
   "price-validity-invalid": "Contract validity dates need review",
+  "supplier-pricing-date-agreement-unknown": "Confirm whether prices apply on the order date or delivery date",
+  "price-source-date-unknown": "Source issue date is unknown",
+  "purchase-option-price-confirmation-unknown": "One or more purchase options have no matching price confirmation",
 };
 export const supplierPriceUnavailableLabel = (reason) => reasonLabels[reason] || "Price comparison unavailable";
 
@@ -29,7 +32,7 @@ export function compareSupplierOffers(products, { query = "", currency = "", inc
       name: product.name, currency: product.currency, priceBasis: product.priceBasis, vatRate: product.vatRate,
       priceValidity: product.priceValidity || "unknown", contractualValidFrom: product.contractualValidFrom,
       contractualValidUntil: product.contractualValidUntil,
-      sourcePriceRecordedAt: product.sourcePriceRecordedAt })))
+      sourcePriceRecordedAt: product.sourcePriceRecordedAt, reliability: product.reliability, scheduledVersionCount: product.scheduledVersionCount || 0 })))
     .map((row) => ({ ...row, reason: !["current", "unknown"].includes(row.priceValidity) ? `price-validity-${row.priceValidity}` : row.reason,
       comparable: ["current", "unknown"].includes(row.priceValidity) && row.available === true && /^[A-Z]{3}$/.test(row.currency || "") && knownPrice(row.netPricePerCatalogUnit) }))
     .filter((row) => (!currency || row.currency === currency) && (!needle || [row.name, row.supplierName, row.supplierSku, row.purchaseUnit].some((value) => String(value || "").toLowerCase().includes(needle)))

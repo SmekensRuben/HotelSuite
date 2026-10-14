@@ -10,7 +10,7 @@ const PUBLIC_TEXT = { name: 200, accountNumber: 100, orderEmail: 254, phone: 100
 
 function supplierPublicView(id, supplier) {
   const result = { id, revision: supplier.revision || 0, credentialsConfigured: supplier.credentialsConfigured === true || Boolean(supplier.password || supplier.sftpPassword) };
-  for (const key of [...Object.keys(PUBLIC_TEXT), "orderEmailCc", "orderSystem", "deliveryDays"]) {
+  for (const key of [...Object.keys(PUBLIC_TEXT), "orderEmailCc", "orderSystem", "deliveryDays", "priceDateBasis"]) {
     if (supplier[key] !== undefined) result[key] = supplier[key];
   }
   return result;
@@ -66,6 +66,10 @@ function validateSupplier(input) {
     throw new HttpsError("invalid-argument", "Delivery days must be weekdays from 0 to 6.");
   }
   value.deliveryDays = [...new Set(input.deliveryDays)];
+  if (input.priceDateBasis !== undefined) {
+    if (!["order-date", "delivery-date"].includes(input.priceDateBasis)) throw new HttpsError("invalid-argument", "Choose whether the supplier price applies on the order date or delivery date.");
+    value.priceDateBasis = input.priceDateBasis;
+  }
   return value;
 }
 
@@ -182,7 +186,7 @@ async function migrateSupplierCredentialsHandler(request, services = {}) {
 }
 
 const options = { region: "us-central1", cors: true };
-module.exports = { PRIVATE_FIELDS, supplierPublicView, listSuppliersHandler, getSupplierConnectionHandler, saveSupplierHandler, deleteSupplierHandler, migrateSupplierCredentialsHandler,
+module.exports = { PRIVATE_FIELDS, validateSupplier, supplierPublicView, listSuppliersHandler, getSupplierConnectionHandler, saveSupplierHandler, deleteSupplierHandler, migrateSupplierCredentialsHandler,
   listSuppliers: onCall(options, listSuppliersHandler), getSupplierConnection: onCall(options, getSupplierConnectionHandler),
   saveSupplier: onCall(options, gated(saveSupplierHandler)), deleteSupplier: onCall(options, gated(deleteSupplierHandler)),
   migrateSupplierCredentials: onCall(options, gated(migrateSupplierCredentialsHandler)) };

@@ -17,8 +17,8 @@ const NORMALIZED_EXTRACTION_INSTRUCTIONS = [
 const SUPPORTED_CURRENCIES = new Set(Intl.supportedValuesOf("currency"));
 function validatedImportSettings(settings) {
   const fields = ["policyVersion", "priceBasis", "currency", "vatRate"];
-  if (!settings || typeof settings !== "object" || Array.isArray(settings) || Object.keys(settings).length !== fields.length
-    || Object.keys(settings).some((field) => !fields.includes(field)) || fields.some((field) => !Object.hasOwn(settings, field))
+  const optional = ["assortmentMode", "documentPurpose", "sourceIssuedOn", "priceValidFrom", "priceValidUntil"];
+  if (!settings || typeof settings !== "object" || Array.isArray(settings) || Object.keys(settings).some((field) => !fields.includes(field) && !optional.includes(field)) || fields.some((field) => !Object.hasOwn(settings, field))
     || settings.policyVersion !== 2 || !["net", "gross", "unknown"].includes(settings.priceBasis)
     || typeof settings.currency !== "string" || !SUPPORTED_CURRENCIES.has(settings.currency)
     || (settings.vatRate !== null && (typeof settings.vatRate !== "number" || !Number.isFinite(settings.vatRate) || settings.vatRate < 0 || settings.vatRate > 1))) {
@@ -30,7 +30,9 @@ function validatedImportSettings(settings) {
     try { decimal(settings.vatRate, "Import VAT rate", { maximum: 1 }); }
     catch { throw new HttpsError("failed-precondition", "Complete validated AI import settings are required."); }
   }
-  return { policyVersion: 2, priceBasis: settings.priceBasis, currency: settings.currency, vatRate: settings.vatRate };
+  // Validate the optional business fields with the same canonical contract as uploads.
+  // Lazy import avoids the worker/provider module initialization cycle.
+  return require("./supplierAiImports").validateImportSettings(settings);
 }
 function createSupplierAiRequest(source, configuration, schema, importSettings) {
   if (!Array.isArray(source?.units) || !source.units.length || !schema || schema.type !== "object") throw new HttpsError("failed-precondition", "A complete validated source and import schema are required.");

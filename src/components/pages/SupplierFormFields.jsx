@@ -25,6 +25,7 @@ const EMPTY_FORM = {
   username: "",
   password: "",
   deliveryDays: [],
+  priceDateBasis: "",
   sftpAddress: "",
   sftpProtocol: "sftp",
   sftpPort: "22",
@@ -49,6 +50,7 @@ export default function SupplierFormFields({
     return {
       ...mergedValues,
       orderEmailCc: normalizedOrderEmailCc,
+      priceDateBasis: mergedValues.priceDateBasis || "",
     };
   }, [initialValues]);
 
@@ -137,6 +139,16 @@ export default function SupplierFormFields({
         <div className="text-xs text-gray-500 -mt-2">
           Separate multiple addresses with commas, semicolons or a new line.
         </div>
+        <label className="block text-sm font-medium text-gray-700">Price agreement date
+          <select aria-label="Price agreement date" required value={formValues.priceDateBasis}
+            onChange={(event) => setValue("priceDateBasis", event.target.value)}
+            className="mt-1 min-h-[44px] w-full rounded-lg border border-gray-300 bg-white px-3 py-2">
+            <option value="">Choose the agreed date</option>
+            <option value="order-date">Order date</option>
+            <option value="delivery-date">Delivery date</option>
+          </select>
+          <span className="mt-1 block text-xs font-normal text-gray-500">New orders use the approved price valid on this date. For delivery-date agreements, the actual scheduled delivery day determines the price. Historic orders keep their frozen prices.</span>
+        </label>
         <TextAreaField label="Notes" value={formValues.notes} onChange={(value) => setValue("notes", value)} />
       </section>
 

@@ -1,3 +1,4 @@
+import { normalizeSupplierFormatInterpretation } from "../utils/supplierImportFormat";
 import { auth, functions, httpsCallable } from "../firebaseConfig";
 import { invalidateProcurementReads, poolProcurementRead, procurementReadScope } from "./procurementReadPool";
 import { PURCHASE_UNITS, SUPPLIER_IMPORT_FILTERS, projectSupplierImportRow, projectSupplierImportWorkspace, projectReviewCounts } from "../utils/supplierImportWorkspace";
@@ -24,7 +25,7 @@ async function invoke(name, hotelUid, input, captured = capture(hotelUid)) {
   if (data?.hotelUid !== hotelUid || (input.jobId && data.jobId !== input.jobId) || (input.supplierId && data.supplierId !== input.supplierId)) throw new Error("The import response belongs to another hotel or session.");
   return data;
 }
-async function stableCommand(name, hotelUid, payload, verify) {
+async function stableCommand(name, hotelUid, payload, verify, requestIdOverride = null) {
   const captured = capture(hotelUid);
   const bytes = new TextEncoder().encode(JSON.stringify([name, hotelUid, payload]));
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -34,7 +35,9 @@ async function stableCommand(name, hotelUid, payload, verify) {
   const commands = pending.get(captured.actor);
   let stored; try { stored = JSON.parse(sessionStorage.getItem(key) || "null"); } catch { /* Browser recovery is optional. */ }
   if (stored && !ids(stored.requestId)) throw new Error("The original import operation could not be verified.");
-  const requestId = commands.get(key) || stored?.requestId || crypto.randomUUID();
+  if (requestIdOverride !== null && !ids(requestIdOverride)) throw new Error("The saved format application request could not be verified.");
+  if (requestIdOverride && (commands.get(key) || stored?.requestId) && requestIdOverride !== (commands.get(key) || stored?.requestId)) throw new Error("An earlier format application needs its original request ID.");
+  const requestId = requestIdOverride || commands.get(key) || stored?.requestId || crypto.randomUUID();
   commands.set(key, requestId);
   // Only an opaque operation reference is stored, never product/source values.
   try { sessionStorage.setItem(key, JSON.stringify({ requestId })); } catch { /* Same-view retries retain the command. */ }
@@ -53,7 +56,8 @@ async function stableCommand(name, hotelUid, payload, verify) {
 }
 export function readSupplierImportWorkspace(hotelUid, jobId, { cursor = null, filter = "all", focusRowId = null, includeIndex = true, limit = 25 } = {}) {
   if (!ids(jobId) || (cursor !== null && !ids(cursor)) || (focusRowId !== null && !ids(focusRowId)) || !SUPPLIER_IMPORT_FILTERS.includes(filter) || !Number.isInteger(limit) || limit < 1 || limit > 25) return Promise.reject(new Error("The import review reference is invalid."));
-  const input = { jobId, cursor, filter, includeIndex, limit, ...(focusRowId ? { focusRowId } : {}) };
+  // Recurring change groups use the complete protected index, not a partial server page.
+  const input = { jobId, cursor, filter: ["price-change", "packaging-change", "new-article", "exception", "confirmation", "product-change", "unchanged"].includes(filter) ? "all" : filter, includeIndex, limit, ...(focusRowId ? { focusRowId } : {}) };
   return poolProcurementRead(hotelUid, `supplier-import-workspace:${JSON.stringify(input)}`, async () => projectSupplierImportWorkspace(await invoke("readHotelSupplierAiImportWorkspace", hotelUid, input)));
 }
 export function decideSupplierImportRows(hotelUid, jobId, rows, { bulk = false } = {}) {
@@ -92,17 +96,18 @@ function mappingProfile(data, expected) {
     if (!value || typeof value.sourceUnit !== "string" || !value.sourceUnit.trim() || value.sourceUnit.length > 100 || !PURCHASE_UNITS.includes(value.purchaseUnit)) throw new Error("A supplier purchase-unit mapping is invalid.");
     return { sourceUnit: value.sourceUnit, purchaseUnit: value.purchaseUnit };
   };
-  return { version: 1, supplierId: expected.supplierId, sourceFormat: expected.sourceFormat, profileId: expected.profileId, revision: data.revision, mappings: data.mappings.map(project), suggestions: (Array.isArray(data.suggestions) ? data.suggestions : []).slice(0, 100).map((value) => ({ ...project(value), needsConfirmation: true })) };
+  return { version: 1, supplierId: expected.supplierId, sourceFormat: expected.sourceFormat, profileId: expected.profileId, revision: data.revision, ...(data.interpretation ? { interpretation: normalizeSupplierFormatInterpretation(data.interpretation) } : {}), mappings: data.mappings.map(project), suggestions: (Array.isArray(data.suggestions) ? data.suggestions : []).slice(0, 100).map((value) => ({ ...project(value), needsConfirmation: true })) };
 }
 export function readSupplierPurchaseUnitMappings(hotelUid, supplierId, sourceFormat, profileId = "default") {
   const input = mappingScope(supplierId, sourceFormat, profileId);
   return poolProcurementRead(hotelUid, `supplier-unit-mappings:${JSON.stringify(input)}`, async () => mappingProfile(await invoke("readHotelSupplierPurchaseUnitMappings", hotelUid, input), input));
 }
-export function saveSupplierPurchaseUnitMappings(hotelUid, supplierId, sourceFormat, profileId, expectedRevision, mappings) {
+export function saveSupplierPurchaseUnitMappings(hotelUid, supplierId, sourceFormat, profileId, expectedRevision, mappings, { interpretation } = {}) {
   const scope = mappingScope(supplierId, sourceFormat, profileId);
-  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !Array.isArray(mappings) || !mappings.length || mappings.length > 100 || mappings.some((mapping) => typeof mapping.sourceUnit !== "string" || !mapping.sourceUnit.trim() || mapping.sourceUnit.length > 100 || !PURCHASE_UNITS.includes(mapping.purchaseUnit))) return Promise.reject(new Error("Choose valid supplier purchase-unit mappings."));
-  return stableCommand("saveHotelSupplierPurchaseUnitMapping", hotelUid, { ...scope, expectedRevision, mappings: mappings.map(({ sourceUnit, purchaseUnit }) => ({ sourceUnit, purchaseUnit })) }, (data, requestId) => {
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !Array.isArray(mappings) || !mappings.length && !interpretation || mappings.length > 100 || mappings.some((mapping) => typeof mapping.sourceUnit !== "string" || !mapping.sourceUnit.trim() || mapping.sourceUnit.length > 100 || !PURCHASE_UNITS.includes(mapping.purchaseUnit))) return Promise.reject(new Error("Choose valid supplier purchase-unit mappings."));
+  return stableCommand("saveHotelSupplierPurchaseUnitMapping", hotelUid, { ...scope, expectedRevision, ...(interpretation ? { interpretation: normalizeSupplierFormatInterpretation(interpretation) } : {}), mappings: mappings.map(({ sourceUnit, purchaseUnit }) => ({ sourceUnit, purchaseUnit })) }, (data, requestId) => {
     const saved = mappingProfile(data, scope);
+    if (interpretation && JSON.stringify(saved.interpretation) !== JSON.stringify(normalizeSupplierFormatInterpretation(interpretation))) throw new Error("The saved file interpretation could not be verified. Retry the original profile confirmation.");
     if (data.requestId !== requestId || saved.revision !== expectedRevision + 1 || mappings.some((chosen) => !saved.mappings.some((entry) => entry.sourceUnit.normalize("NFKC").trim().toUpperCase() === chosen.sourceUnit.normalize("NFKC").trim().toUpperCase() && entry.purchaseUnit === chosen.purchaseUnit))) throw new Error("The saved supplier rule could not be verified. Retry the same mapping selection.");
     return saved;
   });
@@ -114,4 +119,15 @@ export function completeSupplierImportReview(hotelUid, jobId) {
     if (typeof data.completed !== "boolean" || !counts || (data.completed && (counts.pending !== 0 || counts.approved !== 0 || counts.applied + counts.skipped !== data.totalRows))) throw new Error("The final import status could not be verified. Retry the same completion.");
     return { hotelUid, jobId, completed: data.completed, totalRows: data.totalRows, reviewCounts: counts };
   });
+}
+
+export function applySupplierImportFormat(hotelUid, jobId, { expectedMappingRevision, requestId = null }) {
+  if (!ids(jobId) || !Number.isSafeInteger(expectedMappingRevision) || expectedMappingRevision < 1) return Promise.reject(new Error("Confirm a supplier file interpretation before applying it to this draft."));
+  return stableCommand("applyHotelSupplierImportFormat", hotelUid, { jobId, expectedMappingRevision }, (data) => {
+    if (data.completed !== true || !Number.isSafeInteger(data.rebuiltRows) || data.rebuiltRows < 0 || data.rebuiltRows > 1000
+      || !Number.isSafeInteger(data.skippedRows) || data.skippedRows < 0 || data.skippedRows > 1000 || data.rebuiltRows + data.skippedRows > 1000) {
+      throw new Error("The format application could not be verified. Retry the original profile revision.");
+    }
+    return { hotelUid, jobId, completed: true, rebuiltRows: data.rebuiltRows, skippedRows: data.skippedRows };
+  }, requestId);
 }

@@ -4,12 +4,27 @@ const proposal = require("./supplierAiProposal");
 const review = require("./supplierAiReview");
 const { mutateHotelSupplierProductHandler } = require("./products");
 const { SAAS_RULES_VERSION } = require("./saasRollout");
+const { createHash } = require("node:crypto");
 test("an explicitly unavailable package source cannot become a physical-unit mapping group through originalInput", () => {
   const indexed = review.indexRow({ rowId: "r-000001", reviewRevision: 1, category: "blocked", product: { purchaseUnit: null },
     originalInput: { purchaseUnit: "GR" }, purchaseUnitMapping: { sourceUnit: null, status: "unconfirmed" }, issues: [{ severity: "error" }] });
   assert.equal(indexed.sourceUnit, null); assert.equal(indexed.canApprove, false);
   const legacy = review.indexRow({ rowId: "r-000001", reviewRevision: 1, category: "new", product: { purchaseUnit: "FL" }, originalInput: { purchaseUnit: "FL" } });
   assert.equal(legacy.sourceUnit, "FL");
+});
+
+test("confirmed recurring formats allow factual price and unchanged confirmations, while packages and new offers require individual review", () => {
+  const existing = offer({ productPolicyVersion: 1 });
+  const interpretation = { version: 1, status: "confirmed", requiresFormatReview: false, documentPurpose: "price-list", assortmentMode: "partial", sourceIssuedOn: "2026-10-01",
+    providedFields: ["supplierSku", "supplierProductName", "pricePerPurchaseUnit", "pricingModel", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "currency", "priceBasis"], unitPriceEstablished: true };
+  const candidate = (patch = {}, previous = existing) => proposal.buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex: 0, previous, raw: {
+    ...raw(patch), sourceInterpretation: interpretation, sourceAnchors: [{ verified: true, sourceExcerpt: "Milk 12", sourceId: "csv-row-2" }] } });
+  const price = candidate({ pricePerPurchaseUnit: 15 });
+  assert.equal(price.recurringReview.category, "price-change"); assert.equal(review.bulkEligible(price), true);
+  assert.equal(candidate().recurringReview.category, "confirmation"); assert.equal(review.bulkEligible(candidate()), true);
+  const packageChange = candidate({ baseUnitsPerPurchaseUnit: 4 });
+  assert.equal(packageChange.recurringReview.category, "packaging-change"); assert.equal(packageChange.recurringReview.physicalPriceComparison.percentChange, 50);
+  assert.equal(review.bulkEligible(packageChange), false); assert.equal(review.bulkEligible(candidate({}, null)), false);
 });
 function database(initial = {}) {
   const records = new Map(Object.entries(initial));
@@ -86,6 +101,207 @@ const workspace = (db, patch = {}) => review.readHotelSupplierAiImportWorkspaceH
 const decide = (db, action = "approve", rows = [rowDoc(db)], patch = {}) => review.decideHotelSupplierAiImportRowsHandler(request({ hotelUid, jobId, requestId: `decision-${action}`, rows: rows.map((row) => ({ rowId: row.rowId, reviewRevision: row.reviewRevision, action, acknowledged: true })), ...patch }), services(db));
 const finish = (db, patch = {}) => review.completeHotelSupplierAiImportReviewHandler(request({ hotelUid, jobId, requestId: "finish", ...patch }), services(db));
 const apply = (db, rows, patch = {}) => review.applyHotelSupplierAiImportMappingHandler(request({ hotelUid, jobId, requestId: "mapping-apply", sourceUnit: "ZK", purchaseUnit: "Bag", expectedMappingRevision: null, rows: rows.map((row) => ({ rowId: row.rowId, reviewRevision: row.reviewRevision })), ...patch }), services(db));
+
+async function formatFixture(count = 1, existing = false) {
+  const db = fixture(), mappings = require("./supplierImportMappings"), formats = require("./supplierImportFormat");
+  if (existing) await createExisting(db);
+  const header = ["SKU", "Name", "Package", "Content", "Base unit", "Purchase price"];
+  const source = { format: "csv", sourceSha256: createHash("sha256").update("uploaded source").digest("hex"), units: [
+    { sourceId: "csv-header", anchor: "CSV row 1 (possible header)", text: JSON.stringify(header) },
+    ...Array.from({ length: count }, (_, index) => ({ sourceId: `csv-row-${index + 2}`, anchor: `CSV row ${index + 2}`,
+      text: JSON.stringify([index === 0 ? "MILK6" : `MILK-${index}`, "Milk six pack", "Case", 6, "l", 15]) })),
+  ] };
+  const scope = { supplierId, sourceFormat: "csv", profileId: "default" };
+  const interpretation = { version: 1, header, sheetName: null,
+    columns: { supplierSku: 0, supplierProductName: 1, purchaseUnit: 2, baseUnitsPerPurchaseUnit: 3, baseUnit: 4, pricePerPurchaseUnit: 5 },
+    defaults: { currency: "EUR", priceBasis: "net" }, assortmentMode: "partial", documentPurpose: "price-list", decimalSeparator: ".", dateFormat: "YYYY-MM-DD" };
+  const profile = { version: 1, ...scope, revision: 1, mappings: [], interpretation,
+    interpretationFingerprint: mappings.interpretationFingerprint(interpretation, "csv") };
+  db.records.set(mappings.mappingProfileRef(db, hotelUid, scope).path, profile);
+  const checked = formats.interpretSupplierSourceRows(source, profile).rows.map((row) => ({ ...row,
+    sourceInterpretation: { ...row.sourceInterpretation, status: "unconfirmed", requiresFormatReview: true } }));
+  const serialized = Buffer.from(JSON.stringify(source));
+  const sourceFormatObject = { path: `private/supplier-ai-imports/${hotelUid}/${jobId}/source-format.json`, generation: "1",
+    sha256: createHash("sha256").update(serialized).digest("hex"), size: serialized.length, contentType: "application/json" };
+  db.records.set(jobRoot, { ...db.records.get(jobRoot), source: { sha256: source.sourceSha256 }, sourceFormatObject,
+    sourceFormatCandidate: formats.interpretationForSources(source, { version: 1, ...scope, revision: 0, mappings: [] }).sourceFormatCandidate });
+  let result;
+  do { result = await proposal.reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows: checked, leaseId: "lease" }); } while (!result.complete);
+  db.records.set(jobRoot, { ...db.records.get(jobRoot), status: "review", counts: result.counts, totalRows: result.totalRows });
+  let reads = 0;
+  const bucket = { file(path, options) {
+    assert.equal(path, sourceFormatObject.path); assert.equal(options.generation, "1");
+    return { getMetadata: async () => [{ generation: "1", size: serialized.length, contentType: "application/json", metadata: { sha256: sourceFormatObject.sha256 } }],
+      download: async () => { reads++; return [serialized]; } };
+  } };
+  return { db, bucket, profile, readCount: () => reads };
+}
+const applyFormat = (fixture, patch = {}, actorUid = uid) => review.applyHotelSupplierImportFormatHandler(request({ hotelUid, jobId, requestId: "confirm-format", expectedMappingRevision: 1, ...patch }, actorUid), services(fixture.db, { bucket: fixture.bucket }));
+
+test("format application rebuilds pinned source columns, preserves human correction and invalidates approvals without product writes", async () => {
+  const fixture = await formatFixture(1, true), { db } = fixture;
+  assert.equal(rowDoc(db).category, "blocked"); await assert.rejects(decide(db), /blocking/);
+  await correct(db, { supplierProductName: "Hotel's preferred description" });
+  const before = rowDoc(db).reviewRevision, historyBefore = history(db).length;
+  const result = await applyFormat(fixture);
+  assert.deepEqual(result, { hotelUid, jobId, rebuiltRows: 1, skippedRows: 0, completed: true });
+  assert.equal(rowDoc(db).reviewRevision, before + 1); assert.equal(rowDoc(db).review.status, "pending");
+  assert.equal(rowDoc(db).product.supplierProductName, "Hotel's preferred description"); assert.equal(rowDoc(db).product.pricePerPurchaseUnit, 15);
+  assert.equal(rowDoc(db).sourceInterpretation.status, "confirmed"); assert.equal(rowDoc(db).category, "changed");
+  assert.equal(history(db).length, historyBefore); assert.equal((await workspace(db)).reviewCounts.pending, 1);
+  const readsBefore = fixture.readCount(); assert.deepEqual(await applyFormat(fixture), result); assert.equal(fixture.readCount(), readsBefore, "Completed replay does not redownload or reinterpret the source");
+  await assert.rejects(applyFormat(fixture, { expectedMappingRevision: 2 }), (error) => error.code === "already-exists");
+  await assert.rejects(applyFormat(fixture, {}, "outsider"), (error) => error.code === "permission-denied");
+  db.records.set(`hotels/${hotelUid}/members/${uid}`, { permissions: permissions.filter((permission) => permission !== "supplierproducts.update") });
+  await assert.rejects(applyFormat(fixture), (error) => error.code === "permission-denied");
+});
+
+test("format application resumes after a lost saved batch and keeps skipped rows explicit", async () => {
+  const fixture = await formatFixture(30), { db } = fixture;
+  await decide(db, "skip", [rowDoc(db, 30)]);
+  let interrupted = false;
+  db.afterCommit = async (writes) => {
+    if (!interrupted && writes.some(([, path, value]) => path.includes("/reviewOperations/t-") && value.processed === 25)) {
+      interrupted = true; throw new Error("Response lost after a saved format batch");
+    }
+  };
+  await assert.rejects(applyFormat(fixture), /Response lost/);
+  assert.equal(db.records.get(jobRoot).formatApplication.processed, 25);
+  await assert.rejects(correct(db, { supplierProductName: "Concurrent edit" }), /Finish applying/);
+  await assert.rejects(decide(db), /Finish applying/);
+  const mappings = require("./supplierImportMappings"), profileRef = mappings.mappingProfileRef(db, hotelUid, { supplierId, sourceFormat: "csv", profileId: "default" });
+  const profile = db.records.get(profileRef.path), changedInterpretation = { ...profile.interpretation, defaults: { ...profile.interpretation.defaults, currency: "USD" } };
+  db.records.set(profileRef.path, { ...profile, revision: 2, interpretation: changedInterpretation,
+    interpretationFingerprint: mappings.interpretationFingerprint(changedInterpretation, "csv") });
+  db.afterCommit = null;
+  const result = await applyFormat(fixture);
+  assert.equal(result.rebuiltRows, 29); assert.equal(result.skippedRows, 1); assert.equal(result.completed, true);
+  assert.equal(rowDoc(db, 1).reviewRevision, 2); assert.equal(rowDoc(db, 26).reviewRevision, 2); assert.equal(rowDoc(db, 30).reviewRevision, 1);
+  assert.equal(rowDoc(db, 26).product.currency, "EUR", "Continuation retains the already accepted format instead of a concurrently changed supplier profile");
+  assert.equal(db.records.get(jobRoot).purchaseUnitMappingSnapshot.revision, 1); assert.equal(db.records.get(profileRef.path).revision, 2);
+  assert.equal((await workspace(db)).reviewCounts.skipped, 1); assert.equal((await workspace(db)).reviewCounts.pending, 29);
+});
+
+test("format application rejects stale profiles, changed source hashes and other-import artifact paths before modifying review", async () => {
+  const stale = await formatFixture();
+  await assert.rejects(applyFormat(stale, { expectedMappingRevision: 0 }), (error) => error.code === "aborted");
+  const changed = await formatFixture(); changed.db.records.set(jobRoot, { ...changed.db.records.get(jobRoot), source: { sha256: "a".repeat(64) } });
+  await assert.rejects(applyFormat(changed), /does not match/); assert.equal(rowDoc(changed.db).reviewRevision, 1);
+  const foreign = await formatFixture(); foreign.db.records.set(jobRoot, { ...foreign.db.records.get(jobRoot), sourceFormatObject: {
+    ...foreign.db.records.get(jobRoot).sourceFormatObject, path: "private/supplier-ai-imports/hotel-b/other/source-format.json" } });
+  await assert.rejects(applyFormat(foreign), /no pinned structured source/); assert.equal(foreign.readCount(), 0);
+});
+
+test("format application follows source article references across reordered model rows and refuses ambiguous coverage", async () => {
+  const fixture = await formatFixture(2), { db } = fixture;
+  const first = rowDoc(db, 1), second = rowDoc(db, 2);
+  db.records.set(`${jobRoot}/rows/${first.rowId}`, { ...second, rowId: first.rowId, rowIndex: 0, productId: first.productId });
+  db.records.set(`${jobRoot}/rows/${second.rowId}`, { ...first, rowId: second.rowId, rowIndex: 1, productId: second.productId });
+  db.records.set(`${jobRoot}/reviewIndex/${first.rowId}`, review.indexRow(rowDoc(db, 1)));
+  db.records.set(`${jobRoot}/reviewIndex/${second.rowId}`, review.indexRow(rowDoc(db, 2)));
+  await correct(db, { supplierProductName: "Keep this local correction with the second source article" }, rowDoc(db, 1));
+  await applyFormat(fixture);
+  assert.equal(rowDoc(db, 1).product.supplierSku, "MILK-1");
+  assert.equal(rowDoc(db, 1).product.supplierProductName, "Keep this local correction with the second source article");
+  assert.equal(rowDoc(db, 2).product.supplierSku, "MILK6");
+  const ambiguous = await formatFixture(2);
+  const row = rowDoc(ambiguous.db, 2);
+  ambiguous.db.records.set(`${jobRoot}/rows/${row.rowId}`, { ...row, sourceAnchors: rowDoc(ambiguous.db, 1).sourceAnchors });
+  await assert.rejects(applyFormat(ambiguous), /do not cover every source article/);
+  assert.equal(rowDoc(ambiguous.db, 1).reviewRevision, 1);
+});
+
+test("full and partial assortments flag missing offers while preserving their identities, prices, options and orderability", async () => {
+  for (const mode of ["full", "partial"]) {
+    const fixture = await formatFixture(), { db } = fixture;
+    db.records.set(`hotels/${hotelUid}/supplierproducts/omitted`, offer({ supplierSku: "OLD-MILK", revision: 3,
+      purchaseOptions: [{ id: "single", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 2 }] }));
+    const before = structuredClone(db.records.get(`hotels/${hotelUid}/supplierproducts/omitted`));
+    const mappings = require("./supplierImportMappings"), profileRef = mappings.mappingProfileRef(db, hotelUid, { supplierId, sourceFormat: "csv", profileId: "default" });
+    const profile = db.records.get(profileRef.path);
+    db.records.set(profileRef.path, { ...profile, interpretation: { ...profile.interpretation, assortmentMode: mode },
+      interpretationFingerprint: mappings.interpretationFingerprint({ ...profile.interpretation, assortmentMode: mode }, "csv") });
+    await applyFormat(fixture);
+    const overview = await workspace(db);
+    assert.equal(overview.assortmentSummary.mode, mode); assert.equal(overview.assortmentSummary.missingOfferCount, 1);
+    assert.equal(overview.assortmentSummary.policy, "preserve-existing"); assert.equal(overview.assortmentSummary.missingOffers[0].productId, "omitted");
+    await decide(db); await confirm(db);
+    assert.deepEqual(db.records.get(`hotels/${hotelUid}/supplierproducts/omitted`), before);
+  }
+});
+
+test("statistics without current unit prices preserve local terms and never manufacture a price confirmation", async () => {
+  const db = fixture(), existing = await createExisting(db, { purchaseOptions: [{ id: "single", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 2 }] });
+  const path = `hotels/${hotelUid}/supplierproducts/${existing.productId}`, before = db.records.get(path);
+  const checked = proposal.validateRawSupplierAiRows({ rows: [raw({ pricePerPurchaseUnit: null, purchaseUnit: "Box", baseUnitsPerPurchaseUnit: 3, priceValidFrom: "2027-01-01" })] }, { sourceUnits })
+    .map((row) => ({ ...row, sourceInterpretation: { status: "confirmed", requiresFormatReview: false, documentPurpose: "statistics", assortmentMode: "partial",
+      sourceIssuedOn: "2026-10-01", unitPriceEstablished: false, providedFields: ["supplierSku", "supplierProductName", "purchaseUnit", "baseUnitsPerPurchaseUnit", "priceValidFrom"] } }));
+  const result = await proposal.reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows: checked, leaseId: "lease" });
+  db.records.set(jobRoot, { ...db.records.get(jobRoot), status: "review", counts: result.counts, totalRows: 1 });
+  assert.equal(rowDoc(db).product.purchaseUnit, "Case"); assert.equal(rowDoc(db).product.baseUnitsPerPurchaseUnit, 6); assert.equal(rowDoc(db).product.priceValidFrom, null);
+  assert.equal(rowDoc(db).recurringReview.confirmsUnitPrice, false); assert.equal(rowDoc(db).category, "unchanged");
+  assert.equal(review.bulkEligible(rowDoc(db)), false); await decide(db); assert.equal((await confirm(db)).outcomes[0].status, "unchanged");
+  assert.deepEqual(db.records.get(path), before); assert.equal(history(db).length, 1);
+});
+
+test("missing approved period evidence blocks the affected offer without losing other source articles", async () => {
+  const fixture = await formatFixture(2, true), { db } = fixture;
+  const productId = rowDoc(db).productId, existing = db.records.get(`hotels/${hotelUid}/supplierproducts/${productId}`);
+  db.records.delete(`hotels/${hotelUid}/supplierPriceVersions/${productId}/entries/${existing.latestApprovedPriceVersionId}`);
+  db.records.set(jobRoot, { ...db.records.get(jobRoot), importSettings: { priceValidFrom: "2027-01-01" } });
+  const result = await applyFormat(fixture);
+  assert.equal(result.rebuiltRows, 2); assert.equal(rowDoc(db).category, "blocked");
+  assert.ok(rowDoc(db).issues.some((issue) => issue.code === "approved-price-agreement-missing"));
+  assert.equal(rowDoc(db, 2).category, "new"); assert.equal((await workspace(db)).reviewCounts.pending, 2);
+  assert.equal(db.records.get(`hotels/${hotelUid}/supplierproducts/${productId}`).pricePerPurchaseUnit, 12);
+});
+
+test("scheduled approved supplier prices preserve current purchasing projection and dated older sources cannot regain approval", async () => {
+  const fixture = await formatFixture(1, true), { db } = fixture;
+  await applyFormat(fixture);
+  const row = rowDoc(db), sourceInterpretation = { ...row.sourceInterpretation, sourceIssuedOn: "2026-10-14", providedFields: [...row.sourceInterpretation.providedFields, "priceValidFrom"] };
+  const next = proposal.buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex: 0, raw: {
+    ...row.sourceInput, priceValidFrom: "2027-01-01", sourceInterpretation, sourceAnchors: row.sourceAnchors,
+  }, previous: db.records.get(`hotels/${hotelUid}/supplierproducts/${row.productId}`), productId: row.productId, reviewRevision: row.reviewRevision + 1,
+  userPatch: { purchaseOptions: [{ id: "single", purchaseUnit: "Bottle", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 4 }] } });
+  next.review = { status: "pending", reviewRevision: next.reviewRevision };
+  db.records.set(`${jobRoot}/rows/${row.rowId}`, next); db.records.set(`${jobRoot}/reviewIndex/${row.rowId}`, review.indexRow(next));
+  await decide(db); const result = await confirm(db);
+  assert.equal(result.outcomes[0].status, "updated");
+  const saved = db.records.get(`hotels/${hotelUid}/supplierproducts/${row.productId}`);
+  assert.equal(saved.pricePerPurchaseUnit, 12); assert.equal(saved.priceValidFrom, null); assert.equal(saved.latestPriceSourceIssuedOn, "2026-10-14");
+  const versions = [...db.records.entries()].filter(([path]) => path.includes("/supplierPriceVersions/"));
+  assert.equal(versions.at(-1)[1].productTerms.pricePerPurchaseUnit, 15); assert.equal(versions.at(-1)[1].productTerms.priceValidFrom, "2027-01-01");
+  const repeatJobId = "repeat-future-list", repeatRoot = `hotels/${hotelUid}/supplierAiImportJobs/${repeatJobId}`;
+  db.records.set(repeatRoot, { ...db.records.get(jobRoot), status: "processing", leaseId: "repeat-lease", reconciliation: undefined,
+    reviewState: undefined, counts: undefined, summary: undefined, formatApplication: undefined });
+  const repeated = await proposal.reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId: repeatJobId, leaseId: "repeat-lease", rows: [{
+    ...row.sourceInput, priceValidFrom: "2027-01-01", sourceInterpretation: { ...sourceInterpretation, sourceIssuedOn: "2026-10-15" }, sourceAnchors: row.sourceAnchors,
+  }] });
+  db.records.set(repeatRoot, { ...db.records.get(repeatRoot), status: "review", totalRows: 1, counts: repeated.counts });
+  const repeatedRow = db.records.get(`${repeatRoot}/rows/r-000001`);
+  assert.equal(repeatedRow.category, "unchanged"); assert.equal(repeatedRow.recurringReview.category, "confirmation");
+  assert.equal(repeatedRow.recurringReview.physicalPriceComparison.before, 2.5); assert.equal(repeatedRow.recurringReview.physicalPriceComparison.after, 2.5);
+  assert.equal(repeatedRow.previousProduct.pricePerPurchaseUnit, 12); assert.equal(repeatedRow.previousPriceAgreement.product.pricePerPurchaseUnit, 15);
+  assert.equal(repeatedRow.product.purchaseOptions[0].pricePerPurchaseUnit, 4, "An omitted option keeps its already approved future terms");
+  await review.decideHotelSupplierAiImportRowsHandler(request({ hotelUid, jobId: repeatJobId, requestId: "approve-repeat", bulk: true,
+    rows: [{ rowId: repeatedRow.rowId, reviewRevision: repeatedRow.reviewRevision, action: "approve", acknowledged: true }] }), services(db));
+  const repeatedResult = await proposal.commitHotelSupplierAiImportRowsHandler(request({ hotelUid, jobId: repeatJobId, requestId: "apply-repeat",
+    rows: [{ rowId: repeatedRow.rowId, reviewRevision: repeatedRow.reviewRevision, acknowledged: true }] }), services(db));
+  assert.equal(repeatedResult.outcomes[0].status, "unchanged");
+  assert.equal(db.records.get(`hotels/${hotelUid}/supplierproducts/${row.productId}`).pricePerPurchaseUnit, 12);
+  assert.deepEqual(db.records.get(`hotels/${hotelUid}/supplierproducts/${row.productId}`).purchaseOptions, []);
+  assert.equal([...db.records.keys()].filter((path) => path.includes("/supplierPriceVersions/")).length, versions.length);
+  const old = proposal.buildSupplierAiCandidate({ hotelUid, jobId: "old-source", supplierId, rowIndex: 0, previous: saved, raw: {
+    ...row.sourceInput, pricePerPurchaseUnit: 9, sourceInterpretation: { ...sourceInterpretation, sourceIssuedOn: "2026-09-01" }, sourceAnchors: row.sourceAnchors,
+  } });
+  assert.equal(old.category, "blocked"); assert.ok(old.issues.some((issue) => issue.code === "older-price-source")); assert.equal(review.canApprove(old), false);
+  const unknown = proposal.buildSupplierAiCandidate({ hotelUid, jobId: "undated", supplierId, rowIndex: 0, previous: saved, raw: {
+    ...row.sourceInput, sourceInterpretation: { ...sourceInterpretation, sourceIssuedOn: null }, sourceAnchors: row.sourceAnchors,
+  } });
+  assert.equal(review.canApprove(unknown), true); assert.equal(review.bulkEligible(unknown), false);
+  assert.ok(unknown.issues.some((issue) => issue.code === "price-source-date-unknown"));
+});
 
 test("guided review separates durable approval from product writes and exposes actual outcomes only after final application", async () => {
   const db = fixture(); await reconcile(db);

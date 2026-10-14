@@ -74,3 +74,32 @@ it("lets an all-applied import finish after an unknown completion acknowledgemen
 it("discards late workspace responses when the selected hotel changes", async () => {
   let resolve; mocks.read.mockReturnValueOnce(new Promise((done) => { resolve = done; })); const view = mount(); await waitFor(() => expect(resolve).toBeDefined()); mocks.hotel.hotelUid = "hotel-b"; mocks.job.mockResolvedValueOnce({ hotelUid: "hotel-b", jobId: "job", status: "failed", ownerUid: "manager", error: { message: "No draft here." } }); view.rerender(<MemoryRouter initialEntries={["/catalog/supplier-products/imports/job"]}><Routes><Route path="/catalog/supplier-products/imports/:jobId" element={<SupplierAiImportReviewPage />} /></Routes></MemoryRouter>); await act(async () => resolve(structuredClone(data))); expect(screen.queryByText("2 extracted products")).not.toBeInTheDocument();
 });
+it("selects only eligible straightforward price changes and requires explicit approval before import", async () => {
+  data = setup(4);
+  const categories = ["price-change", "packaging-change", "exception", "price-change"];
+  data.index.forEach((entry, index) => { entry.recurringReview = { category: categories[index], physicalPriceComparison: { comparable: true, before: 8, after: 10, unit: "kg", currency: "EUR", percentChange: 25 } }; entry.bulkEligible = index !== 2; entry.needsAttention = index === 2; });
+  mount(); await screen.findByText("4 extracted products");
+  fireEvent.click(screen.getByRole("button", { name: "Select straightforward price changes" }));
+  expect(screen.getByRole("checkbox", { name: "Select Product 1" })).toBeChecked(); expect(screen.getByRole("checkbox", { name: "Select Product 4" })).toBeChecked(); expect(screen.getByRole("checkbox", { name: "Select Product 2" })).not.toBeChecked(); expect(screen.getByRole("checkbox", { name: "Select Product 3" })).not.toBeChecked();
+  expect(mocks.decide).not.toHaveBeenCalled(); expect(mocks.confirm).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Approve selected (2)" })); await screen.findByText("The selected products are approved. No supplier products have been changed yet.");
+  expect(mocks.decide.mock.calls[0][2].map((row) => row.rowId)).toEqual(["r-000001", "r-000004"]); expect(mocks.confirm).not.toHaveBeenCalled();
+});
+it("prioritizes exceptions and explicitly skips unchanged articles without confirming their preserved prices", async () => {
+  data = setup(28);
+  data.index.forEach((entry) => { entry.recurringReview = { category: "unchanged", confirmsUnitPrice: false }; entry.bulkEligible = false; entry.needsAttention = false; entry.category = "unchanged"; entry.requiresUpdate = true; });
+  data.index[26].recurringReview = { category: "exception", confirmsUnitPrice: false }; data.index[26].needsAttention = true;
+  data.index[27].recurringReview = { category: "confirmation", confirmsUnitPrice: true }; data.index[27].bulkEligible = true;
+  mount(); await screen.findByText("28 extracted products");
+  fireEvent.click(screen.getByRole("button", { name: "Start review" })); await waitFor(() => expect(within(screen.getByRole("article", { name: "Current product" })).getByText("Product 27")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "Skip unchanged articles without prices" }));
+  expect(mocks.decide).not.toHaveBeenCalled(); expect(within(screen.getByRole("dialog")).getByText(/Skip 26 unchanged articles/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Confirm skip unchanged" })); await screen.findByText("Selected unchanged articles were skipped. Their existing prices, confirmation dates and packages are preserved.");
+  expect(mocks.decide.mock.calls.map((call) => call[2].length)).toEqual([25, 1]); expect(mocks.decide.mock.calls.every((call) => call[2].every((row) => row.action === "skip") && call[3].bulk)).toBe(true);
+  expect(data.index[26].reviewStatus).toBe("pending"); expect(data.index[27].reviewStatus).toBe("pending"); expect(mocks.confirm).not.toHaveBeenCalled();
+});
+it("pauses review decisions and importing while the original format application needs recovery", async () => {
+  data.formatApplication = { requestId: "original-format-request", profileRevision: 2, processed: 1, totalRows: 2, complete: false }; data.index.forEach((row) => { row.bulkEligible = true; });
+  data.index[0].reviewStatus = "approved"; reconcile(); mount(); await screen.findByText("2 extracted products");
+  expect(screen.getByRole("button", { name: "Start review" })).toBeDisabled(); expect(screen.getByRole("button", { name: "Import approved products" })).toBeDisabled(); expect(screen.getByRole("checkbox", { name: "Select Product 2" })).toBeDisabled(); expect(mocks.decide).not.toHaveBeenCalled(); expect(mocks.confirm).not.toHaveBeenCalled();
+});

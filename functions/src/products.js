@@ -6,6 +6,9 @@ const { revision, digest, text } = require("./validation");
 const { gated, requireSaasRollout } = require("./saasRollout");
 const policy = require("./productPolicy");
 const pricePolicy = require("./supplierPricePolicy");
+const priceVersions = require("./supplierPriceVersions");
+const { validTimeZone } = require("./hotelSetupPolicy");
+const { localDate } = require("./importMonitoringPolicy");
 
 const MAX_IMPORT_PRODUCTS = 25;
 const COLLECTIONS = ["catalogproducts", "supplierproducts"];
@@ -46,7 +49,7 @@ function preserveSupplierMetadata(input, previous) {
   return result;
 }
 
-async function prepareProduct(tx, db, hotelUid, collection, productId, action, expected, input, plannedSkus) {
+async function prepareProduct(tx, db, hotelUid, collection, productId, action, expected, input, plannedSkus, priceEvidence, services = {}) {
   const ref = db.doc(`hotels/${hotelUid}/${collection}/${productId}`);
   const current = await tx.get(ref), previous = current.exists ? current.data() : null;
   if (action === "create" && current.exists) throw new HttpsError("already-exists", "This product ID already exists. Edit the existing product instead.");
@@ -88,6 +91,12 @@ async function prepareProduct(tx, db, hotelUid, collection, productId, action, e
         : (await tx.get(db.doc(`hotels/${hotelUid}/catalogproducts/${requireDocumentId(previous.catalogProductId, "Previous catalog product ID")}`))).data() || null;
     }
     plan.priceChanged = pricePolicy.priceTermsChanged(previous, next, plan.previousCatalog, plan.catalog);
+    const hotel = await tx.get(db.doc(`hotels/${hotelUid}`));
+    const timeZone = validTimeZone(hotel.data()?.timeZone) ? hotel.data().timeZone : "UTC";
+    const today = localDate(services.now?.() ?? Date.now(), timeZone);
+    const versions = await priceVersions.loadSupplierPriceVersions(tx, db, hotelUid, productId);
+    priceVersions.prepareSupplierPriceVersion(plan, versions, priceEvidence, today);
+    plan.priceVersionContext = { db, hotelUid };
     plan.priceHistoryRef = db.doc(`hotels/${hotelUid}/supplierPriceHistory/${productId}/entries/${String(expected + 1).padStart(16, "0")}`);
     if (previous?.productPolicyVersion === policy.PRODUCT_POLICY_VERSION && (previous.supplierId !== next.supplierId || (previous.catalogProductId && previous.catalogProductId !== next.catalogProductId) || previous.baseUnit !== next.baseUnit)) {
       throw new HttpsError("failed-precondition", "A reviewed supplier product's supplier, catalog link and base unit are immutable. Create a distinct offer for a changed identity.");
@@ -115,6 +124,9 @@ function writeProduct(tx, plan, collection, actorUid) {
   const now = stamp();
   // Archived legacy records are retained intact. Reviewed saves replace only
   // the public product schema and leave frozen downstream records untouched.
+  if (collection === "supplierproducts" && plan.action !== "archive") {
+    priceVersions.writeSupplierPriceVersion(tx, plan.priceVersionContext.db, plan.priceVersionContext.hotelUid, plan, actorUid, now);
+  }
   const next = { ...plan.next, createdAt: plan.previous?.createdAt ?? now, createdBy: plan.previous?.createdBy ?? actorUid,
     revision: plan.expected + 1, updatedAt: now, updatedBy: actorUid };
   // Media is managed independently of purchase/pricing commands. A routine edit
@@ -124,8 +136,8 @@ function writeProduct(tx, plan, collection, actorUid) {
   }
   if (plan.previous?.archived === true || plan.action === "archive") next.archived = true;
   if (collection === "supplierproducts" && plan.action !== "archive") {
-    next.priceUpdatedOn = plan.priceChanged ? now : plan.previous?.priceUpdatedOn ?? null;
-    if (plan.priceChanged) tx.create(plan.priceHistoryRef, pricePolicy.historyEntry(plan, actorUid, now));
+    next.priceUpdatedOn = Object.hasOwn(plan.next, "priceUpdatedOn") ? plan.next.priceUpdatedOn : plan.priceValueChanged ? now : plan.previous?.priceUpdatedOn ?? null;
+    if (plan.priceChanged || plan.priceConfirms) tx.create(plan.priceHistoryRef, pricePolicy.historyEntry(plan, actorUid, now));
   }
   tx.set(plan.ref, next);
   if (plan.skuRef) tx.set(plan.skuRef, { productId: plan.productId, supplierId: next.supplierId, supplierSku: next.supplierSku, updatedAt: now });
@@ -158,7 +170,7 @@ async function mutateProduct(request, services, collection) {
         ? `p-${digest(collection, request.auth.uid, requestId).slice(0, 40)}` : requireDocumentId(input.productId, "productId");
       if (action !== "create" && !input.productId) throw new HttpsError("invalid-argument", "An existing product ID is required.");
       if (action === "archive" && input.product !== undefined) throw new HttpsError("invalid-argument", "Archival does not accept changed product details.");
-      const plan = await prepareProduct(tx, db, hotelUid, collection, productId, action, expected, input.product, new Map());
+      const plan = await prepareProduct(tx, db, hotelUid, collection, productId, action, expected, input.product, new Map(), undefined, services);
       const result = { hotelUid, ...writeProduct(tx, plan, collection, request.auth.uid) };
       tx.create(operationRef, { actorUid: request.auth.uid, collection, action, fingerprint, result, createdAt: stamp() });
       tx.create(db.doc(`hotels/${hotelUid}/productAudit/${commandId}`), { actorUid: request.auth.uid, collection, action, productId, revision: result.revision, createdAt: stamp() });
@@ -212,7 +224,7 @@ async function importHotelProductsHandler(request, services = {}) {
           await requireHotelPermission(db, actor, hotelUid, collection, "update", tx, services.auth);
           requiresUpdate = true;
         }
-        const plan = await prepareProduct(tx, db, hotelUid, collection, productId, current.exists ? "update" : "create", expected, row.product, plannedSkus);
+        const plan = await prepareProduct(tx, db, hotelUid, collection, productId, current.exists ? "update" : "create", expected, row.product, plannedSkus, undefined, services);
         plans.push(plan); outcomes.push({ productId, revision: expected + 1 });
       }
       // No transaction writes occur until every row and reference has passed.

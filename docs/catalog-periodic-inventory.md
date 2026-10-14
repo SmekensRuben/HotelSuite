@@ -28,6 +28,14 @@ Mass/volume/count conversions are not guessed. Supplier SKU edits keep the
 document ID stable and use a transactional uniqueness reservation. Archival
 retains historical references; product hard deletes are not exposed.
 
+## Recurring supplier lists
+
+See [Recurring supplier lists and approved price periods](recurring-supplier-prices.md)
+for reusable file interpretation, focused change review, effective price selection
+and separate price confirmation evidence. New orders use approved purchasing terms
+for the supplier's order-date or delivery-date agreement; historical evidence stays
+frozen.
+
 ## Prices and unknown values
 
 Known prices are finite numeric values. An explicit zero price is valid; missing,

@@ -199,6 +199,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
               {canEditProducts && product.archived !== true && <Card className="lg:col-span-2"><h2 className="text-lg font-semibold mb-3">Product image</h2><SupplierProductImageUpload hotelUid={hotelUid} product={product} onChanged={query.retry} /></Card>}
               <Card className="border-0 shadow-md shadow-slate-200/70">
                 <h2 className="text-lg font-semibold mb-3">Pricing</h2>
+                <p className="mb-3 text-xs text-slate-600">Recorded catalog prices are indicative. Order preview checks applicable approved prices for the supplier's agreed order date or delivery date.</p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <DetailField label="Currency" value={product.currency || "Unknown"} />
                   <DetailField label="Price basis" value={formatOrderPriceBasis(product.priceBasis)} />
@@ -237,7 +238,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
               </Card>
 
               {product.hasVariants && !product.purchaseOptions?.length && <Card className="lg:col-span-2"><p className="text-amber-800">Legacy variants require review in Edit before this offer can be ordered.</p></Card>}
-              {product.purchaseOptions?.length > 0 && <Card className="lg:col-span-2"><h2 className="font-semibold mb-3">Additional purchase options</h2><div className="grid gap-3 md:grid-cols-2">{product.purchaseOptions.map((option) => <div key={option.id} className="space-y-3 rounded border p-3"><DetailField label="Package" value={option.purchaseUnit} /><DetailField label="Package GTIN" value={option.gtin || "Not supplied"} /><DetailField label={`Content (${product.baseUnit})`} value={option.baseUnitsPerPurchaseUnit} /><DetailField label={`Price (${product.currency || "unknown currency"})`} value={option.pricePerPurchaseUnit == null ? "Unknown" : option.pricePerPurchaseUnit} />{catalogProduct && <p className="text-sm text-gray-600">{packageConversionLabel(option.baseUnitsPerPurchaseUnit, product.baseUnit, catalogProduct.baseUnit)}</p>}</div>)}</div></Card>}
+              {product.purchaseOptions?.length > 0 && <Card className="lg:col-span-2"><h2 className="font-semibold mb-3">Additional purchase options</h2><p className="mb-3 text-xs text-slate-600">Package prices are indicative; the order preview selects the approved version for the agreed date.</p><div className="grid gap-3 md:grid-cols-2">{product.purchaseOptions.map((option) => <div key={option.id} className="space-y-3 rounded border p-3"><DetailField label="Package" value={option.purchaseUnit} /><DetailField label="Package GTIN" value={option.gtin || "Not supplied"} /><DetailField label={`Content (${product.baseUnit})`} value={option.baseUnitsPerPurchaseUnit} /><DetailField label={`Price (${product.currency || "unknown currency"})`} value={option.pricePerPurchaseUnit == null ? "Unknown" : option.pricePerPurchaseUnit} />{catalogProduct && <p className="text-sm text-gray-600">{packageConversionLabel(option.baseUnitsPerPurchaseUnit, product.baseUnit, catalogProduct.baseUnit)}</p>}</div>)}</div></Card>}
 
               <Card className="lg:col-span-2 border-0 shadow-md shadow-slate-200/70">
                 <h2 className="text-lg font-semibold mb-3">Audit</h2>
