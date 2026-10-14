@@ -45,6 +45,12 @@ test("mapping save is revision checked, audited, bounded and idempotent with can
   await assert.rejects(save(request(command({ requestId: "stale", expectedRevision: 0 })), services), { code: "aborted" });
   await assert.rejects(save(request({ ...input, mappings: [{ sourceUnit: "FL", purchaseUnit: "Jar" }] }), services), { code: "already-exists" });
 });
+test("a confirmed supplier KG code can map to the canonical kilogram purchase measure", async () => {
+  const services = fixture();
+  const result = await save(request(command({ mappings: [{ sourceUnit: "KG", purchaseUnit: "KG" }] })), services);
+  assert.deepEqual(result.mappings, [{ sourceUnit: "KG", purchaseUnit: "kg" }]);
+  const profile = await read(request(scope()), services); assert.deepEqual(profile.mappings, result.mappings);
+});
 test("profiles remain scoped to hotel, supplier, source format and named source profile", async () => {
   const services = fixture(); await save(request(command()), services);
   for (const patch of [{ supplierId: "other" }, { sourceFormat: "csv" }, { profileId: "volume-list" }]) {

@@ -104,6 +104,8 @@ test("new extraction contract distinguishes purchase price channels, quantities 
   assert.match(request.instructions, /purchaseUnit comes exclusively from 'Eenheid verpakking'/);
   assert.match(request.instructions, /12, PK, 1, LT means purchaseUnit PK with 12 l total content/);
   assert.match(request.instructions, /KG as a purchase unit with ST inner content cannot establish a mass-to-item conversion/);
+  assert.match(request.instructions, /One kg purchase unit is exactly 1 kg or 1000 g/);
+  assert.match(request.instructions, /An explicit price per kg belongs to Per Base Unit pricing/);
 });
 test("new extraction contract preserves display provenance while guiding canonical physical values", () => {
   const request = createSupplierAiRequest(source, DEFAULT_AI_CONFIGURATION, schema, importSettings);

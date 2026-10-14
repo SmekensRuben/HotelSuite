@@ -73,6 +73,8 @@ const SUMMARY_BUSINESS_MESSAGES = Object.freeze({
   "supplier-purchase-unit-mapped": "The confirmed supplier and source-format profile supplies the English purchase-package label. Quantities and financial terms remain unchanged.",
   "source-purchase-unit-recovered": "The verified purchase-package column supplies the package label; the physical content unit remains separate.",
   "split-package-content-unavailable": "Package count, inner content or content unit needs review. A weight purchase unit does not establish a mass-to-item conversion.",
+  "kilogram-purchase-content": "One kg purchased contains exactly 1 kg or 1000 g. No piece weight or count is inferred.",
+  "kilogram-purchase-measure": "Order quantities are kilograms; individual piece weight and count remain unknown.",
   "purchase-unit-confirmed-for-import": "The purchase-package label was explicitly confirmed for this import. Quantities and financial terms remain unchanged.",
   "base-unit-normalized": "The source unit was mapped to a supported physical unit without changing its dimension.",
   "unsupported-source-unit": "The source unit is unsupported or ambiguous. Choose a supported unit before confirmation.",

@@ -10,7 +10,7 @@ const UNIT_ALIASES = { g: "g", gr: "g", gram: "g", grams: "g", gramme: "g", gram
   ml: "ml", milliliter: "ml", millilitre: "ml", milliliters: "ml", millilitres: "ml", l: "l", lt: "l", ltr: "l", liter: "l", litre: "l", liters: "l", litres: "l",
   each: "each", ea: "each", st: "each", stuk: "each", stuks: "each", piece: "each", pieces: "each", pcs: "each" };
 const PURCHASE_ALIASES = { ds: "Box", doos: "Box", box: "Box", pk: "Pack", pak: "Pack", pack: "Pack", pakket: "Pack",
-  fl: "Bottle", fles: "Bottle", bottle: "Bottle", st: "Piece", stuk: "Piece", piece: "Piece", each: "Piece" };
+  fl: "Bottle", fles: "Bottle", bottle: "Bottle", st: "Piece", stuk: "Piece", piece: "Piece", each: "Piece", kg: "kg", kilo: "kg", kilogram: "kg", kilograms: "kg" };
 const plain = (value) => String(value ?? "").normalize("NFC").replace(/\s+/gu, " ").trim();
 const unitOf = (value) => UNIT_ALIASES[plain(value).toLowerCase().replace(/\.$/, "")] || null;
 function sourceCells(unit) {
@@ -47,7 +47,7 @@ function priceChannel(header, cells = [], labels = [], sources = {}) {
   const unit = match && unitOf(match[1]);
   // A supplier's package-code profile cannot redefine explicit physical price
   // units such as EUR/kg. Package names and inventory dimensions are distinct.
-  if (sources.purchaseUnitMappingSnapshot && unit && !/^(?:st|stuk|stuks|piece|pieces|pcs|ea)$/i.test(match[1])) return { channel: "base", unit };
+  if (unit && !/^(?:st|stuk|stuks|piece|pieces|pcs|ea)$/i.test(match[1])) return { channel: "base", unit };
   const label = match && mappedPurchaseLabel(match[1], sources);
   if (label) return { channel: "purchase", purchaseUnit: label, sourceUnit: purchaseSourceUnit(match[1]), unit: null };
   if (unit) return { channel: "base", unit };
@@ -58,6 +58,7 @@ function priceChannel(header, cells = [], labels = [], sources = {}) {
     for (const index of indexes) {
       const value = plain(cells[index]), candidate = mappedPurchaseLabel(value, sources) || (/^(?:case|carton|bag|tray|jar|can)$/i.test(value)
         ? sources.purchaseUnitMappingSnapshot ? canonicalPurchaseUnit(value) : value : null);
+      if (candidate === "kg") return { channel: "base", unit: "kg", sourceUnit: purchaseSourceUnit(value) };
       if (candidate) return { channel: "purchase", purchaseUnit: candidate, sourceUnit: purchaseSourceUnit(value), unit: null, inferred: true };
       // The structured source explicitly establishes a price per purchasable
       // package even while its English label awaits human confirmation. Keep
@@ -307,7 +308,14 @@ function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [], pu
       } else change("purchaseUnit", result.purchaseUnitMapping.suggestedUnit, "supplier-purchase-unit-mapped", "The confirmed supplier and source-format profile supplies this English purchase-package label. Package quantities and financial terms remain unchanged.", "supplier-mapping");
   } else if (typeof result.purchaseUnit === "string") {
       const label = plain(result.purchaseUnit), alias = label.match(/^(ds|doos|box|pk|pak|pack|pakket|fl|fles|bottle|st|stuk|piece|each)(?:\s*\d|$)/i);
-      change("purchaseUnit", alias ? PURCHASE_ALIASES[alias[1].toLowerCase()] : label, "purchase-label-normalized", "The supplier purchase-package label was standardized in English; no additional purchase option was created.");
+      change("purchaseUnit", /^(?:kg|kilo|kilograms?)$/i.test(label) ? "kg" : alias ? PURCHASE_ALIASES[alias[1].toLowerCase()] : label, "purchase-label-normalized", "The supplier purchase-package label was standardized in English; no additional purchase option was created.");
+  }
+  const kilogramPurchase = result.purchaseUnit === "kg";
+  if (kilogramPurchase) {
+    const massUnit = ["kg", "g"].includes(unitOf(result.baseUnit)) ? unitOf(result.baseUnit) : "kg";
+    change("baseUnit", massUnit, "kilogram-purchase-content", "The kg purchase unit measures one kilogram bought, independently of piece or package counts. No piece weight is inferred.", "source", "warning");
+    change("baseUnitsPerPurchaseUnit", policy.measuredPurchaseContent("kg", massUnit), "kilogram-purchase-content", "One kg purchased contains exactly 1 kg or 1000 g. Product-name piece sizes and annual quantities do not change this purchase measure.", "source", "warning");
+    finding("purchaseUnit", "kilogram-purchase-measure", "Order quantities for this offer are kilograms, not pieces. The weight or count of an individual piece remains unknown.", "kg", "kg");
   }
   if (typeof result.baseUnit === "string") {
     const unit = unitOf(result.baseUnit);
@@ -377,7 +385,7 @@ function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [], pu
   if (result.pricePerBaseUnit === null && result.pricePerPurchaseUnit === null) finding("price", "source-price-missing", "The source has no established supplier unit price. New offers remain unpriced and cannot be ordered; existing prices are preserved.", null, null, "source", "warning");
   const quantities = namedQuantities(originalName), singlePack = ["Pack", "Bottle", "Piece"].includes(result.purchaseUnit), hasMultiplier = /\d+\s*[x×*]\s*\d+/i.test(originalName || "");
   let base = unitOf(result.baseUnit), quantity = result.baseUnitsPerPurchaseUnit;
-  const contentEvidence = packageQuantityEvidence(sources), explicitContents = contentEvidence.quantities;
+  const contentEvidence = kilogramPurchase ? { unavailable: false, quantities: [{ quantity: 1, unit: "kg" }] } : packageQuantityEvidence(sources), explicitContents = contentEvidence.quantities;
   if (contentEvidence.unavailable) {
     change("baseUnitsPerPurchaseUnit", null, "split-package-content-unavailable", "The source package count, inner content or content unit is missing or ambiguous. A weight purchase unit cannot establish a mass-to-item conversion.", "source", "error"); quantity = null;
   }
@@ -407,7 +415,7 @@ function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [], pu
     } else if (base) finding("baseUnit", "package-dimension-conflict", "The named package content and proposed base unit have different dimensions. No mass, volume or item conversion was guessed.", base, base, "source", "error");
   }
   if (quantity === null) finding("baseUnitsPerPurchaseUnit", "package-content-missing", "The full purchasable package content is unknown. A Box or ambiguous multipack cannot inherit a single piece's named weight.", null, null, "source", "error");
-  if (base && base !== "each" && typeof quantity === "number" && quantity > 0 && quantities.length) {
+  if (!kilogramPurchase && base && base !== "each" && typeof quantity === "number" && quantity > 0 && quantities.length) {
     const pieces = quantities.filter((entry) => policy.compatibleUnits(base, entry.unit) && namedQuantityInSource(entry.quantity, entry.unit, sources)).filter((entry) => {
       try { return policy.convertQuantity(entry.quantity, entry.unit, base) < quantity; } catch { return false; }
     });

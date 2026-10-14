@@ -56,6 +56,38 @@ test("split exports multiply inner packages by their content instead of substitu
     assert.equal(row.pricePerPurchaseUnit, null); assert.equal(row.pricePerBaseUnit, null);
   }
 });
+test("KG purchases in real XLSX and CSV split exports are one kilogram, without claiming kilograms per piece", async () => {
+  for (const csv of [false, true]) {
+    const data = await splitExport({ csv, purchase: "KG", unit: "ST", content: 1, raw: { baseUnit: "each", baseUnitsPerPurchaseUnit: 37 } });
+    const row = normalizeMapped(data);
+    assert.equal(row.purchaseUnit, "kg"); assert.equal(row.purchaseUnitMapping.status, "known");
+    assert.equal(row.purchaseUnitMapping.sourceUnit, "KG"); assert.equal(row.baseUnit, "kg"); assert.equal(row.baseUnitsPerPurchaseUnit, 1);
+    assert.equal(row.packInference, null); assert.equal(row.pricePerBaseUnit, null); assert.equal(row.pricePerPurchaseUnit, null);
+    assert.equal(row.originalInput.baseUnit, "each"); assert.equal(row.originalInput.baseUnitsPerPurchaseUnit, 37);
+    assert.equal(codes(row).includes("split-package-content-unavailable"), false); assert.equal(candidate(row).category, "new");
+  }
+});
+test("kg prices are kept per physical mass and a gram catalog receives exactly 1000 g for each kg purchased", () => {
+  for (const [baseUnit, rate, content] of [["kg", 8, 1], ["g", 0.008, 1000]]) {
+    const normalized = normalizeMapped(fixture({ purchaseUnit: "KG", baseUnit, baseUnitsPerPurchaseUnit: 20, pricePerPurchaseUnit: 8 }, { price: 8, priceHeader: "Net price per kg", content: "1 ST" }));
+    assert.equal(normalized.purchaseUnit, "kg"); assert.equal(normalized.baseUnitsPerPurchaseUnit, content);
+    assert.equal(normalized.pricePerBaseUnit, rate); assert.equal(normalized.pricingModel, "Per Base Unit");
+    const product = candidate(normalized).product; assert.equal(product.pricePerPurchaseUnit, 8);
+    assert.equal(policy.calculateNetValue(2.5, product.pricePerPurchaseUnit), 20);
+  }
+});
+test("an explicit Unit price beside KG establishes a kilogram price, while annual spend never does", () => {
+  const row = normalizeMapped(fixture({ purchaseUnit: "KG", baseUnit: "kg", pricePerPurchaseUnit: 8 }, { price: 8, priceHeader: "Unit price", content: "1 ST" }));
+  assert.equal(row.pricePerBaseUnit, 8); assert.equal(row.pricingModel, "Per Base Unit");
+  const statistics = normalizeMapped(fixture({ purchaseUnit: "KG", baseUnit: "kg", pricePerPurchaseUnit: 1200 }, { amount: 1200, quantity: 100, content: "1 ST" }));
+  assert.equal(statistics.pricePerBaseUnit, null); assert.equal(statistics.pricePerPurchaseUnit, null);
+  assert.equal(statistics.baseUnitsPerPurchaseUnit, 1);
+});
+test("kilogram purchase measures never infer piece counts from a named inner weight", () => {
+  const row = normalizeMapped(fixture({ purchaseUnit: "KG", supplierProductName: "FICTIONAL PIECES 10G", baseUnit: "kg" }, { content: "1 ST" }));
+  assert.equal(row.baseUnitsPerPurchaseUnit, 1); assert.equal(row.packInference, null);
+  assert.equal(codes(row).includes("piece-count-inferred"), false);
+});
 test("a blank explicit package column never falls back to physical Eenheid or a provider guess", async () => {
   const row = normalizeMapped(await splitExport({ purchase: null, unit: "ST", raw: { purchaseUnit: "TR" } }), mappingSnapshot([{ sourceUnit: "ST", purchaseUnit: "Piece" }, { sourceUnit: "TR", purchaseUnit: "Tray" }]));
   assert.equal(row.purchaseUnit, null); assert.equal(row.purchaseUnitMapping.sourceUnit, null);
@@ -173,7 +205,7 @@ test("an explicit source purchase-unit price stays available behind mapping revi
   }
 });
 test("explicit prices per canonical Bucket, Tray and all supported English packages retain the purchase-price contract", () => {
-  for (const purchaseUnit of require("./supplierImportMappings").PURCHASE_UNITS) {
+  for (const purchaseUnit of require("./supplierImportMappings").PURCHASE_UNITS.filter((unit) => unit !== "kg")) {
     const normalized = normalizeMapped(fixture({ purchaseUnit, pricePerPurchaseUnit: 6 }, { price: 6, priceHeader: `Net price per ${purchaseUnit}`, content: "400 GR" }));
     assert.equal(normalized.pricePerPurchaseUnit, 6, purchaseUnit); assert.equal(normalized.pricingModel, "Per Purchase Unit");
     assert.equal(normalized.baseUnitsPerPurchaseUnit, 400); assert.equal(normalized.purchaseUnitMapping.status, "known");

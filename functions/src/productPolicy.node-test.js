@@ -6,6 +6,31 @@ const catalog = (patch = {}) => ({ id: "milk", name: "Milk", baseUnit: "l", inve
 const supplier = (patch = {}) => ({ supplierId: "dairy", supplierSku: "MILK-6", supplierProductName: "Milk six pack", currency: "EUR",
   pricingModel: "Per Purchase Unit", pricePerBaseUnit: null, pricePerPurchaseUnit: 12, purchaseUnit: "Case of six", baseUnit: "l",
   baseUnitsPerPurchaseUnit: 6, catalogProductId: "milk", active: true, priceBasis: "net", vatRate: null, purchaseOptions: [], ...patch });
+test("kg purchase measures support fractional orders, exact mass inventory and net goods value", () => {
+  for (const [baseUnit, amount] of [["kg", 1], ["g", 1000]]) {
+    const product = policy.normalizeSupplierProduct(supplier({ purchaseUnit: "KG", baseUnit, baseUnitsPerPurchaseUnit: amount, pricePerPurchaseUnit: 8 }));
+    assert.equal(product.purchaseUnit, "kg"); const option = policy.resolvePurchaseOption(product);
+    const terms = policy.inventoryTerms(product, catalog({ baseUnit: "g" }), option);
+    assert.equal(terms.available, true); assert.equal(terms.catalogUnitsPerPurchaseUnit, 1000); assert.equal(terms.netUnitCost, 0.008);
+    assert.equal(policy.multiplyQuantities(2.5, terms.catalogUnitsPerPurchaseUnit), 2500);
+    assert.equal(policy.calculateNetValue(2.5, option.netPricePerPurchaseUnit), 20);
+  }
+});
+test("kg guards reject false piece, volume and package-size conversions at save and order boundaries", () => {
+  for (const [baseUnit, amount] of [["each", 1], ["l", 1], ["g", 1], ["kg", 2]]) {
+    const invalid = supplier({ purchaseUnit: "kg", baseUnit, baseUnitsPerPurchaseUnit: amount });
+    assert.throws(() => policy.normalizeSupplierProduct(invalid), /kg purchase unit/);
+    assert.throws(() => policy.resolvePurchaseOption(invalid), /kg purchase unit/);
+  }
+  assert.equal(policy.measuredPurchaseContent("__proto__", "kg"), null);
+  assert.equal(policy.measuredPurchaseContent("constructor", "kg"), null);
+});
+test("additional kg options inherit a compatible mass unit and cannot redefine one kilogram", () => {
+  const extra = { id: "by-weight", purchaseUnit: "kg", baseUnitsPerPurchaseUnit: 1000, pricePerPurchaseUnit: 8 };
+  const product = policy.normalizeSupplierProduct(supplier({ purchaseUnit: "Box", baseUnit: "g", baseUnitsPerPurchaseUnit: 5000, purchaseOptions: [extra] }));
+  assert.equal(policy.resolvePurchaseOption(product, "by-weight").baseUnitsPerPurchaseUnit, 1000);
+  assert.throws(() => policy.normalizeSupplierProduct(supplier({ purchaseUnit: "Box", baseUnit: "g", baseUnitsPerPurchaseUnit: 5000, purchaseOptions: [{ ...extra, baseUnitsPerPurchaseUnit: 5 }] })), /exactly 1 kg/);
+});
 
 test("supplier images are upload-only and external URL fields cannot enter the public schema", () => {
   assert.equal(Object.hasOwn(policy.normalizeSupplierProduct(supplier()), "imageUrl"), false);
