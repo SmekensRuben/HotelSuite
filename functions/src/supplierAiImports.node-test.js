@@ -2,7 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { SAAS_RULES_VERSION } = require("./saasRollout");
 const { DEFAULT_AI_CONFIGURATION } = require("./supplierAiPolicy");
-const { uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob, normalizeMonth, supplierProductAiImportHandler, cleanupSupplierAiSourcesHandler, publicJob, publicImportError } = require("./supplierAiImports");
+const { digest } = require("./validation");
+const { uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob, normalizeMonth, supplierProductAiImportHandler, cleanupSupplierAiSourcesHandler, publicJob, publicImportError, parseImportSettings } = require("./supplierAiImports");
 function memoryDatabase(initial = {}) {
   const records = new Map(Object.entries(initial)); let serial = Promise.resolve();
   const snapshot = (path) => ({ id: path.split("/").at(-1), exists: records.has(path), data: () => records.get(path), ref: db.doc(path) });
@@ -27,7 +28,7 @@ function memoryDatabase(initial = {}) {
     runTransaction(fn) {
       const run = serial.then(async () => {
         const writes = [];
-        const tx = { get: async (ref) => { assert.equal(writes.length, 0, "Firestore reads must precede writes"); return snapshot(ref.path); },
+        const tx = { get: async (ref) => { assert.equal(writes.length, 0, "Firestore reads must precede writes"); return ref.path === undefined ? ref.get() : snapshot(ref.path); },
           create: (ref, data) => { assert.equal(records.has(ref.path), false); writes.push([ref.path, data, true]); },
           update: (ref, data) => { assert.equal(records.has(ref.path), true); writes.push([ref.path, data, false]); },
           set: (ref, data) => writes.push([ref.path, data, true]) };
@@ -51,7 +52,8 @@ function memoryBucket() {
   return bucket;
 }
 const request = () => ({ auth: { uid: "buyer", token: { email_verified: true, auth_time: 9999 } } });
-const data = (patch = {}) => ({ hotelUid: "hotel-a", supplierId: "dairy", requestId: "import-one", fileName: "supplier.csv", mimeType: "text/csv", ...patch });
+const importSettings = (patch = {}) => ({ policyVersion: 2, priceBasis: "net", currency: "EUR", vatRate: null, ...patch });
+const data = (patch = {}) => ({ hotelUid: "hotel-a", supplierId: "dairy", requestId: "import-one", fileName: "supplier.csv", mimeType: "text/csv", importSettings: JSON.stringify(importSettings()), ...patch });
 const bytes = Buffer.from("SKU,Name\n001,Milk\n");
 const response = (patch = {}) => ({ id: "fictional-response", model: "gpt-6-luna", status: "completed",
   usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30, output_tokens_details: { reasoning_tokens: 5 } },
@@ -59,7 +61,7 @@ const response = (patch = {}) => ({ id: "fictional-response", model: "gpt-6-luna
 function fixture(configuration = {}) {
   let now = Date.parse("2026-10-13T19:02:10.000Z");
   const firestore = memoryDatabase({
-    "hotels/hotel-a": { hotelName: "Fictional hotel" },
+    "hotels/hotel-a": { hotelName: "Fictional hotel", currency: "EUR" },
     "platformConfiguration/saasProcurement": { enabled: true, rulesVersion: SAAS_RULES_VERSION },
     "platformConfiguration/aiSupplierProductImport": { ...DEFAULT_AI_CONFIGURATION, enabled: true, ...configuration },
     "hotels/hotel-a/members/buyer": { permissions: ["supplierproducts.read", "supplierproducts.create", "supplierproducts.update"] },
@@ -67,19 +69,36 @@ function fixture(configuration = {}) {
     "hotels/hotel-a/suppliers/dairy": { supplierName: "Fictional dairy" },
   });
   const identity = { uid: "buyer", disabled: false, emailVerified: true };
-  const calls = { count: 0, response: 0, reconcile: 0 };
+  const calls = { count: 0, response: 0, reconcile: 0, normalize: 0 };
   const source = { units: [{ sourceId: "row-1", anchor: "Row 1", text: "001 Milk" }], warnings: [{ code: "CHECK_PACKAGE", message: "Check package content" }] };
   const services = { firestore, bucket: memoryBucket(), identity, calls, now: () => now, advance: (milliseconds) => { now += milliseconds; },
     auth: { getUser: async () => identity, verifyIdToken: async () => ({ uid: "buyer", email_verified: true, auth_time: 9999 }) },
     extractSource: async () => source, splitSource: async () => [source],
     schema: { type: "object", properties: { rows: { type: "array", items: { type: "object" } } }, required: ["rows"], additionalProperties: false },
     validateRows: (payload) => payload.rows,
+    normalizeRow: (row) => { calls.normalize++; return row; },
     reconcileRows: async ({ rows }) => { calls.reconcile++; return { counts: { new: rows.length, changed: 0, blocked: 0, unchanged: 0 }, totalRows: rows.length, complete: true }; },
     provider: { countInput: async () => { calls.count++; return 10; }, respond: async () => { calls.response++; return response(); } } };
   return services;
 }
 const jobOf = (s, id) => s.firestore.records.get(`hotels/hotel-a/supplierAiImportJobs/${id}`);
 const monthOf = (s) => s.firestore.records.get("hotels/hotel-a/aiUsageMonths/2026-10");
+async function legacyUploaded(s) {
+  const uploaded = await uploadSupplierAiImport(request(), data(), bytes, s);
+  const old = jobOf(s, uploaded.jobId), fingerprint = digest(old.supplierId, old.fileName, old.mimeType, old.sha256);
+  const jobId = digest(old.hotelUid, old.requestId, old.ownerUid, fingerprint);
+  const legacy = { ...old, jobId, fingerprint, source: { ...old.source, path: `private/supplier-ai-imports/hotel-a/${jobId}/source` } };
+  delete legacy.importSettings; delete legacy.importPolicyVersion;
+  s.bucket.objects.set(legacy.source.path, s.bucket.objects.get(old.source.path)); s.bucket.objects.delete(old.source.path);
+  s.firestore.records.delete(`hotels/hotel-a/supplierAiImportJobs/${uploaded.jobId}`);
+  s.firestore.records.set(`hotels/hotel-a/supplierAiImportJobs/${jobId}`, legacy);
+  const receipt = { ...s.firestore.records.get("hotels/hotel-a/supplierAiImportRequests/import-one"), jobId, fingerprint };
+  delete receipt.importSettings; delete receipt.importPolicyVersion;
+  s.firestore.records.set("hotels/hotel-a/supplierAiImportRequests/import-one", receipt);
+  s.firestore.records.delete(`hotels/hotel-a/supplierAiImportWork/${uploaded.jobId}`);
+  s.firestore.records.set(`hotels/hotel-a/supplierAiImportWork/${jobId}`, { hotelUid: "hotel-a", jobId });
+  return publicJob(legacy);
+}
 function assertCustomerPrivacy(value) {
   const serialized = JSON.stringify(value);
   assert.doesNotMatch(serialized, /"(?:usage|configuration|model|fallbackModel|fallbackEnabled|inputTokens|outputTokens|reasoningTokens|priceVersion|actualCostUsd|knownCostUsd|reservedCostUsd|knownCostMicros|reservedCostMicros|limitUsd|maxCostPerImportUsd|maxMonthlyCostPerHotelUsd)"/);
@@ -104,7 +123,7 @@ test("normal hotel buyer creates an isolated job, receives complete review and s
 test("customer availability and job DTOs cannot serialize operator accounting or provider configuration", async () => {
   const s = fixture();
   const availability = await readSupplierAiImport(request(), { hotelUid: "hotel-a" }, s);
-  assert.deepEqual(availability, { available: true, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 } });
+  assert.deepEqual(availability, { available: true, importPolicyVersion: 2, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 }, defaults: { currency: "EUR" } });
   assertCustomerPrivacy(availability);
   const created = await uploadSupplierAiImport(request(), data(), bytes, s);
   const stored = jobOf(s, created.jobId);
@@ -118,6 +137,175 @@ test("customer availability and job DTOs cannot serialize operator accounting or
   assert.equal(stored.configuration.maxCostPerImportUsd, 0.25, "Public projection must not erase the private budget");
   assert.equal(publicJob({ ...stored, counts: { new: 1 }, totalRows: 1 }).counts, null, "Missing counts must not become false zeroes");
   assert.equal(publicJob({ ...stored, counts: { new: 1, changed: 0, unchanged: 0, blocked: 0 }, totalRows: 2 }).counts, null, "Inconsistent counts stay unavailable");
+});
+test("new imports require explicit closed business settings before reserving quota or saving sources", async () => {
+  const invalid = [undefined, "", "{", "null", "[]", "x".repeat(1025), JSON.stringify(importSettings({ policyVersion: 1 })),
+    JSON.stringify(importSettings({ priceBasis: "" })), JSON.stringify(importSettings({ priceBasis: null })),
+    JSON.stringify(importSettings({ currency: "eur" })), JSON.stringify(importSettings({ currency: "ZZZ" })),
+    JSON.stringify(importSettings({ currency: " EUR" })), JSON.stringify(importSettings({ currency: null })),
+    JSON.stringify(importSettings({ vatRate: "0.21" })), JSON.stringify(importSettings({ vatRate: -0.01 })),
+    JSON.stringify(importSettings({ vatRate: 21 })), JSON.stringify(importSettings({ vatRate: 0.1234567 })), JSON.stringify(importSettings({ vatRate: 0.055999999999999994 })),
+    JSON.stringify(importSettings({ model: "gpt-fictional" })),
+    JSON.stringify({ policyVersion: 2, priceBasis: "net", currency: "EUR" })];
+  for (const settings of invalid) {
+    const s = fixture();
+    await assert.rejects(uploadSupplierAiImport(request(), data({ importSettings: settings }), bytes, s), { code: "invalid-argument" });
+    assert.equal(s.bucket.objects.size, 0); assert.equal(s.calls.count, 0); assert.equal(s.calls.response, 0);
+    assert.equal(monthOf(s), undefined); assert.equal(s.firestore.records.has("hotels/hotel-a/aiImportAdministration/state"), false);
+    assert.equal([...s.firestore.records.keys()].some((path) => path.includes("supplierAiImportRequests")), false);
+  }
+  assert.deepEqual(parseImportSettings(JSON.stringify({ vatRate: 0, currency: "USD", priceBasis: "unknown", policyVersion: 2 })),
+    importSettings({ vatRate: 0, currency: "USD", priceBasis: "unknown" }));
+});
+test("business settings are an immutable replay contract including key-order independent canonicalization", async () => {
+  const s = fixture();
+  const created = await uploadSupplierAiImport(request(), data(), bytes, s);
+  const saved = jobOf(s, created.jobId); assert.equal(saved.importPolicyVersion, 2); assert.deepEqual(saved.importSettings, importSettings());
+  assert.deepEqual(created.importSettings, importSettings()); assertCustomerPrivacy(created);
+  const reordered = JSON.stringify({ vatRate: null, currency: "EUR", priceBasis: "net", policyVersion: 2 });
+  assert.equal((await uploadSupplierAiImport(request(), data({ importSettings: reordered }), bytes, s)).jobId, created.jobId);
+  const recordCount = s.firestore.records.size;
+  for (const settings of [importSettings({ currency: "USD" }), importSettings({ priceBasis: "gross" }), importSettings({ vatRate: 0.21 })]) {
+    await assert.rejects(uploadSupplierAiImport(request(), data({ importSettings: JSON.stringify(settings) }), bytes, s), { code: "already-exists" });
+  }
+  assert.equal(s.firestore.records.size, recordCount); assert.equal(monthOf(s).importsStarted, 1); assert.equal(s.bucket.objects.size, 1);
+  assert.deepEqual(jobOf(s, created.jobId).importSettings, importSettings());
+});
+test("changed settings after an uncertain response cannot initiate a second charged import", async () => {
+  const s = fixture(); s.provider.respond = async () => { s.calls.response++; throw Error("Lost acknowledgement after send"); };
+  const original = await uploadSupplierAiImport(request(), data(), bytes, s);
+  await runSupplierAiImportJob("hotel-a", original.jobId, s);
+  const reservation = monthOf(s).reservedCostMicros;
+  await assert.rejects(uploadSupplierAiImport(request(), data({ importSettings: JSON.stringify(importSettings({ priceBasis: "gross" })) }), bytes, s), { code: "already-exists" });
+  const replay = await uploadSupplierAiImport(request(), data(), bytes, s);
+  assert.equal(replay.jobId, original.jobId); assert.equal(replay.status, "response_unknown"); assert.deepEqual(replay.importSettings, importSettings());
+  assert.equal(s.calls.response, 1); assert.equal(monthOf(s).reservedCostMicros, reservation); assert.equal(monthOf(s).importsStarted, 1); assertCustomerPrivacy(replay);
+});
+test("hotel currency is a verified suggestion, never an invented default or data from another hotel", async () => {
+  const s = fixture(); s.firestore.records.set("hotels/hotel-b", { currency: "GBP" });
+  assert.equal((await readSupplierAiImport(request(), { hotelUid: "hotel-a" }, s)).defaults.currency, "EUR");
+  await assert.rejects(readSupplierAiImport(request(), { hotelUid: "hotel-b" }, s), { code: "permission-denied" });
+  s.firestore.records.set("hotels/hotel-a/settings/bootstrap", { currency: "USD" });
+  assert.equal((await readSupplierAiImport(request(), { hotelUid: "hotel-a" }, s)).defaults.currency, null);
+  s.firestore.records.delete("hotels/hotel-a/settings/bootstrap");
+  for (const currency of [undefined, null, "", "eur", "ZZZ", "EUR "]) {
+    s.firestore.records.set("hotels/hotel-a", { currency });
+    assert.equal((await readSupplierAiImport(request(), { hotelUid: "hotel-a" }, s)).defaults.currency, null);
+  }
+  const originalDoc = s.firestore.doc;
+  s.firestore.records.set("hotels/hotel-a", { currency: "EUR" });
+  s.firestore.doc = (path) => {
+    const ref = originalDoc(path);
+    return { ...ref, get: async () => { const value = await ref.get(); if (path === "hotels/hotel-a") s.identity.disabled = true; return value; } };
+  };
+  await assert.rejects(readSupplierAiImport(request(), { hotelUid: "hotel-a" }, s), { code: "permission-denied" });
+});
+test("normalization runs only after source validation and is frozen in the confirmed private response", async () => {
+  const s = fixture({ maxOutputTokens: 512 }); let checked = false;
+  s.validateRows = (payload) => { checked = true; return payload.rows.map((row) => ({ ...row, sourceAnchors: [{ sourceId: "row-1", quote: "Milk", verified: true }] })); };
+  s.normalizeRow = (row, context) => {
+    assert.equal(checked, true); assert.equal(row.sourceAnchors[0].verified, true); assert.deepEqual(context.importSettings, importSettings());
+    assert.equal(context.sourceUnits[0].sourceId, "row-1"); s.calls.normalize++;
+    return { ...row, normalizationVersion: 2, normalizationFindings: [], originalInput: { supplierProductName: row.supplierProductName } };
+  };
+  const created = await uploadSupplierAiImport(request(), data(), bytes, s);
+  assert.equal((await runSupplierAiImportJob("hotel-a", created.jobId, s)).status, "review");
+  const receipt = s.firestore.records.get(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}/attempts/chunk-0000`);
+  const confirmed = JSON.parse(s.bucket.objects.get(receipt.result.path).bytes.toString("utf8"));
+  assert.equal(confirmed[0].normalizationVersion, 2); assert.equal(confirmed[0].originalInput.supplierProductName, "Milk");
+  assert.equal(s.calls.normalize, 1); await runSupplierAiImportJob("hotel-a", created.jobId, s);
+  assert.equal(s.calls.response, 1); assert.equal(s.calls.normalize, 1);
+});
+test("the real worker pipeline validates, normalizes, reconciles and freezes policy 2 products with one paid request", async () => {
+  const s = fixture();
+  for (const override of ["schema", "validateRows", "normalizeRow", "extractSource", "splitSource", "reconcileRows"]) delete s[override];
+  const source = Buffer.from("SKU,Name,Net price per Pack,Currency,Price basis,Purchase unit,Package content\nMEEL400,MEEL TARWE 400 GR,2.40,EUR,net,PK,400 GR\n");
+  let sentSchema;
+  s.provider.respond = async (body) => {
+    s.calls.response++; sentSchema = body.text.format.schema;
+    const supplied = JSON.parse(body.input[0].content[0].text), unit = supplied.units.find((row) => row.text.includes("MEEL400"));
+    assert.ok(unit, "Real extraction must send the complete supplier source row");
+    const row = { supplierSku: "MEEL400", supplierProductName: "MEEL TARWE 400 GR", currency: "EUR", pricingModel: "Per Purchase Unit", purchaseUnit: "PK", baseUnit: "g",
+      priceBasis: "net", gtin: null, priceValidFrom: null, priceValidUntil: null, pricePerBaseUnit: null, pricePerPurchaseUnit: 2.4,
+      baseUnitsPerPurchaseUnit: 400, vatRate: null, sourceAnchors: [{ sourceId: unit.sourceId, quote: "MEEL TARWE 400 GR" }] };
+    s.advance(370000); // Force the real reconciliation to continue in another work invocation.
+    return response({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ rows: [row] }) }] }] });
+  };
+  const created = await uploadSupplierAiImport(request(), data(), source, s);
+  assert.deepEqual(await runSupplierAiImportJob("hotel-a", created.jobId, s), { queued: true });
+  const receiptPath = `hotels/hotel-a/supplierAiImportJobs/${created.jobId}/attempts/chunk-0000`, receipt = s.firestore.records.get(receiptPath);
+  const pinnedReceipt = { ...receipt }, pinnedBytes = Buffer.from(s.bucket.objects.get(receipt.result.path).bytes);
+  assert.equal(jobOf(s, created.jobId).reconciliation.nextRowIndex, 0); assert.equal(s.calls.response, 1);
+  const ready = await runSupplierAiImportJob("hotel-a", created.jobId, s);
+  assert.equal(ready.status, "review", JSON.stringify(ready)); assert.equal(ready.summary.version, 2); assert.equal(ready.summary.totalRows, 1);
+  assert.equal(ready.summary.normalizedRows, 1); assert.equal(ready.summary.unknownPriceRows, 0); assertCustomerPrivacy(ready);
+  assert.deepEqual(sentSchema, require("./supplierAiProposal").AI_SUPPLIER_SCHEMA_V2);
+  const confirmed = JSON.parse(s.bucket.objects.get(receipt.result.path).bytes.toString("utf8"))[0];
+  assert.equal(confirmed.purchaseUnit, "Pack"); assert.equal(confirmed.baseUnit, "g"); assert.equal(confirmed.baseUnitsPerPurchaseUnit, 400);
+  assert.equal(confirmed.supplierProductName, "Meel Tarwe 400 g"); assert.equal(confirmed.pricePerPurchaseUnit, 2.4);
+  assert.equal(confirmed.sourceAnchors[0].verified, true); assert.equal(confirmed.normalizationVersion, 2);
+  assert.equal(confirmed.originalInput.supplierProductName, "MEEL TARWE 400 GR");
+  const reviewRow = s.firestore.records.get(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}/rows/r-000001`);
+  assert.equal(reviewRow.product.purchaseUnit, "Pack"); assert.equal(reviewRow.product.baseUnitsPerPurchaseUnit, 400);
+  assert.equal(reviewRow.product.pricePerPurchaseUnit, 2.4); assert.equal(reviewRow.category, "new");
+  assert.deepEqual(await runSupplierAiImportJob("hotel-a", created.jobId, s), { ignored: true });
+  assert.equal(s.calls.response, 1); assert.equal(s.calls.count, 1); assert.deepEqual(s.firestore.records.get(receiptPath), pinnedReceipt);
+  assert.deepEqual(s.bucket.objects.get(receipt.result.path).bytes, pinnedBytes); assert.equal(monthOf(s).attemptedCalls, 1);
+});
+test("legacy queued and historical jobs keep their original source interpretation and unavailable summary", async () => {
+  const s = fixture(); const created = await legacyUploaded(s);
+  const stored = jobOf(s, created.jobId);
+  const originalFingerprint = stored.fingerprint;
+  const result = await runSupplierAiImportJob("hotel-a", created.jobId, s);
+  assert.equal(result.status, "review"); assert.equal(result.importSettings, null); assert.equal(result.summary, null); assert.equal(s.calls.normalize, 0);
+  assert.equal(jobOf(s, created.jobId).fingerprint, originalFingerprint);
+  const receipt = s.firestore.records.get(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}/attempts/chunk-0000`);
+  assert.equal(JSON.parse(s.bucket.objects.get(receipt.result.path).bytes.toString("utf8"))[0].normalizationVersion, undefined);
+  const read = await readSupplierAiImport(request(), { hotelUid: "hotel-a", jobId: created.jobId }, s);
+  assert.equal(read.importSettings, null); assert.equal(read.summary, null); assertCustomerPrivacy(read); assert.equal(s.calls.response, 1);
+});
+test("legacy lost acknowledgements recover only the owned original receipt without creating a new import", async () => {
+  const s = fixture(); const original = await legacyUploaded(s);
+  s.provider.respond = async () => { s.calls.response++; throw Error("Lost paid response"); };
+  await runSupplierAiImportJob("hotel-a", original.jobId, s);
+  const fingerprint = jobOf(s, original.jobId).fingerprint, reservation = monthOf(s).reservedCostMicros;
+  const replay = await uploadSupplierAiImport(request(), data({ importSettings: undefined }), bytes, s);
+  assert.equal(replay.jobId, original.jobId); assert.equal(replay.status, "response_unknown"); assert.equal(replay.importSettings, null); assert.equal(replay.summary, null);
+  assert.equal(jobOf(s, original.jobId).fingerprint, fingerprint); assert.equal(s.calls.response, 1); assert.equal(s.calls.normalize, 0);
+  assert.equal(monthOf(s).reservedCostMicros, reservation); assert.equal(monthOf(s).importsStarted, 1); assertCustomerPrivacy(replay);
+  await assert.rejects(uploadSupplierAiImport(request(), data({ importSettings: undefined, requestId: "new-legacy" }), bytes, s), { code: "invalid-argument" });
+  await assert.rejects(uploadSupplierAiImport(request(), data({ importSettings: undefined }), Buffer.from("different source"), s), { code: "already-exists" });
+  await assert.rejects(uploadSupplierAiImport(request(), data(), bytes, s), { code: "already-exists" });
+  await assert.rejects(uploadSupplierAiImport({ auth: { ...request().auth, uid: "another-buyer" } }, data({ importSettings: undefined }), bytes, s), { code: "permission-denied" });
+  assert.equal(monthOf(s).importsStarted, 1); assert.equal(s.calls.response, 1);
+});
+test("legacy unfinished uploads finalize their original business policy rather than taking new defaults", async () => {
+  const s = fixture(), original = await legacyUploaded(s);
+  s.firestore.records.delete(`hotels/hotel-a/supplierAiImportJobs/${original.jobId}`);
+  s.firestore.records.delete(`hotels/hotel-a/supplierAiImportWork/${original.jobId}`);
+  const resumed = await uploadSupplierAiImport(request(), data({ importSettings: undefined }), bytes, s);
+  assert.equal(resumed.jobId, original.jobId); assert.equal(resumed.status, "queued"); assert.equal(resumed.importSettings, null); assert.equal(resumed.summary, null);
+  assert.equal(monthOf(s).importsStarted, 1); assert.equal(monthOf(s).activeJobs, 1); assert.equal(s.bucket.objects.size, 1);
+  assert.equal(jobOf(s, original.jobId).importPolicyVersion, undefined); assert.equal(s.calls.response, 0);
+});
+test("public normalization summaries are complete typed business data and never guessed for old or corrupt jobs", async () => {
+  const s = fixture(), created = await uploadSupplierAiImport(request(), data(), bytes, s), stored = jobOf(s, created.jobId);
+  const summary = { version: 2, totalRows: 1, normalizedRows: 1, assumptionRows: 1, unknownPriceRows: 1, blockedNormalizationRows: 0,
+    inferredPieceRows: 0, missingRequiredRows: 1, knownCostMicros: 999,
+    findings: [{ field: "priceBasis", code: "basis-from-import-context", severity: "warning", message: "Net purchase pricing was chosen for the source.", count: 1, rowIds: ["r-000001"], model: "private-provider" }] };
+  stored.totalRows = 1; stored.summary = summary;
+  const result = publicJob(stored); assertCustomerPrivacy(result);
+  assert.equal(result.summary.unknownPriceRows, 1); assert.equal(result.summary.findings[0].field, "priceBasis");
+  assert.equal(result.summary.knownCostMicros, undefined); assert.equal(result.summary.findings[0].model, undefined);
+  assert.equal(publicJob({ ...stored, summary: { ...summary, missingRequiredRows: undefined } }).summary, null);
+  assert.equal(publicJob({ ...stored, summary: { ...summary, assumptionRows: 2 } }).summary, null);
+  assert.equal(publicJob({ ...stored, summary: { ...summary, findings: [{ ...summary.findings[0], rowIds: ["forged"] }] } }).summary, null);
+  assert.equal(publicJob({ ...stored, importPolicyVersion: 1, importSettings: undefined }).summary, null);
+  const injected = publicJob({ ...stored, summary: { ...summary, findings: [{ ...summary.findings[0], message: "Estimated AI API cost $0.0082 with secret paid token usage" },
+    { ...summary.findings[0], field: "knownCostUsd", code: "provider-cost", message: "The provider model charged $0.0001" }] } });
+  assertCustomerPrivacy(injected); assert.doesNotMatch(JSON.stringify(injected), /0\.0082|0\.0001|provider-cost|paid token|knownCostUsd/);
+  assert.equal(injected.summary.findings[0].code, "basis-from-import-context");
+  assert.equal(injected.summary.findings[1].code, "review-notice");
 });
 test("HTTP errors never reveal private budget, model settings, provider details or arbitrary exception text", async () => {
   const s = fixture();
@@ -250,11 +438,15 @@ test("maintenance releases orphan/stranded jobs and erases expired source plus p
   const s = fixture(), created = await uploadSupplierAiImport(request(), data(), bytes, s);
   await runSupplierAiImportJob("hotel-a", created.jobId, s);
   s.firestore.records.set(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}/rows/row-1`, { raw: "private supplier source", sourceAnchors: [{ quote: "private supplier source" }] });
+  jobOf(s, created.jobId).summary = { version: 2, totalRows: 1, findings: [{ message: "Private source-derived finding" }] };
+  jobOf(s, created.jobId).reconciliation = { fingerprint: "retained source fingerprint", groups: [{ message: "Private source-derived finding" }] };
   s.advance(8 * 86400000);
   const result = await cleanupSupplierAiSourcesHandler({}, s);
   assert.equal(result.checked, 1); assert.equal(result.deleted, 2); assert.equal(s.bucket.objects.size, 0);
   assert.equal(s.firestore.records.has(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}/rows/row-1`), false);
   assert.equal(jobOf(s, created.jobId).source, undefined);
+  assert.equal(jobOf(s, created.jobId).summary, undefined); assert.equal(jobOf(s, created.jobId).reconciliation, undefined);
+  assert.equal(publicJob(jobOf(s, created.jobId)).summary, null, "Expired source-derived findings must never become false empty totals");
   assert.equal(monthOf(s).knownCostMicros, 12);
   assert.ok(s.firestore.records.has(`hotels/hotel-a/supplierAiImportJobs/${created.jobId}/attempts/chunk-0000`));
   assert.ok(s.firestore.records.has("hotels/hotel-a/supplierAiImportRequests/import-one"));

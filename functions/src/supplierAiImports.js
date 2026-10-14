@@ -7,10 +7,14 @@ const { requireHotelPermission } = require("./authorization");
 const { requireSaasRollout } = require("./saasRollout");
 const { requireDocumentId } = require("./subscriptions");
 const { digest } = require("./validation");
+const { decimal } = require("./productPolicy");
 const { AI_POLICY_VERSION, PRICE_VERSION, MAX_SOURCE_BYTES, SOURCE_RETENTION_MS, loadSupplierAiConfiguration,
   inputReservationTokens, costMicros, normalizedProviderUsage, boundedResponseText } = require("./supplierAiPolicy");
 const { createSupplierAiRequest, createSupplierAiProvider } = require("./supplierAiProvider");
 const prefix = "private/supplier-ai-imports", LEASE_MS = 600000;
+const IMPORT_POLICY_VERSION = 2;
+const IMPORT_SETTING_FIELDS = ["policyVersion", "priceBasis", "currency", "vatRate"];
+const currencyCodes = new Set(Intl.supportedValuesOf("currency"));
 const HTTP_STATUS = { unauthenticated: 401, "permission-denied": 403, "not-found": 404, "invalid-argument": 400,
   "failed-precondition": 409, "resource-exhausted": 429, "already-exists": 409, aborted: 409, unavailable: 503 };
 const TERMINAL = new Set(["review", "failed", "response_unknown", "committed"]);
@@ -25,6 +29,114 @@ function strictId(value, field) {
 function validGeneration(value) {
   if (typeof value !== "string" || !/^\d{1,30}$/.test(value)) throw new HttpsError("failed-precondition", "The import source generation is unavailable.");
   return value;
+}
+function validateImportSettings(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype
+    || Object.keys(value).length !== IMPORT_SETTING_FIELDS.length || IMPORT_SETTING_FIELDS.some((field) => !Object.hasOwn(value, field))
+    || Object.keys(value).some((field) => !IMPORT_SETTING_FIELDS.includes(field))) throw new HttpsError("invalid-argument", "Choose the import price basis, currency and optional VAT rate before uploading.");
+  if (value.policyVersion !== IMPORT_POLICY_VERSION) throw new HttpsError("invalid-argument", "Refresh the import form before uploading.");
+  if (!["net", "gross", "unknown"].includes(value.priceBasis)) throw new HttpsError("invalid-argument", "Choose net, gross or explicitly unknown source pricing.");
+  if (typeof value.currency !== "string" || !/^[A-Z]{3}$/.test(value.currency) || !currencyCodes.has(value.currency)) throw new HttpsError("invalid-argument", "Choose a supported ISO currency for this import.");
+  if (value.vatRate !== null && (typeof value.vatRate !== "number" || !Number.isFinite(value.vatRate) || value.vatRate < 0 || value.vatRate > 1)) throw new HttpsError("invalid-argument", "Choose an explicit VAT fraction between zero and one, or leave VAT unknown.");
+  let vatRate = null;
+  try { if (value.vatRate !== null) vatRate = decimal(value.vatRate, "VAT rate", { maximum: 1 }); }
+  catch { throw new HttpsError("invalid-argument", "Choose a VAT fraction with at most six decimal places, or leave VAT unknown."); }
+  return { policyVersion: IMPORT_POLICY_VERSION, priceBasis: value.priceBasis, currency: value.currency, vatRate };
+}
+function parseImportSettings(value) {
+  if (typeof value !== "string" || value.length > 1024 || !value.trim()) throw new HttpsError("invalid-argument", "Choose the import price basis, currency and optional VAT rate before uploading.");
+  let parsed;
+  try { parsed = JSON.parse(value); } catch { throw new HttpsError("invalid-argument", "The import settings could not be read. Refresh the import form."); }
+  return validateImportSettings(parsed);
+}
+function settingsForJob(job) {
+  if (job.importPolicyVersion === undefined || job.importPolicyVersion === 1) {
+    if (job.importSettings !== undefined) throw new HttpsError("failed-precondition", "This import has inconsistent saved business settings. Start a new import.");
+    return undefined;
+  }
+  if (job.importPolicyVersion !== IMPORT_POLICY_VERSION) throw new HttpsError("failed-precondition", "This import uses an unsupported business policy. Start a new import.");
+  return validateImportSettings(job.importSettings);
+}
+function publicImportSettings(job) {
+  try { return settingsForJob(job) || null; } catch { return null; }
+}
+const SUMMARY_COUNT_FIELDS = ["normalizedRows", "assumptionRows", "unknownPriceRows", "blockedNormalizationRows", "inferredPieceRows", "missingRequiredRows"];
+const SUMMARY_BUSINESS_FIELDS = new Set(["supplierSku", "supplierProductName", "currency", "pricingModel", "purchaseUnit", "baseUnit", "priceBasis", "gtin", "priceValidFrom", "priceValidUntil",
+  "pricePerBaseUnit", "pricePerPurchaseUnit", "baseUnitsPerPurchaseUnit", "vatRate", "price", "contract", "active", "supplierId", "catalogProductId", "sourceAnchors", "packInference", "purchaseOptions"]);
+const SUMMARY_BUSINESS_MESSAGES = Object.freeze({
+  "approved-name-expansion": "An approved product abbreviation was expanded. Confirm the product identity.",
+  "display-name-normalized": "Display words and SI labels were standardized; supplier SKU and GTIN were preserved.",
+  "purchase-label-normalized": "The purchase-package label was standardized without creating another purchase option.",
+  "base-unit-normalized": "The source unit was mapped to a supported physical unit without changing its dimension.",
+  "unsupported-source-unit": "The source unit is unsupported or ambiguous. Choose a supported unit before confirmation.",
+  "currency-normalized": "The explicit source currency was standardized to uppercase.",
+  "currency-from-import-context": "Missing currency uses the selected import currency. Existing unpriced offers keep their prior financial terms.",
+  "currency-context-conflict": "The source currency differs from the selected import currency. Review the contract before confirmation.",
+  "price-basis-normalized": "The explicit source price basis was standardized.",
+  "basis-from-import-context": "Missing source price basis uses the selected import context. Existing unpriced offers keep their prior financial terms.",
+  "basis-context-conflict": "The source price basis differs from the selected import context. Review the contract before confirmation.",
+  "vat-from-import-context": "Missing source VAT uses the selected VAT fraction. Confirm that this rate applies to the product.",
+  "source-vat-retained": "Explicit source VAT takes precedence over the optional import VAT. Confirm that the document rate applies.",
+  "statistical-amount-not-price": "A quantity, spend or statistical amount cannot establish a supplier unit price. The proposed price remains unknown.",
+  "unit-price-unverified": "The proposed unit price cannot be established from a source price field. It remains unknown until reviewed.",
+  "source-unit-price": "The unit price matches a source price field. Review its currency, tax and validity.",
+  "visual-unit-price-unverified": "The visual source price needs review of its price channel, tax and validity.",
+  "unsupported-pricing-model": "Choose a supported product pricing model before confirmation.",
+  "pricing-model-from-channel": "The product pricing model follows the explicit source price channel.",
+  "ambiguous-price-channel": "Both price channels were supplied without an authoritative basis. Choose the correct product pricing model.",
+  "inactive-draft-price-model": "An unpriced new offer uses an inactive draft price contract; no purchase price was invented.",
+  "source-price-missing": "The source has no established supplier unit price. New offers stay unpriced; existing prices are preserved.",
+  "visual-package-content-unverified": "Check the full purchasable package content against the visual source.",
+  "package-quantity-unverified": "The package quantity cannot be established from its source. Review its explicit content.",
+  "single-pack-unit-inferred": "Named content supplies a single package's draft base unit. Verify the package.",
+  "single-pack-content-inferred": "Named content supplies a single package's draft quantity. Verify the full purchasable package.",
+  "package-dimension-conflict": "Named content and the proposed base unit have different dimensions. No physical conversion was guessed.",
+  "package-content-missing": "The full purchasable package content is unknown. Supply an explicit quantity before confirmation.",
+  "piece-count-inferred": "Named piece content divides the full package exactly. This review metadata does not change the inventory unit or purchase options.",
+  "piece-count-not-integral": "Piece content does not divide the full package exactly. No rounded piece count was created.",
+  "piece-count-unavailable": "The piece count cannot be represented exactly. The physical package remains unchanged.",
+  "ambiguous-piece-content": "Several piece sizes could fit the package. No piece count was guessed.",
+  missing: "A required product field must be supplied or corrected before import.",
+  invalid: "A product field does not meet its contract. Review the row before confirmation.",
+  unknown: "This commercial value is unknown. Review the row before it can be used for purchasing.",
+  unlinked: "No catalog link was guessed. Choose a link for inventory conversion or keep the offer explicitly unlinked.",
+  "existing-price-contract-preserved": "The source has no new unit price. Existing package and financial terms were preserved.",
+  "duplicate-source-sku": "The import repeats a supplier SKU. Resolve source duplicates before confirmation.",
+  "ambiguous-existing-sku": "Multiple existing products share this supplier and SKU. Resolve the identities before confirmation.",
+  "protected-identity": "The existing product identity cannot be changed through AI import.",
+  archived: "An archived supplier offer cannot be reactivated through this import.",
+  "legacy-variants": "Legacy variants require reviewed purchase options before import.",
+  "inactive-new-offer": "New imported offers start inactive. Enable them only after reviewing their purchase terms.",
+  "missing-supplier": "The selected supplier no longer exists in this hotel.",
+  "inactive-supplier": "An active offer requires an active supplier.",
+  "missing-catalog": "The selected catalog product no longer exists in this hotel.",
+  "inactive-catalog": "An active offer requires an active catalog product.",
+  "catalog-conversion": "The supplier package and catalog inventory unit require a valid physical conversion.",
+  "evidence-missing-anchors": "The product has no verifiable source reference. Exclude it or correct the source and import again.",
+  "evidence-unknown-source": "The reference does not identify a supplied source row. Exclude it or correct the source and import again.",
+  "evidence-quote-absent": "The reference quote cannot be verified. Exclude the row or correct the source and import again.",
+  "evidence-context-only": "Header context alone cannot establish a product. Exclude the row or correct its source.",
+});
+function publicSummary(job) {
+  if (job.importPolicyVersion !== IMPORT_POLICY_VERSION || !publicImportSettings(job)) return null;
+  const summary = job.summary;
+  if (!summary || summary.version !== IMPORT_POLICY_VERSION || !Number.isSafeInteger(summary.totalRows) || summary.totalRows < 0 || summary.totalRows > 1000
+    || summary.totalRows !== job.totalRows || SUMMARY_COUNT_FIELDS.some((field) => !Number.isSafeInteger(summary[field]) || summary[field] < 0 || summary[field] > summary.totalRows)
+    || !Array.isArray(summary.findings) || summary.findings.length > 20) return null;
+  const findings = [];
+  for (const finding of summary.findings) {
+    if (!finding || typeof finding.field !== "string" || finding.field.length > 100 || typeof finding.code !== "string" || finding.code.length > 100
+      || !["info", "warning", "error"].includes(finding.severity) || typeof finding.message !== "string" || finding.message.length > 1000
+      || !Number.isSafeInteger(finding.count) || finding.count < 1 || finding.count > summary.totalRows || !Array.isArray(finding.rowIds) || finding.rowIds.length > 3
+      || finding.rowIds.some((rowId) => typeof rowId !== "string" || !/^r-\d{6}$/.test(rowId))) return null;
+    const recognized = SUMMARY_BUSINESS_FIELDS.has(finding.field) && Object.hasOwn(SUMMARY_BUSINESS_MESSAGES, finding.code);
+    // Never echo arbitrary stored finding text. Operator billing accidentally
+    // present in a corrupted summary must not enter a customer response.
+    findings.push({ field: recognized ? finding.field : "review", code: recognized ? finding.code : "review-notice", severity: finding.severity,
+      message: recognized ? SUMMARY_BUSINESS_MESSAGES[finding.code] : "Review this product finding before confirmation.", count: finding.count, rowIds: [...finding.rowIds] });
+  }
+  return { version: IMPORT_POLICY_VERSION, totalRows: summary.totalRows,
+    ...Object.fromEntries(SUMMARY_COUNT_FIELDS.map((field) => [field, summary[field]])), findings };
 }
 function references(db, hotelUid, jobId, month, requestId) {
   return { job: db.doc(`hotels/${hotelUid}/supplierAiImportJobs/${jobId}`), month: db.doc(`hotels/${hotelUid}/aiUsageMonths/${month}`),
@@ -89,6 +201,14 @@ const SAFE_PUBLIC_IMPORT_MESSAGES = new Set([
   "The file is not a complete PDF document.", "The CSV contains invalid quoting or an oversized record.",
   "The source contains unsupported or invalid text encoding.",
   "The email has no supported body text. Upload relevant attachments separately.",
+  "Choose the import price basis, currency and optional VAT rate before uploading.",
+  "Refresh the import form before uploading.", "Choose net, gross or explicitly unknown source pricing.",
+  "Choose a supported ISO currency for this import.",
+  "Choose an explicit VAT fraction between zero and one, or leave VAT unknown.",
+  "Choose a VAT fraction with at most six decimal places, or leave VAT unknown.",
+  "The import settings could not be read. Refresh the import form.",
+  "This import has inconsistent saved business settings. Start a new import.",
+  "This import uses an unsupported business policy. Start a new import.",
 ]);
 const SAFE_PUBLIC_ID_MESSAGE = /^(hotelUid|supplierId|jobId|requestId) (must be a valid document ID|contains unsupported characters)\.$/;
 function publicImportError(error = {}) {
@@ -123,7 +243,7 @@ function publicJob(job) {
   const counts = countsValid ? Object.fromEntries(countKeys.map((key) => [key, job.counts[key]])) : null;
   return { hotelUid: job.hotelUid, jobId: job.jobId, supplierId: job.supplierId, ownerUid: job.ownerUid, status: job.status,
     source: { fileName: job.fileName, size: job.size, mimeType: job.mimeType }, expiresAtMillis: job.expiresAtMillis,
-    counts, totalRows, warnings: publicWarnings(job.warnings), progress: { completedChunks, totalChunks },
+    counts, totalRows, importSettings: publicImportSettings(job), summary: publicSummary(job), warnings: publicWarnings(job.warnings), progress: { completedChunks, totalChunks },
     ...(job.errorCode ? { error: publicImportError({ code: job.errorCode, message: job.errorMessage }) } : {}) };
 }
 async function savePrivate(bucket, path, bytes, contentType) {
@@ -161,9 +281,12 @@ async function uploadSupplierAiImport(request, data, bytes, services = {}) {
   if (typeof data.fileName !== "string" || data.fileName.length > 180 || /[/\\\u0000-\u001f]/.test(data.fileName)
     || !/\.(csv|xlsx|pdf|docx|eml|txt)$/i.test(data.fileName)) throw new HttpsError("invalid-argument", "Select a CSV, XLSX, PDF, DOCX, EML or TXT file.");
   const mimeType = typeof data.mimeType === "string" && data.mimeType.length <= 150 ? data.mimeType : "";
+  const importSettings = data.importSettings === undefined ? undefined : parseImportSettings(data.importSettings);
   const db = services.firestore || admin.firestore(), bucket = services.bucket || admin.storage().bucket();
   const now = services.now?.() ?? Date.now(), month = new Date(now).toISOString().slice(0, 7), day = new Date(now).toISOString().slice(0, 10);
-  const sha256 = hashOf(bytes), fingerprint = digest(supplierId, data.fileName, mimeType, sha256), jobId = digest(hotelUid, requestId, request.auth?.uid, fingerprint);
+  const sha256 = hashOf(bytes), fingerprint = importSettings ? digest(supplierId, data.fileName, mimeType, sha256, IMPORT_POLICY_VERSION, importSettings)
+    : digest(supplierId, data.fileName, mimeType, sha256);
+  const jobId = digest(hotelUid, requestId, request.auth?.uid, fingerprint);
   const refs = references(db, hotelUid, jobId, month, requestId);
   await authorize(db, request, hotelUid, "create", undefined, services);
   const pending = await db.runTransaction(async (tx) => {
@@ -172,8 +295,13 @@ async function uploadSupplierAiImport(request, data, bytes, services = {}) {
     const active = activeState(state);
     if (stored.exists) {
       if (stored.data().ownerUid !== request.auth.uid || stored.data().fingerprint !== fingerprint) throw new HttpsError("already-exists", "This request ID belongs to a different import.");
+      if (!importSettings && (stored.data().importPolicyVersion !== undefined && stored.data().importPolicyVersion !== 1 || Object.hasOwn(stored.data(), "importSettings")
+        || stored.data().jobId !== jobId)) throw new HttpsError("invalid-argument", "Choose the import price basis, currency and optional VAT rate before uploading.");
       if (stored.data().expiresAtMillis <= now) throw new HttpsError("failed-precondition", "This upload expired. Start a new import.");
-      if (job.exists) return { job: job.data() };
+      if (job.exists) {
+        if (!importSettings && settingsForJob(job.data()) !== undefined) throw new HttpsError("failed-precondition", "This import has inconsistent saved business settings. Start a new import.");
+        return { job: job.data() };
+      }
       if (stored.data().quotaReleased) {
         const oldMonthRef = db.doc(`hotels/${hotelUid}/aiUsageMonths/${stored.data().month}`);
         const oldMonth = stored.data().month === month ? usage : await tx.get(oldMonthRef);
@@ -185,6 +313,7 @@ async function uploadSupplierAiImport(request, data, bytes, services = {}) {
       }
       return { receipt: stored.data() };
     }
+    if (!importSettings) throw new HttpsError("invalid-argument", "Choose the import price basis, currency and optional VAT rate before uploading.");
     const configuration = await loadSupplierAiConfiguration(db, tx);
     if (!configuration.enabled) throw new HttpsError("failed-precondition", "AI supplier import is disabled by the platform operator.");
     if (!supplier.exists || supplier.data().archived === true) throw new HttpsError("failed-precondition", "Choose an active supplier in this hotel.");
@@ -194,6 +323,7 @@ async function uploadSupplierAiImport(request, data, bytes, services = {}) {
     const authTime = request.auth.token.auth_time;
     if (!Number.isFinite(authTime)) throw new HttpsError("unauthenticated", "A current signed-in session is required.");
     const receipt = { hotelUid, jobId, requestId, supplierId, ownerUid: request.auth.uid, authTime, fingerprint,
+      importPolicyVersion: IMPORT_POLICY_VERSION, importSettings,
       fileName: data.fileName, mimeType, size: bytes.length, sha256, month, configuration, configVersion: configuration.revision,
       configPolicyVersion: AI_POLICY_VERSION, expiresAtMillis: now + SOURCE_RETENTION_MS, expiresAt: admin.firestore.Timestamp.fromMillis(now + SOURCE_RETENTION_MS), createdAt: stamp() };
     receipt.cleanupPending = true; receipt.quotaReleased = false; receipt.pendingUntil = admin.firestore.Timestamp.fromMillis(now + LEASE_MS);
@@ -296,9 +426,13 @@ async function readSupplierAiImport(request, data, services = {}) {
   await authorize(db, request, hotelUid, "read", undefined, services);
   if (data.jobId == null) {
     await authorize(db, request, hotelUid, "create", undefined, services);
-    const config = await loadSupplierAiConfiguration(db);
-    return { available: config.enabled, reason: config.enabled ? null : "disabled",
-      limits: { maxFileBytes: MAX_SOURCE_BYTES, maxPages: 50, maxProducts: 1000 } };
+    const [config, hotel, bootstrap] = await Promise.all([loadSupplierAiConfiguration(db), db.doc(`hotels/${hotelUid}`).get(), db.doc(`hotels/${hotelUid}/settings/bootstrap`).get()]);
+    const currency = hotel.data()?.currency;
+    const suggestedCurrency = typeof currency === "string" && currencyCodes.has(currency)
+      && (!bootstrap.exists || bootstrap.data()?.currency === currency) ? currency : null;
+    await authorize(db, request, hotelUid, "create", undefined, services);
+    return { available: config.enabled, importPolicyVersion: IMPORT_POLICY_VERSION, reason: config.enabled ? null : "disabled",
+      limits: { maxFileBytes: MAX_SOURCE_BYTES, maxPages: 50, maxProducts: 1000 }, defaults: { currency: suggestedCurrency } };
   }
   const ref = db.doc(`hotels/${hotelUid}/supplierAiImportJobs/${strictId(data.jobId, "jobId")}`), stored = await ref.get();
   if (!stored.exists) throw new HttpsError("not-found", "This AI import was not found in the selected hotel.");
@@ -338,8 +472,10 @@ async function executeChunk(db, bucket, job, source, index, provider, services) 
     if (existing.data().status !== "succeeded") throw new HttpsError("failed-precondition", "A prior AI request remains unconfirmed. No automatic retry is allowed.");
     return JSON.parse((await readPrivate(bucket, existing.data().result, 4 * 1024 * 1024)).toString("utf8"));
   }
-  const configuration = await configurationFor(db, job), schema = services.schema || require("./supplierAiProposal").AI_SUPPLIER_SCHEMA;
-  const body = createSupplierAiRequest(source, configuration, schema), requestDigest = hashOf(Buffer.from(JSON.stringify(body)));
+  const importSettings = settingsForJob(job);
+  const proposals = require("./supplierAiProposal");
+  const configuration = await configurationFor(db, job), schema = services.schema || (importSettings ? proposals.AI_SUPPLIER_SCHEMA_V2 : proposals.AI_SUPPLIER_SCHEMA);
+  const body = createSupplierAiRequest(source, configuration, schema, importSettings), requestDigest = hashOf(Buffer.from(JSON.stringify(body)));
   const countedTokens = await countChunk(db, job, body, provider, services), reservedInput = inputReservationTokens(countedTokens);
   const billingMonth = billingMonthOf(services);
   refs = references(db, job.hotelUid, job.jobId, billingMonth);
@@ -390,7 +526,10 @@ async function executeChunk(db, bucket, job, source, index, provider, services) 
   if (accountingBoundExceeded) throw new HttpsError("failed-precondition", "Verified AI usage exceeded the preflight reservation. The recorded cost includes that usage. Processing stopped; the platform operator must investigate before another attempt.");
   const raw = boundedResponseText(response);
   const validate = services.validateRows || require("./supplierAiProposal").validateRawSupplierAiRows;
-  const rows = validate(raw, { sourceUnits: [...source.units, ...(source.contextUnits || []).map((unit) => ({ ...unit, contextOnly: true }))] });
+  const sourceUnits = [...source.units, ...(source.contextUnits || []).map((unit) => ({ ...unit, contextOnly: true }))];
+  const validatedRows = validate(raw, { sourceUnits });
+  const normalize = services.normalizeRow || require("./supplierAiNormalization").normalizeSupplierAiProposal;
+  const rows = importSettings ? validatedRows.map((row) => normalize(row, { importSettings, sourceUnits })) : validatedRows;
   await authorize(db, actorRequest(job), job.hotelUid, "create", undefined, services);
   const result = await savePrivate(bucket, `${prefix}/${job.hotelUid}/${job.jobId}/${attemptId}.json`, Buffer.from(JSON.stringify(rows)), "application/json");
   await db.runTransaction(async (tx) => {
@@ -447,6 +586,7 @@ async function runSupplierAiImportJob(hotelUid, jobId, services = {}) {
       if (!current.exists || TERMINAL.has(current.data().status)) return null;
       const data = current.data(), now = services.now?.() ?? Date.now();
       if (data.hotelUid !== hotelUid || data.jobId !== jobId || data.policyVersion !== AI_POLICY_VERSION) throw new HttpsError("failed-precondition", "This AI import needs operator review.");
+      settingsForJob(data);
       if (data.expiresAtMillis <= now) throw new HttpsError("failed-precondition", "The AI import expired. Start a new import.");
       if (data.leaseUntil > now) return null;
       await authorize(db, actorRequest(data), hotelUid, "create", tx, services);
@@ -503,7 +643,7 @@ async function runSupplierAiImportJob(hotelUid, jobId, services = {}) {
     }
     if (result?.complete !== true) throw new HttpsError("failed-precondition", "The complete proposal state could not be verified.");
     await authorize(db, actorRequest(job), hotelUid, "create", undefined, services);
-    const finished = await finishJob(db, job, "review", null, { counts: result.counts, totalRows: result.totalRows, warnings });
+    const finished = await finishJob(db, job, "review", null, { counts: result.counts, totalRows: result.totalRows, summary: result.summary ?? null, warnings });
     return publicJob(finished);
   } catch (error) {
     const latest = await jobRef.get();
@@ -616,7 +756,8 @@ async function cleanupSupplierAiSourcesHandler(_event, services = {}) {
         tx.set(stateRef, { ...active, activeJobs: Math.max(0, active.activeJobs - 1), updatedAt: stamp() });
       }
       if (job.exists) tx.update(jobRef, { source: admin.firestore.FieldValue.delete(), fileName: "Expired source",
-        warnings: admin.firestore.FieldValue.delete(), quotaReleased: true, sourceDeletedAt: stamp(), updatedAt: stamp(),
+        warnings: admin.firestore.FieldValue.delete(), summary: admin.firestore.FieldValue.delete(), reconciliation: admin.firestore.FieldValue.delete(),
+        quotaReleased: true, sourceDeletedAt: stamp(), updatedAt: stamp(),
         ...(!TERMINAL.has(job.data().status) ? { status: "failed", errorCode: "expired", errorMessage: "The import source expired. Start a new import." } : {}) });
       tx.update(receipt.ref, { cleanupPending: false, quotaReleased: true, expiresAt: admin.firestore.FieldValue.delete(),
         fileName: admin.firestore.FieldValue.delete(), sourceDeletedAt: stamp() });
@@ -635,4 +776,4 @@ const processSupplierProductAiImport = onDocumentCreated({ document: "hotels/{ho
 const cleanupSupplierAiSources = onSchedule({ schedule: "every 15 minutes", region: "us-central1", timeoutSeconds: 540, memory: "512MiB", maxInstances: 1 }, cleanupSupplierAiSourcesHandler);
 module.exports = { supplierProductAiImport, processSupplierProductAiImport, cleanupSupplierAiSources, supplierProductAiImportHandler,
   processSupplierAiImportJobHandler, cleanupSupplierAiSourcesHandler, uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob,
-  publicJob, publicImportError, normalizeMonth, settleExpiredAttempt, savePrivate, readPrivate };
+  publicJob, publicImportError, parseImportSettings, validateImportSettings, normalizeMonth, settleExpiredAttempt, savePrivate, readPrivate };

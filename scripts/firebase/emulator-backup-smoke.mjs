@@ -67,7 +67,7 @@ const inventoryServices = { firestore: database, auth, now: () => revisionTime.t
 const procurementServices = { firestore: database, auth, now: () => Date.parse("2026-10-12T10:00:00Z") };
 const imageServices = { firestore: database, auth, bucket };
 const aiServices = { firestore: database, auth, bucket };
-const aiUpload = { hotelUid: "restore-hotel-a", supplierId: "restore-dairy", requestId: "restore-ai-unknown", fileName: "offers.csv", mimeType: "text/csv" };
+const aiUpload = { hotelUid: "restore-hotel-a", supplierId: "restore-dairy", requestId: "restore-ai-unknown", fileName: "offers.csv", mimeType: "text/csv", importSettings: JSON.stringify({ policyVersion: 2, priceBasis: "net", currency: "EUR", vatRate: null }) };
 const aiBytes = Buffer.from("SKU,Name,Price\nRESTORE-MILK6,Fictional milk,15\n");
 const aiRequest = (authTime) => ({ auth: { uid: "restore-a", token: { email_verified: true, auth_time: authTime } } });
 const jsonData = (value) => JSON.parse(JSON.stringify(value));

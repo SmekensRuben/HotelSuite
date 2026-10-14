@@ -36,6 +36,13 @@ const AI_SUPPLIER_SCHEMA = { type: "object", additionalProperties: false, requir
         properties: { sourceId: { type: "string" }, quote: { type: "string" } } } },
     } } },
 } };
+// Policy 1 remains byte-identical for saved request digests and paid receipts.
+const AI_SUPPLIER_SCHEMA_V2 = structuredClone(AI_SUPPLIER_SCHEMA);
+Object.assign(AI_SUPPLIER_SCHEMA_V2.properties.rows.items.properties, {
+  pricingModel: { type: ["string", "null"], enum: ["Per Purchase Unit", "Per Base Unit", null] },
+  baseUnit: { type: ["string", "null"], enum: ["g", "kg", "ml", "l", "each", null] },
+  priceBasis: { type: ["string", "null"], enum: ["net", "gross", "unknown", null] },
+});
 
 function sourceQuoteMatch(source, quote) {
   if (typeof source.text !== "string" || !quote) return null;
@@ -116,6 +123,61 @@ function emptyProduct(supplierId) {
 }
 const issue = (field, code, message, severity = "error") => ({ field, code, message, severity });
 const hasErrors = (issues) => issues.some((entry) => entry.severity === "error");
+const SUMMARY_COUNT_FIELDS = ["normalizedRows", "assumptionRows", "unknownPriceRows", "blockedNormalizationRows", "inferredPieceRows", "missingRequiredRows"];
+function summaryContribution(row) {
+  if (row.normalizationVersion !== 2) return null;
+  const normalization = row.normalizationFindings || [], activeIssues = row.issues || [];
+  const findings = [...activeIssues, ...normalization.filter((entry) => entry.severity === "info"
+    || (entry.severity === "error" && activeIssues.some((current) => current.field === entry.field && current.code === entry.code && current.severity === "error")))];
+  const unique = [...new Map(findings.map((entry) => [digest(entry.field, entry.code, entry.severity), {
+    field: entry.field, code: entry.code, severity: entry.severity, message: entry.message }])).values()];
+  const price = row.product?.pricingModel === "Per Base Unit" ? row.product.pricePerBaseUnit
+    : row.product?.pricingModel === "Per Purchase Unit" ? row.product.pricePerPurchaseUnit : null;
+  return { rowId: row.rowId, counts: {
+    normalizedRows: Number(normalization.some((entry) => JSON.stringify(entry.before) !== JSON.stringify(entry.after))),
+    assumptionRows: Number(normalization.some((entry) => ["import-setting", "inference", "approved-name-expansion"].includes(entry.provenance))),
+    unknownPriceRows: Number(price === null || price === undefined),
+    blockedNormalizationRows: Number(row.category === "blocked" && normalization.some((entry) => entry.severity === "error"
+      && activeIssues.some((current) => current.field === entry.field && current.code === entry.code && current.severity === "error"))),
+    inferredPieceRows: Number(row.packInference !== null && row.packInference !== undefined),
+    missingRequiredRows: Number(activeIssues.some((entry) => entry.severity === "error" && entry.code === "missing")),
+  }, findings: unique };
+}
+const emptySummaryAccumulator = () => ({ version: 2, counts: Object.fromEntries(SUMMARY_COUNT_FIELDS.map((field) => [field, 0])), groups: {} });
+function adjustSummaryAccumulator(accumulator, row, direction = 1) {
+  const contribution = summaryContribution(row);
+  if (!contribution) return accumulator;
+  if (!accumulator || accumulator.version !== 2 || !accumulator.counts || !accumulator.groups) {
+    throw new HttpsError("failed-precondition", "The import-wide findings receipt is unavailable. Start a new import.");
+  }
+  const next = { ...accumulator, counts: { ...accumulator.counts }, groups: { ...accumulator.groups } };
+  for (const field of SUMMARY_COUNT_FIELDS) {
+    const count = accumulator.counts[field];
+    if (!Number.isSafeInteger(count) || count < 0 || count + direction * contribution.counts[field] < 0) {
+      throw new HttpsError("failed-precondition", "The import-wide findings counts are invalid. Start a new import.");
+    }
+    next.counts[field] = count + direction * contribution.counts[field];
+  }
+  for (const entry of contribution.findings) {
+    const key = digest(entry.field, entry.code, entry.severity), prior = next.groups[key];
+    if (direction === -1 && (!prior || !Number.isSafeInteger(prior.count) || prior.count < 1)) {
+      throw new HttpsError("failed-precondition", "The import-wide finding groups do not reconcile. Start a new import.");
+    }
+    const count = (prior?.count || 0) + direction;
+    if (!count) { delete next.groups[key]; continue; }
+    const rowIds = direction === -1 ? (prior.rowIds || []).filter((rowId) => rowId !== contribution.rowId)
+      : [...new Set([...(prior?.rowIds || []), contribution.rowId])].slice(0, 3);
+    next.groups[key] = { ...entry, count, rowIds };
+  }
+  return next;
+}
+function publicSummary(accumulator, totalRows) {
+  if (!accumulator) return null;
+  const order = { error: 0, warning: 1, info: 2 };
+  return { version: 2, totalRows, ...accumulator.counts, findings: Object.values(accumulator.groups)
+    .sort((left, right) => order[left.severity] - order[right.severity] || right.count - left.count
+      || left.field.localeCompare(right.field) || left.code.localeCompare(right.code)).slice(0, 20) };
+}
 function validationIssues(product) {
   const issues = [];
   for (const field of ["supplierSku", "supplierProductName", "currency", "pricingModel", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit"]) {
@@ -142,6 +204,11 @@ function validationIssues(product) {
 
 function buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex, raw, previous = null, productId = null, userPatch = {}, duplicate = false, ambiguous = false, reviewRevision = 1 }) {
   const inputPatch = Object.fromEntries(RAW_FIELDS.filter((field) => raw[field] !== null && raw[field] !== undefined).map((field) => [field, raw[field]]));
+  const normalizationFindings = raw.normalizationFindings || [];
+  const sourcePriceMissing = raw.normalizationVersion === 2 && raw.pricePerBaseUnit == null && raw.pricePerPurchaseUnit == null;
+  if (previous && sourcePriceMissing) {
+    for (const field of ["pricingModel", "currency", "priceBasis", "vatRate", "purchaseUnit", "baseUnitsPerPurchaseUnit"]) delete inputPatch[field];
+  }
   const before = productView(previous);
   // Omitted AI values never clear an existing package, GTIN, price contract or
   // catalog link. Only a separately authenticated human correction may clear.
@@ -155,7 +222,20 @@ function buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex, raw, 
     });
   }
   const sourceEvidenceIssues = raw.sourceEvidenceIssues || [];
-  const issues = [...validationIssues(candidate), ...sourceEvidenceIssues];
+  const issues = [...validationIssues(candidate), ...sourceEvidenceIssues,
+    ...normalizationFindings.filter((entry) => entry.severity !== "info" && !(entry.severity === "error" && Object.hasOwn(userPatch, entry.field)))
+      .map((entry) => ({ field: entry.field, code: entry.code, message: entry.message, severity: entry.severity }))];
+  if (previous && sourcePriceMissing) issues.push(issue("price", "existing-price-contract-preserved", "The source has no new unit price. Existing package and financial terms were preserved; explicit human corrections may change the reviewed contract.", "warning"));
+  let packInference = raw.packInference ?? normalizationFindings.find((entry) => entry.code === "piece-count-inferred")?.after ?? null;
+  if (packInference) {
+    try {
+      const inferredTotal = policy.multiplyQuantities(packInference.piecesPerPurchaseUnit, packInference.pieceQuantity);
+      if (policy.convertQuantity(candidate.baseUnitsPerPurchaseUnit, candidate.baseUnit, packInference.pieceUnit) !== inferredTotal) {
+        packInference = null;
+        issues.push(issue("packInference", "piece-inference-stale", "The current reviewed package differs from the original piece-count inference. That hint is unavailable until the physical contract matches or is reviewed separately.", "warning"));
+      }
+    } catch { packInference = null; issues.push(issue("packInference", "piece-inference-stale", "The current package cannot reconcile with the original piece-count inference. The physical inventory contract takes precedence.", "warning")); }
+  }
   if (duplicate) issues.push(issue("supplierSku", "duplicate-source-sku", "This import contains the same supplier SKU more than once. Correct distinct SKUs only when supported by the source, or remove duplicate rows from the source and re-import."));
   if (ambiguous) issues.push(issue("supplierSku", "ambiguous-existing-sku", "More than one existing offer has this exact supplier and SKU. Repair the duplicate identities before importing."));
   if (previous) {
@@ -177,7 +257,9 @@ function buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex, raw, 
     productId: productId || `p-${digest(hotelUid, jobId, rowIndex).slice(0, 40)}`,
     expectedRevision: supplierProductInternals.currentRevision(previous), reviewRevision,
     product: productView(normalized), previousProduct: before ? { ...before, productPolicyVersion: previous.productPolicyVersion ?? null } : null, inputPatch, userPatch,
-    issues, changes, sourceAnchors: raw.sourceAnchors || [], sourceEvidenceIssues, duplicate, ambiguous, committed: null };
+    issues, changes, sourceAnchors: raw.sourceAnchors || [], sourceEvidenceIssues, duplicate, ambiguous, committed: null,
+    ...(raw.normalizationVersion === 2 ? { normalizationVersion: 2, originalInput: raw.originalInput,
+      normalizationFindings, packInference, sourcePriceMissing } : {}) };
 }
 
 async function matchesForSku(reader, db, hotelUid, supplierId, sku) {
@@ -232,11 +314,13 @@ async function reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, 
   if (!Array.isArray(rows) || rows.length > MAX_AI_ROWS) bad(`Review supports at most ${MAX_AI_ROWS} products.`);
   if (!Number.isSafeInteger(maxRows) || maxRows < 1 || maxRows > 100 || typeof shouldContinue !== "function") bad("Reconcile between one and 100 rows per bounded worker pass.");
   const fingerprint = digest(rows), jobRef = db.doc(jobPath(hotelUid, jobId));
+  const summarized = rows.length > 0 && rows.every((row) => row.normalizationVersion === 2);
+  if (rows.some((row) => row.normalizationVersion === 2) && !summarized) bad("A normalized import cannot mix proposal policies.");
   let state = await db.runTransaction(async (tx) => {
     const job = requireReconciliationLease(await tx.get(jobRef), leaseId, supplierId);
     if (job.reconciliation) return validateReconciliationState(job.reconciliation, fingerprint, rows.length, job.source);
     const initial = { fingerprint, sourceFingerprint: sourceFingerprint(job.source), totalRows: rows.length, nextRowIndex: 0,
-      counts: { new: 0, changed: 0, unchanged: 0, blocked: 0 } };
+      counts: { new: 0, changed: 0, unchanged: 0, blocked: 0 }, ...(summarized ? { summaryAccumulator: emptySummaryAccumulator() } : {}) };
     tx.set(jobRef, { ...job, reconciliation: initial, updatedAt: stamp() });
     return initial;
   });
@@ -272,12 +356,14 @@ async function reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, 
         await validateReferences((ref) => tx.get(ref), db, hotelUid, result);
         tx.create(rowRef, { ...result, reconciliationFingerprint: fingerprint, sourceRowFingerprint, createdAt: stamp(), updatedAt: stamp() });
       }
-      const next = { ...current, nextRowIndex: index + 1, counts: { ...current.counts, [result.category]: current.counts[result.category] + 1 } };
+      const next = { ...current, nextRowIndex: index + 1, counts: { ...current.counts, [result.category]: current.counts[result.category] + 1 },
+        ...(summarized ? { summaryAccumulator: adjustSummaryAccumulator(current.summaryAccumulator, result) } : {}) };
       tx.set(jobRef, { ...job, reconciliation: next, updatedAt: stamp() });
       return next;
     });
   }
-  return { counts: state.counts, totalRows: rows.length, complete: state.nextRowIndex === rows.length, nextRowIndex: state.nextRowIndex };
+  return { counts: state.counts, totalRows: rows.length, complete: state.nextRowIndex === rows.length, nextRowIndex: state.nextRowIndex,
+    summary: publicSummary(state.summaryAccumulator, rows.length) };
 }
 
 function requireReviewJob(snapshot, now = Date.now(), actorUid) {
@@ -312,7 +398,9 @@ async function requireReviewAuthority(db, request, hotelUid, tx, services) {
 function publicRow(row) {
   return { rowId: row.rowId, category: row.category, productId: row.productId, expectedRevision: row.expectedRevision,
     reviewRevision: row.reviewRevision, product: row.product, previousProduct: row.previousProduct,
-    inputPatch: row.inputPatch, issues: row.issues, changes: row.changes, sourceAnchors: row.sourceAnchors, committed: row.committed || null };
+    inputPatch: row.inputPatch, issues: row.issues, changes: row.changes, sourceAnchors: row.sourceAnchors, committed: row.committed || null,
+    normalizationVersion: row.normalizationVersion ?? null, originalInput: row.originalInput ?? null,
+    normalizationFindings: row.normalizationFindings ?? null, packInference: row.packInference ?? null };
 }
 
 async function readHotelSupplierAiImportRowsHandler(request, services = {}) {
@@ -366,7 +454,9 @@ async function correctHotelSupplierAiImportRowHandler(request, services = {}) {
       previous = current.data(); productId = row.productId;
     }
     const raw = { ...Object.fromEntries(RAW_FIELDS.map((field) => [field, null])), ...row.inputPatch,
-      sourceAnchors: row.sourceAnchors, sourceEvidenceIssues: row.sourceEvidenceIssues || [] };
+      sourceAnchors: row.sourceAnchors, sourceEvidenceIssues: row.sourceEvidenceIssues || [],
+      ...(row.normalizationVersion === 2 ? { normalizationVersion: 2, originalInput: row.originalInput,
+        normalizationFindings: row.normalizationFindings, packInference: row.packInference } : {}) };
     const next = buildSupplierAiCandidate({ hotelUid, jobId, supplierId: job.supplierId, rowIndex: row.rowIndex, raw, previous, productId,
       userPatch, reviewRevision: expected + 1, duplicate: duplicateRows.docs.some((document) => document.id !== rowId), ambiguous: matches.length > 1 });
     await validateReferences((ref) => tx.get(ref), db, hotelUid, next);
@@ -375,9 +465,16 @@ async function correctHotelSupplierAiImportRowHandler(request, services = {}) {
     }
     const counts = { ...job.counts };
     if (row.category !== next.category) { counts[row.category]--; counts[next.category]++; }
+    let summary = job.summary ?? null, reconciliation = job.reconciliation;
+    if (row.normalizationVersion === 2) {
+      const accumulator = adjustSummaryAccumulator(adjustSummaryAccumulator(job.reconciliation?.summaryAccumulator, row, -1), next);
+      reconciliation = { ...job.reconciliation, summaryAccumulator: accumulator };
+      summary = publicSummary(accumulator, job.totalRows);
+    }
     tx.set(rowRef, { ...next, createdAt: row.createdAt, updatedAt: stamp(), correctedBy: request.auth.uid,
       lastCorrection: { fingerprint, actorUid: request.auth.uid } });
-    if (row.category !== next.category) tx.set(db.doc(jobPath(hotelUid, jobId)), { ...job, counts, updatedAt: stamp() });
+    if (row.category !== next.category || row.normalizationVersion === 2) tx.set(db.doc(jobPath(hotelUid, jobId)), { ...job, counts,
+      ...(row.normalizationVersion === 2 ? { summary, reconciliation } : {}), updatedAt: stamp() });
     return { hotelUid, jobId, row: publicRow(next) };
   });
 }
@@ -461,6 +558,6 @@ const options = { region: "us-central1", cors: true, timeoutSeconds: 120 };
 const readHotelSupplierAiImportRows = onCall(options, gated(readHotelSupplierAiImportRowsHandler));
 const correctHotelSupplierAiImportRow = onCall(options, gated(correctHotelSupplierAiImportRowHandler));
 const commitHotelSupplierAiImportRows = onCall(options, gated(commitHotelSupplierAiImportRowsHandler));
-module.exports = { AI_PROPOSAL_POLICY_VERSION, MAX_AI_ROWS, MAX_CONFIRM_ROWS, AI_SUPPLIER_SCHEMA, validateRawSupplierAiRows,
+module.exports = { AI_PROPOSAL_POLICY_VERSION, MAX_AI_ROWS, MAX_CONFIRM_ROWS, AI_SUPPLIER_SCHEMA, AI_SUPPLIER_SCHEMA_V2, validateRawSupplierAiRows,
   buildSupplierAiCandidate, reconcileSupplierAiRows, readHotelSupplierAiImportRowsHandler, correctHotelSupplierAiImportRowHandler, commitHotelSupplierAiImportRowsHandler,
   readHotelSupplierAiImportRows, correctHotelSupplierAiImportRow, commitHotelSupplierAiImportRows };
