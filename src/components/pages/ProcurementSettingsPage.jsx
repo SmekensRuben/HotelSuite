@@ -10,6 +10,7 @@ import { useProcurementSettingsScope } from "../../hooks/useProcurementSettingsS
 const Categories = lazy(() => import("./SettingsCatalogPage"));
 const Outlets = lazy(() => import("./OutletSettingsPage"));
 const Locations = lazy(() => import("./LocationSettingsPage"));
+const SupplierImportMappings = lazy(() => import("./SupplierImportMappingSettingsSection"));
 
 export default function ProcurementSettingsPage() {
   const [params, setParams] = useSearchParams();
@@ -17,10 +18,14 @@ export default function ProcurementSettingsPage() {
   const canReadCategories = usePermission("catalogsettings", "read");
   const canReadOutlets = usePermission("outlets", "read");
   const canReadLocations = usePermission("locations", "read");
+  const canReadSuppliers = usePermission("suppliers", "read");
+  const canReadSupplierProducts = usePermission("supplierproducts", "read");
+  const canReadSupplierMappings = canReadSuppliers && canReadSupplierProducts;
   const sections = [
     { id: "categories", label: "Categories", description: "Catalog organization", icon: Layers3, Page: Categories, allowed: canReadCategories },
     { id: "outlets", label: "Outlets", description: "Purchasing & approvers", icon: Store, Page: Outlets, allowed: canReadOutlets },
     { id: "locations", label: "Locations & templates", description: "Storage & stock counts", icon: Boxes, Page: Locations, allowed: canReadLocations },
+    { id: "supplier-imports", label: "Supplier import mappings", description: "Purchase-package codes", icon: Settings2, Page: SupplierImportMappings, allowed: canReadSupplierMappings },
   ].filter((section) => section.allowed);
   const requested = params.get("section");
   const active = sections.find((section) => section.id === requested) || sections[0];
@@ -43,7 +48,7 @@ export default function ProcurementSettingsPage() {
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Purchasing &amp; Inventory</p>
           <h1 className="mt-1 text-3xl font-semibold">Module settings</h1>
-          <p className="mt-2 max-w-2xl text-sm text-gray-600">Set up your catalog, purchasing outlets and physical stock locations in one place.</p>
+          <p className="mt-2 max-w-2xl text-sm text-gray-600">Set up your catalog, purchasing outlets, physical stock locations and supplier import mappings in one place.</p>
         </div>
       </div>
       <div className="grid items-start gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">

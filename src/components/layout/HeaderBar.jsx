@@ -236,7 +236,7 @@ export default function HeaderBar({ today, onLogout }) {
           to: "/settings/procurement",
           label: "Purchasing & Inventory Settings",
           icon: Settings2,
-          visible: canViewCatalogSettings || canViewOutlets || canViewLocations,
+          visible: canViewCatalogSettings || canViewOutlets || canViewLocations || (canViewSuppliers && canViewSupplierProducts),
         },
         {
           to: "/settings/file-import",

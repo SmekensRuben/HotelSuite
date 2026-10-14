@@ -314,6 +314,7 @@ export default function AppRouter() {
             { feature: "catalogsettings", action: "read" },
             { feature: "outlets", action: "read" },
             { feature: "locations", action: "read" },
+            { feature: "supplierproducts", action: "read" },
           ]}>
             <ProcurementSettingsPage />
           </ProtectedRoute>
