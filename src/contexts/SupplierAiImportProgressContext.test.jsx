@@ -36,7 +36,7 @@ function Page({ name }) {
   </main>;
 }
 const tree = (strict = false) => {
-  const content = <MemoryRouter initialEntries={["/suppliers"]}><SupplierAiImportProgressProvider><Routes><Route path="/suppliers" element={<Page name="Supplier products" />} /><Route path="/orders" element={<Page name="Orders" />} /></Routes></SupplierAiImportProgressProvider></MemoryRouter>;
+  const content = <MemoryRouter initialEntries={["/suppliers"]}><SupplierAiImportProgressProvider><Routes><Route path="/suppliers" element={<Page name="Supplier products" />} /><Route path="/orders" element={<Page name="Orders" />} /><Route path="/catalog/supplier-products/imports/:jobId" element={<Page name="Private import review" />} /></Routes></SupplierAiImportProgressProvider></MemoryRouter>;
   return strict ? <StrictMode>{content}</StrictMode> : content;
 };
 const advance = async (milliseconds) => { await act(async () => { await vi.advanceTimersByTimeAsync(milliseconds); }); };
@@ -56,7 +56,7 @@ describe("persistent supplier import progress", () => {
     mocks.get.mockImplementation(async (_hotel, id) => job(id, id === "one" ? "review" : "failed")); await advance(3000);
     expect(mocks.success).toHaveBeenCalledTimes(1); expect(mocks.error).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "1 import needs attention" }));
-    fireEvent.click(screen.getByRole("button", { name: "Open one.csv: Ready for review" })); expect(screen.getByRole("dialog")).toHaveTextContent("review");
+    fireEvent.click(screen.getByRole("button", { name: "Open one.csv: Ready for review" })); expect(screen.getByRole("heading", { name: "Private import review" })).toBeInTheDocument(); expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await advance(30000); expect(mocks.get).toHaveBeenCalledTimes(4);
   });
   it("registers an upload acknowledgement after the dialog closes and the page changes", async () => {
@@ -151,4 +151,41 @@ describe("persistent supplier import progress", () => {
     fireEvent.click(screen.getByRole("button", { name: "Track first job" })); expect(screen.queryByRole("complementary", { name: "Supplier import progress" })).not.toBeInTheDocument();
     await advance(30000); expect(mocks.get).toHaveBeenCalledTimes(1);
   });
+  it("opens a completed notification in the dedicated page while keeping an unresolved upload dialog mounted", async () => {
+    render(tree()); fireEvent.click(screen.getByRole("button", { name: "Open new import" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start delayed upload" }));
+    act(() => { mocks.progress.watchJob(job("older")); mocks.progress.watchJob(job("older", "review")); });
+    act(() => mocks.success.mock.calls[0][1].onClick());
+    expect(screen.getByRole("heading", { name: "Private import review" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(); expect(mocks.dialogMounts).toBe(1);
+    await act(async () => mocks.upload.resolve(job("current")));
+    expect(JSON.parse(screen.getByTestId("safe-jobs").textContent).some((value) => value.jobId === "current")).toBe(true);
+  });
+  it("allows a private cold reference to navigate but rejects path injection and revoked authority", () => {
+    const view = render(tree());
+    act(() => mocks.progress.openJob("../hotel-b"));
+    expect(screen.getByRole("heading", { name: "Supplier products" })).toBeInTheDocument();
+    act(() => mocks.progress.openJob("untracked-job"));
+    expect(screen.getByRole("heading", { name: "Private import review" })).toBeInTheDocument();
+    expect(mocks.get).not.toHaveBeenCalled();
+    mocks.hotel.permissions = ["supplierproducts.read"]; view.rerender(tree());
+    act(() => mocks.progress.openNew()); expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("hides the floating card on the review page while polling and restoring it on other routes", async () => {
+    render(tree()); fireEvent.click(screen.getByRole("button", { name: "Track first job" }));
+    fireEvent.click(screen.getByRole("button", { name: "Track second job" }));
+    expect(screen.getByRole("complementary", { name: "Supplier import progress" })).toBeInTheDocument();
+    act(() => mocks.progress.openJob("one"));
+    expect(screen.getByRole("heading", { name: "Private import review" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Supplier import progress" })).not.toBeInTheDocument();
+    await advance(3000);
+    expect(mocks.get).toHaveBeenCalledWith("hotel-a", "one"); expect(mocks.get).toHaveBeenCalledWith("hotel-a", "two");
+    expect(JSON.parse(screen.getByTestId("safe-jobs").textContent)).toHaveLength(2);
+    fireEvent.click(screen.getByRole("link", { name: "Navigate to another page" }));
+    expect(screen.getByRole("heading", { name: "Supplier products" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "2 imports in progress" })).toBeInTheDocument();
+    expect(JSON.parse(screen.getByTestId("safe-jobs").textContent)).toHaveLength(2);
+  });
+
 });

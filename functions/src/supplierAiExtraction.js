@@ -604,11 +604,11 @@ function validatePdfInflation(bytes) {
     if (/\/(?:LZWDecode|RunLengthDecode|LZW|RL)\b/.test(dictionary)) fail("UNSUPPORTED_PDF", "PDF LZW and run-length stream compression are not supported; recreate the PDF with standard compression.");
     if (/\/(?:FlateDecode|Fl)\b/.test(dictionary)) {
       if (/\/Filter\s*\[/.test(dictionary) && !/\/Filter\s*\[\s*\/(?:FlateDecode|Fl)\s*\]/.test(dictionary)) fail("UNSUPPORTED_PDF", "PDF multi-stage compressed filters are not supported; recreate the PDF.");
-      let dataEnd = end;
-      if (raw[dataEnd - 1] === "\n") dataEnd -= 1;
-      if (raw[dataEnd - 1] === "\r") dataEnd -= 1;
       let expanded;
-      try { expanded = zlib.inflateSync(bytes.subarray(dataStart, dataEnd), { maxOutputLength: LIMITS.zipEntryBytes }); }
+      // A binary checksum may itself end in CR immediately before the PDF's
+      // LF separator. Do not trim those indistinguishable bytes: zlib validates
+      // the complete stream/checksum and ignores its trailing PDF separator.
+      try { expanded = zlib.inflateSync(bytes.subarray(dataStart, end), { maxOutputLength: LIMITS.zipEntryBytes }); }
       catch { fail("PDF_LIMIT", "A PDF stream is corrupt or exceeds the 8 MiB decompression limit."); }
       total += expanded.length;
       if (total > LIMITS.zipExpandedBytes) fail("PDF_LIMIT", "The PDF exceeds 32 MiB of decompressed streams.");

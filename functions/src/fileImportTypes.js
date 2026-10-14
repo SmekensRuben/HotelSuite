@@ -5,7 +5,7 @@ function importObjectMatchesHotel(objectName, hotelUid) {
 }
 function requireHotelImportTarget(path, hotelUid) {
   const segments = String(path || "").split("/");
-  if (["supplierAiImportJobs", "supplierAiImportRequests", "supplierAiImportWork", "aiUsageMonths", "aiImportAdministration"].includes(segments[2])) {
+  if (["supplierAiImportJobs", "supplierAiImportRequests", "supplierAiImportWork", "aiUsageMonths", "aiImportAdministration", "supplierImportMappingProfiles", "supplierImportMappingOperations", "supplierImportMappingAudit"].includes(segments[2])) {
     throw new Error("Import target must not modify protected AI jobs, source receipts or billing evidence.");
   }
   if (["locations", "procurementResourceOperations", "procurementResourceAudit"].includes(segments[2])) {

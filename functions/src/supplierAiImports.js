@@ -11,13 +11,15 @@ const { decimal } = require("./productPolicy");
 const { AI_POLICY_VERSION, PRICE_VERSION, MAX_SOURCE_BYTES, SOURCE_RETENTION_MS, loadSupplierAiConfiguration,
   inputReservationTokens, costMicros, normalizedProviderUsage, boundedResponseText } = require("./supplierAiPolicy");
 const { createSupplierAiRequest, createSupplierAiProvider } = require("./supplierAiProvider");
+const { mappingScope, mappingProfileRef, mappingSnapshot } = require("./supplierImportMappings");
 const prefix = "private/supplier-ai-imports", LEASE_MS = 600000;
 const IMPORT_POLICY_VERSION = 2;
+const REVIEW_WORKSPACE_VERSION = 1;
 const IMPORT_SETTING_FIELDS = ["policyVersion", "priceBasis", "currency", "vatRate"];
 const currencyCodes = new Set(Intl.supportedValuesOf("currency"));
 const HTTP_STATUS = { unauthenticated: 401, "permission-denied": 403, "not-found": 404, "invalid-argument": 400,
   "failed-precondition": 409, "resource-exhausted": 429, "already-exists": 409, aborted: 409, unavailable: 503 };
-const TERMINAL = new Set(["review", "failed", "response_unknown", "committed"]);
+const TERMINAL = new Set(["review", "failed", "response_unknown", "committed", "completed"]);
 const stamp = () => admin.firestore.FieldValue.serverTimestamp();
 const hashOf = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const billingMonthOf = (services) => new Date(services.now?.() ?? Date.now()).toISOString().slice(0, 7);
@@ -67,6 +69,9 @@ const SUMMARY_BUSINESS_MESSAGES = Object.freeze({
   "approved-name-expansion": "An approved product abbreviation was expanded. Confirm the product identity.",
   "display-name-normalized": "Display words and SI labels were standardized; supplier SKU and GTIN were preserved.",
   "purchase-label-normalized": "The purchase-package label was standardized without creating another purchase option.",
+  "purchase-unit-unconfirmed": "Confirm this source purchase unit and its English label before importing. Suggested abbreviations are not accepted supplier mappings.",
+  "supplier-purchase-unit-mapped": "The confirmed supplier and source-format profile supplies the English purchase-package label. Quantities and financial terms remain unchanged.",
+  "purchase-unit-confirmed-for-import": "The purchase-package label was explicitly confirmed for this import. Quantities and financial terms remain unchanged.",
   "base-unit-normalized": "The source unit was mapped to a supported physical unit without changing its dimension.",
   "unsupported-source-unit": "The source unit is unsupported or ambiguous. Choose a supported unit before confirmation.",
   "currency-normalized": "The explicit source currency was standardized to uppercase.",
@@ -182,6 +187,7 @@ const SAFE_PUBLIC_IMPORT_MESSAGES = new Set([
   "This import expired and its source is no longer available. Start a new import.",
   "This upload expired. Start a new import.", "This request ID belongs to a different import.",
   "Choose an active supplier in this hotel.", "The selected supplier is no longer active.",
+  "Refresh the supplier import page before starting a new import.",
   "Upload a non-empty file no larger than 10 MiB.", "Select a CSV, XLSX, PDF, DOCX, EML or TXT file.",
   "Use GET or POST.", "Use a binary file upload.", "The import source or supplier changed.",
   "The import worker changed.", "The complete import source no longer matches its saved progress.",
@@ -234,6 +240,7 @@ function publicWarnings(warnings) {
   }));
 }
 function publicJob(job) {
+  const purchaseUnitMappingSnapshot = publicMappingSnapshot(job);
   const totalChunks = Number.isSafeInteger(job.totalChunks) && job.totalChunks > 0 ? job.totalChunks : null;
   const completedChunks = Number.isSafeInteger(job.completedChunks) && job.completedChunks >= 0 ? job.completedChunks : 0;
   const totalRows = Number.isSafeInteger(job.totalRows) && job.totalRows >= 0 && job.totalRows <= 1000 ? job.totalRows : null;
@@ -242,9 +249,19 @@ function publicJob(job) {
     && (totalRows === null || countKeys.reduce((sum, key) => sum + job.counts[key], 0) === totalRows);
   const counts = countsValid ? Object.fromEntries(countKeys.map((key) => [key, job.counts[key]])) : null;
   return { hotelUid: job.hotelUid, jobId: job.jobId, supplierId: job.supplierId, ownerUid: job.ownerUid, status: job.status,
+    importReviewVersion: job.importReviewVersion === REVIEW_WORKSPACE_VERSION ? REVIEW_WORKSPACE_VERSION : null,
+    mappingProfileId: purchaseUnitMappingSnapshot?.profileId ?? null, sourceFormat: purchaseUnitMappingSnapshot?.sourceFormat ?? null,
+    purchaseUnitMappingSnapshot,
     source: { fileName: job.fileName, size: job.size, mimeType: job.mimeType }, expiresAtMillis: job.expiresAtMillis,
     counts, totalRows, importSettings: publicImportSettings(job), summary: publicSummary(job), warnings: publicWarnings(job.warnings), progress: { completedChunks, totalChunks },
     ...(job.errorCode ? { error: publicImportError({ code: job.errorCode, message: job.errorMessage }) } : {}) };
+}
+function publicMappingSnapshot(job) {
+  if (job.importReviewVersion !== REVIEW_WORKSPACE_VERSION || !job.purchaseUnitMappingSnapshot) return null;
+  try {
+    const scope = mappingScope({ supplierId: job.supplierId, sourceFormat: job.fileName.split(".").at(-1).toLowerCase(), profileId: job.mappingProfileId || "default" });
+    return mappingSnapshot(job.purchaseUnitMappingSnapshot, scope);
+  } catch { return null; }
 }
 async function savePrivate(bucket, path, bytes, contentType) {
   const file = bucket.file(path), sha256 = hashOf(bytes);
@@ -282,9 +299,14 @@ async function uploadSupplierAiImport(request, data, bytes, services = {}) {
     || !/\.(csv|xlsx|pdf|docx|eml|txt)$/i.test(data.fileName)) throw new HttpsError("invalid-argument", "Select a CSV, XLSX, PDF, DOCX, EML or TXT file.");
   const mimeType = typeof data.mimeType === "string" && data.mimeType.length <= 150 ? data.mimeType : "";
   const importSettings = data.importSettings === undefined ? undefined : parseImportSettings(data.importSettings);
+  const reviewRequested = data.reviewWorkspaceVersion !== undefined;
+  if (reviewRequested && ![REVIEW_WORKSPACE_VERSION, String(REVIEW_WORKSPACE_VERSION)].includes(data.reviewWorkspaceVersion)) throw new HttpsError("invalid-argument", "Refresh the supplier import page before starting a new import.");
+  if (!reviewRequested && data.mappingProfileId !== undefined) throw new HttpsError("invalid-argument", "Refresh the supplier import page before starting a new import.");
+  const mappingProfile = reviewRequested ? mappingScope({ supplierId, sourceFormat: data.fileName.split(".").at(-1).toLowerCase(), profileId: data.mappingProfileId ?? "default" }) : null;
   const db = services.firestore || admin.firestore(), bucket = services.bucket || admin.storage().bucket();
   const now = services.now?.() ?? Date.now(), month = new Date(now).toISOString().slice(0, 7), day = new Date(now).toISOString().slice(0, 10);
-  const sha256 = hashOf(bytes), fingerprint = importSettings ? digest(supplierId, data.fileName, mimeType, sha256, IMPORT_POLICY_VERSION, importSettings)
+  const sha256 = hashOf(bytes), fingerprint = reviewRequested ? digest(supplierId, data.fileName, mimeType, sha256, IMPORT_POLICY_VERSION, importSettings,
+    { reviewWorkspaceVersion: REVIEW_WORKSPACE_VERSION, mappingProfileId: mappingProfile.profileId }) : importSettings ? digest(supplierId, data.fileName, mimeType, sha256, IMPORT_POLICY_VERSION, importSettings)
     : digest(supplierId, data.fileName, mimeType, sha256);
   const jobId = digest(hotelUid, requestId, request.auth?.uid, fingerprint);
   const refs = references(db, hotelUid, jobId, month, requestId);
@@ -314,6 +336,10 @@ async function uploadSupplierAiImport(request, data, bytes, services = {}) {
       return { receipt: stored.data() };
     }
     if (!importSettings) throw new HttpsError("invalid-argument", "Choose the import price basis, currency and optional VAT rate before uploading.");
+    if (!reviewRequested) throw new HttpsError("failed-precondition", "Refresh the supplier import page before starting a new import.");
+    await requireHotelPermission(db, { auth: request.auth }, hotelUid, "suppliers", "read", tx, services.auth);
+    const profile = await tx.get(mappingProfileRef(db, hotelUid, mappingProfile));
+    const purchaseUnitMappingSnapshot = mappingSnapshot(profile.exists ? profile.data() : null, mappingProfile);
     const configuration = await loadSupplierAiConfiguration(db, tx);
     if (!configuration.enabled) throw new HttpsError("failed-precondition", "AI supplier import is disabled by the platform operator.");
     if (!supplier.exists || supplier.data().archived === true) throw new HttpsError("failed-precondition", "Choose an active supplier in this hotel.");
@@ -324,6 +350,7 @@ async function uploadSupplierAiImport(request, data, bytes, services = {}) {
     if (!Number.isFinite(authTime)) throw new HttpsError("unauthenticated", "A current signed-in session is required.");
     const receipt = { hotelUid, jobId, requestId, supplierId, ownerUid: request.auth.uid, authTime, fingerprint,
       importPolicyVersion: IMPORT_POLICY_VERSION, importSettings,
+      importReviewVersion: REVIEW_WORKSPACE_VERSION, mappingProfileId: mappingProfile.profileId, purchaseUnitMappingSnapshot,
       fileName: data.fileName, mimeType, size: bytes.length, sha256, month, configuration, configVersion: configuration.revision,
       configPolicyVersion: AI_POLICY_VERSION, expiresAtMillis: now + SOURCE_RETENTION_MS, expiresAt: admin.firestore.Timestamp.fromMillis(now + SOURCE_RETENTION_MS), createdAt: stamp() };
     receipt.cleanupPending = true; receipt.quotaReleased = false; receipt.pendingUntil = admin.firestore.Timestamp.fromMillis(now + LEASE_MS);
@@ -431,7 +458,7 @@ async function readSupplierAiImport(request, data, services = {}) {
     const suggestedCurrency = typeof currency === "string" && currencyCodes.has(currency)
       && (!bootstrap.exists || bootstrap.data()?.currency === currency) ? currency : null;
     await authorize(db, request, hotelUid, "create", undefined, services);
-    return { available: config.enabled, importPolicyVersion: IMPORT_POLICY_VERSION, reason: config.enabled ? null : "disabled",
+    return { available: config.enabled, importPolicyVersion: IMPORT_POLICY_VERSION, reviewWorkspaceVersion: REVIEW_WORKSPACE_VERSION, reason: config.enabled ? null : "disabled",
       limits: { maxFileBytes: MAX_SOURCE_BYTES, maxPages: 50, maxProducts: 1000 }, defaults: { currency: suggestedCurrency } };
   }
   const ref = db.doc(`hotels/${hotelUid}/supplierAiImportJobs/${strictId(data.jobId, "jobId")}`), stored = await ref.get();
@@ -473,6 +500,8 @@ async function executeChunk(db, bucket, job, source, index, provider, services) 
     return JSON.parse((await readPrivate(bucket, existing.data().result, 4 * 1024 * 1024)).toString("utf8"));
   }
   const importSettings = settingsForJob(job);
+  const purchaseUnitMappingSnapshot = job.importReviewVersion === REVIEW_WORKSPACE_VERSION ? publicMappingSnapshot(job) : undefined;
+  if (job.importReviewVersion !== undefined && job.importReviewVersion !== REVIEW_WORKSPACE_VERSION || job.importReviewVersion === REVIEW_WORKSPACE_VERSION && !purchaseUnitMappingSnapshot) throw new HttpsError("failed-precondition", "The supplier purchase-unit profile needs review.");
   const proposals = require("./supplierAiProposal");
   const configuration = await configurationFor(db, job), schema = services.schema || (importSettings ? proposals.AI_SUPPLIER_SCHEMA_V2 : proposals.AI_SUPPLIER_SCHEMA);
   const body = createSupplierAiRequest(source, configuration, schema, importSettings), requestDigest = hashOf(Buffer.from(JSON.stringify(body)));
@@ -529,7 +558,7 @@ async function executeChunk(db, bucket, job, source, index, provider, services) 
   const sourceUnits = [...source.units, ...(source.contextUnits || []).map((unit) => ({ ...unit, contextOnly: true }))];
   const validatedRows = validate(raw, { sourceUnits });
   const normalize = services.normalizeRow || require("./supplierAiNormalization").normalizeSupplierAiProposal;
-  const rows = importSettings ? validatedRows.map((row) => normalize(row, { importSettings, sourceUnits })) : validatedRows;
+  const rows = importSettings ? validatedRows.map((row) => normalize(row, { importSettings, sourceUnits, purchaseUnitMappingSnapshot })) : validatedRows;
   await authorize(db, actorRequest(job), job.hotelUid, "create", undefined, services);
   const result = await savePrivate(bucket, `${prefix}/${job.hotelUid}/${job.jobId}/${attemptId}.json`, Buffer.from(JSON.stringify(rows)), "application/json");
   await db.runTransaction(async (tx) => {
@@ -735,15 +764,31 @@ async function cleanupSupplierAiSourcesHandler(_event, services = {}) {
       continue;
     }
     const jobRef = db.doc(`hotels/${hotelUid}/supplierAiImportJobs/${jobId}`);
-    let rows;
-    do {
-      rows = await db.collection(`${jobRef.path}/rows`).limit(200).get();
-      if (rows.docs.length) {
-        const batch = db.batch();
-        for (const row of rows.docs) batch.delete(row.ref);
-        await batch.commit();
-      }
-    } while (rows.docs.length === 200);
+    const deletePrivateRows = async (path) => {
+      let rows;
+      do {
+        rows = await db.collection(path).limit(200).get();
+        if (rows.docs.length) {
+          const batch = db.batch();
+          for (const row of rows.docs) batch.delete(row.ref);
+          await batch.commit();
+        }
+      } while (rows.docs.length === 200);
+    };
+    await deletePrivateRows(`${jobRef.path}/rows`);
+    await deletePrivateRows(`${jobRef.path}/reviewIndex`);
+    // Operation parents retain only command fences and aggregate decisions.
+    // Their per-row children contain the source/product review snapshots and
+    // expire with the source. A persistent cursor bounds cleanup per run while
+    // keeping the request pending until every private snapshot was removed.
+    let reviewOperations = db.collection(`${jobRef.path}/reviewOperations`).orderBy(admin.firestore.FieldPath.documentId());
+    if (typeof data.cleanupReviewAfter === "string") reviewOperations = reviewOperations.startAfter(data.cleanupReviewAfter);
+    const operations = await reviewOperations.limit(50).get();
+    for (const operation of operations.docs) await deletePrivateRows(`${operation.ref.path}/rows`);
+    if (operations.docs.length === 50) {
+      await receipt.ref.set({ cleanupReviewAfter: operations.docs.at(-1).id }, { merge: true });
+      continue;
+    }
     await db.runTransaction(async (tx) => {
       const stateRef = db.doc(`hotels/${hotelUid}/aiImportAdministration/state`);
       const [stored, job, month, state] = await Promise.all([tx.get(receipt.ref), tx.get(jobRef), tx.get(db.doc(`hotels/${hotelUid}/aiUsageMonths/${data.month}`)), tx.get(stateRef)]);
@@ -760,6 +805,7 @@ async function cleanupSupplierAiSourcesHandler(_event, services = {}) {
         quotaReleased: true, sourceDeletedAt: stamp(), updatedAt: stamp(),
         ...(!TERMINAL.has(job.data().status) ? { status: "failed", errorCode: "expired", errorMessage: "The import source expired. Start a new import." } : {}) });
       tx.update(receipt.ref, { cleanupPending: false, quotaReleased: true, expiresAt: admin.firestore.FieldValue.delete(),
+        cleanupReviewAfter: admin.firestore.FieldValue.delete(),
         fileName: admin.firestore.FieldValue.delete(), sourceDeletedAt: stamp() });
     });
     // Do not remove the receipt: it fences replay even after the retained source has expired.
@@ -776,4 +822,4 @@ const processSupplierProductAiImport = onDocumentCreated({ document: "hotels/{ho
 const cleanupSupplierAiSources = onSchedule({ schedule: "every 15 minutes", region: "us-central1", timeoutSeconds: 540, memory: "512MiB", maxInstances: 1 }, cleanupSupplierAiSourcesHandler);
 module.exports = { supplierProductAiImport, processSupplierProductAiImport, cleanupSupplierAiSources, supplierProductAiImportHandler,
   processSupplierAiImportJobHandler, cleanupSupplierAiSourcesHandler, uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob,
-  publicJob, publicImportError, parseImportSettings, validateImportSettings, normalizeMonth, settleExpiredAttempt, savePrivate, readPrivate };
+  publicJob, publicImportError, parseImportSettings, validateImportSettings, normalizeMonth, settleExpiredAttempt, savePrivate, readPrivate, REVIEW_WORKSPACE_VERSION };

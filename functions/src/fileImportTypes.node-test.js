@@ -28,6 +28,11 @@ test("generic imports cannot forge supplier price history or manual movement evi
       assert.throws(() => requireHotelImportTarget(path, "hotel-a"));
   requireHotelImportTarget("hotels/hotel-a/reports/arrivals/2026-10-12/guest", "hotel-a");
 });
+test("generic imports cannot forge confirmed supplier mappings or their command and audit receipts", () => {
+  for (const collection of ["supplierImportMappingProfiles", "supplierImportMappingOperations", "supplierImportMappingAudit"])
+    for (const path of [`hotels/hotel-a/${collection}/record`, `hotels/hotel-a/${collection}/record/entries/nested`])
+      assert.throws(() => requireHotelImportTarget(path, "hotel-a"), /protected AI/);
+});
 
 test("mapped import columns cannot override the trusted template tenant", () => {
   const context = buildTemplateContext({ hotelUid: "hotel-a", fileType: "arrivals", fileImportType: {},

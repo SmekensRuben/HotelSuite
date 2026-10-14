@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { normalizeSupplierAiProposal, normalizeSupplierAiProposals } = require("./supplierAiNormalization");
+const { normalizeSupplierAiProposal, normalizeSupplierAiProposals, applyPurchaseUnitMappingToProposal } = require("./supplierAiNormalization");
 const { validateRawSupplierAiRows, buildSupplierAiCandidate } = require("./supplierAiProposal");
 const policy = require("./productPolicy");
 const settings = { policyVersion: 2, currency: "EUR", priceBasis: "net", vatRate: null };
@@ -18,6 +18,112 @@ function fixture(patch = {}, columns = {}) {
 const normalize = (data, context = settings) => normalizeSupplierAiProposal(data.checked, { importSettings: context, sourceUnits: data.sourceUnits });
 const candidate = (raw, extra = {}) => buildSupplierAiCandidate({ hotelUid: "hotel", jobId: "job", supplierId: "supplier", rowIndex: 0, raw, ...extra });
 const codes = (row) => row.normalizationFindings.map((entry) => entry.code);
+const mappingSnapshot = (mappings = [], revision = mappings.length ? 1 : 0) => ({ version: 1, supplierId: "supplier", sourceFormat: "xlsx", profileId: "default", revision, mappings });
+const normalizeMapped = (data, snapshot = mappingSnapshot()) => normalizeSupplierAiProposal(data.checked,
+  { importSettings: settings, sourceUnits: data.sourceUnits, purchaseUnitMappingSnapshot: snapshot });
+
+test("confirmed Sligro source mappings produce canonical English packages without changing physical contents", () => {
+  for (const [sourceUnit, purchaseUnit] of Object.entries({ FL: "Bottle", ZK: "Bag", EM: "Bucket", BK: "Box", TR: "Tray", PT: "Jar", ST: "Piece", DS: "Box", PK: "Pack" })) {
+    const normalized = normalizeMapped(fixture({ purchaseUnit: sourceUnit, baseUnit: "KG", baseUnitsPerPurchaseUnit: 1 }, { content: "1 KG" }), mappingSnapshot([{ sourceUnit, purchaseUnit }]));
+    assert.equal(normalized.purchaseUnit, purchaseUnit); assert.equal(normalized.baseUnit, "kg"); assert.equal(normalized.baseUnitsPerPurchaseUnit, 1);
+    assert.equal(normalized.purchaseUnitMapping.sourceUnit, sourceUnit); assert.equal(normalized.purchaseUnitMapping.status, "confirmed");
+    assert.equal(normalized.originalInput.purchaseUnit, sourceUnit); assert.equal(codes(normalized).includes("purchase-unit-unconfirmed"), false);
+  }
+});
+test("supplier profile overrides common aliases while unknown abbreviations require explicit review", () => {
+  const overridden = normalizeMapped(fixture({ purchaseUnit: "FL" }, { content: "400 GR" }), mappingSnapshot([{ sourceUnit: "FL", purchaseUnit: "Jar" }]));
+  assert.equal(overridden.purchaseUnit, "Jar"); assert.equal(overridden.purchaseUnitMapping.suggestedUnit, "Jar");
+  for (const [code, suggested] of [["TR", "Tray"], ["ZZ", null], ["FL", "Bottle"]]) {
+    const normalized = normalizeMapped(fixture({ purchaseUnit: code }));
+    assert.equal(normalized.purchaseUnitMapping.status, "unconfirmed"); assert.equal(normalized.purchaseUnitMapping.suggestedUnit, suggested);
+    assert.equal(normalized.purchaseUnit, code); assert.equal(candidate(normalized).category, "blocked");
+    assert.ok(codes(normalized).includes("purchase-unit-unconfirmed"));
+  }
+});
+test("verified source purchase-unit cells take precedence over a model's unconfirmed expanded label", () => {
+  const data = fixture({ purchaseUnit: "Bottle" });
+  data.sourceUnits[1].text = data.sourceUnits[1].text.replace('"Bottle"', '"FL"');
+  data.checked = validateRawSupplierAiRows({ rows: [data.raw] }, { sourceUnits: data.sourceUnits })[0];
+  const unconfirmed = normalizeMapped(data);
+  assert.equal(unconfirmed.purchaseUnitMapping.sourceUnit, "FL"); assert.equal(unconfirmed.purchaseUnitMapping.status, "unconfirmed");
+  const confirmed = normalizeMapped(data, mappingSnapshot([{ sourceUnit: "FL", purchaseUnit: "Jar" }]));
+  assert.equal(confirmed.purchaseUnit, "Jar"); assert.equal(confirmed.purchaseUnitMapping.status, "confirmed");
+});
+test("real CSV and XLSX source Eenheid recover confirmed FL mappings even when the model purchase unit is null", async () => {
+  const ExcelJS = require("exceljs"), { extractSupplierAiSource } = require("./supplierAiExtraction");
+  const name = "MILK 1L", headers = ["SKU", "Name", "Eenheid", "Package content", "Content unit"], values = ["00081-A", name, "FL", "1 L", "L"];
+  const workbook = new ExcelJS.Workbook(), sheet = workbook.addWorksheet("Volumes"); sheet.addRow(headers); sheet.addRow(values);
+  for (const [fileName, bytes] of [["volumes.csv", Buffer.from(headers.join(",") + "\n" + values.join(",") + "\n")],
+    ["volumes.xlsx", Buffer.from(await workbook.xlsx.writeBuffer())]]) {
+    const extracted = await extractSupplierAiSource({ fileName, bytes, mimeType: fileName.endsWith("csv") ? "text/csv" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const sourceUnits = extracted.units.map((unit, index) => ({ ...unit, contextOnly: index === 0 }));
+    const raw = { ...fixture({ supplierProductName: name, purchaseUnit: null, baseUnit: "L" }).raw,
+      sourceAnchors: [{ sourceId: sourceUnits[1].sourceId, quote: name }] };
+    const checked = validateRawSupplierAiRows({ rows: [raw] }, { sourceUnits })[0];
+    const normalized = normalizeSupplierAiProposal(checked, { importSettings: settings, sourceUnits,
+      purchaseUnitMappingSnapshot: mappingSnapshot([{ sourceUnit: "FL", purchaseUnit: "Bottle" }]) });
+    assert.equal(normalized.purchaseUnit, "Bottle", fileName); assert.equal(normalized.purchaseUnitMapping.sourceUnit, "FL");
+    assert.equal(normalized.purchaseUnitMapping.status, "confirmed"); assert.equal(normalized.baseUnit, "l"); assert.equal(normalized.baseUnitsPerPurchaseUnit, 1);
+    assert.equal(normalized.originalInput.purchaseUnit, null); assert.equal(candidate(normalized).category, "new");
+    const unmapped = normalizeSupplierAiProposal(checked, { importSettings: settings, sourceUnits, purchaseUnitMappingSnapshot: mappingSnapshot() });
+    assert.equal(unmapped.purchaseUnitMapping.sourceUnit, "FL"); assert.equal(unmapped.purchaseUnitMapping.status, "unconfirmed"); assert.equal(candidate(unmapped).category, "blocked");
+  }
+});
+test("physical-unit columns cannot establish a purchase unit and contradictory purchase-unit headers remain blocked", () => {
+  const data = fixture({ purchaseUnit: null, baseUnit: "KG" }, { content: "1 KG" });
+  data.sourceUnits[0].text = JSON.stringify(["SKU", "Name", "Content unit", "Content", "Unit", "Annual amount", "Annual quantity"]);
+  const cells = JSON.parse(data.sourceUnits[1].text); cells[2] = "FL"; cells[4] = "FL"; data.sourceUnits[1].text = JSON.stringify(cells);
+  data.checked = validateRawSupplierAiRows({ rows: [data.raw] }, { sourceUnits: data.sourceUnits })[0];
+  const physical = normalizeMapped(data, mappingSnapshot([{ sourceUnit: "FL", purchaseUnit: "Bottle" }]));
+  assert.equal(physical.purchaseUnit, null); assert.equal(physical.purchaseUnitMapping.sourceUnit, null); assert.equal(physical.purchaseUnitMapping.status, "unconfirmed");
+  const ambiguous = fixture({ purchaseUnit: null });
+  const header = JSON.parse(ambiguous.sourceUnits[0].text), values = JSON.parse(ambiguous.sourceUnits[1].text);
+  header[2] = "Purchase unit"; values[2] = "FL"; header[4] = "Package"; values[4] = "TR";
+  ambiguous.sourceUnits[0].text = JSON.stringify(header); ambiguous.sourceUnits[1].text = JSON.stringify(values);
+  ambiguous.checked = validateRawSupplierAiRows({ rows: [ambiguous.raw] }, { sourceUnits: ambiguous.sourceUnits })[0];
+  const blocked = normalizeMapped(ambiguous, mappingSnapshot([{ sourceUnit: "FL", purchaseUnit: "Bottle" }, { sourceUnit: "TR", purchaseUnit: "Tray" }]));
+  assert.equal(blocked.purchaseUnitMapping.status, "unconfirmed"); assert.equal(blocked.purchaseUnit, null); assert.equal(candidate(blocked).category, "blocked");
+});
+test("explicit one-import mapping changes only its label and findings and preserves prices, physical contents and other human metadata", () => {
+  const normalized = normalizeMapped(fixture({ purchaseUnit: "TR", pricePerPurchaseUnit: 12 }, { price: 12, priceHeader: "Purchase price", content: "400 GR" }));
+  const original = structuredClone(normalized), extra = { ...normalized, humanNote: "Preserve my reviewed product", customReview: { approvedName: true } };
+  const confirmed = applyPurchaseUnitMappingToProposal(extra, { sourceUnit: "TR", purchaseUnit: "Tray" });
+  assert.equal(confirmed.purchaseUnit, "Tray"); assert.equal(confirmed.purchaseUnitMapping.status, "confirmed");
+  for (const field of ["pricePerPurchaseUnit", "pricePerBaseUnit", "pricingModel", "currency", "priceBasis", "vatRate", "baseUnit", "baseUnitsPerPurchaseUnit", "originalInput", "sourceAnchors", "customReview", "humanNote"]) {
+    assert.deepEqual(confirmed[field], extra[field], field);
+  }
+  assert.deepEqual(normalized, original); assert.equal(codes(confirmed).includes("purchase-unit-unconfirmed"), false);
+  assert.ok(codes(confirmed).includes("purchase-unit-confirmed-for-import"));
+  assert.throws(() => applyPurchaseUnitMappingToProposal(extra, { sourceUnit: "FL", purchaseUnit: "Bottle" }), { code: "failed-precondition" });
+  assert.throws(() => applyPurchaseUnitMappingToProposal(extra, { sourceUnit: "TR", purchaseUnit: "Box", snapshot: mappingSnapshot([{ sourceUnit: "TR", purchaseUnit: "Tray" }]) }), { code: "aborted" });
+});
+test("an explicit source purchase-unit price stays available behind mapping review and survives human confirmation", () => {
+  for (const sourceUnit of ["FL", "ZK", "EM", "TR"]) {
+    const data = fixture({ purchaseUnit: sourceUnit, pricePerPurchaseUnit: 12 }, { price: 12, priceHeader: "Unit price", content: "400 GR" });
+    const normalized = normalizeMapped(data);
+    assert.equal(normalized.pricePerPurchaseUnit, 12); assert.equal(normalized.pricingModel, "Per Purchase Unit");
+    assert.equal(candidate(normalized).category, "blocked");
+    assert.equal(codes(normalized).includes("price-purchase-label-conflict"), false);
+    const label = { FL: "Bottle", ZK: "Bag", EM: "Bucket", TR: "Tray" }[sourceUnit];
+    const reviewed = applyPurchaseUnitMappingToProposal(normalized, { sourceUnit, purchaseUnit: label });
+    assert.equal(reviewed.pricePerPurchaseUnit, 12); assert.equal(candidate(reviewed).category, "new");
+  }
+});
+test("explicit prices per canonical Bucket, Tray and all supported English packages retain the purchase-price contract", () => {
+  for (const purchaseUnit of require("./supplierImportMappings").PURCHASE_UNITS) {
+    const normalized = normalizeMapped(fixture({ purchaseUnit, pricePerPurchaseUnit: 6 }, { price: 6, priceHeader: `Net price per ${purchaseUnit}`, content: "400 GR" }));
+    assert.equal(normalized.pricePerPurchaseUnit, 6, purchaseUnit); assert.equal(normalized.pricingModel, "Per Purchase Unit");
+    assert.equal(normalized.baseUnitsPerPurchaseUnit, 400); assert.equal(normalized.purchaseUnitMapping.status, "known");
+    assert.equal(candidate(normalized).category, "new", purchaseUnit);
+  }
+});
+test("a supplier package-code mapping cannot redefine an explicit per-kilogram price as a per-Box price", () => {
+  const normalized = normalizeMapped(fixture({ purchaseUnit: "KG", baseUnit: "GR", pricePerPurchaseUnit: 12 },
+    { price: 12, priceHeader: "Net price per kg", content: "400 GR" }), mappingSnapshot([{ sourceUnit: "KG", purchaseUnit: "Box" }]));
+  assert.equal(normalized.purchaseUnit, "Box"); assert.equal(normalized.baseUnit, "g");
+  assert.equal(normalized.pricingModel, "Per Base Unit"); assert.equal(normalized.pricePerBaseUnit, 0.012); assert.equal(normalized.pricePerPurchaseUnit, null);
+  assert.equal(candidate(normalized).product.pricePerPurchaseUnit, 4.8);
+});
 
 test("uppercase display names, canonical GR, English PK and explicit import context create an unpriced inactive draft", () => {
   const data = fixture(), normalized = normalize(data), proposed = candidate(normalized);

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { auth } from "../../firebaseConfig";
+import { useNavigate } from "react-router-dom";
 import { usePermission } from "../../hooks/usePermission";
 import { getSuppliers } from "../../services/firebaseSuppliers";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
@@ -7,17 +8,14 @@ import { useSupplierProductAuthority } from "../../hooks/useSupplierProductAutho
 import { currencyChoices } from "../../utils/propertySettingChoices";
 import { Combobox } from "../ui/combobox";
 import Modal from "../shared/Modal";
-import SupplierAiImportRow from "./SupplierAiImportRow";
-import SupplierAiImportFindings from "./SupplierAiImportFindings";
 import {
   SUPPLIER_AI_IMPORT_ACCEPT, validateSupplierAiImportFile, getSupplierAiImportAvailability,
-  startSupplierAiImport, getSupplierAiImport, getSupplierAiImportReview, confirmSupplierAiImport, normalizeSupplierAiImportSettings, supplierAiImportVatFraction,
+  startSupplierAiImport, getSupplierAiImport, normalizeSupplierAiImportSettings, supplierAiImportVatFraction,
 } from "../../services/firebaseSupplierAiImports";
 
 const currencyOptions = currencyChoices();
 const supportedCurrency = (value) => currencyOptions.some((option) => option.id === value);
 const processing = new Set(["queued", "processing"]);
-const reviewable = new Set(["review", "partially_committed", "completed"]);
 const statuses = {
   queued: "Your document is queued.", processing: "Reading the document and preparing a review…",
   review: "Review the proposed products before importing.", failed: "Document processing failed. No products were changed.",
@@ -28,7 +26,8 @@ export default function SupplierAiImportDialog(props) {
   const authority = useSupplierProductAuthority();
   return <ScopedSupplierAiImportDialog key={authority} {...props} />;
 }
-function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [], suppliersLoading = false, initialSupplierId = "", onImported, trackedJobId = null, trackedJob = null, backgroundManaged = false, onJobChange, onNewDocument }) {
+function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [], suppliersLoading = false, initialSupplierId = "", onOpenReview, trackedJobId = null, trackedJob = null, backgroundManaged = false, onJobChange, onNewDocument }) {
+  const navigate = useNavigate();
   const actor = useRef(auth.currentUser).current, alive = useRef(true);
   const current = useCallback(() => alive.current && auth.currentUser === actor, [actor]);
   const canRead = usePermission("supplierproducts", "read"), canCreate = usePermission("supplierproducts", "create"), canReadSuppliers = usePermission("suppliers", "read");
@@ -38,13 +37,9 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
   const [priceBasis, setPriceBasis] = useState(""), [currency, setCurrency] = useState(""), [sharedVat, setSharedVat] = useState(false), [vatPercent, setVatPercent] = useState("");
   const currencyTouched = useRef(false), pendingUploadSettings = useRef(null);
   const [supplierId, setSupplierId] = useState(initialSupplierId), [file, setFile] = useState(null), [job, setJob] = useState(null);
-  const [busy, setBusy] = useState(false), [error, setError] = useState(null), [pollError, setPollError] = useState(null), [rows, setRows] = useState([]);
-  const [nextCursor, setNextCursor] = useState(null), [cursor, setCursor] = useState(null), [cursorHistory, setCursorHistory] = useState([null]);
-  const [totalRows, setTotalRows] = useState(0), [reviewLoading, setReviewLoading] = useState(false), [selected, setSelected] = useState({});
-  const [summaryStale, setSummaryStale] = useState(false), [summaryRefreshing, setSummaryRefreshing] = useState(false);
-  const [outcomes, setOutcomes] = useState([]), [uncertainUpload, setUncertainUpload] = useState(false), [uncertainCommit, setUncertainCommit] = useState(false);
-  const pendingCommit = useRef(null), lastReviewJob = useRef(null), input = useRef(null);
-  const generation = useRef(0), jobRequests = useRef(0), rowRequests = useRef(0), latestJob = useRef(job), latestRows = useRef(rows); latestJob.current = job; latestRows.current = rows;
+  const [busy, setBusy] = useState(false), [error, setError] = useState(null), [pollError, setPollError] = useState(null);
+  const [uncertainUpload, setUncertainUpload] = useState(false);
+  const input = useRef(null), generation = useRef(0), jobRequests = useRef(0), latestJob = useRef(job); latestJob.current = job;
   const [resuming, setResuming] = useState(false), [closeIn, setCloseIn] = useState(null);
   const closeDeadline = useRef(null);
   const previousTrackedJobId = useRef(trackedJobId);
@@ -61,25 +56,25 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
   const vatInputValid = !sharedVatRequired || enteredVatRate !== null;
   const priceSettingsReady = ["net", "gross", "unknown"].includes(priceBasis) && supportedCurrency(currency) && vatInputValid;
   useEffect(() => {
-    if (!backgroundManaged || !current() || busy || uncertainUpload || uncertainCommit) return;
+    if (!backgroundManaged || !current() || busy || uncertainUpload) return;
     if (!trackedJobId) {
       if (previousTrackedJobId.current && latestJob.current) {
-        generation.current += 1; rowRequests.current += 1; jobRequests.current += 1;
-        setJob(null); setSummaryStale(false); setSummaryRefreshing(false); setRows([]); setSelected({}); setOutcomes([]); setCursor(null); setCursorHistory([null]); setNextCursor(null); setError(null); setPollError(null); setCloseIn(null);
-        pendingCommit.current = null; lastReviewJob.current = null; setReviewLoading(false); setFile(null); setSupplierId(initialSupplierId); clearPriceSettings(); setResuming(false);
+        generation.current += 1; jobRequests.current += 1;
+        setJob(null); setError(null); setPollError(null); setCloseIn(null);
+        setFile(null); setSupplierId(initialSupplierId); clearPriceSettings(); setResuming(false);
       }
       previousTrackedJobId.current = null; return;
     }
     previousTrackedJobId.current = trackedJobId;
     if (latestJob.current?.jobId !== trackedJobId) {
-      generation.current += 1; rowRequests.current += 1; jobRequests.current += 1;
-      setSummaryStale(false); setSummaryRefreshing(false); setRows([]); setSelected({}); setOutcomes([]); setCursor(null); setCursorHistory([null]); setNextCursor(null); setError(null); setPollError(null); setCloseIn(null);
-      pendingCommit.current = null; lastReviewJob.current = null; setUncertainCommit(false); setUncertainUpload(false); setReviewLoading(false); setFile(null);
+      generation.current += 1; jobRequests.current += 1;
+      setError(null); setPollError(null); setCloseIn(null);
+      setUncertainUpload(false); setFile(null);
     }
     if (trackedJob) { setJob(trackedJob); setSupplierId(trackedJob.supplierId || ""); setResuming(false); return; }
     const captured = generation.current; setResuming(true);
     getSupplierAiImport(hotelUid, trackedJobId).then((value) => { if (current() && captured === generation.current) { publishJob(value); setSupplierId(value.supplierId || ""); } }).catch((failure) => { if (current() && captured === generation.current) setError(failure); }).finally(() => { if (current() && captured === generation.current) setResuming(false); });
-  }, [backgroundManaged, trackedJobId, trackedJob, hotelUid, current, busy, uncertainUpload, uncertainCommit, initialSupplierId]);
+  }, [backgroundManaged, trackedJobId, trackedJob, hotelUid, current, busy, uncertainUpload, initialSupplierId]);
   useEffect(() => {
     if (closeIn === null) return;
     if (!open || !job || !processing.has(job.status) || !current()) { setCloseIn(null); return; }
@@ -90,13 +85,12 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
     }, Math.min(1000, Math.max(0, closeDeadline.current - Date.now())));
     return () => clearTimeout(timer);
   }, [closeIn, open, job?.jobId, job?.status, current, onClose]);
-  const renderedGeneration = generation.current;
   const remember = useCallback((value) => { try { sessionStorage.setItem(storageKey, JSON.stringify({ jobId: value.jobId })); } catch { /* Recovery remains available in the open view. */ } }, [storageKey]);
   const forget = () => { try { sessionStorage.removeItem(storageKey); } catch { /* Browser storage is optional. */ } };
   const loadAvailability = useCallback(async () => {
     if (!permitted || !hotelUid || !current()) return;
     setAvailabilityLoading(true); setError(null);
-    try { const value = await getSupplierAiImportAvailability(hotelUid); if (current()) setAvailability(value.importPolicyVersion === 2 ? value : { ...value, available: false, reason: value.available ? "upgrade-required" : value.reason }); }
+    try { const value = await getSupplierAiImportAvailability(hotelUid); if (current()) setAvailability(value.importPolicyVersion === 2 && value.reviewWorkspaceVersion === 1 ? value : { ...value, available: false, reason: value.available ? "upgrade-required" : value.reason }); }
     catch (failure) { if (current()) setError(failure); }
     finally { if (current()) setAvailabilityLoading(false); }
   }, [permitted, hotelUid, current]);
@@ -112,45 +106,21 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
     if (!job?.jobId || !current()) return;
     const captured = { jobId: job.jobId, generation: generation.current, request: ++jobRequests.current };
     const active = () => current() && generation.current === captured.generation && latestJob.current?.jobId === captured.jobId && jobRequests.current === captured.request;
-    setSummaryRefreshing(true);
-    try { const value = await getSupplierAiImport(hotelUid, captured.jobId); if (active()) { publishJob(value); setSummaryStale(false); setPollError(null); } }
+    try { const value = await getSupplierAiImport(hotelUid, captured.jobId); if (active()) { publishJob(value); setPollError(null); } }
     catch (failure) { if (active()) {
       setPollError(failure);
       if (["not-found", "failed-precondition"].includes(String(failure.code || "").replace(/^functions\//, ""))) {
         setPollError(null);
         const expired = { hotelUid, jobId: captured.jobId, ownerUid: actor?.uid, status: "expired", error: { message: failure.message } }; publishJob(expired);
-        setSummaryStale(false); setRows([]); setSelected({}); setOutcomes([]); pendingCommit.current = null; setUncertainCommit(false);
         try { sessionStorage.removeItem(storageKey); } catch { /* An expired reference contains no source content. */ }
       }
-    } } finally { if (active()) setSummaryRefreshing(false); }
+    } }
   }, [job?.jobId, hotelUid, current, storageKey]);
   useEffect(() => {
     if (backgroundManaged || !job || !processing.has(job.status) || !current()) return;
     const timer = setTimeout(refreshJob, pollError ? 10000 : 3000);
     return () => clearTimeout(timer);
   }, [job, refreshJob, pollError, current, backgroundManaged]);
-  const loadRows = useCallback(async (next = null) => {
-    if (!job?.jobId || !current()) return;
-    const captured = { jobId: job.jobId, generation: generation.current, request: ++rowRequests.current };
-    const active = () => current() && generation.current === captured.generation && latestJob.current?.jobId === captured.jobId && rowRequests.current === captured.request;
-    setReviewLoading(true); setError(null);
-    try {
-      const value = await getSupplierAiImportReview(hotelUid, captured.jobId, next);
-      if (!active()) return;
-      if (!Array.isArray(value.rows) || !Number.isSafeInteger(value.totalRows) || value.totalRows > 1000) throw new Error("The review response is invalid. Reopen this import.");
-      const reviewedRows = value.rows.map((incoming) => {
-        const local = latestRows.current.find((entry) => entry.rowId === incoming.rowId);
-        return local && (local.reviewRevision > incoming.reviewRevision || (local.reviewRevision === incoming.reviewRevision && local.committed && !incoming.committed)) ? local : incoming;
-      });
-      setRows(reviewedRows); setTotalRows(value.totalRows); setNextCursor(value.nextCursor || null); setCursor(next);
-      setSelected((prior) => Object.fromEntries(Object.entries(prior).filter(([rowId, revision]) => {
-        const row = reviewedRows.find((entry) => entry.rowId === rowId);
-        return !row || (row.reviewRevision === revision && !row.committed && row.category !== "blocked" && !(row.issues || []).some((issue) => issue.severity === "error"));
-      })));
-    } catch (failure) { if (active()) setError(failure); }
-    finally { if (active()) setReviewLoading(false); }
-  }, [hotelUid, job?.jobId, current]);
-  useEffect(() => { if (open && job && reviewable.has(job.status) && lastReviewJob.current !== job.jobId) { lastReviewJob.current = job.jobId; loadRows(null); } }, [open, job, loadRows]);
   const chooseFile = (event) => {
     const chosen = event.target.files?.[0];
     if (busy || uncertainUpload || !current()) return;
@@ -175,24 +145,17 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
       setUncertainUpload(!["invalid-argument", "permission-denied", "unauthenticated", "failed-precondition", "resource-exhausted", "already-exists", "not-found"].includes(String(failure.code || "").replace(/^functions\//, "")));
     } finally { if (current() && captured === generation.current) setBusy(false); }
   };
-  const select = (rowId, checked, reviewRevision) => setSelected((prior) => { const next = { ...prior }; if (checked) next[rowId] = reviewRevision; else delete next[rowId]; return next; });
-  const corrected = (row) => { if (!current() || generation.current !== renderedGeneration || latestJob.current?.jobId !== job?.jobId || !row?.rowId) return; setRows((prior) => prior.map((value) => value.rowId === row.rowId ? row : value)); select(row.rowId, false); setSummaryStale(true); refreshJob(); };
-  const confirm = async () => {
-    if (busy || !current() || !job || !permitted) return;
-    const captured = { generation: generation.current, jobId: job.jobId };
-    const active = () => current() && generation.current === captured.generation && latestJob.current?.jobId === captured.jobId;
-    const commandRows = pendingCommit.current || Object.entries(selected).map(([rowId, reviewRevision]) => ({ rowId, reviewRevision, acknowledged: true }));
-    if (!commandRows.length) return;
-    pendingCommit.current = commandRows; setBusy(true); setError(null);
-    try {
-      const result = await confirmSupplierAiImport(hotelUid, captured.jobId, commandRows);
-      if (!active()) return;
-      setOutcomes(result.outcomes); setUncertainCommit(false); pendingCommit.current = null; setSelected({});
-      await loadRows(cursor); if (active()) { onImported?.(result); await refreshJob(); }
-    } catch (failure) { if (active()) { setError(failure); setUncertainCommit(true); } }
-    finally { if (active()) setBusy(false); }
+  const openReview = () => {
+    if (!current() || !job?.jobId) return;
+    close();
+    if (onOpenReview) onOpenReview(job.jobId);
+    else navigate(`/catalog/supplier-products/imports/${encodeURIComponent(job.jobId)}`);
   };
-  const reset = () => { if (busy || uncertainUpload || uncertainCommit) return; generation.current += 1; rowRequests.current += 1; jobRequests.current += 1; setReviewLoading(false); setResuming(false); setPollError(null); forget(); clearPriceSettings(); setSummaryStale(false); setSummaryRefreshing(false); setCloseIn(null); setJob(null); onNewDocument?.(); setRows([]); setSelected({}); setOutcomes([]); setCursor(null); setCursorHistory([null]); setNextCursor(null); lastReviewJob.current = null; setError(null); };
+  const reset = () => {
+    if (busy || uncertainUpload) return;
+    generation.current += 1; jobRequests.current += 1;
+    setResuming(false); setPollError(null); forget(); clearPriceSettings(); setCloseIn(null); setJob(null); onNewDocument?.(); setFile(null); setError(null);
+  };
   const loadSupplierDirectory = useCallback(() => getSuppliers(hotelUid), [hotelUid]);
   const supplierDirectory = useScopedAsync({ scopeKey: `${hotelUid}:ai-import-suppliers`, enabled: Boolean(backgroundManaged && open && !job && permitted), initialData: null, load: loadSupplierDirectory });
   const supplierOptions = backgroundManaged ? supplierDirectory.data || [] : suppliers;
@@ -236,18 +199,12 @@ function ScopedSupplierAiImportDialog({ open, onClose, hotelUid, suppliers = [],
         {job.error && <p role="alert" className="text-sm text-red-800">{job.error.message || String(job.error)}</p>}
         {pollError && <p role="alert" className="text-sm text-amber-800">{pollError.message} The original import reference is retained.</p>}
         <button type="button" onClick={refreshJob} disabled={busy} className="ht-button-secondary">Refresh import status</button>
-        {reviewable.has(job.status) && <>
-          <SupplierAiImportFindings summary={summaryStale ? null : job.summary ?? null} counts={summaryStale ? null : job.counts ?? null} loading={summaryRefreshing} />
-          <div className="border-t pt-3"><h2 className="font-semibold">Product review</h2><p className="mt-1 text-xs text-stone-500">{totalRows} rows · {Object.keys(selected).length} selected across review pages. Errors must be corrected; unchanged rows do not rewrite products. Product revisions are checked again on confirmation.</p></div>
-          <button type="button" onClick={() => loadRows(cursor)} disabled={busy || reviewLoading || uncertainCommit} className="ht-button-secondary">Refresh review rows</button>
-          {reviewLoading ? <p role="status" className="animate-pulse text-sm">Loading review rows…</p> : rows.map((row) => <SupplierAiImportRow key={`${job.jobId}:${row.rowId}`} hotelUid={hotelUid} jobId={job.jobId} row={row} selected={Boolean(selected[row.rowId])} onSelect={select} onCorrected={corrected} locked={busy || uncertainCommit} current={() => current() && generation.current === renderedGeneration && latestJob.current?.jobId === job.jobId} />)}
-          {!reviewLoading && !rows.length && <p className="text-sm text-stone-600">No review rows are available.</p>}
-          <div className="flex justify-between gap-2"><button type="button" disabled={reviewLoading || busy || uncertainCommit || cursorHistory.length <= 1} onClick={() => { const history = cursorHistory.slice(0, -1); setCursorHistory(history); loadRows(history[history.length - 1]); }} className="ht-button-secondary">Previous rows</button><button type="button" disabled={reviewLoading || busy || uncertainCommit || !nextCursor} onClick={() => { setCursorHistory((history) => [...history, nextCursor]); loadRows(nextCursor); }} className="ht-button-secondary">Next rows</button></div>
-          {uncertainCommit && <p className="text-sm text-amber-800">Some writes may already have succeeded. Retry the original selection to recover its saved results. Selection and corrections remain locked until the response is recovered.</p>}
-          <button type="button" onClick={confirm} disabled={busy || reviewLoading || (!Object.keys(selected).length && !uncertainCommit)} className="ht-button-primary w-full">{busy ? "Confirming reviewed rows…" : uncertainCommit ? "Recover original confirmation" : `Confirm ${Object.keys(selected).length} reviewed rows`}</button>
-        </>}
-        {outcomes.length > 0 && <section className="rounded-lg border border-stone-200 bg-stone-50 p-3 text-sm" aria-label="Import results"><h2 className="font-semibold">Confirmed server results</h2><p className="mt-1">{outcomes.filter((row) => row.status === "created").length} created · {outcomes.filter((row) => row.status === "updated").length} updated · {outcomes.filter((row) => row.status === "unchanged").length} unchanged · {outcomes.filter((row) => row.status === "blocked").length} blocked</p>{outcomes.filter((row) => row.status === "blocked").map((row) => <p key={row.rowId} className="mt-2 text-xs text-red-700">{row.rowId}: {row.error?.message || row.error || "This row could not be imported. Recheck the product and its revision."}</p>)}</section>}
-        {!processing.has(job.status) && <button type="button" disabled={busy || uncertainUpload || uncertainCommit} onClick={reset} className="ht-button-secondary">Start another document</button>}
+        <div className="rounded-xl border border-stone-200 bg-white p-4">
+          <h2 className="font-semibold">Review on the import page</h2>
+          <p className="mt-1 text-sm text-stone-600">Follow processing, review products one at a time and confirm the approved selection on a separate page. Products are never saved automatically.</p>
+          <button type="button" onClick={openReview} disabled={busy} className="ht-button-primary mt-3">Open import review</button>
+        </div>
+        {!processing.has(job.status) && <button type="button" disabled={busy || uncertainUpload} onClick={reset} className="ht-button-secondary">Start another document</button>}
       </>}
     </div>
   </Modal>;

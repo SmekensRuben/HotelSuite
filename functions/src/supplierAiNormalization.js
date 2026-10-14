@@ -1,6 +1,7 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const policy = require("./productPolicy");
 const { supplierAiSourceDeclarations } = require("./supplierAiSourceDeclarations");
+const { mappingSnapshot, sourceUnitKey, canonicalPurchaseUnit, UNIT_SUGGESTIONS } = require("./supplierImportMappings");
 
 const NORMALIZATION_VERSION = 2;
 const RAW_FIELDS = ["supplierSku", "supplierProductName", "currency", "pricingModel", "purchaseUnit", "baseUnit", "priceBasis", "gtin",
@@ -33,18 +34,36 @@ function relevantSources(raw, sourceUnits) {
   const headers = sourceUnits.filter((unit) => unit.contextOnly === true || /header$/.test(unit.sourceId) || /\(possible header\)$/.test(unit.anchor || ""));
   return { rows, headers, visual: (raw.sourceAnchors || []).some((anchor) => anchor.evidenceKind === "visual-page") };
 }
-function priceChannel(header, cells = [], labels = []) {
+function mappedPurchaseLabel(value, sources) {
+  const code = purchaseSourceUnit(value), mapped = sources.purchaseUnitMappingSnapshot?.mappings.find((entry) => entry.sourceUnit === code);
+  if (mapped) return mapped.purchaseUnit;
+  if (sources.purchaseUnitMappingSnapshot) {
+    try { return canonicalPurchaseUnit(value); } catch { /* Abbreviations still require an explicitly confirmed supplier mapping. */ }
+  }
+  return PURCHASE_ALIASES[plain(value).toLowerCase()] || null;
+}
+function priceChannel(header, cells = [], labels = [], sources = {}) {
   const match = plain(header).match(/(?:\b(?:per|par)\s*|\/\s*)([a-z]+)\b/i);
-  const label = match && PURCHASE_ALIASES[match[1].toLowerCase()];
-  if (label) return { channel: "purchase", purchaseUnit: label, unit: null };
   const unit = match && unitOf(match[1]);
+  // A supplier's package-code profile cannot redefine explicit physical price
+  // units such as EUR/kg. Package names and inventory dimensions are distinct.
+  if (sources.purchaseUnitMappingSnapshot && unit && !/^(?:st|stuk|stuks|piece|pieces|pcs|ea)$/i.test(match[1])) return { channel: "base", unit };
+  const label = match && mappedPurchaseLabel(match[1], sources);
+  if (label) return { channel: "purchase", purchaseUnit: label, sourceUnit: purchaseSourceUnit(match[1]), unit: null };
   if (unit) return { channel: "base", unit };
   if (/\b(?:purchase\s*price|aankoopprijs|inkoopprijs|(?:per|par)\s*(?:verpakking|package|purchase\s*unit))\b/i.test(header)) return { channel: "purchase", unit: null };
   if (/\b(?:unit\s*price|eenheidsprijs|stukprijs)\b/i.test(header)) {
     for (let index = 0; index < Math.min(cells.length, labels.length); index++) {
-      if (!isPackageHeader(plain(labels[index]))) continue;
-      const value = plain(cells[index]), candidate = PURCHASE_ALIASES[value.toLowerCase()] || (/^(?:case|carton|bag|tray|jar|can)$/i.test(value) ? value : null);
-      if (candidate) return { channel: "purchase", purchaseUnit: candidate, unit: null, inferred: true };
+      if (!(sources.purchaseUnitMappingSnapshot ? isPurchaseUnitHeader : isPackageHeader)(plain(labels[index]))) continue;
+      const value = plain(cells[index]), candidate = mappedPurchaseLabel(value, sources) || (/^(?:case|carton|bag|tray|jar|can)$/i.test(value)
+        ? sources.purchaseUnitMappingSnapshot ? canonicalPurchaseUnit(value) : value : null);
+      if (candidate) return { channel: "purchase", purchaseUnit: candidate, sourceUnit: purchaseSourceUnit(value), unit: null, inferred: true };
+      // The structured source explicitly establishes a price per purchasable
+      // package even while its English label awaits human confirmation. Keep
+      // that evidenced price behind the blocking mapping review instead of
+      // losing it and requiring the user to type the same price again.
+      if (sources.purchaseUnitMappingSnapshot && purchaseSourceUnit(value)) return { channel: "purchase", purchaseUnit: null,
+        sourceUnit: purchaseSourceUnit(value), unit: null, inferred: true };
     }
   }
   return { channel: "unknown", unit: null };
@@ -64,7 +83,7 @@ function priceEvidence(value, sources, baseUnit) {
           const sourceValue = priceNumber(cells[index]); if (sourceValue === null) continue;
           const label = plain(labels[index]);
           if (isPriceHeader(label)) {
-            const contract = priceChannel(label, cells, labels);
+            const contract = priceChannel(label, cells, labels, sources);
             if (contract.channel === "unknown") { if (sourceValue === value) unknownChannel = true; continue; }
             let matches = sourceValue === value;
             try {
@@ -107,6 +126,51 @@ function namedQuantities(value) {
 }
 const isPackageHeader = (label) => /\b(?:content|inhoud|pack\s*size|package|purchase\s*unit|aankoop\s*eenheid|verpakking|verpakkingsinhoud|net\s*weight|netto\s*gewicht|gewicht\s*per)\b/i.test(label)
   && !/\b(?:annual|yearly|jaarlijkse?|ordered|besteld|afname|verbruik|sales|sold|total|totaal)\b/i.test(label);
+const isPurchaseUnitHeader = (label) => /^(?:eenheid|purchase\s*unit|purchase\s*package|package|verpakking|besteleenheid|aankoop\s*eenheid)$/i.test(plain(label));
+function purchaseSourceUnit(value) {
+  const spelling = plain(value), content = spelling.match(/^(.+?)\s*\d+(?:[.,]\d+)?\s*(?:kg|gr|g|ml|l)\b/i);
+  try { return sourceUnitKey(content ? content[1] : spelling); } catch { return null; }
+}
+function sourcePurchaseUnit(raw, sources) {
+  const codes = new Set();
+  for (const row of sources.rows) {
+    const cells = sourceCells(row); if (!cells) continue;
+    for (const header of headersFor(row, sources)) {
+      const labels = sourceCells(header); if (!labels) continue;
+      for (let index = 0; index < Math.min(labels.length, cells.length); index++) {
+        if (!isPurchaseUnitHeader(labels[index])) continue;
+        const code = purchaseSourceUnit(cells[index]); if (code) codes.add(code);
+      }
+    }
+  }
+  return { sourceUnit: codes.size === 1 ? [...codes][0] : purchaseSourceUnit(raw.purchaseUnit), ambiguous: codes.size > 1 };
+}
+function normalizePurchaseUnit(value, { snapshot, sourceUnit = purchaseSourceUnit(value), ambiguous = false } = {}) {
+  if (!snapshot) return null;
+  const scope = { supplierId: snapshot.supplierId, sourceFormat: snapshot.sourceFormat, profileId: snapshot.profileId };
+  const accepted = mappingSnapshot(snapshot, scope), mapped = accepted.mappings.find((entry) => entry.sourceUnit === sourceUnit);
+  let known = null;
+  try { if (sourceUnit) known = canonicalPurchaseUnit(sourceUnit); } catch { /* Unknown abbreviations need an explicit supplier decision. */ }
+  const suggestedUnit = mapped?.purchaseUnit || known || UNIT_SUGGESTIONS[sourceUnit] || PURCHASE_ALIASES[plain(sourceUnit).toLowerCase()] || null;
+  return { sourceUnit, suggestedUnit, status: ambiguous || !sourceUnit || !mapped && !known ? "unconfirmed" : mapped ? "confirmed" : "known",
+    sourceFormat: accepted.sourceFormat, profileId: accepted.profileId, revision: accepted.revision };
+}
+function applyPurchaseUnitMappingToProposal(raw, { sourceUnit, purchaseUnit, snapshot }) {
+  const code = sourceUnitKey(sourceUnit), label = canonicalPurchaseUnit(purchaseUnit);
+  const currentCode = raw.purchaseUnitMapping?.sourceUnit || purchaseSourceUnit(raw.originalInput?.purchaseUnit ?? raw.purchaseUnit);
+  if (currentCode !== code) throw new HttpsError("failed-precondition", "This product belongs to a different source purchase unit.");
+  const accepted = snapshot ? mappingSnapshot(snapshot, { supplierId: snapshot.supplierId, sourceFormat: snapshot.sourceFormat, profileId: snapshot.profileId }) : null;
+  const matched = accepted?.mappings.find((entry) => entry.sourceUnit === code);
+  if (matched && matched.purchaseUnit !== label) throw new HttpsError("aborted", "The supplier mapping differs from the selected purchase unit.");
+  const purchaseUnitMapping = { sourceUnit: code, suggestedUnit: label, status: "confirmed", sourceFormat: accepted?.sourceFormat ?? raw.purchaseUnitMapping?.sourceFormat ?? null,
+    profileId: accepted?.profileId ?? raw.purchaseUnitMapping?.profileId ?? "default", revision: accepted?.revision ?? raw.purchaseUnitMapping?.revision ?? 0 };
+  return { ...raw, purchaseUnit: label, purchaseUnitMapping,
+    normalizationFindings: [...(raw.normalizationFindings || []).filter((finding) => !["purchase-unit-unconfirmed", "supplier-purchase-unit-mapped", "purchase-unit-confirmed-for-import"].includes(finding.code)),
+      { field: "purchaseUnit", code: matched ? "supplier-purchase-unit-mapped" : "purchase-unit-confirmed-for-import", severity: "info",
+        message: matched ? "The confirmed supplier and source-format profile supplies this English purchase-package label. Package quantities and financial terms remain unchanged."
+          : "This English purchase-package label was explicitly confirmed for this import. Package quantities and financial terms remain unchanged.",
+        before: raw.purchaseUnit ?? null, after: label, provenance: matched ? "supplier-mapping" : "human-confirmation" }] };
+}
 function packageCellQuantities(value) {
   const spelling = plain(value);
   if (/\d\s*[x×*]\s*\d/i.test(spelling)) {
@@ -180,7 +244,7 @@ function displayName(value) {
     .replace(/(\d(?:[.,]\d+)?\s*)(KG|GR|G|ML|LTR|LT|L)\b/gi, (_, amount, unit) => amount + (unitOf(unit) || unit.toLowerCase()));
 }
 
-function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [] } = {}) {
+function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [], purchaseUnitMappingSnapshot } = {}) {
   if (!importSettings || importSettings.policyVersion === 1) return raw;
   if (importSettings.policyVersion !== NORMALIZATION_VERSION || typeof raw !== "object" || !raw || Array.isArray(raw)
     || raw.normalizationVersion !== undefined) throw new HttpsError("failed-precondition", "This supplier import normalization policy is unavailable or was already applied.");
@@ -192,15 +256,22 @@ function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [] } =
   const change = (field, next, code, message, provenance = "source", severity = "info") => {
     if (result[field] !== next) { finding(field, code, message, result[field], next, provenance, severity); result[field] = next; }
   };
-  const sources = relevantSources(raw, sourceUnits), originalName = raw.supplierProductName;
+  const sources = { ...relevantSources(raw, sourceUnits), purchaseUnitMappingSnapshot }, originalName = raw.supplierProductName;
   if (typeof originalName === "string") {
     const expanded = originalName.replace(/\bROCH\.\s*BOTER(?=\s|\d|$)/gi, (match, offset) => "Rochefort Boter" + (/\d/.test(originalName[offset + match.length] || "") ? " " : ""));
     if (expanded !== originalName) change("supplierProductName", expanded, "approved-name-expansion", "The approved ROCH.BOTER abbreviation was expanded to Rochefort Boter. Confirm the product identity.", "approved-name-expansion", "warning");
     change("supplierProductName", displayName(result.supplierProductName), "display-name-normalized", "Capitalized display words and SI unit labels were standardized; supplier SKU and GTIN were preserved.");
   }
-  if (typeof result.purchaseUnit === "string") {
-    const label = plain(result.purchaseUnit), alias = label.match(/^(ds|doos|box|pk|pak|pack|pakket|fl|fles|bottle|st|stuk|piece|each)(?:\s*\d|$)/i);
-    change("purchaseUnit", alias ? PURCHASE_ALIASES[alias[1].toLowerCase()] : label, "purchase-label-normalized", "The supplier purchase-package label was standardized in English; no additional purchase option was created.");
+  if (purchaseUnitMappingSnapshot) {
+      const source = sourcePurchaseUnit(raw, sources);
+      result.purchaseUnitMapping = normalizePurchaseUnit(result.purchaseUnit, { snapshot: purchaseUnitMappingSnapshot, ...source });
+      if (result.purchaseUnitMapping.status === "unconfirmed") {
+        finding("purchaseUnit", "purchase-unit-unconfirmed", "Confirm the supplier source purchase unit and its English label before importing. A suggested abbreviation is not an accepted supplier mapping.",
+          result.purchaseUnitMapping.sourceUnit, result.purchaseUnitMapping.suggestedUnit, "supplier-mapping", "error");
+      } else change("purchaseUnit", result.purchaseUnitMapping.suggestedUnit, "supplier-purchase-unit-mapped", "The confirmed supplier and source-format profile supplies this English purchase-package label. Package quantities and financial terms remain unchanged.", "supplier-mapping");
+  } else if (typeof result.purchaseUnit === "string") {
+      const label = plain(result.purchaseUnit), alias = label.match(/^(ds|doos|box|pk|pak|pack|pakket|fl|fles|bottle|st|stuk|piece|each)(?:\s*\d|$)/i);
+      change("purchaseUnit", alias ? PURCHASE_ALIASES[alias[1].toLowerCase()] : label, "purchase-label-normalized", "The supplier purchase-package label was standardized in English; no additional purchase option was created.");
   }
   if (typeof result.baseUnit === "string") {
     const unit = unitOf(result.baseUnit);
@@ -248,7 +319,8 @@ function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [] } =
           finding("pricePerBaseUnit", "source-unit-price", "The proposed price matches the explicit source base-unit price contract. Review currency, tax and validity.", converted, converted);
         } catch { change(field, null, "price-unit-conversion-unavailable", "The source price-unit conversion cannot be represented safely. Supply a reviewed price contract.", "source", "error"); }
       }
-    } else if (evidence.purchaseUnit && evidence.purchaseUnit !== result.purchaseUnit) {
+    } else if (evidence.purchaseUnit && evidence.purchaseUnit !== result.purchaseUnit
+      && !(result.purchaseUnitMapping?.status === "unconfirmed" && evidence.sourceUnit === result.purchaseUnitMapping.sourceUnit)) {
       change(field, null, "price-purchase-label-conflict", "The source price applies to a different purchasable package label. Review the package and price contract.", "source", "error");
     } else {
       if (field !== "pricePerPurchaseUnit") change(field, null, "price-channel-normalized", "The source price is per purchasable package rather than per base unit. Its authoritative channel was corrected.", "source", "warning");
@@ -315,4 +387,4 @@ function normalizeSupplierAiProposal(raw, { importSettings, sourceUnits = [] } =
   return result;
 }
 const normalizeSupplierAiProposals = (rows, options) => rows.map((row) => normalizeSupplierAiProposal(row, options));
-module.exports = { NORMALIZATION_VERSION, normalizeSupplierAiProposal, normalizeSupplierAiProposals };
+module.exports = { NORMALIZATION_VERSION, normalizeSupplierAiProposal, normalizeSupplierAiProposals, normalizePurchaseUnit, applyPurchaseUnitMappingToProposal, purchaseSourceUnit };

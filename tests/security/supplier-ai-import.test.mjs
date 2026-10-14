@@ -19,6 +19,10 @@ const { DEFAULT_AI_CONFIGURATION } = require("../../functions/src/supplierAiPoli
 const { uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob, savePrivate } = require("../../functions/src/supplierAiImports");
 const { readHotelSupplierAiImportRowsHandler: review, correctHotelSupplierAiImportRowHandler: correct,
   commitHotelSupplierAiImportRowsHandler: commit } = require("../../functions/src/supplierAiProposal");
+const { readHotelSupplierAiImportWorkspaceHandler: workspace, decideHotelSupplierAiImportRowsHandler: decide,
+  completeHotelSupplierAiImportReviewHandler: completeReview, applyHotelSupplierAiImportMappingHandler: applyMapping } = require("../../functions/src/supplierAiReview");
+const { readHotelSupplierPurchaseUnitMappingsHandler: readMappings, saveHotelSupplierPurchaseUnitMappingHandler: saveMappings,
+  mappingProfileRef, mappingScope } = require("../../functions/src/supplierImportMappings");
 const { getPlatformSupplierAiImportSettingsHandler: settings, listPlatformSupplierAiUsageHandler: usage } = require("../../functions/src/supplierAiPlatform");
 const { mutateHotelSupplierProductHandler } = require("../../functions/src/products");
 const { requireHotelImportTarget } = require("../../functions/src/fileImportTypes");
@@ -32,8 +36,8 @@ const identities = Object.fromEntries(["manager", "other-manager", "hotel-b", "o
 const request = (data, actor = "manager") => ({ auth: identities[actor], data });
 // The source declares the full purchase-package price, rather than leaving a
 // bare "price" column ambiguous between package and inventory-unit pricing.
-const bytes = Buffer.from("sku,name,Net Purchase Price,currency,package\nMILK6,Milk six pack,15,EUR,6 l net\n");
-const uploadData = (patch = {}) => ({ hotelUid: "hotel-a", supplierId: "dairy", requestId: "import-one", fileName: "offers.csv", mimeType: "text/csv", importSettings: JSON.stringify({ policyVersion: 2, priceBasis: "net", currency: "EUR", vatRate: null }), ...patch });
+const bytes = Buffer.from("sku,name,Net Purchase Price,currency,Purchase Unit,Package Content\nMILK6,Milk six pack,15,EUR,Case,6 l net\n");
+const uploadData = (patch = {}) => ({ hotelUid: "hotel-a", supplierId: "dairy", requestId: "import-one", fileName: "offers.csv", mimeType: "text/csv", reviewWorkspaceVersion: "1", importSettings: JSON.stringify({ policyVersion: 2, priceBasis: "net", currency: "EUR", vatRate: null }), ...patch });
 let environment, calls;
 const provider = { countInput: async () => 500, respond: async (body) => {
   calls++;
@@ -49,6 +53,12 @@ const provider = { countInput: async () => 500, respond: async (body) => {
 const services = { ...baseServices, provider };
 async function uploaded() { return uploadSupplierAiImport(request(), uploadData(), bytes, services); }
 async function ready() { const job = await uploaded(); const result = await runSupplierAiImportJob("hotel-a", job.jobId, services); assert.equal(result.status, "review", JSON.stringify(result)); return job; }
+const decisionData = (jobId, row, action = "approve", requestId = `decision-${action}`) => ({ hotelUid: "hotel-a", jobId, requestId,
+  rows: [{ rowId: row.rowId, reviewRevision: row.reviewRevision, action, acknowledged: true }], bulk: false });
+async function approve(jobId, row, requestId) { return decide(request(decisionData(jobId, row, "approve", requestId)), services); }
+const mappingData = (patch = {}) => ({ hotelUid: "hotel-a", supplierId: "dairy", sourceFormat: "csv", profileId: "default", ...patch });
+const mappingCommand = (patch = {}) => mappingData({ requestId: "mapping-one", expectedRevision: 0,
+  mappings: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }, { sourceUnit: "TR", purchaseUnit: "Tray" }], ...patch });
 const rejectPermission = (promise) => assert.rejects(promise, { code: "permission-denied" });
 function assertCustomerPrivacy(value) {
   assert.doesNotMatch(JSON.stringify(value), /"(?:usage|configuration|model|fallbackModel|fallbackEnabled|inputTokens|outputTokens|reasoningTokens|priceVersion|actualCostUsd|knownCostUsd|reservedCostUsd|knownCostMicros|reservedCostMicros|limitUsd|maxCostPerImportUsd|maxMonthlyCostPerHotelUsd)"/);
@@ -96,6 +106,7 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
     assert.equal((await db.doc("hotels/hotel-a/supplierproducts/milk").get()).data().pricePerPurchaseUnit, 12);
     const page = await review(request({ hotelUid: "hotel-a", jobId: job.jobId, limit: 25 }), services);
     assert.equal(page.rows.length, 1); assert.equal(page.rows[0].category, "changed");
+    await approve(job.jobId, page.rows[0]);
     const data = { hotelUid: "hotel-a", jobId: job.jobId, requestId: "confirm-one", rows: [{ rowId: page.rows[0].rowId, reviewRevision: page.rows[0].reviewRevision, acknowledged: true }] };
     const result = await commit(request(data), services); assert.equal(result.outcomes[0].status, "updated");
     assert.deepEqual(await commit(request(data), services), result);
@@ -110,6 +121,9 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
       const data = { hotelUid: "hotel-a", jobId: job.jobId };
       await rejectPermission(readSupplierAiImport(request(null, actor), data, services));
       await rejectPermission(review(request(data, actor), services));
+      await rejectPermission(workspace(request({ ...data, filter: "all", includeIndex: true }, actor), services));
+      await rejectPermission(decide(request(decisionData(job.jobId, { rowId: "r-000000", reviewRevision: 1 }), actor), services));
+      await rejectPermission(completeReview(request({ ...data, requestId: "forged-completion" }, actor), services));
       await rejectPermission(correct(request({ ...data, rowId: "r-000000", expectedReviewRevision: 1, patch: {} }, actor), services));
       await rejectPermission(commit(request({ ...data, requestId: "forged", rows: [{ rowId: "r-000000", reviewRevision: 1, acknowledged: true }] }, actor), services));
     }
@@ -147,7 +161,7 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
   });
   it("exposes only file limits in customer availability and keeps operator pricing configuration restricted", async () => {
     const availability = await readSupplierAiImport(request(), { hotelUid: "hotel-a" }, services);
-    assert.deepEqual(availability, { available: true, importPolicyVersion: 2, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 }, defaults: { currency: "EUR" } });
+    assert.deepEqual(availability, { available: true, importPolicyVersion: 2, reviewWorkspaceVersion: 1, reason: null, limits: { maxFileBytes: 10485760, maxPages: 50, maxProducts: 1000 }, defaults: { currency: "EUR" } });
     assertCustomerPrivacy(availability);
     await rejectPermission(settings(request(), services));
     const operator = await settings(request(null, "operator"), services);
@@ -190,7 +204,8 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
   });
   it("returns legacy draft settings and summary as unavailable without recalculating retained results", async () => {
     const job = await ready(), jobRef = db.doc(`hotels/hotel-a/supplierAiImportJobs/${job.jobId}`), existing = (await jobRef.get()).data();
-    const { importSettings: _settings, importPolicyVersion: _version, ...legacy } = existing;
+    const { importSettings: _settings, importPolicyVersion: _version, importReviewVersion: _reviewVersion,
+      mappingProfileId: _profileId, purchaseUnitMappingSnapshot: _mappingSnapshot, reviewState: _reviewState, ...legacy } = existing;
     await jobRef.set(legacy);
     const rows = await db.collection(`${jobRef.path}/rows`).get(), originalRows = rows.docs.map((row) => row.data());
     const status = await readSupplierAiImport(request(), { hotelUid: "hotel-a", jobId: job.jobId }, services);
@@ -204,16 +219,18 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
     const fingerprint = digest(current.supplierId, current.fileName, current.mimeType, current.sha256);
     const jobId = digest(current.hotelUid, current.requestId, current.ownerUid, fingerprint), path = `private/supplier-ai-imports/hotel-a/${jobId}/source`;
     const source = await savePrivate(bucket, path, bytes, "application/octet-stream");
-    const { importSettings: _settings, importPolicyVersion: _version, ...base } = current;
+    const { importSettings: _settings, importPolicyVersion: _version, importReviewVersion: _reviewVersion,
+      mappingProfileId: _profileId, purchaseUnitMappingSnapshot: _mappingSnapshot, reviewState: _reviewState, ...base } = current;
     const legacy = { ...base, jobId, fingerprint, source };
     await db.doc(`hotels/hotel-a/supplierAiImportJobs/${jobId}`).set(legacy); await currentRef.delete();
-    const receiptRef = db.doc("hotels/hotel-a/supplierAiImportRequests/import-one"), { importSettings: _receiptSettings, importPolicyVersion: _receiptVersion, ...receipt } = (await receiptRef.get()).data();
+    const receiptRef = db.doc("hotels/hotel-a/supplierAiImportRequests/import-one"), { importSettings: _receiptSettings, importPolicyVersion: _receiptVersion,
+      importReviewVersion: _receiptReviewVersion, mappingProfileId: _receiptProfileId, purchaseUnitMappingSnapshot: _receiptMappingSnapshot, ...receipt } = (await receiptRef.get()).data();
     await receiptRef.set({ ...receipt, jobId, fingerprint });
-    const result = await uploadSupplierAiImport(request(), uploadData({ importSettings: undefined }), bytes, services);
+    const result = await uploadSupplierAiImport(request(), uploadData({ importSettings: undefined, reviewWorkspaceVersion: undefined }), bytes, services);
     assert.equal(result.jobId, jobId); assert.equal(result.status, "queued"); assert.equal(result.importSettings, null); assert.equal(result.summary, null); assertCustomerPrivacy(result);
-    await assert.rejects(uploadSupplierAiImport(request(), uploadData({ importSettings: undefined, requestId: "new-legacy" }), bytes, services), { code: "invalid-argument" });
-    await assert.rejects(uploadSupplierAiImport(request(), uploadData({ importSettings: undefined }), Buffer.from("different source"), services), { code: "already-exists" });
-    await assert.rejects(uploadSupplierAiImport(request(null, "other-manager"), uploadData({ importSettings: undefined }), bytes, services), { code: "already-exists" });
+    await assert.rejects(uploadSupplierAiImport(request(), uploadData({ importSettings: undefined, reviewWorkspaceVersion: undefined, requestId: "new-legacy" }), bytes, services), { code: "invalid-argument" });
+    await assert.rejects(uploadSupplierAiImport(request(), uploadData({ importSettings: undefined, reviewWorkspaceVersion: undefined }), Buffer.from("different source"), services), { code: "already-exists" });
+    await assert.rejects(uploadSupplierAiImport(request(null, "other-manager"), uploadData({ importSettings: undefined, reviewWorkspaceVersion: undefined }), bytes, services), { code: "already-exists" });
     const ready = await runSupplierAiImportJob("hotel-a", jobId, services);
     assert.equal(ready.status, "review"); assert.equal(ready.importSettings, null); assert.equal(ready.summary, null); assert.equal(calls, 1);
     const row = (await review(request({ hotelUid: "hotel-a", jobId }), services)).rows[0];
@@ -226,8 +243,289 @@ describe("supplier AI import with ordinary hotel accounts and real Firebase boun
     await db.doc("platformConfiguration/aiSupplierProductImport").update({ enabled: false });
     const data = { hotelUid: "hotel-a", jobId: job.jobId, requestId: "disabled-confirm", rows: [{ rowId: page.rows[0].rowId, reviewRevision: page.rows[0].reviewRevision, acknowledged: true }] };
     await auth.updateUser("manager", { disabled: true }); await rejectPermission(commit(request(data), services));
-    await auth.updateUser("manager", { disabled: false }); assert.equal((await commit(request(data), services)).outcomes[0].status, "updated");
+    await rejectPermission(approve(job.jobId, page.rows[0]));
+    await auth.updateUser("manager", { disabled: false }); await approve(job.jobId, page.rows[0]);
+    assert.equal((await commit(request(data), services)).outcomes[0].status, "updated");
     await rejectPermission(settings(request(), services));
     assert.equal((await settings(request(null, "operator"), services)).configuration.enabled, false);
+  });
+  it("persists explicit approval without changing a product, and replays the decision without new writes or paid work", async () => {
+    const job = await ready(), row = (await review(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)).rows[0];
+    const jobRef = db.doc(`hotels/hotel-a/supplierAiImportJobs/${job.jobId}`), rowRef = db.doc(`${jobRef.path}/rows/${row.rowId}`);
+    assert.equal((await jobRef.get()).data().importReviewVersion, 1);
+    const blockedCommand = { hotelUid: "hotel-a", jobId: job.jobId, requestId: "unapproved-command",
+      rows: [{ rowId: row.rowId, reviewRevision: row.reviewRevision, acknowledged: true }] };
+    const unapproved = await commit(request(blockedCommand), services);
+    assert.equal(unapproved.outcomes[0].status, "blocked");
+    assert.equal((await db.doc("hotels/hotel-a/supplierproducts/milk").get()).data().pricePerPurchaseUnit, 12);
+    const receiptRef = db.doc(`${jobRef.path}/commitOperations/c-${digest("manager", blockedCommand.requestId).slice(0, 48)}/rows/${row.rowId}`);
+    const receiptBefore = await receiptRef.get(), failedRow = await rowRef.get(), failedJob = await jobRef.get();
+    assert.deepEqual((await workspace(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)).reviewCounts,
+      { pending: 1, approved: 0, skipped: 0, applied: 0, failed: 1 });
+    await assert.rejects(approve(job.jobId, row, "approve-failed-without-revalidation"), { code: "failed-precondition" });
+    assert.equal((await rowRef.get()).updateTime.isEqual(failedRow.updateTime), true);
+    assert.equal((await jobRef.get()).updateTime.isEqual(failedJob.updateTime), true); assert.equal(calls, 1);
+    const refreshed = await correct(request({ hotelUid: "hotel-a", jobId: job.jobId, rowId: row.rowId,
+      expectedReviewRevision: row.reviewRevision, patch: {} }), services);
+    assert.equal(refreshed.row.reviewRevision, row.reviewRevision + 1); assert.equal(refreshed.row.lastOutcome, null);
+    assert.deepEqual((await workspace(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)).reviewCounts,
+      { pending: 1, approved: 0, skipped: 0, applied: 0, failed: 0 });
+    const command = decisionData(job.jobId, refreshed.row), first = await decide(request(command), services);
+    const stored = await rowRef.get(), jobBefore = await jobRef.get();
+    assert.equal(stored.data().review.status, "approved"); assert.equal(stored.data().review.reviewRevision, refreshed.row.reviewRevision);
+    assertCustomerPrivacy(first);
+    assert.deepEqual(await decide(request(command), services), first);
+    const after = await rowRef.get(), jobAfter = await jobRef.get();
+    assert.equal(after.updateTime.isEqual(stored.updateTime), true); assert.equal(jobAfter.updateTime.isEqual(jobBefore.updateTime), true);
+    assert.equal((await db.doc("hotels/hotel-a/supplierproducts/milk").get()).data().pricePerPurchaseUnit, 12);
+    await assert.rejects(decide(request({ ...command, rows: [{ ...command.rows[0], action: "skip" }] }), services), { code: "already-exists" });
+    assert.deepEqual(await commit(request(blockedCommand), services), unapproved, "The original blocked command keeps its recorded outcome after fresh approval.");
+    const receiptAfter = await receiptRef.get(); assert.deepEqual(receiptAfter.data(), receiptBefore.data());
+    assert.equal(receiptAfter.updateTime.isEqual(receiptBefore.updateTime), true);
+    assert.equal((await rowRef.get()).updateTime.isEqual(stored.updateTime), true); assert.equal((await jobRef.get()).updateTime.isEqual(jobBefore.updateTime), true);
+    assert.equal((await db.collection("hotels/hotel-a/supplierPriceHistory/milk/entries").get()).size, 1);
+    await runSupplierAiImportJob("hotel-a", job.jobId, services); assert.equal(calls, 1);
+  });
+  it("reconciles review decisions across the whole 250-product import rather than only the first loaded page", async () => {
+    const source = Buffer.from("SKU,Name,Net Purchase Price,Currency,Purchase Unit,Package Content\n"
+      + Array.from({ length: 250 }, (_, index) => `BULK-${String(index).padStart(3, "0")},Fictional product ${index},18,EUR,Case,6 L`).join("\n") + "\n");
+    const bulkServices = { ...services, provider: { ...provider, respond: async (body) => {
+      calls++;
+      const rows = JSON.parse(body.input[0].content[0].text).units.filter((unit) => /^csv-row-\d+$/.test(unit.sourceId) && !unit.contextOnly)
+        .map((unit) => ({ unit, cells: JSON.parse(unit.text) })).filter(({ cells }) => String(cells[0]).startsWith("BULK-"))
+        .map(({ unit, cells }) => ({ supplierSku: cells[0], supplierProductName: cells[1], currency: "EUR", pricingModel: "Per Purchase Unit",
+          purchaseUnit: "Case", baseUnit: "l", priceBasis: "net", gtin: null, priceValidFrom: null, priceValidUntil: null,
+          pricePerBaseUnit: null, pricePerPurchaseUnit: 18, baseUnitsPerPurchaseUnit: 6, vatRate: null,
+          sourceAnchors: [{ sourceId: unit.sourceId, quote: cells[0] }] }));
+      return { id: `fictional-bulk-${calls}`, model: "gpt-6-luna", status: "completed",
+        usage: { input_tokens: 500, output_tokens: 100, total_tokens: 600 },
+        output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ rows }) }] }] };
+    } } };
+    const job = await uploadSupplierAiImport(request(), uploadData({ requestId: "import-250" }), source, bulkServices);
+    let processed, originalPaidCalls;
+    for (let resume = 0; resume < 5; resume++) {
+      processed = await runSupplierAiImportJob("hotel-a", job.jobId, bulkServices);
+      if (resume === 0) originalPaidCalls = calls;
+      else assert.equal(calls, originalPaidCalls, "Reconciliation continuation must reuse the original paid chunk receipts.");
+      if (processed.status === "review") break;
+      assert.equal(processed.queued, true, JSON.stringify(processed));
+    }
+    assert.equal(processed.status, "review");
+    const first = await workspace(request({ hotelUid: "hotel-a", jobId: job.jobId, limit: 25, includeIndex: true }), services);
+    assert.equal(first.rows.length, 25); assert.equal(first.index.length, 250); assert.equal(first.totalRows, 250);
+    assert.deepEqual(first.reviewCounts, { pending: 250, approved: 0, skipped: 0, applied: 0, failed: 0 });
+    assert.equal(first.counts.new, 250); assert.equal(first.summary.totalRows, 250);
+    await approve(job.jobId, first.rows[0], "approve-first-of-250");
+    await decide(request(decisionData(job.jobId, first.rows[1], "skip", "skip-second-of-250")), services);
+    const filtered = await workspace(request({ hotelUid: "hotel-a", jobId: job.jobId, filter: "approved", limit: 25, includeIndex: true }), services);
+    assert.equal(filtered.rows.length, 1); assert.equal(filtered.index.length, 250);
+    assert.deepEqual(filtered.reviewCounts, { pending: 248, approved: 1, skipped: 1, applied: 0, failed: 0 });
+    const paidCalls = calls; await runSupplierAiImportJob("hotel-a", job.jobId, bulkServices); assert.equal(calls, paidCalls);
+    assert.equal((await db.collection("hotels/hotel-a/supplierproducts").get()).size, 1,
+      "Reviewing drafts must not create any of the proposed 250 products before confirmation.");
+  });
+  it("invalidates approval after correction and refuses a stale decision instead of importing unseen values", async () => {
+    const job = await ready(), row = (await review(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)).rows[0];
+    await approve(job.jobId, row);
+    const changed = await correct(request({ hotelUid: "hotel-a", jobId: job.jobId, rowId: row.rowId,
+      expectedReviewRevision: row.reviewRevision, patch: { pricePerPurchaseUnit: 18 } }), services);
+    assert.equal(changed.row.reviewRevision, row.reviewRevision + 1);
+    const stored = (await db.doc(`hotels/hotel-a/supplierAiImportJobs/${job.jobId}/rows/${row.rowId}`).get()).data();
+    assert.notEqual(stored.review?.status, "approved");
+    await assert.rejects(approve(job.jobId, row, "stale-approval"), { code: "aborted" });
+    const blockedCommand = { hotelUid: "hotel-a", jobId: job.jobId, requestId: "corrected-unapproved",
+      rows: [{ rowId: row.rowId, reviewRevision: changed.row.reviewRevision, acknowledged: true }] };
+    const withoutApproval = await commit(request(blockedCommand), services);
+    assert.equal(withoutApproval.outcomes[0].status, "blocked");
+    const jobRef = db.doc(`hotels/hotel-a/supplierAiImportJobs/${job.jobId}`), rowRef = db.doc(`${jobRef.path}/rows/${row.rowId}`);
+    const receiptRef = db.doc(`${jobRef.path}/commitOperations/c-${digest("manager", blockedCommand.requestId).slice(0, 48)}/rows/${row.rowId}`);
+    const receiptBefore = await receiptRef.get(), failedRow = await rowRef.get(), failedJob = await jobRef.get();
+    await assert.rejects(approve(job.jobId, changed.row, "latest-approval-without-revalidation"), { code: "failed-precondition" });
+    assert.equal((await rowRef.get()).updateTime.isEqual(failedRow.updateTime), true);
+    assert.equal((await jobRef.get()).updateTime.isEqual(failedJob.updateTime), true); assert.equal(calls, 1);
+    assert.deepEqual((await workspace(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)).reviewCounts,
+      { pending: 1, approved: 0, skipped: 0, applied: 0, failed: 1 });
+    const refreshed = await correct(request({ hotelUid: "hotel-a", jobId: job.jobId, rowId: row.rowId,
+      expectedReviewRevision: changed.row.reviewRevision, patch: {} }), services);
+    assert.equal(refreshed.row.reviewRevision, changed.row.reviewRevision + 1); assert.equal(refreshed.row.lastOutcome, null);
+    assert.equal(refreshed.row.product.pricePerPurchaseUnit, 18);
+    await assert.rejects(approve(job.jobId, changed.row, "stale-corrected-approval"), { code: "aborted" });
+    await approve(job.jobId, refreshed.row, "latest-approval");
+    const result = await commit(request({ hotelUid: "hotel-a", jobId: job.jobId, requestId: "corrected-approved",
+      rows: [{ rowId: row.rowId, reviewRevision: refreshed.row.reviewRevision, acknowledged: true }] }), services);
+    assert.equal(result.outcomes[0].status, "updated");
+    assert.deepEqual(await commit(request(blockedCommand), services), withoutApproval);
+    const receiptAfter = await receiptRef.get(); assert.deepEqual(receiptAfter.data(), receiptBefore.data());
+    assert.equal(receiptAfter.updateTime.isEqual(receiptBefore.updateTime), true);
+    assert.deepEqual((await workspace(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)).reviewCounts,
+      { pending: 0, approved: 0, skipped: 0, applied: 1, failed: 0 });
+    assert.equal((await db.collection("hotels/hotel-a/supplierPriceHistory/milk/entries").get()).size, 2);
+    assert.equal((await db.doc("hotels/hotel-a/supplierproducts/milk").get()).data().pricePerPurchaseUnit, 18); assert.equal(calls, 1);
+  });
+  it("keeps skip and reset resumable and refuses completion until every proposal is applied or skipped", async () => {
+    const job = await ready(), row = (await review(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)).rows[0];
+    const completion = { hotelUid: "hotel-a", jobId: job.jobId, requestId: "finish-reviewed-import" };
+    assert.equal((await completeReview(request(completion), services)).completed, false);
+    await decide(request(decisionData(job.jobId, row, "skip", "skip-first")), services);
+    assert.equal((await db.doc(`hotels/hotel-a/supplierAiImportJobs/${job.jobId}/rows/${row.rowId}`).get()).data().review.status, "skipped");
+    await decide(request(decisionData(job.jobId, row, "reset", "reset-first")), services);
+    assert.equal((await completeReview(request({ ...completion, requestId: "not-finished" }), services)).completed, false);
+    await decide(request(decisionData(job.jobId, row, "skip", "skip-final")), services);
+    const result = await completeReview(request(completion), services); assertCustomerPrivacy(result);
+    assert.deepEqual(await completeReview(request(completion), services), result);
+    const jobRef = db.doc(`hotels/hotel-a/supplierAiImportJobs/${job.jobId}`), before = await jobRef.get();
+    assert.equal(before.data().status, "completed");
+    await runSupplierAiImportJob("hotel-a", job.jobId, services);
+    const after = await jobRef.get(); assert.deepEqual(after.data(), before.data()); assert.equal(after.updateTime.isEqual(before.updateTime), true);
+    assert.equal((await db.doc("hotels/hotel-a/supplierproducts/milk").get()).data().pricePerPurchaseUnit, 12); assert.equal(calls, 1);
+  });
+  it("rechecks current hotel permissions, subscription and account status for persisted review decisions", async () => {
+    const job = await ready(), row = (await review(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)).rows[0];
+    await db.doc("hotels/hotel-a/members/manager").delete();
+    await rejectPermission(workspace(request({ hotelUid: "hotel-a", jobId: job.jobId }), services));
+    await rejectPermission(approve(job.jobId, row));
+    await db.doc("hotels/hotel-a/members/manager").set(access);
+    await db.doc("hotelSubscriptions/hotel-a").update({ status: "canceled" }); await rejectPermission(approve(job.jobId, row));
+    await db.doc("hotelSubscriptions/hotel-a").set(subscription);
+    await db.doc("hotels/hotel-a/members/manager").update({ permissions: access.permissions.filter((permission) => permission !== "supplierproducts.update") });
+    await rejectPermission(approve(job.jobId, row));
+    await db.doc("hotels/hotel-a/members/manager").set(access); await auth.updateUser("manager", { disabled: true });
+    await rejectPermission(workspace(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)); await rejectPermission(approve(job.jobId, row));
+    await auth.updateUser("manager", { disabled: false }); await auth.revokeRefreshTokens("manager");
+    const currentAccount = await auth.getUser("manager"), previousAuthTime = identities.manager.token.auth_time;
+    identities.manager.token.auth_time = Math.floor(Date.parse(currentAccount.tokensValidAfterTime) / 1000) - 1;
+    try {
+      await rejectPermission(workspace(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)); await rejectPermission(approve(job.jobId, row));
+    } finally { identities.manager.token.auth_time = previousAuthTime; }
+    assert.notEqual((await db.doc(`hotels/hotel-a/supplierAiImportJobs/${job.jobId}/rows/${row.rowId}`).get()).data().review?.status, "approved");
+    assert.equal(calls, 1);
+  });
+  it("cannot approve unverified source evidence even after correcting the product fields", async () => {
+    const job = await uploaded();
+    const wrongEvidence = { ...services, provider: { ...provider, respond: async (body) => {
+      const response = await provider.respond(body), payload = JSON.parse(response.output[0].content[0].text);
+      payload.rows[0].sourceAnchors[0].quote = "A product quote which is absent from this source";
+      response.output[0].content[0].text = JSON.stringify(payload); return response;
+    } } };
+    assert.equal((await runSupplierAiImportJob("hotel-a", job.jobId, wrongEvidence)).status, "review");
+    const row = (await review(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)).rows[0];
+    assert.equal(row.category, "blocked"); await assert.rejects(approve(job.jobId, row), { code: "failed-precondition" });
+    const changed = await correct(request({ hotelUid: "hotel-a", jobId: job.jobId, rowId: row.rowId,
+      expectedReviewRevision: row.reviewRevision, patch: { supplierProductName: "Human corrected milk", pricePerPurchaseUnit: 15 } }), services);
+    await assert.rejects(approve(job.jobId, changed.row, "still-unverified"), { code: "failed-precondition" });
+    assert.equal((await db.doc("hotels/hotel-a/supplierproducts/milk").get()).data().pricePerPurchaseUnit, 12); assert.equal(calls, 1);
+  });
+  it("requires confirmation before persisting Sligro suggestions and isolates saved mappings by hotel, supplier, format and profile", async () => {
+    await db.doc("hotels/hotel-a/suppliers/dairy").update({ name: "Sligro" });
+    const suggested = await readMappings(request(mappingData()), services);
+    assert.equal(suggested.revision, 0); assert.deepEqual(suggested.mappings, []);
+    assert.equal(suggested.suggestions.find((entry) => entry.sourceUnit === "TR").purchaseUnit, "Tray");
+    assert.equal(suggested.suggestions.find((entry) => entry.sourceUnit === "TR").needsConfirmation, true);
+    assert.equal((await db.collection("hotels/hotel-a/supplierImportMappingProfiles").get()).size, 0);
+    const command = mappingCommand(), saved = await saveMappings(request(command), services); assertCustomerPrivacy(saved);
+    assert.equal(saved.revision, 1); assert.deepEqual(saved.mappings, command.mappings);
+    const profileRef = mappingProfileRef(db, "hotel-a", mappingScope(command)), before = await profileRef.get();
+    assert.equal(before.data().createdBy, "manager");
+    assert.deepEqual(await saveMappings(request(command), services), saved);
+    const after = await profileRef.get(); assert.deepEqual(after.data(), before.data()); assert.equal(after.updateTime.isEqual(before.updateTime), true);
+    assert.deepEqual((await readMappings(request(mappingData(), "other-manager"), services)).mappings, command.mappings,
+      "Confirmed supplier rules are shared within the hotel, unlike a user's private import job.");
+    await db.doc("hotels/hotel-a/suppliers/other").set({ name: "Other supplier" });
+    for (const scope of [mappingData({ sourceFormat: "xlsx" }), mappingData({ profileId: "volume-list" }), mappingData({ supplierId: "other" })]) {
+      assert.deepEqual((await readMappings(request(scope), services)).mappings, []);
+    }
+    assert.deepEqual((await readMappings(request(mappingData({ hotelUid: "hotel-b" }), "hotel-b"), services)).mappings, []);
+    await assert.rejects(saveMappings(request(mappingCommand({ requestId: "stale-profile", mappings: [{ sourceUnit: "BK", purchaseUnit: "Box" }] })), services), { code: "aborted" });
+    await assert.rejects(saveMappings(request(mappingCommand({ mappings: [{ sourceUnit: "FL", purchaseUnit: "Bag" }] })), services), { code: "already-exists" });
+    assert.equal((await db.collection("hotels/hotel-a/supplierImportMappingOperations").get()).size, 1);
+    assert.equal((await db.collection("hotels/hotel-a/supplierImportMappingAudit").get()).size, 1); assert.equal(calls, 0);
+  });
+  it("applies a confirmed mapping only to matching unedited units and invalidates approval without rewriting paid evidence", async () => {
+    await saveMappings(request(mappingCommand()), services);
+    const source = Buffer.from("SKU,Name,Net Purchase Price,Currency,Purchase Unit,Package Content\n"
+      + "MILK6,Milk six pack,18,EUR,FL,6 L\nOTHERFL,Other bottle,18,EUR,FL,6 L\nOTHERZK,Other bag,18,EUR,ZK,6 L\n");
+    const mappedServices = { ...services, provider: { ...provider, respond: async (body) => {
+      calls++;
+      const rows = JSON.parse(body.input[0].content[0].text).units.filter((unit) => /^csv-row-\d+$/.test(unit.sourceId) && !unit.contextOnly)
+        .map((unit) => ({ unit, cells: JSON.parse(unit.text) })).filter(({ cells }) => ["MILK6", "OTHERFL", "OTHERZK"].includes(cells[0]))
+        .map(({ unit, cells }) => ({ supplierSku: cells[0], supplierProductName: cells[1], currency: "EUR", pricingModel: "Per Purchase Unit",
+          purchaseUnit: cells[4], baseUnit: "l", priceBasis: "net", gtin: null, priceValidFrom: null, priceValidUntil: null,
+          pricePerBaseUnit: null, pricePerPurchaseUnit: 18, baseUnitsPerPurchaseUnit: 6, vatRate: null,
+          sourceAnchors: [{ sourceId: unit.sourceId, quote: cells[0] }] }));
+      return { id: "fictional-mapping-response", model: "gpt-6-luna", status: "completed",
+        usage: { input_tokens: 500, output_tokens: 100, total_tokens: 600 },
+        output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ rows }) }] }] };
+    } } };
+    const input = uploadData({ requestId: "mapping-application-import" });
+    const job = await uploadSupplierAiImport(request(), input, source, mappedServices);
+    assert.equal((await runSupplierAiImportJob("hotel-a", job.jobId, mappedServices)).status, "review"); assert.equal(calls, 1);
+    const rows = (await review(request({ hotelUid: "hotel-a", jobId: job.jobId }), services)).rows;
+    const first = rows.find((row) => row.product.supplierSku === "MILK6"), second = rows.find((row) => row.product.supplierSku === "OTHERFL"), third = rows.find((row) => row.product.supplierSku === "OTHERZK");
+    assert.equal(first.product.purchaseUnit, "Bottle"); assert.equal(second.product.purchaseUnit, "Bottle");
+    const editedFirst = (await correct(request({ hotelUid: "hotel-a", jobId: job.jobId, rowId: first.rowId,
+      expectedReviewRevision: first.reviewRevision, patch: { supplierProductName: "Verified milk name" } }), services)).row;
+    const editedSecond = (await correct(request({ hotelUid: "hotel-a", jobId: job.jobId, rowId: second.rowId,
+      expectedReviewRevision: second.reviewRevision, patch: { purchaseUnit: "Jar" } }), services)).row;
+    await approve(job.jobId, editedFirst, "approve-before-remapping");
+    const jobRef = db.doc(`hotels/hotel-a/supplierAiImportJobs/${job.jobId}`), stored = (await jobRef.get()).data();
+    const attempts = (await db.collection(`${jobRef.path}/attempts`).get()).docs.map((doc) => doc.data());
+    const replacement = await saveMappings(request(mappingCommand({ requestId: "confirm-box", expectedRevision: 1,
+      mappings: [{ sourceUnit: "FL", purchaseUnit: "Box" }] })), services); assert.equal(replacement.revision, 2);
+    const command = { hotelUid: "hotel-a", jobId: job.jobId, requestId: "apply-box", sourceUnit: "FL", purchaseUnit: "Box", expectedMappingRevision: 2,
+      rows: [editedFirst, editedSecond, third].map((row) => ({ rowId: row.rowId, reviewRevision: row.reviewRevision })) };
+    await assert.rejects(applyMapping(request({ ...command, requestId: "stale-mapping", expectedMappingRevision: 1 }), services), { code: "aborted" });
+    const result = await applyMapping(request(command), services);
+    assert.equal(result.outcomes.find((outcome) => outcome.rowId === first.rowId).status, "mapped");
+    assert.equal(result.outcomes.find((outcome) => outcome.rowId === second.rowId).reason, "human-correction");
+    assert.equal(result.outcomes.find((outcome) => outcome.rowId === third.rowId).status, "blocked");
+    const mapped = (await db.doc(`${jobRef.path}/rows/${first.rowId}`).get()).data();
+    assert.equal(mapped.product.purchaseUnit, "Box"); assert.equal(mapped.product.supplierProductName, "Verified milk name");
+    assert.equal(mapped.reviewRevision, editedFirst.reviewRevision + 1); assert.equal(mapped.review.status, "pending");
+    assert.equal((await db.doc(`${jobRef.path}/rows/${second.rowId}`).get()).data().product.purchaseUnit, "Jar");
+    assert.equal((await db.doc(`${jobRef.path}/rows/${third.rowId}`).get()).data().reviewRevision, third.reviewRevision);
+    assert.deepEqual(await applyMapping(request(command), services), result);
+    const after = (await jobRef.get()).data();
+    assert.deepEqual(after.purchaseUnitMappingSnapshot, stored.purchaseUnitMappingSnapshot); assert.equal(after.purchaseUnitMappingSnapshot.revision, 1);
+    assert.equal(after.fingerprint, stored.fingerprint); assert.deepEqual(after.source, stored.source);
+    assert.deepEqual((await db.collection(`${jobRef.path}/attempts`).get()).docs.map((doc) => doc.data()), attempts);
+    assert.equal((await uploadSupplierAiImport(request(), input, source, mappedServices)).jobId, job.jobId);
+    await runSupplierAiImportJob("hotel-a", job.jobId, mappedServices); assert.equal(calls, 1);
+  });
+  it("enforces live ordinary-hotel authorization for mapping reads, updates and receipt replay", async () => {
+    for (const actor of ["hotel-b", "operator"]) {
+      await rejectPermission(readMappings(request(mappingData(), actor), services));
+      await rejectPermission(saveMappings(request(mappingCommand(), actor), services));
+    }
+    await rejectPermission(readMappings(request(mappingData({ hotelUid: "hotel-b" })), services));
+    await saveMappings(request(mappingCommand()), services);
+    const replacement = mappingCommand({ requestId: "mapping-change", expectedRevision: 1, mappings: [{ sourceUnit: "FL", purchaseUnit: "Jar" }] });
+    const first = await saveMappings(request(replacement), services); assert.equal(first.revision, 2);
+    await db.doc("hotels/hotel-a/members/manager").update({ permissions: access.permissions.filter((permission) => permission !== "supplierproducts.update") });
+    await rejectPermission(saveMappings(request(replacement), services));
+    await rejectPermission(saveMappings(request(mappingCommand({ requestId: "mapping-change-without-rights", expectedRevision: 2,
+      mappings: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }] })), services));
+    await db.doc("hotels/hotel-a/members/manager").set(access); await db.doc("hotelSubscriptions/hotel-a").update({ status: "canceled" });
+    await rejectPermission(readMappings(request(mappingData()), services)); await rejectPermission(saveMappings(request(replacement), services));
+    await db.doc("hotelSubscriptions/hotel-a").set(subscription); await auth.updateUser("manager", { disabled: true });
+    await rejectPermission(readMappings(request(mappingData()), services)); await rejectPermission(saveMappings(request(replacement), services));
+    await auth.updateUser("manager", { disabled: false }); await db.doc("hotels/hotel-a/members/manager").delete();
+    await rejectPermission(readMappings(request(mappingData()), services)); await rejectPermission(saveMappings(request(replacement), services));
+    assert.equal((await db.collection("hotels/hotel-a/supplierImportMappingOperations").get()).size, 2); assert.equal(calls, 0);
+  });
+  it("denies browser and generic-import writes to saved mapping profiles, operations and audit evidence", async () => {
+    await saveMappings(request(mappingCommand()), services);
+    const profileRef = mappingProfileRef(db, "hotel-a", mappingScope(mappingData()));
+    const operationId = `m-${digest("manager", "mapping-one").slice(0, 48)}`;
+    for (const actor of ["manager", "operator", "hotel-b"]) {
+      const context = environment.authenticatedContext(actor, identities[actor].token);
+      for (const path of [profileRef.path, `hotels/hotel-a/supplierImportMappingOperations/${operationId}`,
+        `hotels/hotel-a/supplierImportMappingAudit/${operationId}`]) {
+        await assertFails(getDoc(doc(context.firestore(), path))); await assertFails(setDoc(doc(context.firestore(), path), { mappings: [] }));
+      }
+    }
+    for (const collection of ["supplierImportMappingProfiles", "supplierImportMappingOperations", "supplierImportMappingAudit"]) {
+      assert.throws(() => requireHotelImportTarget(`hotels/hotel-a/${collection}/forged`, "hotel-a"), /protected|operational/);
+    }
+    assert.deepEqual((await profileRef.get()).data().mappings, mappingCommand().mappings); assert.equal(calls, 0);
   });
 });

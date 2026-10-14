@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
+import { useNavigate } from "react-router-dom";
 import { auth } from "../firebaseConfig";
 import { useHotelContext } from "./HotelContext";
 import { useSupplierProductAuthority } from "../hooks/useSupplierProductAuthority";
@@ -73,6 +74,7 @@ export function SupplierAiImportProgressProvider({ children }) {
 }
 
 function ScopedSupplierAiImportProgressProvider({ children, hotelUid, actor, permitted }) {
+  const navigate = useNavigate();
   const storageKey = `supplier-ai-progress:${actor?.uid || "anonymous"}:${hotelUid || "none"}`;
   const legacyKey = `supplier-ai-import:${hotelUid}:${actor?.uid || "anonymous"}`;
   const recovery = useRef(permitted ? readReferences(storageKey, legacyKey) : { jobIds: [], activeIds: [], notified: [] }).current;
@@ -113,6 +115,11 @@ function ScopedSupplierAiImportProgressProvider({ children, hotelUid, actor, per
     for (const control of controls.current.values()) clearTimeout(control.timer);
     controls.current.clear(); replaceJobs([]); setDialog(null);
   }, [replaceJobs]);
+  const openReview = useCallback((jobId) => {
+    if (!current() || !validId(jobId)) return;
+    setDialog((prior) => prior ? { ...prior, open: false } : null);
+    navigate(`/catalog/supplier-products/imports/${encodeURIComponent(jobId)}`);
+  }, [current, navigate]);
   const notify = useCallback((prior, value) => {
     if (!prior || !(ACTIVE.has(prior.status) || prior.status === "recovering" && observedActive.current.has(prior.jobId)) || !(SUCCESS.has(value.status) || FAILURE.has(value.status)) || !current()) return;
     const fingerprint = JSON.stringify([value.jobId, SUCCESS.has(value.status) ? "ready" : value.status]);
@@ -127,8 +134,8 @@ function ScopedSupplierAiImportProgressProvider({ children, hotelUid, actor, per
       : value.status === "expired" ? "Your supplier import draft has expired."
       : "Your supplier document could not be processed. Open its status for details.";
     const show = FAILURE.has(value.status) ? toast.error : toast.success;
-    show(message, { toastId, onClick: () => { if (current()) setDialog({ jobId: value.jobId, open: true }); } });
-  }, [current, actor, hotelUid]);
+    show(message, { toastId, onClick: () => openReview(value.jobId) });
+  }, [current, actor, hotelUid, openReview]);
   const watchJob = useCallback((incoming, options = {}) => {
     if (!current()) return;
     const value = supplierAiProgressMetadata(incoming, hotelUid, actor.uid);
@@ -206,7 +213,7 @@ function ScopedSupplierAiImportProgressProvider({ children, hotelUid, actor, per
     }
   }, [jobs, current, schedule]);
   const openNew = useCallback((options = {}) => { if (current()) { setNewOptions(options); setDialog({ jobId: null, open: true }); } }, [current]);
-  const openJob = useCallback((jobId) => { if (current() && jobsRef.current.some((job) => job.jobId === jobId)) setDialog({ jobId, open: true }); }, [current]);
+  const openJob = openReview;
   const closeDialog = useCallback(() => setDialog((prior) => prior ? { ...prior, open: false } : null), []);
   const dismissJob = useCallback((jobId) => {
     if (!current()) return;
@@ -220,6 +227,6 @@ function ScopedSupplierAiImportProgressProvider({ children, hotelUid, actor, per
   return <ProgressContext.Provider value={value}>
     {children}
     {permitted && <SupplierAiImportProgress />}
-    {permitted && dialog && <SupplierAiImportDialog {...newOptions} open={dialog.open} hotelUid={hotelUid} onClose={closeDialog} trackedJobId={dialog.jobId} trackedJob={selected?.status === "recovering" ? null : selected} backgroundManaged onJobChange={(incoming) => watchJob(incoming, { fromDialog: true })} onNewDocument={() => setDialog({ jobId: null, open: true })} />}
+    {permitted && dialog && <SupplierAiImportDialog {...newOptions} open={dialog.open} hotelUid={hotelUid} onClose={closeDialog} trackedJobId={dialog.jobId} trackedJob={selected?.status === "recovering" ? null : selected} backgroundManaged onOpenReview={openReview} onJobChange={(incoming) => watchJob(incoming, { fromDialog: true })} onNewDocument={() => setDialog({ jobId: null, open: true })} />}
   </ProgressContext.Provider>;
 }

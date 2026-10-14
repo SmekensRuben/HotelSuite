@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { CheckCircle2, ChevronDown, CircleAlert, LoaderCircle, X } from "lucide-react";
+import { useMatch } from "react-router-dom";
 import { useSupplierAiImportProgress } from "../../contexts/SupplierAiImportProgressContext";
 
 const active = new Set(["uploading", "queued", "processing", "recovering"]);
@@ -10,10 +11,12 @@ const label = (job) => active.has(job.status) ? job.status === "recovering" ? "R
 
 export default function SupplierAiImportProgress() {
   const progress = useSupplierAiImportProgress();
+  const onReviewPage = useMatch("/catalog/supplier-products/imports/:jobId");
   const [expanded, setExpanded] = useState(false);
   const jobs = progress?.jobs || [];
   useEffect(() => { if (!jobs.length) setExpanded(false); }, [jobs.length]);
-  if (!jobs.length) return null;
+  // The workspace shows its own status; keep background polling in the provider.
+  if (!jobs.length || onReviewPage) return null;
   const working = jobs.filter((job) => active.has(job.status));
   const errors = jobs.filter((job) => failed.has(job.status));
   const Icon = working.length ? LoaderCircle : errors.length ? CircleAlert : CheckCircle2;
@@ -24,7 +27,7 @@ export default function SupplierAiImportProgress() {
   return <aside aria-label="Supplier import progress" className="fixed right-3 top-20 z-40 w-[min(320px,calc(100vw-1.5rem))] sm:right-5">
     <button type="button" className={`flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left text-sm shadow-panel ${tone} ${jobs.length === 1 && !active.has(jobs[0].status) ? "pr-10" : ""}`} aria-label={summary} aria-expanded={jobs.length > 1 ? expanded : undefined} onClick={() => jobs.length === 1 ? progress.openJob(jobs[0].jobId) : setExpanded((prior) => !prior)}>
       <Icon size={20} className={working.length ? "shrink-0 animate-spin motion-reduce:animate-none" : "shrink-0"} aria-hidden="true" />
-      <span className="min-w-0 flex-1"><span className="block font-semibold">{summary}</span><span className="block text-xs opacity-80">{jobs.length === 1 && jobs[0].connectionWarning ? "Reconnecting to status updates…" : "Click to open import status"}</span></span>
+      <span className="min-w-0 flex-1"><span className="block font-semibold">{summary}</span><span className="block text-xs opacity-80">{jobs.length === 1 && jobs[0].connectionWarning ? "Reconnecting to status updates…" : "Click to open import review"}</span></span>
       {jobs.length > 1 && <ChevronDown size={16} className={expanded ? "rotate-180" : ""} aria-hidden="true" />}
     </button>
     {jobs.length === 1 && !active.has(jobs[0].status) && <button type="button" className="ht-icon-button absolute right-1.5 top-1.5 h-7 w-7" onClick={() => progress.dismissJob(jobs[0].jobId)} aria-label={`Dismiss ${jobs[0].source?.fileName || "supplier document"} from progress`}><X size={14} aria-hidden="true" /></button>}

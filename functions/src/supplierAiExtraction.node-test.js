@@ -204,6 +204,59 @@ async function pdfFixture(pages, scanned = false) {
   return Buffer.from(await pdf.save());
 }
 
+function pdfWithCompressedStreams(streams, separator = "\n") {
+  const objects = [
+    Buffer.from("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"),
+    Buffer.from("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"),
+    Buffer.from(`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents [${streams.map((_, index) => `${index + 4} 0 R`).join(" ")}] >>\nendobj\n`),
+    ...streams.map((compressed, index) => Buffer.concat([
+      Buffer.from(`${index + 4} 0 obj\n<< /Length ${compressed.length} /Filter /FlateDecode >>\nstream\n`),
+      compressed, Buffer.from(`${separator}endstream\nendobj\n`),
+    ])),
+  ];
+  const parts = [Buffer.from("%PDF-1.7\n")];
+  const offsets = [];
+  let length = parts[0].length;
+  for (const object of objects) { offsets.push(length); parts.push(object); length += object.length; }
+  parts.push(Buffer.from(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Root 1 0 R /Size ${objects.length + 1} >>\nstartxref\n${length}\n%%EOF\n`));
+  return Buffer.concat(parts);
+}
+
+test("valid PDF Flate checksum bytes remain intact before LF and CRLF separators", async () => {
+  // Adler-32's final byte is 0x0D for this deterministic, valid PDF content.
+  const content = Buffer.from(`q\nQ\n%${"A".repeat(209)}`);
+  const compressed = zlib.deflateSync(content);
+  assert.equal(compressed.at(-1), 0x0d);
+  assert.ok(zlib.inflateSync(compressed).equals(content));
+  for (const separator of ["\n", "\r\n"]) {
+    const bytes = pdfWithCompressedStreams([compressed], separator);
+    assert.equal((await PDFDocument.load(bytes, { throwOnInvalidObject: true })).getPageCount(), 1);
+    const source = await extract(bytes, "supplier.pdf", "application/pdf");
+    assert.equal(source.pdf.pageCount, 1);
+    assert.ok(source.pdf.bytes.equals(bytes));
+    const chunks = await splitSupplierAiSource(source);
+    assert.equal((await PDFDocument.load(chunks[0].pdf.bytes)).getPageCount(), 1);
+    const corrupt = Buffer.from(compressed);
+    corrupt[corrupt.length - 2] ^= 1;
+    await rejectsCode(extract(pdfWithCompressedStreams([corrupt], separator), "supplier.pdf"), "PDF_LIMIT");
+  }
+});
+
+test("PDF separator handling preserves per-stream and aggregate inflation limits", async () => {
+  const maximum = zlib.deflateSync(Buffer.alloc(limits.zipEntryBytes, 65));
+  assert.equal((await extract(pdfWithCompressedStreams([maximum]), "supplier.pdf")).pdf.pageCount, 1);
+  const oversizedContent = Buffer.alloc(limits.zipEntryBytes + 1, 65);
+  oversizedContent[oversizedContent.length - 1] = 125;
+  const oversized = zlib.deflateSync(oversizedContent);
+  assert.equal(oversized.at(-1), 0x0d);
+  for (const separator of ["\n", "\r\n"]) {
+    await rejectsCode(extract(pdfWithCompressedStreams([oversized], separator), "supplier.pdf"), "PDF_LIMIT");
+  }
+  await rejectsCode(extract(pdfWithCompressedStreams(Array(5).fill(maximum)), "supplier.pdf"), "PDF_LIMIT");
+  await rejectsCode(extract("%PDF-1.7\n<< /Filter 9 0 R >>\nstream\nfictional\nendstream\n%%EOF", "supplier.pdf"), "UNSUPPORTED_PDF");
+  await rejectsCode(extract("%PDF-1.7\n<< /Filter [/ASCII85Decode /FlateDecode] >>\nstream\nfictional\nendstream\n%%EOF", "supplier.pdf"), "UNSUPPORTED_PDF");
+});
+
 test("text and scanned PDFs preserve every page with original-page mapping in bounded chunks", async () => {
   for (const scanned of [false, true]) {
     const bytes = await pdfFixture(6, scanned);

@@ -7,6 +7,7 @@ const { gated, requireSaasRollout } = require("./saasRollout");
 const policy = require("./productPolicy");
 const { supplierProductInternals } = require("./products");
 const { loadSupplierAiConfiguration } = require("./supplierAiPolicy");
+const review = require("./supplierAiReview");
 
 const AI_PROPOSAL_POLICY_VERSION = 1;
 const MAX_AI_ROWS = 1000;
@@ -203,6 +204,7 @@ function validationIssues(product) {
 }
 
 function buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex, raw, previous = null, productId = null, userPatch = {}, duplicate = false, ambiguous = false, reviewRevision = 1 }) {
+  if (!Number.isSafeInteger(rowIndex) || rowIndex < 0 || rowIndex >= MAX_AI_ROWS || !Number.isSafeInteger(reviewRevision) || reviewRevision < 1) bad("The supplier product review row or revision is invalid.");
   const inputPatch = Object.fromEntries(RAW_FIELDS.filter((field) => raw[field] !== null && raw[field] !== undefined).map((field) => [field, raw[field]]));
   const normalizationFindings = raw.normalizationFindings || [];
   const sourcePriceMissing = raw.normalizationVersion === 2 && raw.pricePerBaseUnit == null && raw.pricePerPurchaseUnit == null;
@@ -257,7 +259,7 @@ function buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex, raw, 
     productId: productId || `p-${digest(hotelUid, jobId, rowIndex).slice(0, 40)}`,
     expectedRevision: supplierProductInternals.currentRevision(previous), reviewRevision,
     product: productView(normalized), previousProduct: before ? { ...before, productPolicyVersion: previous.productPolicyVersion ?? null } : null, inputPatch, userPatch,
-    issues, changes, sourceAnchors: raw.sourceAnchors || [], sourceEvidenceIssues, duplicate, ambiguous, committed: null,
+    issues, changes, sourceAnchors: raw.sourceAnchors || [], sourceEvidenceIssues, duplicate, ambiguous, committed: null, purchaseUnitMapping: raw.purchaseUnitMapping ?? null,
     ...(raw.normalizationVersion === 2 ? { normalizationVersion: 2, originalInput: raw.originalInput,
       normalizationFindings, packInference, sourcePriceMissing } : {}) };
 }
@@ -321,7 +323,7 @@ async function reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, 
     if (job.reconciliation) return validateReconciliationState(job.reconciliation, fingerprint, rows.length, job.source);
     const initial = { fingerprint, sourceFingerprint: sourceFingerprint(job.source), totalRows: rows.length, nextRowIndex: 0,
       counts: { new: 0, changed: 0, unchanged: 0, blocked: 0 }, ...(summarized ? { summaryAccumulator: emptySummaryAccumulator() } : {}) };
-    tx.set(jobRef, { ...job, reconciliation: initial, updatedAt: stamp() });
+    tx.set(jobRef, { ...job, reconciliation: initial, ...(job.importReviewVersion === review.REVIEW_VERSION ? { reviewState: review.emptyReviewState() } : {}), updatedAt: stamp() });
     return initial;
   });
   const frequencies = new Map();
@@ -354,11 +356,14 @@ async function reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, 
           previous: matches.length === 1 ? matches[0].data() : null, productId: matches.length === 1 ? matches[0].id : null,
           duplicate: frequencies.get(rows[index].supplierSku?.trim()) > 1, ambiguous: matches.length > 1 });
         await validateReferences((ref) => tx.get(ref), db, hotelUid, result);
+        if (job.importReviewVersion === review.REVIEW_VERSION) result.review = { status: "pending", reviewRevision: result.reviewRevision };
         tx.create(rowRef, { ...result, reconciliationFingerprint: fingerprint, sourceRowFingerprint, createdAt: stamp(), updatedAt: stamp() });
       }
       const next = { ...current, nextRowIndex: index + 1, counts: { ...current.counts, [result.category]: current.counts[result.category] + 1 },
         ...(summarized ? { summaryAccumulator: adjustSummaryAccumulator(current.summaryAccumulator, result) } : {}) };
-      tx.set(jobRef, { ...job, reconciliation: next, updatedAt: stamp() });
+      if (job.importReviewVersion === review.REVIEW_VERSION) review.writeIndex(tx, db, hotelUid, jobId, result);
+      tx.set(jobRef, { ...job, reconciliation: next, ...(job.importReviewVersion === review.REVIEW_VERSION
+        ? { reviewState: review.adjustReviewState(job.reviewState, result) } : {}), updatedAt: stamp() });
       return next;
     });
   }
@@ -366,11 +371,11 @@ async function reconcileSupplierAiRows({ db, hotelUid, supplierId, jobId, rows, 
     summary: publicSummary(state.summaryAccumulator, rows.length) };
 }
 
-function requireReviewJob(snapshot, now = Date.now(), actorUid) {
+function requireReviewJob(snapshot, now = Date.now(), actorUid, allowCompleted = false) {
   if (!snapshot.exists) throw new HttpsError("not-found", "AI import not found in this hotel.");
   const job = snapshot.data();
   if (!actorUid || job.ownerUid !== actorUid) throw new HttpsError("permission-denied", "Only the current import owner may review or confirm this private draft.");
-  if (job.status !== "review") throw new HttpsError("failed-precondition", "This AI import is not ready for product review.");
+  if (job.status !== "review" && !(allowCompleted && job.status === "completed" && job.importReviewVersion === review.REVIEW_VERSION)) throw new HttpsError("failed-precondition", "This AI import is not ready for product review.");
   const expiry = job.expiresAt?.toMillis?.() ?? job.expiresAtMillis;
   if (!Number.isFinite(expiry) || expiry <= now) throw new HttpsError("failed-precondition", "This AI import has expired. Start a new import.");
   if (job.configPolicyVersion !== AI_PROPOSAL_POLICY_VERSION) throw new HttpsError("failed-precondition", "This AI import policy needs review before confirmation.");
@@ -400,7 +405,8 @@ function publicRow(row) {
     reviewRevision: row.reviewRevision, product: row.product, previousProduct: row.previousProduct,
     inputPatch: row.inputPatch, issues: row.issues, changes: row.changes, sourceAnchors: row.sourceAnchors, committed: row.committed || null,
     normalizationVersion: row.normalizationVersion ?? null, originalInput: row.originalInput ?? null,
-    normalizationFindings: row.normalizationFindings ?? null, packInference: row.packInference ?? null };
+    normalizationFindings: row.normalizationFindings ?? null, packInference: row.packInference ?? null,
+    purchaseUnitMapping: row.purchaseUnitMapping ?? null, ...(row.review ? review.publicReview(row) : {}) };
 }
 
 async function readHotelSupplierAiImportRowsHandler(request, services = {}) {
@@ -413,7 +419,7 @@ async function readHotelSupplierAiImportRowsHandler(request, services = {}) {
   const db = services.firestore || admin.firestore();
   return db.runTransaction(async (tx) => {
     await requireReviewAuthority(db, request, hotelUid, tx, services);
-    const job = requireReviewJob(await tx.get(db.doc(jobPath(hotelUid, jobId))), services.now?.() ?? Date.now(), request.auth.uid);
+    const job = requireReviewJob(await tx.get(db.doc(jobPath(hotelUid, jobId))), services.now?.() ?? Date.now(), request.auth.uid, true);
     let query = db.collection(`${jobPath(hotelUid, jobId)}/rows`).orderBy(admin.firestore.FieldPath.documentId());
     if (cursor) query = query.startAfter(cursor);
     const result = await tx.get(query.limit(limit + 1));
@@ -431,6 +437,7 @@ async function correctHotelSupplierAiImportRowHandler(request, services = {}) {
   return db.runTransaction(async (tx) => {
     const actor = await requireReviewAuthority(db, request, hotelUid, tx, services);
     const job = requireReviewJob(await tx.get(db.doc(jobPath(hotelUid, jobId))), services.now?.() ?? Date.now(), request.auth.uid);
+    if (job.reviewMigration && job.importReviewVersion !== review.REVIEW_VERSION) throw new HttpsError("failed-precondition", "The guided review workspace is being prepared. Refresh before correcting products.");
     const rowRef = db.doc(`${jobPath(hotelUid, jobId)}/rows/${rowId}`), snapshot = await tx.get(rowRef);
     if (!snapshot.exists) throw new HttpsError("not-found", "Review row not found in this hotel import.");
     const row = snapshot.data();
@@ -454,12 +461,13 @@ async function correctHotelSupplierAiImportRowHandler(request, services = {}) {
       previous = current.data(); productId = row.productId;
     }
     const raw = { ...Object.fromEntries(RAW_FIELDS.map((field) => [field, null])), ...row.inputPatch,
-      sourceAnchors: row.sourceAnchors, sourceEvidenceIssues: row.sourceEvidenceIssues || [],
+      sourceAnchors: row.sourceAnchors, sourceEvidenceIssues: row.sourceEvidenceIssues || [], purchaseUnitMapping: row.purchaseUnitMapping ?? null,
       ...(row.normalizationVersion === 2 ? { normalizationVersion: 2, originalInput: row.originalInput,
-        normalizationFindings: row.normalizationFindings, packInference: row.packInference } : {}) };
+        normalizationFindings: row.normalizationFindings, packInference: row.packInference, purchaseUnitMapping: row.purchaseUnitMapping ?? null } : {}) };
     const next = buildSupplierAiCandidate({ hotelUid, jobId, supplierId: job.supplierId, rowIndex: row.rowIndex, raw, previous, productId,
       userPatch, reviewRevision: expected + 1, duplicate: duplicateRows.docs.some((document) => document.id !== rowId), ambiguous: matches.length > 1 });
     await validateReferences((ref) => tx.get(ref), db, hotelUid, next);
+    if (job.importReviewVersion === review.REVIEW_VERSION) { next.review = { status: "pending", reviewRevision: next.reviewRevision }; next.lastOutcome = null; }
     if (!Object.hasOwn(job.counts, row.category) || job.counts[row.category] < 1) {
       throw new HttpsError("failed-precondition", "This reviewed row does not reconcile with its import classification counts. Start a new import.");
     }
@@ -473,7 +481,9 @@ async function correctHotelSupplierAiImportRowHandler(request, services = {}) {
     }
     tx.set(rowRef, { ...next, createdAt: row.createdAt, updatedAt: stamp(), correctedBy: request.auth.uid,
       lastCorrection: { fingerprint, actorUid: request.auth.uid } });
-    if (row.category !== next.category || row.normalizationVersion === 2) tx.set(db.doc(jobPath(hotelUid, jobId)), { ...job, counts,
+    if (job.importReviewVersion === review.REVIEW_VERSION) review.writeIndex(tx, db, hotelUid, jobId, next);
+    if (row.category !== next.category || row.normalizationVersion === 2 || job.importReviewVersion === review.REVIEW_VERSION) tx.set(db.doc(jobPath(hotelUid, jobId)), { ...job, counts,
+      ...(job.importReviewVersion === review.REVIEW_VERSION ? { reviewState: review.adjustReviewState(review.adjustReviewState(job.reviewState, row, -1), next) } : {}),
       ...(row.normalizationVersion === 2 ? { summary, reconciliation } : {}), updatedAt: stamp() });
     return { hotelUid, jobId, row: publicRow(next) };
   });
@@ -498,17 +508,21 @@ async function commitHotelSupplierAiImportRowsHandler(request, services = {}) {
   // failure can replay this exact command without duplicating committed rows.
   await db.runTransaction(async (tx) => {
     await requireReviewAuthority(db, request, hotelUid, tx, services);
-    requireReviewJob(await tx.get(db.doc(jobPath(hotelUid, jobId))), services.now?.() ?? Date.now(), request.auth.uid);
+    const job = requireReviewJob(await tx.get(db.doc(jobPath(hotelUid, jobId))), services.now?.() ?? Date.now(), request.auth.uid, true);
+    if (job.reviewMigration && job.importReviewVersion !== review.REVIEW_VERSION) throw new HttpsError("failed-precondition", "The guided review workspace is being prepared. Refresh before applying products.");
     const prior = await tx.get(operationRef);
     if (prior.exists) {
       if (prior.data().fingerprint !== fingerprint) throw new HttpsError("already-exists", "This AI confirmation request was used with different rows.");
-    } else tx.create(operationRef, { actorUid: request.auth.uid, fingerprint, rows, createdAt: stamp() });
+    } else {
+      if (job.status !== "review") throw new HttpsError("failed-precondition", "This import is completed. Only existing confirmation receipts can be replayed.");
+      tx.create(operationRef, { actorUid: request.auth.uid, fingerprint, rows, createdAt: stamp() });
+    }
   });
   const outcomes = [];
   for (const selection of rows) {
     const outcome = await db.runTransaction(async (tx) => {
       const actor = await requireReviewAuthority(db, request, hotelUid, tx, services);
-      const job = requireReviewJob(await tx.get(db.doc(jobPath(hotelUid, jobId))), services.now?.() ?? Date.now(), request.auth.uid);
+      const job = requireReviewJob(await tx.get(db.doc(jobPath(hotelUid, jobId))), services.now?.() ?? Date.now(), request.auth.uid, true);
       // Turning off billable AI processing does not prevent a human finishing a
       // valid existing draft. The current policy is still read and validated.
       let config;
@@ -523,6 +537,11 @@ async function commitHotelSupplierAiImportRowsHandler(request, services = {}) {
       if (receipt.exists) return receipt.data().outcome;
       let result;
       try {
+        if (job.status !== "review" && !row.committed) throw new HttpsError("failed-precondition", "This import is completed. An unapplied product cannot be written.");
+        if (job.importReviewVersion === review.REVIEW_VERSION && !row.committed
+          && (row.review?.status !== "approved" || row.review.reviewRevision !== row.reviewRevision)) {
+          throw new HttpsError("failed-precondition", "Approve the latest reviewed product before applying it to the catalog.");
+        }
         if (row.reviewRevision !== selection.reviewRevision) throw new HttpsError("aborted", "The reviewed row changed. Review and acknowledge its latest values.");
         if (row.committed) result = row.committed;
         else {
@@ -536,7 +555,12 @@ async function commitHotelSupplierAiImportRowsHandler(request, services = {}) {
           if (digest(productView(plan.next)) !== digest(productView(row.product))) throw new HttpsError("aborted", "Current product validation changed the reviewed values. Correct and review this row again.");
           if (row.category === "unchanged") result = { rowId: row.rowId, status: "unchanged", productId: row.productId, revision: row.expectedRevision };
           else result = { rowId: row.rowId, status: action === "create" ? "created" : "updated", ...supplierProductInternals.writeProduct(tx, plan, "supplierproducts", request.auth.uid) };
-          tx.set(rowRef, { ...row, committed: result, confirmedBy: request.auth.uid, confirmedAt: stamp() });
+          const committedRow = { ...row, committed: result, lastOutcome: result, confirmedBy: request.auth.uid, confirmedAt: stamp() };
+          tx.set(rowRef, committedRow);
+          if (job.importReviewVersion === review.REVIEW_VERSION) {
+            review.writeIndex(tx, db, hotelUid, jobId, committedRow);
+            tx.set(db.doc(jobPath(hotelUid, jobId)), { ...job, reviewState: review.adjustReviewState(review.adjustReviewState(job.reviewState, row, -1), committedRow), updatedAt: stamp() });
+          }
           tx.create(db.doc(`hotels/${hotelUid}/productAudit/ai-${digest(jobId, row.rowId).slice(0, 48)}`), {
             actorUid: request.auth.uid, collection: "supplierproducts", action: "ai-import-confirmation", jobId, rowId: row.rowId,
             productId: row.productId, reviewRevision: row.reviewRevision, revision: result.revision,
@@ -545,6 +569,11 @@ async function commitHotelSupplierAiImportRowsHandler(request, services = {}) {
       } catch (error) {
         if (!(error instanceof HttpsError) || !["invalid-argument", "failed-precondition", "aborted", "already-exists", "not-found"].includes(error.code)) throw error;
         result = blockedOutcome(selection.rowId, error);
+        if (job.importReviewVersion === review.REVIEW_VERSION && !row.committed && job.status === "review") {
+          const failedRow = { ...row, lastOutcome: result, review: { status: "pending", reviewRevision: row.reviewRevision } };
+          tx.set(rowRef, failedRow); review.writeIndex(tx, db, hotelUid, jobId, failedRow);
+          tx.set(db.doc(jobPath(hotelUid, jobId)), { ...job, reviewState: review.adjustReviewState(review.adjustReviewState(job.reviewState, row, -1), failedRow), updatedAt: stamp() });
+        }
       }
       tx.create(receiptRef, { outcome: result, actorUid: request.auth.uid, createdAt: stamp() });
       return result;
@@ -560,4 +589,6 @@ const correctHotelSupplierAiImportRow = onCall(options, gated(correctHotelSuppli
 const commitHotelSupplierAiImportRows = onCall(options, gated(commitHotelSupplierAiImportRowsHandler));
 module.exports = { AI_PROPOSAL_POLICY_VERSION, MAX_AI_ROWS, MAX_CONFIRM_ROWS, AI_SUPPLIER_SCHEMA, AI_SUPPLIER_SCHEMA_V2, validateRawSupplierAiRows,
   buildSupplierAiCandidate, reconcileSupplierAiRows, readHotelSupplierAiImportRowsHandler, correctHotelSupplierAiImportRowHandler, commitHotelSupplierAiImportRowsHandler,
-  readHotelSupplierAiImportRows, correctHotelSupplierAiImportRow, commitHotelSupplierAiImportRows };
+  readHotelSupplierAiImportRows, correctHotelSupplierAiImportRow, commitHotelSupplierAiImportRows,
+  supplierAiProposalInternals: { RAW_FIELDS, PATCH_FIELDS, PRODUCT_FIELDS, jobPath, requireReviewJob, requireReviewAuthority, publicRow,
+    matchesForSku, validateReferences, productView, adjustSummaryAccumulator, publicSummary, buildSupplierAiCandidate } };
