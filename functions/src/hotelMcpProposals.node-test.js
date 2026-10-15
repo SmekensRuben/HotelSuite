@@ -222,6 +222,38 @@ test("bounded batches and owner-filtered pagination cannot mix hotel or requeste
   await assert.rejects(list(request({ hotelUid: "hotel-b" }), services), { code: "permission-denied" });
 });
 
+test("proposal listing reports missing indexes only after access checks and preserves batches for recovery", async () => {
+  const services = fixture(), batch = await propose(services, [catalogRow()]);
+  const before = JSON.stringify([...services.firestore.records]);
+  const runTransaction = services.firestore.runTransaction.bind(services.firestore);
+  let queryFailure = Object.assign(new Error("9 FAILED_PRECONDITION: The query requires an index. https://console.firebase.google.com/private-hotel"), { code: 9 }), queries = 0;
+  services.firestore.runTransaction = (callback) => runTransaction((transaction) => {
+    const get = transaction.get;
+    transaction.get = async (reference) => {
+      if (reference.isQuery) { queries += 1; if (queryFailure) throw queryFailure; }
+      return get(reference);
+    };
+    return callback(transaction);
+  });
+  await assert.rejects(list(request({ hotelUid, limit: 1 }), services), (error) => {
+    assert.equal(error.code, "failed-precondition");
+    assert.deepEqual(error.details, { reason: "mcp-index-required", area: "proposals", indexKey: "hotelMcpProposalBatches" });
+    assert.equal(error.message.includes("private-hotel"), false);
+    return true;
+  });
+  assert.equal(queries, 1); assert.equal(JSON.stringify([...services.firestore.records]), before);
+  await assert.rejects(list(request({ hotelUid: "hotel-b" }), services), { code: "permission-denied" });
+  assert.equal(queries, 1);
+  queryFailure = null;
+  const recovered = await list(request({ hotelUid, limit: 1 }), services);
+  assert.deepEqual(recovered.batches.map((item) => item.batchId), [batch.batchId]);
+  assert.equal(recovered.nextCursor, null); assert.equal(JSON.stringify([...services.firestore.records]), before);
+  queryFailure = Object.assign(new Error("The database is not in the required state."), { code: 9 });
+  await assert.rejects(list(request({ hotelUid }), services), (error) => error === queryFailure);
+  queryFailure = Object.assign(new Error("Permission denied."), { code: 7 });
+  await assert.rejects(list(request({ hotelUid }), services), (error) => error === queryFailure);
+});
+
 test("mapping references are verified for this supplier and source format without importing credentials or applying another source's rules", async () => {
   const services = fixture();
   services.firestore.records.set(`${root}/supplierImportMappingProfiles/mapping`, { version: 1, supplierId: "dairy", sourceFormat: "csv", profileId: "default", revision: 1, mappings: [] });

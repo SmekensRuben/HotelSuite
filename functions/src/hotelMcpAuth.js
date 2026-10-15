@@ -5,6 +5,7 @@ const {
 } = require("@modelcontextprotocol/sdk/server/auth/errors.js");
 const { requireCurrentVerifiedUser } = require("./validation");
 const { normalizeHotelMcpConfig } = require("./hotelMcpConfig");
+const { readMcpIndexQuery } = require("./hotelMcpQuery");
 
 const MCP_SCOPES = Object.freeze([
   { id: "hotel-toolkit:read", label: "Read permitted product data", description: "Discover accessible hotels and read product and reference data allowed by your current hotel permissions." },
@@ -224,9 +225,10 @@ function createHotelMcpOAuthProvider({ db, auth, config: rawConfig, now = Date.n
     },
     async listConnections(request) {
       await requireCurrentVerifiedUser(request, auth);
-      const snapshots = await db.collection("hotelMcpOAuthConnections")
+      const query = db.collection("hotelMcpOAuthConnections")
         .where("uid", "==", request.auth.uid).where("revokedAt", "==", null)
-        .where("expiresAtMs", ">", now()).limit(100).get();
+        .where("expiresAtMs", ">", now()).limit(100);
+      const snapshots = await readMcpIndexQuery("connections", () => query.get());
       return {
         connections: snapshots.docs.map((document) => ({ id: document.id, ...document.data() }))
           .filter((connection) => !connection.revokedAt && connection.expiresAtMs > now())

@@ -33,6 +33,18 @@ it("lists private batches and opens the selected batch with its source", async (
   render(wrap("/catalog/products/proposals")); await screen.findByRole("button", { name: /Sligro list/ }); expect(mocks.read).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: /Sligro list/ })); await screen.findByRole("article", { name: "Product proposal: Whole milk" }); expect(mocks.read).toHaveBeenCalledWith("hotel-a", "batch-1"); expect(screen.getByRole("link", { name: "https://supplier.example/list" })).toHaveAttribute("rel", "noreferrer");
 });
+it("retains a retryable setup failure and opens the original staged batch after recovery", async () => {
+  const message = "MCP setup is incomplete. Ask your operator to finish setup, then retry. Saved proposals have not been changed.";
+  mocks.list.mockRejectedValueOnce(Object.assign(new Error(message), { code: "functions/failed-precondition" }));
+  render(wrap("/catalog/products/proposals"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(screen.queryByText(/No product proposals are available/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Sligro list/ }));
+  await screen.findByRole("article", { name: "Product proposal: Whole milk" });
+  expect(mocks.list).toHaveBeenCalledTimes(2); expect(mocks.read).toHaveBeenCalledWith("hotel-a", "batch-1");
+  expect(mocks.review).not.toHaveBeenCalled();
+});
 it("requires explicit confirmation for individual and bulk approval and retains invalid rows", async () => {
   batch.rows.push(row({ rowId: "invalid-row", status: "invalid", proposed: { name: "Unknown package" }, patch: { name: "Unknown package" }, issues: [{ code: "unit", severity: "error", message: "Choose a supported unit." }] }));
   render(wrap()); await screen.findByRole("heading", { name: "Whole milk" }); expect(screen.getByRole("checkbox", { name: "Select invalid-row" })).toBeDisabled();

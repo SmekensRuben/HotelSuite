@@ -50,4 +50,23 @@ describe("personal MCP connections", () => {
     expect(await revokeMcpConnection(id)).toEqual({ revoked: true });
     expect(mocks.call).toHaveBeenLastCalledWith("revokeHotelMcpConnection", { connectionId: id });
   });
+  it("preserves a safe setup failure without treating unavailable connections as an empty list", async () => {
+    mocks.call.mockRejectedValueOnce(Object.assign(new Error("Firebase: MCP setup is incomplete. Ask your operator to finish setup, then retry."), {
+      code: "functions/failed-precondition", details: { reason: "mcp-index-required", area: "connections",
+        indexKey: "hotelMcpOAuthConnections", rawProviderMessage: "private-provider-evidence", accessToken: "private-token" },
+    }));
+    const failure = await listMcpConnections().catch((error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.message).toBe("MCP setup is incomplete. Ask your operator to finish setup, then retry.");
+    expect(failure.code).toBe("functions/failed-precondition");
+    expect(failure.details).toEqual({ reason: "mcp-index-required", area: "connections", indexKey: "hotelMcpOAuthConnections" });
+    expect(JSON.stringify(failure)).not.toMatch(/private-/);
+    mocks.call.mockResolvedValueOnce({ data: { connections: [connection], configuration: { enabled: true, resourceUrl: "https://toolkit.example/mcp" } } });
+    expect((await listMcpConnections()).connections).toEqual([connection]);
+  });
+  it("retains ordinary callable error codes without copying unrecognized diagnostic details", async () => {
+    mocks.call.mockRejectedValueOnce(Object.assign(new Error("Access denied"), { code: "functions/permission-denied", details: { raw: "private" } }));
+    const failure = await listMcpConnections().catch((error) => error);
+    expect(failure.code).toBe("functions/permission-denied"); expect(failure.details).toBeUndefined();
+  });
 });
