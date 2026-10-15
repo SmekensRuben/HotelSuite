@@ -88,3 +88,13 @@ it("discards a pending revocation acknowledgement after the account changes", as
   await act(async () => resolve({ revoked: true }));
   expect(screen.queryByText("Codex connection revoked.")).not.toBeInTheDocument();
 });
+it("explains incomplete MCP setup and reloads existing connections after the operator repairs it", async () => {
+  const message = "MCP setup is incomplete. Ask your operator to finish setup, then retry. Existing connections have not been changed.";
+  mocks.list.mockRejectedValueOnce(Object.assign(new Error(message), { code: "functions/failed-precondition" }));
+  render(<McpConnectionsPage />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(screen.queryByText("No authorized MCP clients yet.")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await screen.findByRole("heading", { name: "Codex" });
+  expect(mocks.list).toHaveBeenCalledTimes(2); expect(mocks.revoke).not.toHaveBeenCalled();
+});

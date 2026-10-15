@@ -259,6 +259,39 @@ The `hotelMcp` Function must already exist. This command does not deploy Functio
 Rules, indexes, TTL, IAM or App Hosting. If MCP is still disabled, gateway MCP
 routes return 503 until a successful enabled Functions release.
 
+### Prepare the MCP indexes
+
+In the reviewed checkout above, use Node 22 or later and an authenticated `gcloud`
+operator who can read the default database metadata and list/create indexes in
+`hotel-toolkit`. This helper uses only Node builtins and `gcloud`; it does not need
+an npm install or service-account key.
+
+```bash
+# Read-only metadata report; shows MISSING, CREATING or READY for both indexes.
+node scripts/firebase/hotel-mcp-indexes.mjs preflight --project hotel-toolkit
+
+# Create only missing MCP indexes and wait for both to become READY.
+node scripts/firebase/hotel-mcp-indexes.mjs apply --project hotel-toolkit
+
+# Read-only verification; fails unless both indexes are READY.
+node scripts/firebase/hotel-mcp-indexes.mjs verify --project hotel-toolkit
+```
+
+The exact `COLLECTION` indexes are:
+
+| Collection | Ordered fields |
+| --- | --- |
+| `hotelMcpOAuthConnections` | `uid ASC`, `revokedAt ASC`, `expiresAtMs ASC` |
+| `hotelMcpProposalBatches` | `ownerUid ASC`, `createdAtMillis DESC`, `__name__ DESC` |
+
+The helper checks the explicit project ID/number and existing Standard/Native
+default database. It preserves unrelated indexes, reuses existing READY/CREATING
+indexes, and never deletes or replaces indexes. Waiting is bounded to thirty
+minutes; if it times out, builds may continue and the same command can be rerun.
+It does not change Rules, application records, OAuth grants, TTL, IAM or SaaS
+activation. The normal Functions and gateway deployments do not install these
+indexes; the inventory helper manages only its four inventory definitions.
+
 ### Register clients and activate
 
 Use GitHub CLI authenticated as an operator who can manage repository variables
@@ -422,6 +455,23 @@ fallback. Invalid rows need correction; stale revisions need explicit conflict
 review. A pending review must resume its exact original request before another
 review command can run. Invalid callback/issuer errors require correcting the
 registered client and canonical origin, not bypassing validation.
+
+If ChatGPT can connect and stage products but **Product proposals** and **MCP
+connections** both fail with `INTERNAL [500]`, first run the read-only index
+preflight above. Both listings need their MCP composite index; OAuth consent and
+staging use document reads/writes and can succeed before those indexes exist.
+Firestore's missing/building-index error was previously masked as a generic
+callable 500. Recognized index failures now return `failed-precondition` with an
+actionable setup message and safe `mcp-index-required` diagnostic details.
+
+Apply only the missing indexes, wait for READY, then click **Retry** on the same
+page. This repairs the already-published listing queries without restaging
+products or reconnecting ChatGPT. Saved proposals, product approvals and existing
+connections are not modified by index preparation. If both indexes are already
+READY and the failure persists, inspect Cloud Logging for the failing
+`listHotelProductProposalBatches` or `listHotelMcpConnections` invocation; a
+screenshot alone does not confirm the underlying production error. Other errors
+retain their existing classification rather than being treated as index failures.
 
 The implementation is separated into `hotelMcpAuth` (identity/grants),
 `hotelMcpServer` (protocol), `hotelMcpAccess` (operational authorization),

@@ -29,7 +29,14 @@ async function invoke(endpoint, input) {
     return data;
   } catch (failure) {
     assertCurrent();
-    throw new Error(String(failure?.message || "The MCP connection could not be completed. Try again.").replace(/^Firebase:\s*/i, "").slice(0, 1000));
+    const error = new Error(String(failure?.message || "The MCP connection could not be completed. Try again.").replace(/^Firebase:\s*/i, "").slice(0, 1000));
+    if (typeof failure?.code === "string" && /^functions\/[a-z-]+$/.test(failure.code)) error.code = failure.code;
+    const details = failure?.details;
+    if (error.code === "functions/failed-precondition" && details?.reason === "mcp-index-required"
+      && details.area === "connections" && details.indexKey === "hotelMcpOAuthConnections") {
+      error.details = { reason: details.reason, area: details.area, indexKey: details.indexKey };
+    }
+    throw error;
   }
 }
 

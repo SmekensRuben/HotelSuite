@@ -6,6 +6,7 @@ const { normalizedPermissions, permissionAllows } = require("./authorization");
 const { gated, requireSaasRollout } = require("./saasRollout");
 const { validDate } = require("./importMonitoringPolicy");
 const policy = require("./productPolicy");
+const { readMcpIndexQuery } = require("./hotelMcpQuery");
 
 const MAX_PROPOSAL_ROWS = 25, MAX_PROPOSAL_BYTES = 180000, MAX_STORED_BYTES = 850000, MAX_SOURCE_VALUE_DEPTH = 16, VERSION = 1;
 const COLLECTIONS = { catalog: "catalogproducts", supplier: "supplierproducts" };
@@ -357,7 +358,8 @@ async function listHotelProductProposalBatchesHandler(request, services = {}) {
       const anchor = ownedBatch(await tx.get(db.doc(batchPath(hotelUid, cursor))), request.auth.uid);
       query = query.startAfter(anchor.createdAtMillis, cursor);
     }
-    const found = await tx.get(query.limit(limit + 1)), batches = [];
+    const page = query.limit(limit + 1);
+    const found = await readMcpIndexQuery("proposals", () => tx.get(page)), batches = [];
     for (const doc of found.docs.slice(0, limit)) {
       const batch = ownedBatch(doc, request.auth.uid);
       // Returning a summary is also a product data action. Revoked feature

@@ -175,3 +175,36 @@ test("access and connection expiration are enforced without relying on Firestore
   f.setTime(clock + 30 * 24 * 60 * 60 * 1000 + 1);
   await assert.rejects(f.provider.exchangeRefreshToken(f.client, rotated.refresh_token, undefined, new URL("https://mcp.example.com/mcp")), { errorCode: "invalid_grant" });
 });
+
+test("connection listing reports incomplete index setup without hiding grants and recovers after preparation", async () => {
+  const f = fixture(); await f.grant();
+  const originalCollection = f.db.collection;
+  let queryFailure = Object.assign(new Error("9 FAILED_PRECONDITION: The query requires an index. https://console.firebase.google.com/private-user"), { code: 9 }), reads = 0;
+  const clauses = [];
+  f.db.collection = (path) => {
+    assert.equal(path, "hotelMcpOAuthConnections");
+    const query = originalCollection(path), get = query.get, where = query.where, limit = query.limit;
+    query.where = (...args) => { clauses.push(args); return where(...args); };
+    query.limit = (value) => { assert.equal(value, 100); return limit(value); };
+    query.get = async () => { reads += 1; if (queryFailure) throw queryFailure; return get(); };
+    return query;
+  };
+  const before = JSON.stringify([...f.records]);
+  await assert.rejects(f.provider.handlers.listConnections(f.request()), (error) => {
+    assert.equal(error.code, "failed-precondition");
+    assert.deepEqual(error.details, { reason: "mcp-index-required", area: "connections", indexKey: "hotelMcpOAuthConnections" });
+    assert.equal(error.message.includes("private-user"), false);
+    return true;
+  });
+  assert.deepEqual(clauses, [["uid", "==", "hotel-user"], ["revokedAt", "==", null], ["expiresAtMs", ">", clock]]);
+  assert.equal(reads, 1); assert.equal(JSON.stringify([...f.records]), before);
+  queryFailure = null;
+  assert.equal((await f.provider.handlers.listConnections(f.request())).connections.length, 1);
+  assert.equal(JSON.stringify([...f.records]), before);
+  queryFailure = Object.assign(new Error("Unavailable"), { code: 14 });
+  await assert.rejects(f.provider.handlers.listConnections(f.request()), (error) => error === queryFailure);
+  f.setUser({ uid: "hotel-user", emailVerified: true, disabled: true });
+  const beforeDenied = reads;
+  await assert.rejects(f.provider.handlers.listConnections(f.request()), { code: "permission-denied" });
+  assert.equal(reads, beforeDenied);
+});
