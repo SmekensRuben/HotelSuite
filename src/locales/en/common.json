@@ -80,7 +80,6 @@
       "category": "Category",
       "subcategory": "Subcategory",
       "baseUnit": "Base Unit",
-      "baseQtyPerUnit": "Base Qty Per Unit",
       "gtin": "GTIN",
       "internalSku": "Internal SKU",
       "storageType": "Storage Type",

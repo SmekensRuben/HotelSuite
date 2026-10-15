@@ -49,6 +49,25 @@ const offer = (patch = {}) => ({ supplierId: "dairy", supplierSku: "MILK6", supp
 const createCatalog = (db, patch = {}) => mutateHotelCatalogProductHandler(request({ hotelUid, requestId: "catalog-create", action: "create", expectedRevision: 0, product: catalog(), ...patch }), { firestore: db, auth });
 const createOffer = (db, patch = {}) => mutateHotelSupplierProductHandler(request({ hotelUid, requestId: "offer-create", action: "create", expectedRevision: 0, product: offer(), ...patch }), { firestore: db, auth });
 
+test("supplier brand survives omitted imports, explicit edits require update access and brand-only changes preserve prices", async () => {
+  const db = fixture(), created = await createOffer(db, { product: offer({ brand: "Campina" }) });
+  const path = `hotels/${hotelUid}/supplierproducts/${created.productId}`;
+  const history = () => [...db.records.entries()].filter(([key]) => key.includes("/supplierPriceHistory/") || key.includes("/supplierPriceVersions/"));
+  const baseline = history();
+  await importProducts(db, [{ productId: created.productId, expectedRevision: 1, product: offer() }], { requestId: "brand-omitted", onExisting: "overwrite" });
+  assert.equal(db.records.get(path).brand, "Campina");
+  const edit = (requestId, brand) => mutateHotelSupplierProductHandler(request({ hotelUid, requestId, productId: created.productId,
+    action: "update", expectedRevision: 2, product: offer({ brand }) }), { firestore: db, auth });
+  db.records.set(`hotels/${hotelUid}/members/${userUid}`, { permissions: ["supplierproducts.read"] });
+  const before = JSON.stringify([...db.records]);
+  await assert.rejects(edit("brand-forbidden", "Other brand"), (error) => error.code === "permission-denied");
+  assert.equal(JSON.stringify([...db.records]), before);
+  db.records.set(`hotels/${hotelUid}/members/${userUid}`, { permissions });
+  await edit("brand-clear", "");
+  assert.equal(db.records.get(path).brand, "");
+  assert.deepEqual(history(), baseline);
+});
+
 test("ordinary hotel user creates protected products; exact retry returns the original result after later edits", async () => {
   const db = fixture(); const first = await createCatalog(db);
   assert.equal(first.revision, 1);

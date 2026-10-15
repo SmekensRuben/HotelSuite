@@ -35,8 +35,8 @@ function uncommitted(error) {
 function preserveSupplierMetadata(input, previous) {
   if (!previous || !input || typeof input !== "object" || Array.isArray(input)) return input;
   const result = { ...input };
-  for (const key of ["priceValidFrom", "priceValidUntil", "gtin"]) {
-    if (!Object.hasOwn(input, key)) result[key] = previous[key] ?? null;
+  for (const key of ["priceValidFrom", "priceValidUntil", "gtin", "brand"]) {
+    if (!Object.hasOwn(input, key)) result[key] = previous[key] ?? (key === "brand" ? "" : null);
   }
   if (Array.isArray(input.purchaseOptions)) {
     // A package's stable option ID identifies its optional barcode metadata;

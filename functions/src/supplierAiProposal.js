@@ -13,12 +13,13 @@ const recurring = require("./supplierRecurringReview");
 const AI_PROPOSAL_POLICY_VERSION = 1;
 const MAX_AI_ROWS = 1000;
 const MAX_CONFIRM_ROWS = 25;
-const RAW_TEXT_FIELDS = ["supplierSku", "supplierProductName", "currency", "pricingModel", "purchaseUnit", "baseUnit", "priceBasis", "gtin", "priceValidFrom", "priceValidUntil"];
+const LEGACY_RAW_TEXT_FIELDS = ["supplierSku", "supplierProductName", "currency", "pricingModel", "purchaseUnit", "baseUnit", "priceBasis", "gtin", "priceValidFrom", "priceValidUntil"];
+const RAW_TEXT_FIELDS = [...LEGACY_RAW_TEXT_FIELDS, "brand"];
 const RAW_NUMBER_FIELDS = ["pricePerBaseUnit", "pricePerPurchaseUnit", "baseUnitsPerPurchaseUnit", "vatRate"];
 const RAW_FIELDS = [...RAW_TEXT_FIELDS, ...RAW_NUMBER_FIELDS];
 const PRODUCT_FIELDS = ["supplierId", ...RAW_FIELDS, "catalogProductId", "active", "purchaseOptions"];
 const PATCH_FIELDS = PRODUCT_FIELDS.filter((field) => field !== "supplierId");
-const FIELD_LIMITS = { supplierSku: 150, supplierProductName: 200, currency: 3, pricingModel: 30, purchaseUnit: 100, baseUnit: 10,
+const FIELD_LIMITS = { supplierSku: 150, supplierProductName: 200, brand: 200, currency: 3, pricingModel: 30, purchaseUnit: 100, baseUnit: 10,
   priceBasis: 10, gtin: 14, priceValidFrom: 10, priceValidUntil: 10 };
 const stamp = () => admin.firestore.FieldValue.serverTimestamp();
 const jobPath = (hotelUid, jobId) => `hotels/${hotelUid}/supplierAiImportJobs/${jobId}`;
@@ -31,8 +32,8 @@ function object(value, name, fields) {
 // strict provider schema is merely a transport contract, never write authority.
 const AI_SUPPLIER_SCHEMA = { type: "object", additionalProperties: false, required: ["rows"], properties: {
   rows: { type: "array", maxItems: MAX_AI_ROWS, items: { type: "object", additionalProperties: false,
-    required: [...RAW_FIELDS, "sourceAnchors"], properties: {
-      ...Object.fromEntries(RAW_TEXT_FIELDS.map((field) => [field, { type: ["string", "null"] }])),
+    required: [...LEGACY_RAW_TEXT_FIELDS, ...RAW_NUMBER_FIELDS, "sourceAnchors"], properties: {
+      ...Object.fromEntries(LEGACY_RAW_TEXT_FIELDS.map((field) => [field, { type: ["string", "null"] }])),
       ...Object.fromEntries(RAW_NUMBER_FIELDS.map((field) => [field, { type: ["number", "null"] }])),
       sourceAnchors: { type: "array", maxItems: 8, items: { type: "object", additionalProperties: false, required: ["sourceId", "quote"],
         properties: { sourceId: { type: "string" }, quote: { type: "string" } } } },
@@ -45,6 +46,11 @@ Object.assign(AI_SUPPLIER_SCHEMA_V2.properties.rows.items.properties, {
   baseUnit: { type: ["string", "null"], enum: ["g", "kg", "ml", "l", "each", null] },
   priceBasis: { type: ["string", "null"], enum: ["net", "gross", "unknown", null] },
 });
+// Freeze extraction semantics per job so counted/resumed requests keep their
+// exact original body. Brand is requested only by newly created jobs.
+const AI_SUPPLIER_SCHEMA_V3 = structuredClone(AI_SUPPLIER_SCHEMA_V2);
+AI_SUPPLIER_SCHEMA_V3.properties.rows.items.required.push("brand");
+AI_SUPPLIER_SCHEMA_V3.properties.rows.items.properties.brand = { type: ["string", "null"] };
 
 function sourceQuoteMatch(source, quote) {
   if (typeof source.text !== "string" || !quote) return null;
@@ -78,6 +84,7 @@ function validateRawSupplierAiRows(payload, { sourceUnits = [] } = {}) {
     object(input, `AI row ${index + 1}`, [...RAW_FIELDS, "sourceAnchors"]);
     const result = {};
     for (const field of RAW_FIELDS) {
+      if (field === "brand" && !Object.hasOwn(input, field)) { result.brand = null; continue; }
       if (!Object.hasOwn(input, field)) bad(`AI row ${index + 1} is missing the nullable ${field} field.`);
       const value = input[field];
       if (value !== null && (RAW_TEXT_FIELDS.includes(field) ? typeof value !== "string" || value.length > FIELD_LIMITS[field] : typeof value !== "number" || !Number.isFinite(value))) {
@@ -118,7 +125,7 @@ function productView(product) {
   return Object.fromEntries(PRODUCT_FIELDS.map((field) => [field, product[field] === undefined ? null : product[field]]));
 }
 function emptyProduct(supplierId) {
-  return { supplierId, supplierSku: null, supplierProductName: null, currency: null, pricingModel: null,
+  return { supplierId, supplierSku: null, supplierProductName: null, brand: null, currency: null, pricingModel: null,
     pricePerBaseUnit: null, pricePerPurchaseUnit: null, purchaseUnit: null, baseUnit: null, baseUnitsPerPurchaseUnit: null,
     catalogProductId: null, active: false, priceBasis: "unknown", vatRate: null, purchaseOptions: [], gtin: null,
     priceValidFrom: null, priceValidUntil: null };
@@ -660,7 +667,7 @@ const options = { region: "us-central1", cors: true, timeoutSeconds: 120 };
 const readHotelSupplierAiImportRows = onCall(options, gated(readHotelSupplierAiImportRowsHandler));
 const correctHotelSupplierAiImportRow = onCall(options, gated(correctHotelSupplierAiImportRowHandler));
 const commitHotelSupplierAiImportRows = onCall(options, gated(commitHotelSupplierAiImportRowsHandler));
-module.exports = { AI_PROPOSAL_POLICY_VERSION, MAX_AI_ROWS, MAX_CONFIRM_ROWS, AI_SUPPLIER_SCHEMA, AI_SUPPLIER_SCHEMA_V2, validateRawSupplierAiRows,
+module.exports = { AI_PROPOSAL_POLICY_VERSION, MAX_AI_ROWS, MAX_CONFIRM_ROWS, AI_SUPPLIER_SCHEMA, AI_SUPPLIER_SCHEMA_V2, AI_SUPPLIER_SCHEMA_V3, validateRawSupplierAiRows,
   buildSupplierAiCandidate, reconcileSupplierAiRows, readHotelSupplierAiImportRowsHandler, correctHotelSupplierAiImportRowHandler, commitHotelSupplierAiImportRowsHandler,
   readHotelSupplierAiImportRows, correctHotelSupplierAiImportRow, commitHotelSupplierAiImportRows,
   supplierAiProposalInternals: { RAW_FIELDS, PATCH_FIELDS, PRODUCT_FIELDS, jobPath, requireReviewJob, requireReviewAuthority, publicRow,

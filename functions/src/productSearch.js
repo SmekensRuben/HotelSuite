@@ -28,7 +28,7 @@ function buildSearchRequest(input) {
   }
   if (collection === "supplierproducts" && typeof criteria.active === "boolean") filter.push(`active = ${criteria.active}`);
   return { hotelUid, collection, body: { q: boundedString(criteria.searchTerm, 500), filter, limit, offset,
-    ...(collection === "supplierproducts" ? { attributesToSearchOn: ["supplierName", "supplierSku", "supplierProductName"] } : {}) } };
+    ...(collection === "supplierproducts" ? { attributesToSearchOn: ["supplierName", "supplierSku", "supplierProductName", "brand"] } : {}) } };
 }
 
 async function searchHotelProductsHandler(request, services = {}) {

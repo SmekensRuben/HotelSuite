@@ -58,10 +58,14 @@ test("physical multiplication and primitives reject hidden rounding, coercion an
 });
 test("catalog inventory identity requires explicit flags and units while absent costs stay absent", () => {
   const value = policy.normalizeCatalogProduct({ name: "Milk", baseUnit: "l", active: true, inventoryTracked: true, allergens: [] });
-  assert.equal(value.baseQtyPerUnit, null); assert.equal(value.productPolicyVersion, 1);
+  assert.equal(value.productPolicyVersion, 1);
   assert.throws(() => policy.normalizeCatalogProduct({ name: "Milk", baseUnit: "l", active: true }), /explicit boolean/);
   assert.throws(() => policy.normalizeCatalogProduct({ name: "Milk", baseUnit: "litres", active: true, inventoryTracked: true }), /supported base unit/);
-  assert.throws(() => policy.normalizeCatalogProduct({ name: "Milk", baseUnit: "l", active: true, inventoryTracked: true, baseQtyPerUnit: 0 }));
+});
+test("supplier brand is optional bounded text independent of the supplier's name", () => {
+  assert.equal(policy.normalizeSupplierProduct(supplier({ brand: "  iQ McCain  " })).brand, "iQ McCain");
+  assert.equal(policy.normalizeSupplierProduct(supplier()).brand, "");
+  for (const brand of [true, {}, 42, "x".repeat(201)]) assert.throws(() => policy.normalizeSupplierProduct(supplier({ brand })));
 });
 test("two suppliers and selectable packages produce one catalog quantity identity", () => {
   const a = policy.normalizeSupplierProduct(supplier());

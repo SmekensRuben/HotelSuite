@@ -109,11 +109,6 @@ function extractCatalogPhysicalIdentity(product = {}, { knownBrands = [] } = {})
   if (dimension(product.baseUnit) === "count") {
     if (namedQuantities.length === 1) eachSpec = { unit: namedQuantities[0].unit, quantity: namedQuantities[0].quantity, dimension: namedQuantities[0].dimension };
     else eachSpecUnknown = true;
-    // A reviewed each-spec is one inventory item; the supplier box quantity is
-    // never copied here, even when it is a known number of bottles or pieces.
-    if (!product.supplierProductName && typeof product.baseQtyPerUnit === "number") {
-      if (product.baseQtyPerUnit !== 1) eachSpecUnknown = true;
-    }
   }
   return { name, baseUnit: product.baseUnit ?? null, dimension: dimension(product.baseUnit), brand, brandEvidence,
     qualifiers, coreTokens, eachSpec, eachSpecUnknown, hasUnparsedNotes: Boolean(plain(product.notes)), packageGtin: bounded(product.gtin, 100) || null };
@@ -180,7 +175,7 @@ function proposedCatalogFor(supplierProduct) {
   // Catalog names retain the source wording so the reviewer can deliberately
   // choose a package-independent display name. No brand, taxonomy, GTIN or
   // allergen fact is fabricated from an offer or copied from its purchase box.
-  return { name, baseUnit, baseQtyPerUnit: null };
+  return { name, baseUnit };
 }
 function catalogSyncGroupKey(supplierProduct) {
   const identity = extractCatalogPhysicalIdentity(supplierProduct);

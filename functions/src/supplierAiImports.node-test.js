@@ -89,11 +89,13 @@ async function legacyUploaded(s) {
   const jobId = digest(old.hotelUid, old.requestId, old.ownerUid, fingerprint);
   const legacy = { ...old, jobId, fingerprint, source: { ...old.source, path: `private/supplier-ai-imports/hotel-a/${jobId}/source` } };
   delete legacy.importSettings; delete legacy.importPolicyVersion; delete legacy.importReviewVersion; delete legacy.mappingProfileId; delete legacy.purchaseUnitMappingSnapshot;
+  delete legacy.extractionSchemaVersion;
   s.bucket.objects.set(legacy.source.path, s.bucket.objects.get(old.source.path)); s.bucket.objects.delete(old.source.path);
   s.firestore.records.delete(`hotels/hotel-a/supplierAiImportJobs/${uploaded.jobId}`);
   s.firestore.records.set(`hotels/hotel-a/supplierAiImportJobs/${jobId}`, legacy);
   const receipt = { ...s.firestore.records.get("hotels/hotel-a/supplierAiImportRequests/import-one"), jobId, fingerprint };
   delete receipt.importSettings; delete receipt.importPolicyVersion; delete receipt.importReviewVersion; delete receipt.mappingProfileId; delete receipt.purchaseUnitMappingSnapshot;
+  delete receipt.extractionSchemaVersion;
   s.firestore.records.set("hotels/hotel-a/supplierAiImportRequests/import-one", receipt);
   s.firestore.records.delete(`hotels/hotel-a/supplierAiImportWork/${uploaded.jobId}`);
   s.firestore.records.set(`hotels/hotel-a/supplierAiImportWork/${jobId}`, { hotelUid: "hotel-a", jobId });
@@ -104,6 +106,23 @@ function assertCustomerPrivacy(value) {
   assert.doesNotMatch(serialized, /"(?:usage|configuration|model|fallbackModel|fallbackEnabled|inputTokens|outputTokens|reasoningTokens|priceVersion|actualCostUsd|knownCostUsd|reservedCostUsd|knownCostMicros|reservedCostMicros|limitUsd|maxCostPerImportUsd|maxMonthlyCostPerHotelUsd)"/);
   if (value.error) assert.doesNotMatch(value.error.message, /cost|budget|reserv|paid|bill|usage|accounting|token|model|reasoning|provider|secret|configuration|fallback|USD|\$|gpt|openai/i);
 }
+test("pre-brand jobs keep their original counted schema through generation and recovery", async () => {
+  const s = fixture(); delete s.schema;
+  const created = await uploadSupplierAiImport(request(), data(), bytes, s);
+  delete jobOf(s, created.jobId).extractionSchemaVersion;
+  let countedBody;
+  s.provider.countInput = async (body) => { s.calls.count++; countedBody = JSON.stringify(body); return 10; };
+  s.provider.respond = async (body) => {
+    s.calls.response++;
+    assert.equal(JSON.stringify(body), countedBody);
+    assert.deepEqual(body.text.format.schema, require("./supplierAiProposal").AI_SUPPLIER_SCHEMA_V2);
+    assert.doesNotMatch(body.instructions, /Extract brand separately/);
+    return response();
+  };
+  assert.equal((await runSupplierAiImportJob("hotel-a", created.jobId, s)).status, "review");
+  assert.deepEqual(await runSupplierAiImportJob("hotel-a", created.jobId, s), { ignored: true });
+  assert.equal(s.calls.count, 1); assert.equal(s.calls.response, 1);
+});
 test("normal hotel buyer creates an isolated job, receives complete review and safe progress while real usage stays private, with idempotent source and worker replay", async () => {
   const s = fixture(), created = await uploadSupplierAiImport(request(), data(), bytes, s);
   assert.equal(created.status, "queued"); assert.deepEqual(created.progress, { completedChunks: 0, totalChunks: null }); assertCustomerPrivacy(created);
@@ -274,7 +293,7 @@ test("the recurring worker validates, normalizes, reconciles and freezes policy 
     s.calls.response++; sentSchema = body.text.format.schema;
     const supplied = JSON.parse(body.input[0].content[0].text), unit = supplied.units.find((row) => row.text.includes("MEEL400"));
     assert.ok(unit, "Real extraction must send the complete supplier source row");
-    const row = { supplierSku: "MEEL400", supplierProductName: "MEEL TARWE 400 GR", currency: "EUR", pricingModel: "Per Purchase Unit", purchaseUnit: "PK", baseUnit: "g",
+    const row = { supplierSku: "MEEL400", supplierProductName: "MEEL TARWE 400 GR", brand: null, currency: "EUR", pricingModel: "Per Purchase Unit", purchaseUnit: "PK", baseUnit: "g",
       priceBasis: "net", gtin: null, priceValidFrom: null, priceValidUntil: null, pricePerBaseUnit: null, pricePerPurchaseUnit: 2.4,
       baseUnitsPerPurchaseUnit: 400, vatRate: null, sourceAnchors: [{ sourceId: unit.sourceId, quote: "MEEL TARWE 400 GR" }] };
     s.advance(370000); // Force the real reconciliation to continue in another work invocation.
@@ -288,7 +307,8 @@ test("the recurring worker validates, normalizes, reconciles and freezes policy 
   const ready = await runSupplierAiImportJob("hotel-a", created.jobId, s);
   assert.equal(ready.status, "review", JSON.stringify(ready)); assert.equal(ready.summary.version, 2); assert.equal(ready.summary.totalRows, 1);
   assert.equal(ready.summary.normalizedRows, 1); assert.equal(ready.summary.unknownPriceRows, 0); assertCustomerPrivacy(ready);
-  assert.deepEqual(sentSchema, require("./supplierAiProposal").AI_SUPPLIER_SCHEMA_V2);
+  assert.deepEqual(sentSchema, require("./supplierAiProposal").AI_SUPPLIER_SCHEMA_V3);
+  assert.equal(jobOf(s, created.jobId).extractionSchemaVersion, 3);
   const confirmed = JSON.parse(s.bucket.objects.get(receipt.result.path).bytes.toString("utf8"))[0];
   assert.equal(confirmed.purchaseUnit, "Pack"); assert.equal(confirmed.baseUnit, "g"); assert.equal(confirmed.baseUnitsPerPurchaseUnit, 400);
   assert.equal(confirmed.supplierProductName, "Meel Tarwe 400 g"); assert.equal(confirmed.pricePerPurchaseUnit, 2.4);

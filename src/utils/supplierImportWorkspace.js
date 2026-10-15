@@ -8,7 +8,7 @@ const id = (value) => typeof value === "string" && value.length > 0 && value.len
 const count = (value, max = 1000) => Number.isSafeInteger(value) && value >= 0 && value <= max;
 const text = (value, max = 2000) => typeof value === "string" && value.length <= max ? value : null;
 const internal = /\b(?:openai|tokens?|budget|billing|reasoning|fallback|secret|api[-_\s]?key|bearer|gpt[-\s][a-z0-9][a-z0-9._-]*|AI[-_\s]?(?:model|cost|usage))\b|(?:CostUsd|CostMicros|reservedCost|sk-[a-z0-9])/i;
-const fields = ["id", "supplierId", "supplierSku", "supplierProductName", "catalogProductId", "catalogProductName", "baseUnit", "purchaseUnit", "baseUnitsPerPurchaseUnit", "pricingModel", "pricePerPurchaseUnit", "pricePerBaseUnit", "priceBasis", "currency", "vatRate", "priceValidFrom", "priceValidUntil", "gtin", "active", "revision", "purchaseOptions"];
+const fields = ["id", "supplierId", "supplierSku", "supplierProductName", "brand", "catalogProductId", "catalogProductName", "baseUnit", "purchaseUnit", "baseUnitsPerPurchaseUnit", "pricingModel", "pricePerPurchaseUnit", "pricePerBaseUnit", "priceBasis", "currency", "vatRate", "priceValidFrom", "priceValidUntil", "gtin", "active", "revision", "purchaseOptions"];
 const findingFields = new Set([...fields, "price", "contract", "sourceAnchors", "packInference", "sourceInterpretation", "sourceFormat", "sourceIssuedOn", "assortmentMode", "documentPurpose"]);
 const scalar = (value) => value === null || typeof value === "boolean" || typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
 function projectProduct(value) {

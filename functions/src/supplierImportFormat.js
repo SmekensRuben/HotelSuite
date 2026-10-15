@@ -3,7 +3,7 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const { mappingSnapshot, tableFingerprint, normalizeInterpretation } = require("./supplierImportMappings");
 const policy = require("./productPolicy");
-const RAW_FIELDS = ["supplierSku", "supplierProductName", "currency", "pricingModel", "purchaseUnit", "baseUnit", "priceBasis", "gtin",
+const RAW_FIELDS = ["supplierSku", "supplierProductName", "brand", "currency", "pricingModel", "purchaseUnit", "baseUnit", "priceBasis", "gtin",
   "priceValidFrom", "priceValidUntil", "pricePerBaseUnit", "pricePerPurchaseUnit", "baseUnitsPerPurchaseUnit", "vatRate"];
 const NUMBER_FIELDS = new Set(["pricePerBaseUnit", "pricePerPurchaseUnit", "baseUnitsPerPurchaseUnit", "vatRate", "packCount", "contentQuantity"]);
 const UNIT_ALIASES = { gr: "g", gram: "g", kg: "kg", g: "g", ml: "ml", l: "l", lt: "l", ltr: "l", st: "each", each: "each", piece: "each", pcs: "each" };
@@ -30,6 +30,7 @@ function tablesForSource(source) {
 const COLUMN_LABELS = {
   supplierSku: /^(?:sku|article number|article no|item number|item no|product code|artikelnummer|artikelcode|code article)$/i,
   supplierProductName: /^(?:name|description|product name|article description|artikel omschrijving|omschrijving|productnaam|libell[eé])$/i,
+  brand: /^(?:brand|product brand|merk|marque)$/i,
   purchaseUnit: /^(?:purchase unit|purchase package|packaging unit|package|package unit|eenheid verpakking|verpakking|besteleenheid)$/i,
   baseUnitsPerPurchaseUnit: /^(?:package content|total package content|base units per purchase unit|verpakkingsinhoud)$/i,
   baseUnit: /^(?:base unit|inventory unit)$/i,

@@ -38,8 +38,11 @@ function createSupplierAiRequest(source, configuration, schema, importSettings) 
   if (!Array.isArray(source?.units) || !source.units.length || !schema || schema.type !== "object") throw new HttpsError("failed-precondition", "A complete validated source and import schema are required.");
   // Preserve the legacy body byte-for-byte for already-counted requests and
   // confirmed receipts. New extraction semantics require an explicit snapshot.
-  const instructions = importSettings === undefined ? INSTRUCTIONS
+  const originalInstructions = importSettings === undefined ? INSTRUCTIONS
     : `${INSTRUCTIONS}\n\n${NORMALIZED_EXTRACTION_INSTRUCTIONS}\n\nTrusted server import settings (policy version 2):\n${JSON.stringify(validatedImportSettings(importSettings))}`;
+  const instructions = Object.hasOwn(schema.properties?.rows?.items?.properties || {}, "brand")
+    ? `${originalInstructions}\n\nExtract brand separately when the source explicitly identifies the manufacturer's brand. Preserve its spelling and case and include source evidence for it. Supplier names are not product brands. Do not invent brands or expand ambiguous abbreviations. Use null when the brand is not established by the source.`
+    : originalInstructions;
   const wireUnit = ({ sourceId, anchor, text, kind, method, originalPage, chunkPage }) => ({ sourceId, anchor, text, kind, method, originalPage, chunkPage });
   const sourceText = JSON.stringify({ units: source.units.map(wireUnit), contextUnits: (source.contextUnits || []).map((unit) => ({ ...wireUnit(unit), contextOnly: true })) });
   if (Buffer.byteLength(sourceText) > 2 * 1024 * 1024) throw new HttpsError("resource-exhausted", "The extracted source is too large. Split the file before importing.");

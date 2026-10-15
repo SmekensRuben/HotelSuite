@@ -74,7 +74,7 @@ function publicImportSettings(job) {
   try { return settingsForJob(job) || null; } catch { return null; }
 }
 const SUMMARY_COUNT_FIELDS = ["normalizedRows", "assumptionRows", "unknownPriceRows", "blockedNormalizationRows", "inferredPieceRows", "missingRequiredRows"];
-const SUMMARY_BUSINESS_FIELDS = new Set(["supplierSku", "supplierProductName", "currency", "pricingModel", "purchaseUnit", "baseUnit", "priceBasis", "gtin", "priceValidFrom", "priceValidUntil",
+const SUMMARY_BUSINESS_FIELDS = new Set(["supplierSku", "supplierProductName", "brand", "currency", "pricingModel", "purchaseUnit", "baseUnit", "priceBasis", "gtin", "priceValidFrom", "priceValidUntil",
   "pricePerBaseUnit", "pricePerPurchaseUnit", "baseUnitsPerPurchaseUnit", "vatRate", "price", "contract", "active", "supplierId", "catalogProductId", "sourceAnchors", "packInference", "purchaseOptions", "sourceInterpretation", "sourceIssuedOn"]);
 const SUMMARY_BUSINESS_MESSAGES = Object.freeze({
   "source-format-review-required": "Confirm this supplier file's columns, package content and price channel before importing products.",
@@ -402,7 +402,7 @@ async function uploadSupplierAiImport(request, data, bytes, services = {}) {
     const authTime = request.auth.token.auth_time;
     if (!Number.isFinite(authTime)) throw new HttpsError("unauthenticated", "A current signed-in session is required.");
     const receipt = { hotelUid, jobId, requestId, supplierId, ownerUid: request.auth.uid, authTime, fingerprint,
-      importPolicyVersion: IMPORT_POLICY_VERSION, importSettings,
+      importPolicyVersion: IMPORT_POLICY_VERSION, importSettings, extractionSchemaVersion: 3,
       importReviewVersion: REVIEW_WORKSPACE_VERSION, mappingProfileId: mappingProfile.profileId, purchaseUnitMappingSnapshot, processingMode,
       ...(recurringRequested ? { recurringImportVersion: 1, sourceFormatProfileVersion: 1 } : {}),
       fileName: data.fileName, mimeType, size: bytes.length, sha256, month, configuration, configVersion: configuration.revision,
@@ -558,7 +558,8 @@ async function executeChunk(db, bucket, job, source, index, provider, services) 
   const purchaseUnitMappingSnapshot = job.importReviewVersion === REVIEW_WORKSPACE_VERSION ? publicMappingSnapshot(job) : undefined;
   if (job.importReviewVersion !== undefined && job.importReviewVersion !== REVIEW_WORKSPACE_VERSION || job.importReviewVersion === REVIEW_WORKSPACE_VERSION && !purchaseUnitMappingSnapshot) throw new HttpsError("failed-precondition", "The supplier purchase-unit profile needs review.");
   const proposals = require("./supplierAiProposal");
-  const configuration = await configurationFor(db, job), schema = services.schema || (importSettings ? proposals.AI_SUPPLIER_SCHEMA_V2 : proposals.AI_SUPPLIER_SCHEMA);
+  const configuration = await configurationFor(db, job), schema = services.schema || (job.extractionSchemaVersion === 3
+    ? proposals.AI_SUPPLIER_SCHEMA_V3 : importSettings ? proposals.AI_SUPPLIER_SCHEMA_V2 : proposals.AI_SUPPLIER_SCHEMA);
   const body = createSupplierAiRequest(source, configuration, schema, importSettings), requestDigest = hashOf(Buffer.from(JSON.stringify(body)));
   const countedTokens = await countChunk(db, job, body, provider, services), reservedInput = inputReservationTokens(countedTokens);
   const billingMonth = billingMonthOf(services);

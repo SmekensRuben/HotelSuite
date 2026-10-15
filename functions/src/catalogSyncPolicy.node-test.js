@@ -1,8 +1,14 @@
 const test = require("node:test"), assert = require("node:assert/strict");
 const { extractCatalogPhysicalIdentity, getCatalogSyncSuggestions, validateCatalogSyncSelection, validateCatalogSyncModelProposal, catalogSyncGroupKey } = require("./catalogSyncPolicy");
 const offer = (supplierProductName, patch = {}) => ({ supplierProductName, baseUnit: "g", baseUnitsPerPurchaseUnit: 2400, catalogProductId: null, ...patch });
-const catalog = (name, patch = {}) => ({ id: "catalog-one", name, baseUnit: "kg", active: true, brand: "", description: "", notes: "", allergens: [], baseQtyPerUnit: null, ...patch });
+const catalog = (name, patch = {}) => ({ id: "catalog-one", name, baseUnit: "kg", active: true, brand: "", description: "", notes: "", allergens: [], ...patch });
 const verdict = (name, target, patch = {}) => validateCatalogSyncSelection(offer(name, patch), catalog(target));
+test("explicit supplier brands work without appearing in the name and respect catalog brand requirements", () => {
+  const source = offer("Mozzarella sliced 400g", { brand: "Local Dairy" });
+  assert.equal(validateCatalogSyncSelection(source, catalog("Mozzarella sliced", { brand: "Local Dairy" })).allowed, true);
+  assert.equal(validateCatalogSyncSelection(source, catalog("Mozzarella sliced", { brand: "Other Dairy" })).allowed, false);
+  assert.notEqual(catalogSyncGroupKey(source), catalogSyncGroupKey({ ...source, brand: "Other Dairy" }));
+});
 
 test("a same-brand physical article can share catalog identity across different supplier boxes and exact units", () => {
   const first = offer("Galbani Mozzarella sliced 6x400g"), second = offer("Galbani Mozzarella slices 12x400g", { baseUnitsPerPurchaseUnit: 4800 });
@@ -12,7 +18,7 @@ test("a same-brand physical article can share catalog identity across different 
   assert.equal(result.candidates[0].matchKind, "physical-identity"); assert.equal(result.candidates[0].warnings.length, 0);
   assert.equal(validateCatalogSyncSelection(first, target).allowed, true);
   assert.equal(catalogSyncGroupKey(first), catalogSyncGroupKey(second));
-  assert.equal(result.proposedCatalog.baseUnit, "kg"); assert.equal(result.proposedCatalog.baseQtyPerUnit, null);
+  assert.equal(result.proposedCatalog.baseUnit, "kg");
 });
 test("sliced, whole, buffalo and different-brand mozzarella remain different physical articles", () => {
   const cases = [
@@ -67,7 +73,6 @@ test("one counted bottle has its own specification and case quantities cannot co
   assert.notEqual(catalogSyncGroupKey(source), catalogSyncGroupKey({ ...source, supplierProductName: "Spa Water 6x1L" }));
   const unknown = getCatalogSyncSuggestions(offer("Spa Water bottles", { baseUnit: "each", baseUnitsPerPurchaseUnit: 6 }), [catalog("Spa Water bottles", { baseUnit: "each" })]);
   assert.equal(unknown.status, "review"); assert.equal(unknown.groupKey, null);
-  assert.equal(unknown.proposedCatalog.baseQtyPerUnit, null);
 });
 test("mass, volume and count incompatibilities are hard stops without density or guessed item weight", () => {
   const source = offer("Heinz Tomato ketchup 1kg", { baseUnit: "g", baseUnitsPerPurchaseUnit: 1000 });
@@ -89,7 +94,7 @@ test("package GTIN agreement never overrules physical units, qualifiers or incom
 });
 test("new proposals retain reviewable source names and never invent brand, taxonomy, allergens or copied box GTIN", () => {
   const result = getCatalogSyncSuggestions(offer("Unfamiliar supplier flour 12x500g", { gtin: "6291041500213" }), []);
-  assert.equal(result.status, "new"); assert.deepEqual(result.proposedCatalog, { name: "Unfamiliar supplier flour 12x500g", baseUnit: "kg", baseQtyPerUnit: null });
+  assert.equal(result.status, "new"); assert.deepEqual(result.proposedCatalog, { name: "Unfamiliar supplier flour 12x500g", baseUnit: "kg" });
   assert.equal(result.groupKey, null); assert.equal(result.proposedCatalog.brand, undefined); assert.equal(result.proposedCatalog.allergens, undefined); assert.equal(result.proposedCatalog.gtin, undefined);
 });
 test("different concentrations, oil grades and whole or ground forms remain distinct", () => {

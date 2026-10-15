@@ -60,6 +60,19 @@ function offer(patch = {}) {
   const { sourceAnchors, ...product } = raw();
   return { ...product, supplierId, catalogProductId: "milk", active: true, purchaseOptions: [], ...patch };
 }
+test("source-backed brands are reviewed as article changes; absent brands preserve a local correction", () => {
+  const previous = offer({ brand: "Campina", revision: 1 });
+  const build = (brand) => proposal.buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex: 0,
+    raw: raw({ brand }), previous });
+  assert.equal(build(null).product.brand, "Campina");
+  assert.equal(build(undefined).product.brand, "Campina");
+  const changed = build("Arla");
+  assert.equal(changed.product.brand, "Arla"); assert.equal(changed.recurringReview.category, "product-change");
+  assert.deepEqual(changed.changes.filter((change) => change.field === "brand"), [{ field: "brand", before: "Campina", after: "Arla" }]);
+  const corrected = proposal.buildSupplierAiCandidate({ hotelUid, jobId, supplierId, rowIndex: 0,
+    raw: raw({ brand: null }), previous, userPatch: { brand: "" } });
+  assert.equal(corrected.product.brand, "");
+});
 const services = (db, patch = {}) => ({ firestore: db, auth, ...patch });
 const rowDoc = (db, index = 1) => db.records.get(`${jobRoot}/rows/r-${String(index).padStart(6, "0")}`);
 async function reconcile(db, rows = [raw()]) {

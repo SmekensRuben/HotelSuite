@@ -15,6 +15,18 @@ const props = (value = row()) => ({ hotelUid: "hotel-a", jobId: "job-a", row: va
 beforeEach(() => { vi.clearAllMocks(); mocks.permissions = ["supplierproducts.read", "supplierproducts.create", "supplierproducts.update"]; mocks.catalog.mockResolvedValue({ products: [] }); });
 
 describe("compact supplier product review", () => {
+  it("shows old and new brands and saves a separate brand correction before approval", async () => {
+    const properties = props(row({ category: "changed", product: { ...product, brand: "Arla" },
+      previousProduct: { ...product, brand: "Campina" }, changes: [{ field: "brand", before: "Campina", after: "Arla" }] }));
+    mocks.save.mockResolvedValue({ row: row({ reviewRevision: 2, product: { ...product, brand: "Local Dairy" } }) });
+    render(<SupplierImportProductReview {...properties} />);
+    expect(screen.getByText("Campina")).toBeInTheDocument(); expect(screen.getByText("Arla")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/^Brand/), { target: { value: "Local Dairy" } });
+    expect(screen.getByRole("button", { name: "Approve & next" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Save corrections" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledWith("hotel-a", expect.objectContaining({ patch: { brand: "Local Dairy" } })));
+    expect(properties.onApprove).not.toHaveBeenCalled();
+  });
   it("recognizes kg in the review selector and offers it as a correction", () => {
     render(<SupplierImportProductReview {...props(row({ product: { ...product, purchaseUnit: "kg" } }))} />);
     expect(screen.getByRole("combobox", { name: "Purchase unit" })).toHaveValue("kg");

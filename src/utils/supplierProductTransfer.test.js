@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import { parseSupplierProductRows, supplierProductExportRow, SUPPLIER_PRODUCT_EXPORT_HEADERS, SUPPLIER_PRODUCT_TEMPLATE_HEADERS, SUPPLIER_PRODUCT_TEMPLATE_ROW } from "./supplierProductTransfer";
 
 const offer = {
-  id: "stable-offer", revision: 7, supplierId: "supplier-identity", supplierSku: "000040", supplierProductName: "Orange juice case", gtin: "036000291452",
+  id: "stable-offer", revision: 7, supplierId: "supplier-identity", supplierSku: "000040", supplierProductName: "Orange juice case", brand: "iQ Juice", gtin: "036000291452",
   currency: "EUR", pricingModel: "Per Purchase Unit", priceBasis: "gross", vatRate: 0.06, priceValidFrom: "2026-10-01", priceValidUntil: "2026-12-31",
   pricePerBaseUnit: null, pricePerPurchaseUnit: 0, purchaseUnit: "Case of 6", baseUnit: "ml", baseUnitsPerPurchaseUnit: 6000, catalogProductId: "orange-catalog",
   purchaseOptions: [{ id: "single-bottle", purchaseUnit: "Bottle", gtin: "06291041500213", baseUnitsPerPurchaseUnit: 1000, pricePerPurchaseUnit: null }],
@@ -23,6 +23,7 @@ describe("supplier product workbook boundary", () => {
     expect(rows[0].gtin).toBe("036000291452");
     expect(rows[0].createdAt).toBe("2026-10-01T08:00:00.000Z");
     const [parsed] = parseSupplierProductRows(rows);
+    expect(parsed.brand).toBe("iQ Juice");
     expect(parsed).toMatchObject({ documentId: "stable-offer", revision: 7, supplierSku: "000040", gtin: "036000291452", currency: "EUR", priceBasis: "gross", vatRate: 0.06, pricePerPurchaseUnit: 0, pricePerBaseUnit: null, baseUnit: "ml", baseUnitsPerPurchaseUnit: 6000, catalogProductId: "orange-catalog", active: false, priceValidFrom: "2026-10-01", priceValidUntil: "2026-12-31" });
     expect(parsed.purchaseOptions).toEqual([{ id: "single-bottle", purchaseUnit: "Bottle", gtin: "06291041500213", baseUnitsPerPurchaseUnit: 1000, pricePerPurchaseUnit: null }]);
     expect(parsed).not.toHaveProperty("createdBy");
@@ -63,8 +64,10 @@ describe("supplier product workbook boundary", () => {
     expect(() => parseSupplierProductRows([{ ...supplierProductExportRow(offer), [field]: value }])).toThrow(message);
   });
   it("keeps GTIN absent for old workbooks and rejects duplicate stable or supplier/SKU identities", () => {
-    const row = supplierProductExportRow(offer); delete row.gtin;
+    const row = supplierProductExportRow(offer); delete row.gtin; delete row.brand;
     expect(parseSupplierProductRows([row])[0]).not.toHaveProperty("gtin");
+    expect(parseSupplierProductRows([row])[0]).not.toHaveProperty("brand");
+    expect(parseSupplierProductRows([{ ...row, brand: " " }])[0]).not.toHaveProperty("brand");
     expect(() => parseSupplierProductRows([row, row])).toThrow(/duplicate product identity/);
     delete row.documentId;
     expect(() => parseSupplierProductRows([row, row])).toThrow(/duplicate product identity/);
