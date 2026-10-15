@@ -4,6 +4,7 @@ import { uploadCatalogProductImage } from "../../services/firebaseProducts";
 import { getCatalogTaxonomy } from "../../services/firebaseSettings";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import AsyncError from "../shared/AsyncError";
+import { Combobox } from "../ui/combobox";
 import { productUnitLabel } from "../../utils/productUnitDisplay";
 
 const defaultState = {
@@ -59,8 +60,12 @@ export default function ProductFormFields({
   const [imageFile, setImageFile] = useState(null);
   const loadTaxonomy = useCallback(() => getCatalogTaxonomy(hotelUid), [hotelUid]);
   const taxonomy = useScopedAsync({ scopeKey: hotelUid, enabled: Boolean(hotelUid), load: loadTaxonomy });
+  const categories = (taxonomy.data?.categories || []).map((category) => category.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
   const categoryId = taxonomy.data?.categories?.find((category) => category.name === formState.category)?.id;
-  const subcategories = (taxonomy.data?.subcategories || []).filter((subcategory) => !formState.category || subcategory.categoryId === categoryId);
+  const subcategories = (taxonomy.data?.subcategories || [])
+    .filter((subcategory) => categoryId && subcategory.categoryId === categoryId)
+    .map((subcategory) => subcategory.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const taxonomyUnavailable = !hotelUid || taxonomy.loading || Boolean(taxonomy.error);
 
   useEffect(() => {
     setFormState(toFormState(initialData));
@@ -88,6 +93,15 @@ export default function ProductFormFields({
     event.preventDefault();
     if (!hotelUid || !formState.name.trim()) return;
     if (!["g", "kg", "ml", "l", "each"].includes(formState.baseUnit)) { setError("Select a supported base unit before saving."); return; }
+    if ((formState.category || formState.subcategory) && taxonomyUnavailable) {
+      setError("Load the catalog categories before saving this classification."); return;
+    }
+    if (formState.category && !categories.includes(formState.category)) {
+      setError("Choose an existing catalog category or clear the selection."); return;
+    }
+    if (formState.subcategory && !subcategories.includes(formState.subcategory)) {
+      setError("Choose an existing subcategory for the selected category or clear the selection."); return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -130,8 +144,6 @@ export default function ProductFormFields({
     <form onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2">
       {error && <p role="alert" className="sm:col-span-2 text-red-700">{error}</p>}
       <AsyncError error={taxonomy.error} onRetry={taxonomy.retry} label="Could not load catalog categories." />
-      <datalist id="catalog-form-categories">{(taxonomy.data?.categories || []).map((category) => <option key={category.id} value={category.name} />)}</datalist>
-      <datalist id="catalog-form-subcategories">{subcategories.map((subcategory) => <option key={subcategory.id} value={subcategory.name} />)}</datalist>
       <SectionCard title={t("products.sections.identity")}>
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           {t("products.fields.name")} *
@@ -185,24 +197,42 @@ export default function ProductFormFields({
       </SectionCard>
 
       <SectionCard title={t("products.sections.classification")}>
-        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          {t("products.fields.category")}
-          <input
-            list="catalog-form-categories"
-            value={formState.category}
-            onChange={(event) => updateField("category", event.target.value)}
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
+        <div className="flex flex-col gap-1 text-sm">
+          <label htmlFor="catalog-product-category" className="font-semibold text-gray-700">{t("products.fields.category")}</label>
+          <Combobox
+            id="catalog-product-category"
+            value={formState.category || null}
+            onChange={(category) => setFormState((previous) => ({
+              ...previous,
+              category: category || "",
+              subcategory: previous.category === (category || "") ? previous.subcategory : "",
+            }))}
+            options={categories}
+            displayValue={(name) => name}
+            getOptionValue={(name) => name}
+            placeholder="Choose an existing category"
+            emptyMessage="No matching categories. Categories are managed in Catalog Settings."
+            loading={taxonomy.loading}
+            disabled={saving || taxonomyUnavailable}
+            allowClear
           />
-        </label>
-        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          {t("products.fields.subcategory")}
-          <input
-            list="catalog-form-subcategories"
-            value={formState.subcategory}
-            onChange={(event) => updateField("subcategory", event.target.value)}
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
+        </div>
+        <div className="flex flex-col gap-1 text-sm">
+          <label htmlFor="catalog-product-subcategory" className="font-semibold text-gray-700">{t("products.fields.subcategory")}</label>
+          <Combobox
+            id="catalog-product-subcategory"
+            value={formState.subcategory || null}
+            onChange={(subcategory) => updateField("subcategory", subcategory || "")}
+            options={subcategories}
+            displayValue={(name) => name}
+            getOptionValue={(name) => name}
+            placeholder={categoryId ? "Choose an existing subcategory" : "Choose a category first"}
+            emptyMessage="No matching subcategories in this category. Subcategories are managed in Catalog Settings."
+            loading={taxonomy.loading}
+            disabled={saving || taxonomyUnavailable || !categoryId}
+            allowClear
           />
-        </label>
+        </div>
       </SectionCard>
 
       <SectionCard title={t("products.sections.units")}>
