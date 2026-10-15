@@ -19,6 +19,7 @@ const LandingPage = lazy(() => import("./components/pages/LandingPage.jsx"));
 const LoginPage = lazy(() => import("./components/pages/LoginPage.jsx"));
 const DashboardPage = lazy(() => import("./components/pages/DashboardPage.jsx"));
 import ProtectedRoute from "./components/shared/ProtectedRoute.jsx";
+import PurchaseRequestRoute from "./components/shared/PurchaseRequestRoute.jsx";
 const GeneralSettingsPage = lazy(() => import("./components/pages/GeneralSettingsPage.jsx"));
 const RoomTypesPage = lazy(() => import("./components/pages/RoomTypesPage.jsx"));
 const RateCodesPage = lazy(() => import("./components/pages/RateCodesPage.jsx"));
@@ -40,6 +41,10 @@ const SupplierEditPage = lazy(() => import("./components/pages/SupplierEditPage.
 const SupplierOutletAccountsPage = lazy(() => import("./components/pages/SupplierOutletAccountsPage.jsx"));
 const SupplierOutletAccountCreatePage = lazy(() => import("./components/pages/SupplierOutletAccountCreatePage.jsx"));
 const ProcurementSettingsPage = lazy(() => import("./components/pages/ProcurementSettingsPage.jsx"));
+const PurchaseRequestsPage = lazy(() => import("./components/pages/PurchaseRequestsPage.jsx"));
+const PurchaseRequestDetailPage = lazy(() => import("./components/pages/PurchaseRequestDetailPage.jsx"));
+const PurchaseRequestFormPage = lazy(() => import("./components/pages/PurchaseRequestFormPage.jsx"));
+const PurchaseBudgetsPage = lazy(() => import("./components/pages/PurchaseBudgetsPage.jsx"));
 const OutletCreatePage = lazy(() => import("./components/pages/OutletCreatePage.jsx"));
 const OutletDetailPage = lazy(() => import("./components/pages/OutletDetailPage.jsx"));
 const OutletEditPage = lazy(() => import("./components/pages/OutletEditPage.jsx"));
@@ -163,6 +168,11 @@ export default function AppRouter() {
       />
       <Route path="/catalog/products/sync" element={<ProtectedRoute feature="catalogproducts" action="read"><CatalogSyncPage /></ProtectedRoute>} />
       <Route path="/catalog/sync" element={<LegacyCatalogSyncRedirect />} />
+      <Route path="/purchase-requests" element={<PurchaseRequestRoute><PurchaseRequestsPage /></PurchaseRequestRoute>} />
+      <Route path="/purchase-requests/new" element={<PurchaseRequestRoute action="create"><PurchaseRequestFormPage /></PurchaseRequestRoute>} />
+      <Route path="/purchase-requests/:purchaseRequestId" element={<PurchaseRequestRoute><PurchaseRequestDetailPage /></PurchaseRequestRoute>} />
+      <Route path="/purchase-requests/:purchaseRequestId/edit" element={<PurchaseRequestRoute action="update"><PurchaseRequestFormPage /></PurchaseRequestRoute>} />
+      <Route path="/purchase-budgets" element={<ProtectedRoute feature="purchasebudgets" action="read"><PurchaseBudgetsPage /></ProtectedRoute>} />
       <Route
         path="/catalog/products/new"
         element={
@@ -323,6 +333,7 @@ export default function AppRouter() {
             { feature: "outlets", action: "read" },
             { feature: "locations", action: "read" },
             { feature: "supplierproducts", action: "read" },
+            { feature: "purchasebudgets", action: "settings" },
           ]}>
             <ProcurementSettingsPage />
           </ProtectedRoute>

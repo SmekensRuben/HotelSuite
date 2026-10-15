@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   taxonomy: vi.fn(), outlets: vi.fn(), locations: vi.fn(), suppliers: vi.fn(), mappings: vi.fn(),
   createCatalogCategory: vi.fn(), updateCatalogCategory: vi.fn(), deleteCatalogCategory: vi.fn(),
   createCatalogSubcategory: vi.fn(), updateCatalogSubcategory: vi.fn(), deleteCatalogSubcategory: vi.fn(),
+  purchaseSettings: vi.fn(),
 }));
 vi.mock("../../firebaseConfig", () => ({ auth: { get currentUser() { return mocks.actor; } }, signOut: vi.fn() }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotelUid,
@@ -22,6 +23,7 @@ vi.mock("../../services/firebaseSettings", () => ({
 vi.mock("../../services/firebaseSuppliers", () => ({ getSuppliers: mocks.suppliers }));
 vi.mock("../../services/firebaseSupplierImportWorkspace", () => ({ readSupplierPurchaseUnitMappings: mocks.mappings, saveSupplierPurchaseUnitMappings: vi.fn(), applySupplierImportMapping: vi.fn() }));
 vi.mock("../layout/HeaderBar", () => ({ default: () => <div data-testid="workspace-header" /> }));
+vi.mock("./PurchaseRequestSettingsSection", () => ({ default: () => { mocks.purchaseSettings(); return <p>Purchase approval configuration</p>; } }));
 function CurrentUrl() { const { pathname, search } = useLocation(); return <output data-testid="url">{pathname}{search}</output>; }
 const page = (section = "categories") => <MemoryRouter initialEntries={[`/settings/procurement?section=${section}`]}><CurrentUrl /><ProcurementSettingsPage /></MemoryRouter>;
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
@@ -40,6 +42,13 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("one permitted procurement settings section", () => {
+  it("opens approval configuration with its explicit right without loading unrelated hotel settings", async () => {
+    mocks.permissions = new Set(["purchasebudgets.settings"]);
+    render(page("purchase-requests"));
+    expect(await screen.findByText("Purchase approval configuration")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Purchase Requests" })).toHaveAttribute("aria-current", "page");
+    expect(mocks.taxonomy).not.toHaveBeenCalled(); expect(mocks.outlets).not.toHaveBeenCalled(); expect(mocks.locations).not.toHaveBeenCalled();
+  });
   it("offers supplier mappings to users with both read rights without granting unrelated settings", async () => {
     mocks.permissions = new Set(["suppliers.read", "supplierproducts.read"]);
     render(page("supplier-imports"));

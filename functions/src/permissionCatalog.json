@@ -144,5 +144,18 @@
     "read",
     "create",
     "reverse"
+  ],
+  "purchaserequests": [
+    "read",
+    "create",
+    "update",
+    "submit",
+    "approve",
+    "cancel"
+  ],
+  "purchasebudgets": [
+    "read",
+    "update",
+    "settings"
   ]
 }

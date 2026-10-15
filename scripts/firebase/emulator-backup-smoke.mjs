@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { initializeTestEnvironment, assertFails } from "@firebase/rules-unit-testing";
 import { doc, getDoc } from "firebase/firestore";
 import { ref, getBytes, getDownloadURL } from "firebase/storage";
+import { seedPurchaseRequestRestoreProof, verifyPurchaseRequestRestoreProof } from "./purchase-request-restore-proof.mjs";
 
 // Handler injection must use the same SDK installation as Functions; FieldPath
 // and Timestamp constructors from a second installation are not interchangeable.
@@ -701,6 +702,7 @@ try {
     }
     proof.reviewedAiImport = await seedReviewedAiImport();
     proof.unknownAiImport = await seedUnknownAiImport();
+    proof.purchaseRequests = await seedPurchaseRequestRestoreProof({ database, auth, now: procurementServices.now });
     // AI review decisions share productAudit with procurement commands. Capture
     // all evidence after every seed mutation, immediately before export, so the
     // immutable restore proof includes those decisions and their timestamps.
@@ -714,6 +716,7 @@ try {
     console.log("Seeded confirmed recurring file formats, an audited first-file interpretation, reviewed AI approval, original paid attempt/result bytes and pinned source/format generations.");
     console.log("Seeded fictional two-hotel data, supplier responses and approved-price receipts, protected supplier price changes, paired manual transfer/reversal/waste/return evidence, immutable v1/v2 reports, Auth users/claims, private Storage bytes and real managed product-image sources/derivatives with pinned generations.");
     console.log("Seeded two-hotel automatic SKU settings, reserved sequences, selective legacy adoption, atomic catalog synchronization receipts and known/unknown pinned optional suggestion attempts.");
+    console.log("Seeded two-hotel purchase requests with opening expenditure, pending reservations, approved commitments and immutable decision/retry history.");
   } else if (process.argv[2] === "verify") {
     for (const [path, expected] of Object.entries(documents)) {
       const snapshot = await database.doc(path).get();
@@ -757,6 +760,8 @@ try {
       assert.deepEqual(countsAfter, countsBefore, "Report retries must not create additional inventory evidence.");
     }
     const proof = JSON.parse(await readFile(procurementProofPath, "utf8"));
+    await verifyPurchaseRequestRestoreProof({ database, auth, now: procurementServices.now }, proof.purchaseRequests);
+    console.log("Verified two-hotel purchase-request histories and exact create/submit/final-approval replay after restore: opening 50, approved 300 and pending 100 leave 50 of a 500 budget, without another debit.");
     await verifyReviewedAiImport(proof.reviewedAiImport);
     await verifyUnknownAiImport(proof.unknownAiImport);
     console.log("Verified confirmed recurring formats, audited format application, frozen upload snapshots, persisted approvals and original AI source/format/result hashes after restore; exact format/mapping/decision/upload/worker replay made zero provider calls and preserved all review receipts.");

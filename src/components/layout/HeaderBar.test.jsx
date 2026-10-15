@@ -38,6 +38,17 @@ describe("HeaderBar Front Office permissions", () => {
     renderHeader();
     expect(screen.getByText("Front Office")).toBeInTheDocument();
   });
+  it("offers purchase request, budget and approval settings navigation only for their own rights", () => {
+    permissions = ["purchaserequests.read"];
+    const view = renderHeader();
+    expect(screen.getByRole("link", { name: "Purchase Requests" })).toHaveAttribute("href", "/purchase-requests");
+    expect(screen.queryByRole("link", { name: "Purchase budgets" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Purchasing & Inventory Settings" })).not.toBeInTheDocument();
+    view.unmount(); permissions = ["purchasebudgets.read", "purchasebudgets.settings"]; renderHeader();
+    expect(screen.getByRole("link", { name: "Purchase budgets" })).toHaveAttribute("href", "/purchase-budgets");
+    expect(screen.getByRole("link", { name: "Purchasing & Inventory Settings" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Purchase Requests" })).not.toBeInTheDocument();
+  });
   it("keeps catalog sync within Catalog Products instead of adding a separate menu item", () => {
     permissions = ["catalogproducts.read", "supplierproducts.read", "supplierproducts.update", "suppliers.read"];
     renderHeader();

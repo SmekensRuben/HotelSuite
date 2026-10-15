@@ -14,6 +14,8 @@ const authMocks = vi.hoisted(() => ({
   recaptchaClear: vi.fn(),
   getMultiFactorResolver: vi.fn(),
   authPolicy: { requireMfa: true },
+  navigate: vi.fn(),
+  returnPath: null,
 }));
 
 vi.mock("../../firebaseConfig", () => ({
@@ -46,7 +48,7 @@ vi.mock("firebase/auth", () => ({
 }));
 
 vi.mock("framer-motion", () => ({ motion: { div: ({ children, ...props }) => <div {...props}>{children}</div> } }));
-vi.mock("react-router-dom", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("react-router-dom", () => ({ useNavigate: () => authMocks.navigate, useLocation: () => ({ state: { purchaseRequestReturn: authMocks.returnPath } }) }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: null, loading: false }) }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key) => key }) }));
 
@@ -62,6 +64,7 @@ describe("LoginPage authentication steps", () => {
     localStorage.clear();
     authMocks.sendEmailVerification.mockResolvedValue();
     authMocks.authPolicy.requireMfa = true;
+    authMocks.returnPath = null;
   });
 
   it("shows the email verification screen and sends a verification email", async () => {
@@ -74,6 +77,13 @@ describe("LoginPage authentication steps", () => {
     expect(await screen.findByText("verify-emailTitle")).toBeInTheDocument();
     expect(screen.getByText("verificationEmailSent")).toBeInTheDocument();
     expect(authMocks.sendEmailVerification).toHaveBeenCalledWith(user);
+  });
+  it("returns a verified approver to the hotel-aware email link after signing in", async () => {
+    authMocks.authPolicy.requireMfa = false;
+    authMocks.returnPath = "/purchase-requests/request-one?hotel=hotel-b";
+    authMocks.signIn.mockResolvedValue({ user: { emailVerified: true } });
+    render(<LoginPage />); submitCredentials();
+    await waitFor(() => expect(authMocks.navigate).toHaveBeenCalledWith(authMocks.returnPath));
   });
 
   it("starts SMS enrollment for a verified user without a second factor", async () => {

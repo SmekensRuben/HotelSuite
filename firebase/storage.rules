@@ -28,7 +28,7 @@ service firebase.storage {
         && (moduleId == 'core' || moduleId in modules);
     }
     function featureModule(feature) {
-      return feature in ['catalogproducts', 'supplierproducts', 'suppliers', 'orders', 'stockcounts', 'inventorymovements', 'catalogsettings', 'outlets', 'locations'] ? 'procurement' :
+      return feature in ['catalogproducts', 'supplierproducts', 'suppliers', 'orders', 'stockcounts', 'inventorymovements', 'catalogsettings', 'outlets', 'locations', 'purchaserequests', 'purchasebudgets'] ? 'procurement' :
         feature in ['contracts'] ? 'contracts' :
         feature in ['reservations', 'auditupsells'] ? 'frontoffice' :
         feature in ['groups', 'roominglists'] ? 'groups' :
@@ -56,6 +56,9 @@ service firebase.storage {
     // Private contract objects and legacy paths cannot expose metadata or mint
     // download tokens through the browser SDK, even to platform administrators.
     match /private/contracts/{allPaths=**} { allow read, write: if false; }
+    // Purchase-request quotes and attachments never expose browser download
+    // tokens; authorized backend endpoints validate current hotel access.
+    match /private/purchase-requests/{allPaths=**} { allow read, write: if false; }
     match /hotels/{hotelUid}/contracts/{allPaths=**} { allow read, write: if false; }
 
     match /hotels/{hotelUid}/catalogproducts/{allPaths=**} {

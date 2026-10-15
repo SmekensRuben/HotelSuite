@@ -22,4 +22,13 @@ describe("hasPermission", () => {
     expect(hasPermission({ permissions: ["inventorymovements.reverse"] }, "inventorymovements", "reverse")).toBe(true);
     expect(hasPermission({ permissions: ["stockcounts.*"] }, "inventorymovements", "create")).toBe(false);
   });
+  it("requires selected purchase request decision and workflow settings grants", () => {
+    for (const action of ["submit", "approve", "cancel"]) {
+      expect(hasPermission({ permissions: ["purchaserequests.*"] }, "purchaserequests", action)).toBe(false);
+      expect(hasPermission({ permissions: [`purchaserequests.${action}`] }, "purchaserequests", action)).toBe(true);
+    }
+    expect(hasPermission({ permissions: ["purchaserequests.*"] }, "purchaserequests", "create")).toBe(true);
+    expect(hasPermission({ permissions: ["purchasebudgets.*"] }, "purchasebudgets", "settings")).toBe(false);
+    expect(hasPermission({ permissions: ["purchasebudgets.settings"] }, "purchasebudgets", "settings")).toBe(true);
+  });
 });

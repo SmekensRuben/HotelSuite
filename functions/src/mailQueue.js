@@ -507,7 +507,13 @@ async function processMailQueueHandler(event, services = {}) {
         }
       } catch { permitted = false; }
     }
-    if (!["hotel-invitation", "order-approval", "order-confirmation"].includes(data.type)) permitted = false;
+    if (data.type === "purchase-request") {
+      const { resolvePurchaseRequestNotification } = require("./purchaseRequestNotifications");
+      const payload = await resolvePurchaseRequestNotification(tx, db, hotelUid, data, services);
+      permitted = permitted && Boolean(payload);
+      if (payload) data.payload = payload;
+    }
+    if (!["hotel-invitation", "order-approval", "order-confirmation", "purchase-request"].includes(data.type)) permitted = false;
     if (data.type === "order-confirmation") {
       const { requireDocumentId } = require("./subscriptions");
       try {
@@ -550,7 +556,22 @@ async function processMailQueueHandler(event, services = {}) {
     const from = services.from || String(RESEND_FROM.value() || "").trim();
     const apiKey = services.send ? "test-transport" : String(RESEND_API_KEY.value() || "").trim();
     if (!from || !apiKey) throw new Error("Email configuration is incomplete.");
-    const payload = mail.payload || {};
+    let payload = mail.payload || {};
+    if (mail.type === "purchase-request") {
+      const { resolvePurchaseRequestNotification } = require("./purchaseRequestNotifications");
+      // The provider is contacted only after a fresh transaction confirms the
+      // assignment, source revision and membership still match the claimed mail.
+      payload = await db.runTransaction(async (tx) => {
+        const [current, subscription] = await Promise.all([tx.get(ref), tx.get(db.doc(`hotelSubscriptions/${hotelUid}`))]);
+        if (current.data()?.status !== "processing" || !subscription.exists || !subscriptionIsActive(subscription.data())
+          || !moduleAllows(subscription.data(), "procurement")) return null;
+        return resolvePurchaseRequestNotification(tx, db, hotelUid, current.data(), services);
+      });
+      if (!payload) {
+        await ref.update({ status: "blocked", externalAttempt: false, error: "The request or recipient authority changed before delivery." });
+        return;
+      }
+    }
     const to = sanitizeEmails(payload.to);
     if (!to.length || to.length > 20) throw new Error("Invalid email recipients.");
     const send = services.send || ((data, options) => new Resend(apiKey).emails.send(data, options));
@@ -567,7 +588,7 @@ async function processMailQueueHandler(event, services = {}) {
   } catch {
     const status = externalAttempt ? "needs-review" : "failed";
     const error = externalAttempt ? "Email delivery is unconfirmed. Check the provider before any recovery." : "Review email configuration before recovery.";
-    await ref.update({ status, error, failedAt: admin.firestore.FieldValue.serverTimestamp() });
+    await ref.update({ status, error, externalAttempt, failedAt: admin.firestore.FieldValue.serverTimestamp() });
     await finishOrder(status, { error, externalAttempt });
     logger.error("Email delivery requires review", { hotelUid, mailId, externalAttempt });
   }
