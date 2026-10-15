@@ -176,69 +176,180 @@ deduplication of unrelated new-catalog requests.
 
 ## Private installation
 
-Use an isolated Firebase test project with the existing Hotel Toolkit identity,
-SaaS rollout, memberships and procurement module configured. Follow
-[Firebase delivery](firebase-delivery-target.md) and
-[Functions release controls](functions-continuous-deployment.md). Do not use the
-default Firebase alias or bypass the reviewed production release workflow.
+The Functions are published in Firebase project **hotel-toolkit**. The frontend,
+sign-in, consent and review pages stay on Firebase App Hosting at
+`https://hotel-toolkit--hotel-toolkit.europe-west4.hosted.app`. The MCP gateway uses
+Firebase Hosting site **hotel-toolkit**, with issuer `https://hotel-toolkit.web.app`
+and resource `https://hotel-toolkit.web.app/mcp`.
 
-Install the tracked lockfiles with Node 22 and npm 10.9.9:
+The following commands are operator actions after this change is reviewed and
+merged. This change does not set live variables or publish anything. Existing
+SaaS memberships, procurement access, Rules and indexes remain prerequisites.
+Follow [Functions release controls](functions-continuous-deployment.md).
+
+### Repository variables
+
+Configure **SmekensRuben/HotelSuite → Settings → Secrets and variables → Actions →
+Variables → Repository variables**, or use the commands below.
+
+| Repository variable | Default | Enabled pilot value |
+| --- | --- | --- |
+| `HOTEL_MCP_ENABLED` | Unset, empty, or `false` keeps MCP disabled | Exactly `true` |
+| `HOTEL_MCP_PUBLIC_ORIGIN` | Empty when disabled | `https://hotel-toolkit.web.app` |
+| `HOTEL_MCP_CLIENTS_JSON` | `[]` when disabled | Array of 1–20 pre-registered public PKCE clients |
+| `HOTEL_MCP_ALLOWED_ORIGINS_JSON` | `[]` | Array of up to twenty extra HTTPS browser origins; empty/unset means `[]` |
+
+These are public server configuration, not secrets or frontend `VITE_*` values.
+The workflow passes them to `check-functions-runtime.sh`. Activation validates
+JSON, a public HTTPS issuer origin, unique client IDs and exact callbacks. Each
+client allows `client_id`, optional `client_name`, `redirect_uris` (1–10 canonical
+URLs) and optional `token_endpoint_auth_method` (defaults to `none`). Secret fields,
+other authentication methods and wildcard callbacks are rejected. JSON parameters
+are limited to 32 KiB each. Public origins require a domain name without a port,
+path, credentials, query or fragment. Validation checks structure, not DNS or
+endpoint reachability.
+
+`APP_BASE_URL` stays on the existing App Hosting origin, versioned as
+`FUNCTIONS_APP_BASE_URL` in the workflow. CI regenerates ignored
+`functions/.env.hotel-toolkit` with all five parameters. The locked Firebase CLI
+needs explicit values despite SDK defaults; editing a local dotenv file does not
+configure the next release. With activation unset/empty or `false`, stale or
+incomplete activation settings are ignored and replaced with disabled defaults.
+Any other activation flag fails validation.
+
+### Publish only the gateway
+
+Use Node 22, npm 10.9.9 and an authenticated operator with permission to publish
+the existing Hosting site. Start with a reviewed current-main checkout:
 
 ```bash
+git clone https://github.com/SmekensRuben/HotelSuite.git hotelsuite-mcp
+cd hotelsuite-mcp
 npm ci
-npm --prefix functions ci
+
+# Local plan only; no cloud calls.
+node scripts/firebase/deploy-mcp-gateway.mjs
+
+# Publish after reviewing the plan.
+node scripts/firebase/deploy-mcp-gateway.mjs --apply
 ```
 
-In the ignored `functions/.env.YOUR_TEST_PROJECT` file, configure:
+For subsequent publications, update the clean checkout to reviewed current `main`,
+run `npm ci`, and repeat the two script commands. The helper invokes the locked
+local CLI with these exact arguments:
 
-```dotenv
-HOTEL_MCP_ENABLED=true
-HOTEL_MCP_PUBLIC_ORIGIN=https://YOUR_TEST_PROJECT.web.app
-APP_BASE_URL=https://YOUR_TEST_PROJECT.web.app
-HOTEL_MCP_CLIENTS_JSON='[{"client_id":"chatgpt-private","client_name":"ChatGPT (private)","redirect_uris":["https://chatgpt.com/connector_platform/oauth/callback"],"token_endpoint_auth_method":"none"},{"client_id":"codex-private","client_name":"Codex (private)","redirect_uris":["http://127.0.0.1/callback"],"token_endpoint_auth_method":"none"}]'
-HOTEL_MCP_ALLOWED_ORIGINS_JSON='[]'
+```bash
+node node_modules/firebase-tools/lib/bin/firebase.js deploy \
+  --only hosting --config firebase.mcp.json \
+  --project hotel-toolkit --non-interactive
 ```
 
-Production CI regenerates `functions/.env.hotel-toolkit` with all four MCP
-parameters explicitly set to their disabled defaults. The non-interactive Firebase
-CLI requires explicit values despite the SDK defaults. Enabling production MCP
-requires a separately reviewed workflow/runtime configuration change; a local
-ignored dotenv edit would be overwritten by CI. See
-[Functions release controls](functions-continuous-deployment.md).
+`firebase.mcp.json` has only seven exact rewrites to `hotelMcp(us-central1)`:
+`/mcp`, `/authorize`, `/token`, `/revoke`,
+`/.well-known/oauth-authorization-server`,
+`/.well-known/oauth-protected-resource`, and
+`/.well-known/oauth-protected-resource/mcp`. The only static asset is
+`firebase/mcp-gateway/404.html`. There is no SPA fallback, frontend build hook,
+`dist/`, client JavaScript or Firebase web-app configuration. Publication replaces
+the live **Hosting** site version; other application paths return 404. The
+**App Hosting** frontend remains independent. Use this dedicated configuration,
+rather than a root `firebase.json`/`dist` deployment, for the gateway.
 
-Use the exact callback shown by the ChatGPT client being configured. Add another
-callback only after verifying it belongs to that intended client. Codex uses an
-ephemeral loopback port; the maintained SDK permits the port variation while
-retaining the registered host and path. `localhost` and `127.0.0.1` are different
-registered hosts. The runtime pilot accepts public PKCE clients without client
-secrets. Dynamic client registration is deliberately not advertised. Clients must
-be pre-registered in this configuration; the URL alone is insufficient.
+The `hotelMcp` Function must already exist. This command does not deploy Functions,
+Rules, indexes, TTL, IAM or App Hosting. If MCP is still disabled, gateway MCP
+routes return 503 until a successful enabled Functions release.
 
-The app's origin is allowed automatically. Extra browser origins must be explicit
-HTTPS origins in `HOTEL_MCP_ALLOWED_ORIGINS_JSON`. Do not add `*`. Server-to-server
-clients do not need a browser-origin exception. Firebase Authentication must allow
-the consent frontend's domain, with its existing email-verification/MFA policy.
+### Register clients and activate
 
-Search requires the existing per-project `MEILI_HOST`, `MEILI_API_KEY` and
-`MEILI_INDEX` Secret Manager bindings. No OpenAI API key is needed: the connected
-client supplies proposals. Firestore/OAuth state uses the existing function service
-identity; no service-account key file is required.
+Use GitHub CLI authenticated as an operator who can manage repository variables
+and run the existing workflow. Copy the **exact redirect URI shown by the ChatGPT
+app being configured**; do not substitute a guessed callback.
 
-Deploy the reviewed frontend, the new functions, Rules and indexes only to that
-explicit test project using the repository's normal delivery procedure. The new
-exports are `hotelMcp`, `getHotelMcpConsent`, `completeHotelMcpConsent`,
-`listHotelMcpConnections`, `revokeHotelMcpConnection`, `stageHotelProductProposals`,
-`readHotelProductProposalBatch`, `listHotelProductProposalBatches` and
-`reviewHotelProductProposals`. Firebase Hosting needs the tracked rewrites **before**
-the SPA fallback. App Hosting/Vercel frontend publication does not publish these
-MCP rewrites, Functions, Rules or indexes.
+The previous `https://chatgpt.com/connector_platform/oauth/callback` example was
+not confirmed and is removed from configuration. On October 15, 2026, the current
+[official OpenAI authentication guide](https://developers.openai.com/apps-sdk/build/auth)
+could not be fetched because this development environment blocks its host. The
+[official authenticated example](https://github.com/openai/openai-apps-sdk-examples/tree/main/authenticated_server_python)
+describes discovery/authentication but specifies no fixed ChatGPT callback. Check
+the guide and actual client registration at installation; this documentation does
+not certify a replacement URI.
 
-Build a real test frontend with matching Firebase web-app settings as documented
-in the root README. The committed `.env.test` contains fictional CI values and
-cannot connect a hosted browser to a real project. Never publish its output as a
-working connection. The new composite indexes cover active personal connections
-and newest-first owner batches; wait for both to become READY before enabling the
-pilot. The inventory index rollout helper continues to manage only its four
+```bash
+set -euo pipefail
+
+# Prepare while disabled; the next verified Functions release applies variables.
+gh variable set HOTEL_MCP_ENABLED --repo SmekensRuben/HotelSuite --body false
+gh variable set HOTEL_MCP_PUBLIC_ORIGIN --repo SmekensRuben/HotelSuite \
+  --body 'https://hotel-toolkit.web.app'
+gh variable set HOTEL_MCP_ALLOWED_ORIGINS_JSON --repo SmekensRuben/HotelSuite \
+  --body '[]'
+
+read -r -p 'Paste the exact ChatGPT OAuth redirect URI: ' HOTEL_MCP_CHATGPT_REDIRECT_URI
+export HOTEL_MCP_CHATGPT_REDIRECT_URI
+python3 - <<'PY' > /tmp/hotel-toolkit-mcp-clients.json
+import json, os
+from urllib.parse import urlsplit
+
+callback = os.environ["HOTEL_MCP_CHATGPT_REDIRECT_URI"]
+parsed = urlsplit(callback)
+if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+    raise SystemExit("Copy the exact HTTPS callback from ChatGPT before continuing.")
+print(json.dumps([
+    {"client_id": "chatgpt-private", "client_name": "ChatGPT (private)",
+     "redirect_uris": [callback], "token_endpoint_auth_method": "none"},
+    {"client_id": "codex-private", "client_name": "Codex (private)",
+     "redirect_uris": ["http://127.0.0.1/callback"], "token_endpoint_auth_method": "none"}
+]))
+PY
+gh variable set HOTEL_MCP_CLIENTS_JSON --repo SmekensRuben/HotelSuite \
+  < /tmp/hotel-toolkit-mcp-clients.json
+
+gh variable set HOTEL_MCP_ENABLED --repo SmekensRuben/HotelSuite --body true
+gh workflow run deploy-functions.yml --repo SmekensRuben/HotelSuite --ref main
+gh run list --repo SmekensRuben/HotelSuite --workflow deploy-functions.yml --limit 1
+```
+
+Stop on any error and wait for a successful Functions deployment, not merely a
+dispatched/skipped workflow. Existing verified-current-main, keyless identity,
+secret metadata and retry controls still apply; the full release has no `--force`.
+Setting variables alone does not change a running Function.
+
+Callback matching includes the exact path and query. Codex's current official
+source uses `http://127.0.0.1/callback` with an ephemeral port; the maintained SDK
+permits only that port variation while retaining scheme, host, path and query.
+`localhost` and `127.0.0.1` are different registered hosts. Both clients use public
+S256 PKCE without client secrets. Dynamic client registration is not advertised;
+the MCP URL alone is insufficient.
+
+The App Hosting origin is allowed automatically. Extra browser origins must be
+explicit HTTPS origins; server-to-server clients do not need a CORS exception.
+Do not add `*`. Firebase Authentication must allow the existing consent frontend's
+domain with its email-verification/MFA policy.
+
+After gateway publication and the enabled Functions release, verify discovery and
+the unauthenticated challenge:
+
+```bash
+curl --fail --silent --show-error \
+  https://hotel-toolkit.web.app/.well-known/oauth-authorization-server
+curl --fail --silent --show-error \
+  https://hotel-toolkit.web.app/.well-known/oauth-protected-resource/mcp
+curl --silent --show-error --dump-header - --output /dev/null \
+  https://hotel-toolkit.web.app/mcp
+```
+
+Discovery should name the configured issuer/resource and token authentication
+method `none`. The final request should return 401 with a `WWW-Authenticate`
+resource-metadata challenge. Complete actual ChatGPT/Codex browser consent and
+tool checks before expanding the pilot. To disable, set `HOTEL_MCP_ENABLED=false`
+and rerun the same verified-main Functions workflow.
+
+Search uses existing `MEILI_HOST`, `MEILI_API_KEY` and `MEILI_INDEX` Secret Manager
+bindings. MCP needs no OpenAI API key: the client supplies proposals. Existing
+project-wide runtime secret checks remain required by the normal Functions
+release. No service-account key or frontend build is needed for gateway
+publication. Composite indexes for active personal connections and newest-first
+owner batches must be READY. The inventory index helper manages only its four
 reviewed inventory indexes.
 
 Enable Firestore TTL on `expiresAt` for root collections
@@ -273,9 +384,9 @@ With a current Codex CLI and the matching `codex-private` registration:
 
 ```bash
 codex mcp add hotel-toolkit \
-  --url https://YOUR_TEST_PROJECT.web.app/mcp \
+  --url https://hotel-toolkit.web.app/mcp \
   --oauth-client-id codex-private \
-  --oauth-resource https://YOUR_TEST_PROJECT.web.app/mcp
+  --oauth-resource https://hotel-toolkit.web.app/mcp
 ```
 
 The CLI discovers OAuth metadata and starts the browser flow. If explicit consent

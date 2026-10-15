@@ -32,19 +32,4 @@ if ! gcloud secrets get-iam-policy OPENAI_API_KEY --project=hotel-toolkit --form
   echo "Functions deployment stopped. OPENAI_API_KEY needs an unconditional, secret-scoped Secret Accessor grant for 358734544002-compute@developer.gserviceaccount.com. Configure this once on this secret in Google Cloud; key values are never read by CI." >&2
   exit 1
 fi
-node --input-type=module <<'NODE'
-import { writeFileSync } from 'node:fs';
-import { requireFunctionsConfiguration } from './scripts/firebase/functions-release-policy.mjs';
-const origin = requireFunctionsConfiguration(process.env);
-// The non-interactive Firebase CLI requires explicit values even for SDK defaults.
-// Keep MCP disabled until its production configuration is reviewed separately.
-writeFileSync('functions/.env.hotel-toolkit', [
-  `APP_BASE_URL=${origin}`,
-  'HOTEL_MCP_ENABLED=false',
-  'HOTEL_MCP_PUBLIC_ORIGIN=""',
-  'HOTEL_MCP_CLIENTS_JSON=[]',
-  'HOTEL_MCP_ALLOWED_ORIGINS_JSON=[]',
-  '',
-].join('\n'), { mode: 0o600 });
-console.log('Prepared APP_BASE_URL and explicitly disabled MCP parameters for hotel-toolkit.');
-NODE
+node scripts/firebase/mcp-deployment-config.mjs

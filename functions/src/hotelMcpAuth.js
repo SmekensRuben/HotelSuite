@@ -4,6 +4,7 @@ const {
   InvalidGrantError, InvalidScopeError, InvalidTargetError, InvalidTokenError,
 } = require("@modelcontextprotocol/sdk/server/auth/errors.js");
 const { requireCurrentVerifiedUser } = require("./validation");
+const { normalizeHotelMcpConfig } = require("./hotelMcpConfig");
 
 const MCP_SCOPES = Object.freeze([
   { id: "hotel-toolkit:read", label: "Read permitted product data", description: "Discover accessible hotels and read product and reference data allowed by your current hotel permissions." },
@@ -17,57 +18,6 @@ const OPAQUE_ID = /^[A-Za-z0-9_-]{43}$/;
 const opaque = () => randomBytes(32).toString("base64url");
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const expiry = (milliseconds) => ({ expiresAt: new Date(milliseconds), expiresAtMs: milliseconds });
-
-function secureUrl(value, name, allowPath = true) {
-  let url;
-  try { url = new URL(value); } catch { throw new Error(`${name} must be an absolute URL.`); }
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-  if ((url.protocol !== "https:" && !(url.protocol === "http:" && loopback))
-    || url.username || url.password || url.search || url.hash || (!allowPath && url.pathname !== "/")) {
-    throw new Error(`${name} must use HTTPS without credentials, query, fragment${allowPath ? "" : " or a path"}.`);
-  }
-  return url;
-}
-
-function normalizeHotelMcpConfig(input = {}) {
-  if (input.enabled !== true) return { enabled: false };
-  const issuer = secureUrl(input.issuerUrl, "MCP issuer", false);
-  const resource = secureUrl(input.resourceUrl || new URL("/mcp", issuer).href, "MCP resource");
-  const app = secureUrl(input.appUrl, "Hotel Toolkit app URL");
-  if (resource.origin !== issuer.origin || resource.pathname !== "/mcp") throw new Error("The MCP resource must be /mcp on its issuer origin.");
-  if (!Array.isArray(input.clients) || !input.clients.length || input.clients.length > 20) {
-    throw new Error("Configure between one and twenty private OAuth clients.");
-  }
-  const clients = input.clients.map((client) => {
-    if (!client || typeof client.client_id !== "string" || !/^[A-Za-z0-9._-]{1,100}$/.test(client.client_id)
-      || !Array.isArray(client.redirect_uris) || !client.redirect_uris.length || client.redirect_uris.length > 10) {
-      throw new Error("Every private OAuth client needs an ID and explicit redirect URIs.");
-    }
-    const redirectUris = client.redirect_uris.map((uri) => {
-      let redirect;
-      try { redirect = new URL(uri); } catch { throw new Error("OAuth redirect URIs must be absolute URLs."); }
-      const local = ["localhost", "127.0.0.1", "[::1]"].includes(redirect.hostname);
-      if ((redirect.protocol !== "https:" && !(redirect.protocol === "http:" && local))
-        || redirect.username || redirect.password || redirect.hash) throw new Error("OAuth redirect URIs require HTTPS or loopback HTTP.");
-      return redirect.href;
-    });
-    const method = client.token_endpoint_auth_method || "none";
-    if (!["none", "client_secret_post"].includes(method)
-      || (method === "client_secret_post" && (typeof client.client_secret !== "string" || client.client_secret.length < 32))
-      || (method === "none" && client.client_secret)) throw new Error("Invalid private OAuth client authentication configuration.");
-    return {
-      client_id: client.client_id,
-      client_name: typeof client.client_name === "string" && client.client_name.trim() ? client.client_name.trim().slice(0, 100) : client.client_id,
-      redirect_uris: redirectUris,
-      token_endpoint_auth_method: method,
-      ...(method === "client_secret_post" ? { client_secret: client.client_secret } : {}),
-      grant_types: ["authorization_code", "refresh_token"], response_types: ["code"],
-    };
-  });
-  if (new Set(clients.map((client) => client.client_id)).size !== clients.length) throw new Error("OAuth client IDs must be unique.");
-  const origins = [app.origin, ...(input.allowedOrigins || [])].map((value) => secureUrl(value, "Allowed browser origin", false).origin);
-  return { enabled: true, issuerUrl: issuer.href, resourceUrl: resource.href, appUrl: app.href.replace(/\/$/, ""), clients, allowedOrigins: [...new Set(origins)] };
-}
 
 function validScopes(values) {
   const scopes = values?.length ? [...new Set(values)] : [MCP_SCOPES[0].id];

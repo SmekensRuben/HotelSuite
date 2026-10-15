@@ -143,8 +143,10 @@ describe("AI runtime secret metadata preflight", () => {
   it.each(["missing", "wrong-account", "conditional", "granted"])("requires one exact secret-scoped runtime grant: %s", async (mode) => {
     const directory = mkdtempSync(join(tmpdir(), "hotelsuite-ai-runtime-"));
     try {
-      mkdirSync(join(directory, "scripts/firebase"), { recursive: true }); mkdirSync(join(directory, "functions"));
+      mkdirSync(join(directory, "scripts/firebase"), { recursive: true }); mkdirSync(join(directory, "functions/src"), { recursive: true });
       writeFileSync(join(directory, "scripts/firebase/functions-release-policy.mjs"), readFileSync("scripts/firebase/functions-release-policy.mjs"));
+      writeFileSync(join(directory, "scripts/firebase/mcp-deployment-config.mjs"), readFileSync("scripts/firebase/mcp-deployment-config.mjs"));
+      writeFileSync(join(directory, "functions/src/hotelMcpConfig.js"), readFileSync("functions/src/hotelMcpConfig.js"));
       const policy = mode === "missing" ? { bindings: [] } : { bindings: [{ role: "roles/secretmanager.secretAccessor",
         members: [`serviceAccount:${mode === "wrong-account" ? "different" : "358734544002-compute@developer.gserviceaccount.com"}`],
         ...(mode === "conditional" ? { condition: { expression: "true" } } : {}) }] };
