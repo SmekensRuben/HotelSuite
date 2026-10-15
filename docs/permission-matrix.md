@@ -7,8 +7,21 @@ Status date: 2026-10-06. This matrix describes the policy implemented in this br
 - Platform administration is a Firebase custom claim: `platformAdmin == true`. It is not a Firestore field a user can edit.
 - Hotel access is authoritative only through `hotels/{hotelUid}/members/{uid}`. Each membership contains its own `permissions` list, so one user can have different rights in hotels A and B. A missing membership or missing permissions fail closed in the UI and backend.
 - The legacy `users/{uid}.hotelUid` list remains temporarily useful for hotel discovery in the UI, but neither it nor its legacy permissions authorize Firestore, Storage, routes or callable access.
-- Permission keys are `feature.action`; `feature.*` grants all actions for one feature. Platform-wide access uses only the `platformAdmin` Firebase custom claim; `super.admin` is not a supported permission. There is no `users.manage` alias.
+- Permission keys are `feature.action`; `feature.*` grants that feature's standard actions. Special actions listed in `functions/src/explicitPermissions.json` require explicit grants. Platform-wide access uses only the `platformAdmin` Firebase custom claim; `super.admin` is not a supported permission. There is no `users.manage` alias.
 - A hidden menu or button is only UX. Routes, Firestore, Storage and callable functions independently enforce access.
+
+## Purchase Requests extension (2026-10-15)
+
+The procurement module now also includes `purchaserequests` and `purchasebudgets`.
+Request reads and CRUD use their specific actions; submission, approval and
+cancellation require explicit `purchaserequests.submit`, `.approve` and `.cancel`
+grants. Approval also checks the current assignee, configured step and amount
+authority, with no requester self-approval. Budget overview/update use
+`purchasebudgets.read` and `.update`; approval/cost-centre configuration requires
+explicit `purchasebudgets.settings`. These special actions do not inherit a
+feature wildcard. Request/budget writes, history, command receipts and document
+bytes are server-owned; browser and generic-import paths are denied. See
+[Purchase Requests](purchase-requests.md) for the financial and recovery rules.
 
 ## Route and page matrix
 

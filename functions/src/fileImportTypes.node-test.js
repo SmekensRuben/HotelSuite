@@ -39,6 +39,12 @@ test("generic imports cannot forge catalog synchronization, SKU settings, reserv
       assert.throws(() => requireHotelImportTarget(path, "hotel-a"), /catalog synchronization/);
   requireHotelImportTarget("hotels/hotel-a/reports/arrivals/2026-10-14/guest", "hotel-a");
 });
+test("generic imports cannot replace purchase request decisions, reservations, private files or workflow settings", () => {
+  for (const collection of ["purchaseRequests", "purchaseRequestOperations", "purchaseBudgets", "purchaseRequestAttachments", "purchaseRequestNotifications", "settings"])
+    for (const suffix of ["record", "record/history/revision", "record/attachments/file"])
+      assert.throws(() => requireHotelImportTarget(`hotels/hotel-a/${collection}/${suffix}`, "hotel-a"));
+  assert.throws(() => requireHotelImportTarget("hotels/hotel-a/settings/purchaseRequests", "hotel-a"));
+});
 
 test("mapped import columns cannot override the trusted template tenant", () => {
   const context = buildTemplateContext({ hotelUid: "hotel-a", fileType: "arrivals", fileImportType: {},

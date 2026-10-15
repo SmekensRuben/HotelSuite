@@ -350,6 +350,11 @@ Request suggestions lazily with **Suggest unit cost** and inspect the displayed 
 
 ## Coherent template loading
 
+[Purchase Requests](purchase-requests.md) add a separate internal net-budget and
+sequential approval process for goods, services and repairs. Reservations become
+approved commitments without a second budget deduction. This process does not
+dispatch supplier orders or change physical inventory.
+
 Catalog sync and configurable internal SKU numbering are described in
 [Catalog product sync](catalog-product-sync.md). The workflow keeps stable
 physical identities and historical operational snapshots intact.

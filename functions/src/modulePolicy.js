@@ -40,6 +40,7 @@ function dataPathModule(path) {
   const parts = String(path || "").split("/");
   if (parts[0] !== "hotels" || !parts[1]) return null;
   const collection = parts[2]?.toLowerCase();
+  if (collection === "settings" && parts[3] === "purchaseRequests") return "procurement";
   if (collection === "reports") {
     const report = parts[3]?.toLowerCase();
     if (["historyquotes", "historyforecast", "lighthousedata", "staypatternmodel", "staydatepattern"].includes(report)) return "revenue";
@@ -49,7 +50,9 @@ function dataPathModule(path) {
     return "core";
   }
   const aliases = { upselling: "frontoffice", groupsettings: "groups", groupmarketsegments: "groups", subsegments: "groups",
-    demandcalendarevents: "revenue", localevents: "revenue", quotes: "revenue", competitorgroupquotes: "revenue" };
+    demandcalendarevents: "revenue", localevents: "revenue", quotes: "revenue", competitorgroupquotes: "revenue",
+    purchaserequestoperations: "procurement", purchaserequestattachments: "procurement",
+    purchaserequestnotifications: "procurement" };
   return aliases[collection] || featureModule(collection);
 }
 function compileMemberAccess({ moduleRoles = {}, additionalPermissions = [], hotelAdmin = false }, subscription, previousPermissions = [], previousRoles = {}) {

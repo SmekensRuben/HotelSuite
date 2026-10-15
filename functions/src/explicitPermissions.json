@@ -3,5 +3,9 @@
   "orders.finalize",
   "orders.recordconfirmation",
   "orders.reviewconfirmation",
-  "inventorymovements.reverse"
+  "inventorymovements.reverse",
+  "purchaserequests.submit",
+  "purchaserequests.approve",
+  "purchaserequests.cancel",
+  "purchasebudgets.settings"
 ]

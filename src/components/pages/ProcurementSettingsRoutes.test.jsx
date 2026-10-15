@@ -23,6 +23,7 @@ it.each([["catalog", "categories"], ["outlets", "outlets"], ["locations", "locat
     await screen.findByText(`/settings/procurement?section=${section}`);
     expect(checks.latest).toEqual({ anyOf: [
       { feature: "catalogsettings", action: "read" }, { feature: "outlets", action: "read" }, { feature: "locations", action: "read" }, { feature: "supplierproducts", action: "read" },
+      { feature: "purchasebudgets", action: "settings" },
     ] });
   },
 );

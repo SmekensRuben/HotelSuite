@@ -56,7 +56,7 @@ service cloud.firestore {
     function licensedKeys(hotelUid, keys) {
       let modules = get(/databases/$(database)/documents/hotelSubscriptions/$(hotelUid)).data.modules;
       return keys
-        .removeAll('procurement' in modules ? [] : ['catalogproducts.create', 'catalogproducts.read', 'catalogproducts.update', 'catalogproducts.delete', 'catalogproducts.*', 'supplierproducts.create', 'supplierproducts.read', 'supplierproducts.update', 'supplierproducts.delete', 'supplierproducts.*', 'suppliers.create', 'suppliers.read', 'suppliers.update', 'suppliers.delete', 'suppliers.password', 'suppliers.*', 'orders.create', 'orders.read', 'orders.update', 'orders.delete', 'orders.approve', 'orders.receive', 'orders.finalize', 'orders.recordconfirmation', 'orders.reviewconfirmation', 'orders.*', 'stockcounts.create', 'stockcounts.read', 'stockcounts.update', 'stockcounts.delete', 'stockcounts.*', 'inventorymovements.read', 'inventorymovements.create', 'inventorymovements.reverse', 'inventorymovements.*', 'catalogsettings.create', 'catalogsettings.read', 'catalogsettings.update', 'catalogsettings.delete', 'catalogsettings.*', 'outlets.create', 'outlets.read', 'outlets.update', 'outlets.delete', 'outlets.approvers', 'outlets.*', 'locations.create', 'locations.read', 'locations.update', 'locations.delete', 'locations.*'])
+        .removeAll('procurement' in modules ? [] : ['catalogproducts.create', 'catalogproducts.read', 'catalogproducts.update', 'catalogproducts.delete', 'catalogproducts.*', 'supplierproducts.create', 'supplierproducts.read', 'supplierproducts.update', 'supplierproducts.delete', 'supplierproducts.*', 'suppliers.create', 'suppliers.read', 'suppliers.update', 'suppliers.delete', 'suppliers.password', 'suppliers.*', 'orders.create', 'orders.read', 'orders.update', 'orders.delete', 'orders.approve', 'orders.receive', 'orders.finalize', 'orders.recordconfirmation', 'orders.reviewconfirmation', 'orders.*', 'stockcounts.create', 'stockcounts.read', 'stockcounts.update', 'stockcounts.delete', 'stockcounts.*', 'inventorymovements.read', 'inventorymovements.create', 'inventorymovements.reverse', 'inventorymovements.*', 'catalogsettings.create', 'catalogsettings.read', 'catalogsettings.update', 'catalogsettings.delete', 'catalogsettings.*', 'outlets.create', 'outlets.read', 'outlets.update', 'outlets.delete', 'outlets.approvers', 'outlets.*', 'locations.create', 'locations.read', 'locations.update', 'locations.delete', 'locations.*', 'purchaserequests.read', 'purchaserequests.create', 'purchaserequests.update', 'purchaserequests.submit', 'purchaserequests.approve', 'purchaserequests.cancel', 'purchaserequests.*', 'purchasebudgets.read', 'purchasebudgets.update', 'purchasebudgets.settings', 'purchasebudgets.*'])
         .removeAll('contracts' in modules ? [] : ['contracts.create', 'contracts.read', 'contracts.update', 'contracts.delete', 'contracts.notify', 'contracts.settings', 'contracts.*'])
         .removeAll('frontoffice' in modules ? [] : ['reservations.read', 'reservations.*', 'auditupsells.read', 'auditupsells.settings', 'auditupsells.*'])
         .removeAll('groups' in modules ? [] : ['groups.create', 'groups.read', 'groups.update', 'groups.delete', 'groups.*', 'roominglists.create', 'roominglists.read', 'roominglists.update', 'roominglists.approve', 'roominglists.*'])
@@ -64,7 +64,7 @@ service cloud.firestore {
         ;
     }
     function featureModule(feature) {
-      return feature in ['catalogproducts', 'supplierproducts', 'suppliers', 'orders', 'stockcounts', 'inventorymovements', 'catalogsettings', 'outlets', 'locations'] ? 'procurement' :
+      return feature in ['catalogproducts', 'supplierproducts', 'suppliers', 'orders', 'stockcounts', 'inventorymovements', 'catalogsettings', 'outlets', 'locations', 'purchaserequests', 'purchasebudgets'] ? 'procurement' :
         feature in ['contracts'] ? 'contracts' :
         feature in ['reservations', 'auditupsells'] ? 'frontoffice' :
         feature in ['groups', 'roominglists'] ? 'groups' :
@@ -393,6 +393,13 @@ service cloud.firestore {
       // Approved price versions and confirmations remain immutable backend evidence.
       match /supplierPriceVersions/{document=**} { allow read, write: if false; }
       match /supplierPriceConfirmations/{document=**} { allow read, write: if false; }
+      // Request snapshots, decisions, reservations and private file receipts are
+      // read and changed only through authorized hotel-scoped server handlers.
+      match /purchaseRequests/{document=**} { allow read, write: if false; }
+      match /purchaseRequestOperations/{document=**} { allow read, write: if false; }
+      match /purchaseBudgets/{document=**} { allow read, write: if false; }
+      match /purchaseRequestAttachments/{document=**} { allow read, write: if false; }
+      match /purchaseRequestNotifications/{document=**} { allow read, write: if false; }
       match /inventoryAdjustments/{document=**} { allow read, write: if false; }
       match /inventoryAdjustmentOperations/{document=**} { allow read, write: if false; }
       match /inventoryAdjustmentReversals/{document=**} { allow read, write: if false; }
@@ -495,6 +502,10 @@ service cloud.firestore {
         allow get: if verified() && isHotelMember(hotelUid);
         allow create, update: if mayWrite(hotelUid, 'propertysettings', 'update') && bootstrapSchema(request.resource.data);
         allow delete: if false;
+      }
+      match /settings/purchaseRequests/{document=**} {
+        // Includes the settings document itself and any future private evidence.
+        allow read, write: if false;
       }
       match /settings/propertySettings {
         allow read: if mayRead(hotelUid, 'propertysettings');

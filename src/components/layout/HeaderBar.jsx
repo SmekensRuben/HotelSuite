@@ -38,6 +38,9 @@ export default function HeaderBar({ today, onLogout }) {
   const canViewSupplierProducts = usePermission("supplierproducts", "read");
   const canViewSuppliers = usePermission("suppliers", "read");
   const canViewOrders = usePermission("orders", "read");
+  const canViewPurchaseRequests = usePermission("purchaserequests", "read");
+  const canViewPurchaseBudgets = usePermission("purchasebudgets", "read");
+  const canManagePurchaseRequestSettings = usePermission("purchasebudgets", "settings");
   const canViewContracts = usePermission("contracts", "read");
   const canViewStockCounts = usePermission("stockcounts", "read");
   const canViewInventoryMovements = usePermission("inventorymovements", "read");
@@ -131,6 +134,18 @@ export default function HeaderBar({ today, onLogout }) {
           label: "Orders",
           icon: ShoppingBasket,
           visible: canViewOrders,
+        },
+        {
+          to: "/purchase-requests",
+          label: "Purchase Requests",
+          icon: FileText,
+          visible: canViewPurchaseRequests,
+        },
+        {
+          to: "/purchase-budgets",
+          label: "Purchase budgets",
+          icon: BriefcaseBusiness,
+          visible: canViewPurchaseBudgets,
         },
         {
           to: "/catalog/stock-counts",
@@ -236,7 +251,7 @@ export default function HeaderBar({ today, onLogout }) {
           to: "/settings/procurement",
           label: "Purchasing & Inventory Settings",
           icon: Settings2,
-          visible: canViewCatalogSettings || canViewOutlets || canViewLocations || (canViewSuppliers && canViewSupplierProducts),
+          visible: canViewCatalogSettings || canViewOutlets || canViewLocations || canManagePurchaseRequestSettings || (canViewSuppliers && canViewSupplierProducts),
         },
         {
           to: "/settings/file-import",

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import Brand from "../layout/Brand";
 import { ShieldCheck, Users, Layers } from "lucide-react";
 import {
@@ -19,6 +19,7 @@ import {
 } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { workspaceHome } from "../../utils/workspace";
+import { purchaseRequestReturnPath } from "../../utils/purchaseRequestLink";
 import { useTranslation } from "react-i18next";
 
 const SCREENS = {
@@ -68,9 +69,10 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
   const navigate = useNavigate();
+  const location = useLocation();
   const { hotelUid, hotelUids, isPlatformAdmin, loading, authLoading } =
     useHotelContext();
-  const home = workspaceHome({
+  const home = purchaseRequestReturnPath(location.state?.purchaseRequestReturn) || workspaceHome({
     isPlatformAdmin,
     hotelUids: hotelUids || (hotelUid ? [hotelUid] : []),
   });

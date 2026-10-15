@@ -79,6 +79,11 @@ exports.getHotelStockCountPackageOptions = require("./src/stockCountPackages").g
 exports.listHotelStockCountProducts = require("./src/stockCountProducts").listHotelStockCountProducts;
 exports.getHotelInventoryCostProposal = require("./src/inventoryCostProposals").getHotelInventoryCostProposal;
 exports.getHotelSupplierPriceInsights = require("./src/supplierPriceInsights").getHotelSupplierPriceInsights;
+for (const module of ["purchaseRequests", "purchaseRequestFiles", "purchaseRequestNotifications"]) {
+  for (const [name, value] of Object.entries(require(`./src/${module}`))) {
+    if (value?.__endpoint) exports[name] = value;
+  }
+}
 const inventoryAdjustments = require("./src/inventoryAdjustments");
 for (const name of ["recordHotelInventoryAdjustment", "reverseHotelInventoryAdjustment", "listHotelInventoryAdjustments", "listHotelInventoryAdjustmentChoices"]) exports[name] = inventoryAdjustments[name];
 exports.mutateHotelProcurementResource = require("./src/procurementResources").mutateHotelProcurementResource;

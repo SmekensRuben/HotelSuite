@@ -46,6 +46,35 @@ test("manual movements are licensed separately and only supervisors explicitly r
   assert.equal(permissionAllows(["inventorymovements.*"], "inventorymovements", "reverse"), false);
   assert.equal(permissionAllows(["inventorymovements.reverse"], "inventorymovements", "reverse"), true);
 });
+test("purchase request roles separate requesting, approval and budget authority behind explicit grants", () => {
+  const { permissionAllows } = require("./authorization");
+  for (const feature of ["purchaserequests", "purchasebudgets"]) {
+    assert.equal(featureIsLicensed(subscription, feature), true);
+    assert.equal(featureIsLicensed({ ...subscription, modules: [] }, feature), false);
+  }
+  const requester = compileMemberAccess({ moduleRoles: { procurement: ["purchase-requester"] } }, subscription);
+  assert.ok(requester.permissions.includes("purchaserequests.submit"));
+  assert.ok(requester.permissions.includes("purchaserequests.cancel"));
+  assert.equal(requester.permissions.includes("purchaserequests.approve"), false);
+  assert.equal(requester.permissions.includes("purchasebudgets.update"), false);
+  const approver = compileMemberAccess({ moduleRoles: { procurement: ["purchase-approver"] } }, subscription);
+  assert.ok(approver.permissions.includes("purchaserequests.approve"));
+  assert.equal(approver.permissions.includes("purchasebudgets.settings"), false);
+  const manager = compileMemberAccess({ moduleRoles: { procurement: ["budget-manager"] } }, subscription);
+  assert.ok(manager.permissions.includes("purchasebudgets.settings"));
+  assert.equal(manager.permissions.includes("purchaserequests.approve"), false);
+  for (const role of ["viewer", "buyer", "approver", "module-manager"]) {
+    const legacy = compileMemberAccess({ moduleRoles: { procurement: [role] } }, subscription);
+    assert.equal(legacy.permissions.includes("purchaserequests.approve"), false);
+    assert.equal(legacy.permissions.includes("purchasebudgets.settings"), false);
+  }
+  for (const action of ["submit", "approve", "cancel"]) {
+    assert.equal(permissionAllows(["purchaserequests.*"], "purchaserequests", action), false);
+    assert.equal(permissionAllows([`purchaserequests.${action}`], "purchaserequests", action), true);
+  }
+  assert.equal(permissionAllows(["purchasebudgets.*"], "purchasebudgets", "settings"), false);
+  assert.equal(permissionAllows(["purchasebudgets.settings"], "purchasebudgets", "settings"), true);
+});
 test("advanced grants and role selections cannot bypass subscriptions or grant user/platform administration", () => {
   for (const selection of [{ additionalPermissions: ["contracts.*"] }, { additionalPermissions: ["super.admin"] },
     { additionalPermissions: ["users.*"] }, { moduleRoles: { procurement: ["unknown"] } }, { moduleRoles: { procurement: ["buyer", "buyer"] } }]) {
@@ -82,6 +111,8 @@ test("import target modules come from canonical destinations, not source module 
   assert.equal(dataPathModule("hotels/hotel-a/catalogproducts/item"), "procurement");
   assert.equal(dataPathModule("hotelSubscriptions/hotel-a"), null);
   assert.equal(dataPathModule("hotels/hotel-a/memberAdministration/state"), null);
+  for (const name of ["purchaseRequests", "purchaseBudgets", "purchaseRequestOperations", "purchaseRequestAttachments", "purchaseRequestNotifications", "settings/purchaseRequests"])
+    assert.equal(dataPathModule(`hotels/hotel-a/${name}/record`), "procurement");
 });
 test("generated Firestore and Storage module boundaries match the shared catalog", () => {
   execFileSync(process.execPath, [path.resolve(__dirname, "../../scripts/render-module-rules.mjs"), "--check"]);
