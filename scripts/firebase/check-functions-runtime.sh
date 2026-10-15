@@ -36,6 +36,15 @@ node --input-type=module <<'NODE'
 import { writeFileSync } from 'node:fs';
 import { requireFunctionsConfiguration } from './scripts/firebase/functions-release-policy.mjs';
 const origin = requireFunctionsConfiguration(process.env);
-writeFileSync('functions/.env.hotel-toolkit', `APP_BASE_URL=${origin}\n`, { mode: 0o600 });
-console.log('Prepared the public APP_BASE_URL parameter for hotel-toolkit.');
+// The non-interactive Firebase CLI requires explicit values even for SDK defaults.
+// Keep MCP disabled until its production configuration is reviewed separately.
+writeFileSync('functions/.env.hotel-toolkit', [
+  `APP_BASE_URL=${origin}`,
+  'HOTEL_MCP_ENABLED=false',
+  'HOTEL_MCP_PUBLIC_ORIGIN=""',
+  'HOTEL_MCP_CLIENTS_JSON=[]',
+  'HOTEL_MCP_ALLOWED_ORIGINS_JSON=[]',
+  '',
+].join('\n'), { mode: 0o600 });
+console.log('Prepared APP_BASE_URL and explicitly disabled MCP parameters for hotel-toolkit.');
 NODE

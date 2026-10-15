@@ -1,7 +1,9 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { requireFunctionsConfiguration, requireFunctionsRelease, FUNCTIONS_PROVIDER, FUNCTIONS_DEPLOY_ACCOUNT } from "../../scripts/firebase/functions-release-policy.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +14,18 @@ const release = () => ({ eventName: "workflow_run", event: { workflow_run: struc
   ref: "refs/heads/main", checkedOutSha: sha, mainSha: sha, verifiedRuns: [structuredClone(verified)] });
 const env = () => ({ FIREBASE_PROJECT_ID: "hotel-toolkit", FIREBASE_WORKLOAD_IDENTITY_PROVIDER: FUNCTIONS_PROVIDER,
   FIREBASE_DEPLOY_SERVICE_ACCOUNT: FUNCTIONS_DEPLOY_ACCOUNT, FUNCTIONS_APP_BASE_URL: "https://hotel-toolkit--hotel-toolkit.europe-west4.hosted.app" });
+const require = createRequire(import.meta.url);
+const { loadUserEnvs } = require("firebase-tools/lib/functions/env");
+const { resolveBackend } = require("firebase-tools/lib/deploy/functions/build");
+const resolveMcpDeploymentParams = (userEnvs) => resolveBackend({
+  build: { endpoints: {}, params: [
+    { name: "HOTEL_MCP_ENABLED", type: "boolean", default: false },
+    { name: "HOTEL_MCP_PUBLIC_ORIGIN", type: "string", default: "" },
+    { name: "HOTEL_MCP_CLIENTS_JSON", type: "string", default: "[]" },
+    { name: "HOTEL_MCP_ALLOWED_ORIGINS_JSON", type: "string", default: "[]" },
+  ] },
+  firebaseConfig: { projectId: "hotel-toolkit" }, codebase: "default", nonInteractive: true, userEnvs,
+});
 
 describe("Functions release authorization", () => {
   it("allows a successful push verification for the exact current main commit", () => expect(requireFunctionsRelease(release())).toBe(true));
@@ -121,7 +135,12 @@ printf '%s\\n' "$*" >> "$GCLOUD_CALLS"
 });
 
 describe("AI runtime secret metadata preflight", () => {
-  it.each(["missing", "wrong-account", "conditional", "granted"])("requires one exact secret-scoped runtime grant: %s", (mode) => {
+  it("reproduces the locked CLI's missing MCP parameter error despite SDK defaults", async () => {
+    await expect(resolveMcpDeploymentParams({ APP_BASE_URL: env().FUNCTIONS_APP_BASE_URL })).rejects.toThrow(
+      "In non-interactive mode but have no value for the following environment variables: HOTEL_MCP_ENABLED, HOTEL_MCP_PUBLIC_ORIGIN, HOTEL_MCP_CLIENTS_JSON, HOTEL_MCP_ALLOWED_ORIGINS_JSON",
+    );
+  });
+  it.each(["missing", "wrong-account", "conditional", "granted"])("requires one exact secret-scoped runtime grant: %s", async (mode) => {
     const directory = mkdtempSync(join(tmpdir(), "hotelsuite-ai-runtime-"));
     try {
       mkdirSync(join(directory, "scripts/firebase"), { recursive: true }); mkdirSync(join(directory, "functions"));
@@ -144,6 +163,20 @@ esac
       expect(calls).toContain("versions describe latest --secret=OPENAI_API_KEY");
       expect(calls).not.toContain("versions access"); expect(calls).not.toContain("add-iam-policy-binding");
       if (mode !== "granted") expect(result.stderr).toContain("Configure this once on this secret");
+      else {
+        const dotenvPath = join(directory, "functions/.env.hotel-toolkit");
+        expect(statSync(dotenvPath).mode & 0o777).toBe(0o600);
+        // Exercise the real locked CLI parser and resolver without cloud endpoints or secrets.
+        const userEnvs = loadUserEnvs({ functionsSource: join(directory, "functions"), projectDir: directory, projectId: "hotel-toolkit" });
+        expect(userEnvs).toEqual({ APP_BASE_URL: env().FUNCTIONS_APP_BASE_URL, HOTEL_MCP_ENABLED: "false",
+          HOTEL_MCP_PUBLIC_ORIGIN: "", HOTEL_MCP_CLIENTS_JSON: "[]", HOTEL_MCP_ALLOWED_ORIGINS_JSON: "[]" });
+        const { envs, secretRefs } = await resolveMcpDeploymentParams(userEnvs);
+        expect(envs.HOTEL_MCP_ENABLED.asBoolean()).toBe(false);
+        expect(envs.HOTEL_MCP_PUBLIC_ORIGIN.asString()).toBe("");
+        expect(JSON.parse(envs.HOTEL_MCP_CLIENTS_JSON.asString())).toEqual([]);
+        expect(JSON.parse(envs.HOTEL_MCP_ALLOWED_ORIGINS_JSON.asString())).toEqual([]);
+        expect(secretRefs).toEqual({});
+      }
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 });

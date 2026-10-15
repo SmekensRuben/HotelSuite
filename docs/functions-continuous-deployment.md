@@ -22,6 +22,8 @@ GitHub obtains temporary Application Default Credentials through the official Go
 
 The project is fixed explicitly in the workflow; `.firebaserc` is not used to select the deployment target. `APP_BASE_URL` is a public HTTPS origin written into an ignored `functions/.env.hotel-toolkit` during deployment. Update it when the canonical application domain changes.
 
+The same runtime preparation explicitly writes `HOTEL_MCP_ENABLED=false`, an empty `HOTEL_MCP_PUBLIC_ORIGIN`, and `[]` for `HOTEL_MCP_CLIENTS_JSON` and `HOTEL_MCP_ALLOWED_ORIGINS_JSON`. The locked Firebase CLI requires these values in non-interactive mode even though the SDK declares defaults. No new GitHub variables or secrets are required to deploy with MCP disabled. Enabling the production pilot requires a separately reviewed change to the workflow/runtime configuration; editing a local ignored dotenv file does not persist through CI, which regenerates it.
+
 Runtime secrets remain in Google Secret Manager: `MEILI_HOST`, `MEILI_INDEX`, `MEILI_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM`, `RESEND_WEBHOOK_SECRET`. The runtime check inspects latest-version metadata, never secret values. Missing, disabled or inaccessible versions stop deployment. Do not create dummy values to pass that check.
 
 ## One-time Cloud Shell setup
