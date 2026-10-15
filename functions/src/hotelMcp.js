@@ -3,6 +3,7 @@ const { defineBoolean, defineString } = require("firebase-functions/params");
 const { admin, logger, getAppBaseUrl, MEILI_HOST, MEILI_API_KEY, MEILI_INDEX } = require("./config");
 const { createHotelMcpApp } = require("./hotelMcpServer");
 const { createHotelMcpAuthHandlers } = require("./hotelMcpAuth");
+const { normalizePublicHotelMcpConfig } = require("./hotelMcpConfig");
 
 const HOTEL_MCP_ENABLED = defineBoolean("HOTEL_MCP_ENABLED", { default: false });
 const HOTEL_MCP_PUBLIC_ORIGIN = defineString("HOTEL_MCP_PUBLIC_ORIGIN", { default: "" });
@@ -11,15 +12,9 @@ const HOTEL_MCP_ALLOWED_ORIGINS_JSON = defineString("HOTEL_MCP_ALLOWED_ORIGINS_J
 
 function readHotelMcpRuntimeConfig() {
   if (!HOTEL_MCP_ENABLED.value()) return { enabled: false };
-  const clients = JSON.parse(HOTEL_MCP_CLIENTS_JSON.value() || "[]");
-  // The private pilot uses pre-registered public clients with S256 PKCE. No
-  // client secrets belong in Firebase parameter files or frontend settings.
-  if (!Array.isArray(clients) || clients.some((client) => client?.client_secret
-    || (client?.token_endpoint_auth_method && client.token_endpoint_auth_method !== "none"))) {
-    throw new Error("The private MCP pilot requires public PKCE clients without client secrets.");
-  }
-  return { enabled: true, issuerUrl: HOTEL_MCP_PUBLIC_ORIGIN.value(), appUrl: getAppBaseUrl(), clients,
-    allowedOrigins: JSON.parse(HOTEL_MCP_ALLOWED_ORIGINS_JSON.value() || "[]") };
+  return normalizePublicHotelMcpConfig({ enabled: true, issuerUrl: HOTEL_MCP_PUBLIC_ORIGIN.value(), appUrl: getAppBaseUrl(),
+    clients: JSON.parse(HOTEL_MCP_CLIENTS_JSON.value() || "[]"),
+    allowedOrigins: JSON.parse(HOTEL_MCP_ALLOWED_ORIGINS_JSON.value() || "[]") });
 }
 
 function dependencies() {

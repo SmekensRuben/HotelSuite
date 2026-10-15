@@ -38,6 +38,11 @@ jobs:
       # Public canonical origin is versioned with the reviewed release.
       FUNCTIONS_APP_BASE_URL: https://hotel-toolkit--hotel-toolkit.europe-west4.hosted.app
       FIREBASE_FUNCTIONS_DEPLOY_ENABLED: ${{ vars.FIREBASE_FUNCTIONS_DEPLOY_ENABLED }}
+      # Public pilot parameters; absent activation keeps MCP disabled.
+      HOTEL_MCP_ENABLED: ${{ vars.HOTEL_MCP_ENABLED }}
+      HOTEL_MCP_PUBLIC_ORIGIN: ${{ vars.HOTEL_MCP_PUBLIC_ORIGIN }}
+      HOTEL_MCP_CLIENTS_JSON: ${{ vars.HOTEL_MCP_CLIENTS_JSON }}
+      HOTEL_MCP_ALLOWED_ORIGINS_JSON: ${{ vars.HOTEL_MCP_ALLOWED_ORIGINS_JSON }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
