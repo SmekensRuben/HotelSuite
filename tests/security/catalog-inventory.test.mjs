@@ -87,6 +87,18 @@ beforeEach(async () => {
 after(async () => environment.cleanup());
 
 describe("catalog products and periodic inventory acceptance with real ordinary-hotel identity", () => {
+  it("supplier brands use protected hotel commands, preserve omitted values and cannot be written by another hotel or browser", async () => {
+    const created = await offerCommand({ product: offer({ brand: "Local Water" }) });
+    const ref = db.doc(`hotels/hotel-a/supplierproducts/${created.productId}`);
+    await offerCommand({ action: "update", productId: created.productId, expectedRevision: 1, product: offer({ supplierProductName: "Reviewed water" }) });
+    assert.equal((await ref.get()).data().brand, "Local Water");
+    await assertFails(updateDoc(doc(client(), ref.path), { brand: "Unreviewed brand" }));
+    await rejected(offerCommand({ action: "update", productId: created.productId, expectedRevision: 2, product: offer({ brand: "Foreign brand" }) }, outsider), "permission-denied");
+    await db.doc(`hotels/hotel-a/members/${staff.uid}`).update({ permissions: ["supplierproducts.read"] });
+    await rejected(offerCommand({ action: "update", productId: created.productId, expectedRevision: 2, product: offer({ brand: "Unauthorized brand" }) }), "permission-denied");
+    assert.equal((await ref.get()).data().brand, "Local Water");
+    assert.equal((await ref.get()).data().revision, 2);
+  });
   it("normal counters receive a read-only weighted proposal from finished quantities and accepted frozen receipt values", async () => {
     const openingId = await count(10, "2026-10-10", 2);
     await frozenOrder({ netPrice: 3, quantity: 20, terms: { catalogUnitsPerPurchaseUnit: 1, netUnitCost: 3 } });

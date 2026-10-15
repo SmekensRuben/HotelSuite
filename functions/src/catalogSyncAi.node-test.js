@@ -13,7 +13,7 @@ const rowId = "r-000001";
 const source = (patch = {}) => ({ supplierId: "dairy", supplierSku: "MILK", supplierProductName: "Milk", revision: 1,
   active: true, productPolicyVersion: 1, baseUnit: "ml", purchaseUnit: "Case", baseUnitsPerPurchaseUnit: 6000,
   pricePerPurchaseUnit: 12, currency: "EUR", priceBasis: "net", brand: "Campina", description: "Cow milk, contains milk.", purchaseOptions: [], ...patch });
-const catalog = (patch = {}) => ({ name: "Milk", revision: 1, baseUnit: "l", baseQtyPerUnit: 1,
+const catalog = (patch = {}) => ({ name: "Milk", revision: 1, baseUnit: "l",
   active: true, inventoryTracked: true, productPolicyVersion: 1, brand: "Campina", description: "Cow milk, contains milk.", ...patch });
 const permissions = ["supplierproducts.read", "supplierproducts.update", "suppliers.read", "catalogproducts.read"];
 const request = (data = {}, uid = actorUid) => ({ auth: { uid, token: { email_verified: true, auth_time: 123 } },

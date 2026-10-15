@@ -189,13 +189,6 @@ function ScopedProductDetailPage({ hotelUid, productId }) {
                   <DetailField label="Physical inventory counts" value={product.inventoryTracked === true ? "Tracked" : product.inventoryTracked === false ? "Not tracked" : "Needs review"} />
                 </div>
                 <p className="mt-4 text-sm text-gray-600">Count quantities in the catalog stock unit. Supplier package contents use their own compatible unit and are converted on receiving.</p>
-                {product.baseQtyPerUnit !== undefined && product.baseQtyPerUnit !== null && product.baseQtyPerUnit !== "" && (
-                  <details className="mt-4 text-sm text-gray-600">
-                    <summary className="cursor-pointer font-semibold">Additional information</summary>
-                    <p className="mt-2">Previously recorded quantity: <span className="font-medium text-gray-900">{product.baseQtyPerUnit}</span></p>
-                    <p className="mt-1">Kept for reference from the previous product format. Stock counts use the stock-count unit; package conversions use supplier package contents.</p>
-                  </details>
-                )}
               </Card>
 
               <Card>

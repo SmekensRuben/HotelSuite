@@ -21,7 +21,7 @@ const inputClass = "rounded border border-gray-300 px-3 py-2 text-sm";
 function initialForm(product = {}) {
   return {
     supplierId: product.supplierId || "", supplierSku: product.supplierSku || "",
-    supplierProductName: product.supplierProductName || "", currency: product.currency || "", gtin: product.gtin || "",
+    supplierProductName: product.supplierProductName || "", brand: product.brand || "", currency: product.currency || "", gtin: product.gtin || "",
     pricingModel: product.pricingModel || "Per Purchase Unit", priceBasis: product.priceBasis || "unknown",
     vatPercent: product.vatRate == null ? "" : String(product.vatRate * 100),
     priceValidFrom: product.priceValidFrom || "", priceValidUntil: product.priceValidUntil || "",
@@ -86,7 +86,7 @@ function ScopedSupplierProductFormFields({ initialData, onSubmit, savingLabel, s
     const dimensions = { g: "weight", kg: "weight", ml: "volume", l: "volume", each: "count" };
     if (linked && dimensions[linked.baseUnit] !== dimensions[form.baseUnit]) { setError("Supplier and catalog base units must have the same dimension."); return; }
     const payload = {
-      supplierId: form.supplierId, supplierSku: form.supplierSku.trim(), supplierProductName: form.supplierProductName.trim(), gtin: form.gtin.trim() || null,
+      supplierId: form.supplierId, supplierSku: form.supplierSku.trim(), supplierProductName: form.supplierProductName.trim(), brand: form.brand.trim(), gtin: form.gtin.trim() || null,
       currency: form.currency.trim().toUpperCase(), pricingModel: form.pricingModel,
       priceBasis: form.priceBasis, vatRate: form.priceBasis === "gross" && form.vatPercent !== "" ? Number(form.vatPercent) / 100 : null,
       priceValidFrom: form.priceValidFrom || null, priceValidUntil: form.priceValidUntil || null,
@@ -117,6 +117,7 @@ function ScopedSupplierProductFormFields({ initialData, onSubmit, savingLabel, s
       </Field>
       <Field title="Supplier SKU *"><input required maxLength={150} value={form.supplierSku} onChange={(event) => change("supplierSku", event.target.value)} className={inputClass} /><span className="text-xs font-normal text-gray-500">Changing the SKU preserves the product's stable ID.</span></Field>
       <Field title="Supplier product name *" wide><input required maxLength={200} value={form.supplierProductName} onChange={(event) => change("supplierProductName", event.target.value)} className={inputClass} /></Field>
+      <Field title="Brand (optional)" wide><input maxLength={200} value={form.brand} onChange={(event) => change("brand", event.target.value)} className={inputClass} /><span className="text-xs font-normal text-gray-500">The manufacturer's brand of this supplier article. Leave blank when unknown. The linked catalog product may have its own brand requirement.</span></Field>
       <Field title="Catalog product"><Combobox disabled={Boolean(initialData?.id && initialData?.catalogProductId)} value={linkedCatalog || null} options={catalogOptions} displayValue={(product) => `${product.name || "Unnamed catalog product"} (${product.baseUnit || "unit needs review"})`} getOptionValue={(product) => product.id} onChange={(product) => change("catalogProductId", product?.id || "")} placeholder="Unlinked — procurement only" allowClear loading={sources.loading} className={inputClass} />
         {form.catalogProductId && !sources.loading && !linkedCatalog && <span className="text-xs font-normal text-amber-700">The existing catalog link is unavailable. Its identity has been retained.</span>}
       </Field>

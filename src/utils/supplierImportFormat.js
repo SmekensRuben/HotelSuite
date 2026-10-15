@@ -1,4 +1,4 @@
-const columns = new Set(["supplierSku", "supplierProductName", "purchaseUnit", "baseUnitsPerPurchaseUnit", "baseUnit", "pricePerPurchaseUnit", "pricePerBaseUnit", "priceBasis", "currency", "vatRate", "priceValidFrom", "priceValidUntil", "sourceIssuedOn", "gtin", "packCount", "contentQuantity", "contentUnit"]);
+const columns = new Set(["supplierSku", "supplierProductName", "brand", "purchaseUnit", "baseUnitsPerPurchaseUnit", "baseUnit", "pricePerPurchaseUnit", "pricePerBaseUnit", "priceBasis", "currency", "vatRate", "priceValidFrom", "priceValidUntil", "sourceIssuedOn", "gtin", "packCount", "contentQuantity", "contentUnit"]);
 const defaults = new Set(["baseUnit", "pricingModel", "currency", "priceBasis", "vatRate"]);
 const object = (value) => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const label = (value, max = 300) => typeof value === "string" && value.length <= max && !/[\u0000-\u001f]/.test(value);

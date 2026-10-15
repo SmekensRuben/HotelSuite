@@ -11,7 +11,7 @@ import { productUnitLabel, previewCatalogPackageQuantity } from "../../utils/pro
 import { PURCHASE_UNITS } from "../../utils/supplierImportWorkspace";
 
 const labels = {
-  supplierSku: "Supplier SKU", supplierProductName: "Product name", purchaseUnit: "Purchase unit",
+  supplierSku: "Supplier SKU", supplierProductName: "Product name", brand: "Brand", purchaseUnit: "Purchase unit",
   baseUnitsPerPurchaseUnit: "Package content", baseUnit: "Content unit", pricePerPurchaseUnit: "Package price",
   pricePerBaseUnit: "Base-unit price", currency: "Currency", pricingModel: "Pricing model", priceBasis: "Price basis",
   vatRate: "VAT rate", gtin: "Package GTIN", catalogProductId: "Catalog product", active: "Active offer",
@@ -158,6 +158,7 @@ export default function SupplierImportProductReview({ hotelUid, jobId, row, posi
     <form onSubmit={(event) => { event.preventDefault(); save(); }} className="space-y-4">
       <fieldset disabled={!enabled} className="grid min-w-0 gap-4 sm:grid-cols-2">
         <label className={`${labelClass} sm:col-span-2`}>Product name<input className={inputClass} value={draft.supplierProductName ?? ""} onChange={(event) => change("supplierProductName", event.target.value || null)} /></label>
+        <label className={`${labelClass} sm:col-span-2`}>Brand<input maxLength={200} className={inputClass} value={draft.brand ?? ""} onChange={(event) => change("brand", event.target.value || null)} /><span className="mt-1 block text-xs font-normal text-stone-500">Manufacturer's brand from this source. Unknown brands remain blank; missing source values preserve the hotel's existing brand.</span></label>
         <label className={labelClass}>Supplier SKU<input className={inputClass} disabled={existing} value={draft.supplierSku ?? ""} onChange={(event) => change("supplierSku", event.target.value || null)} /></label>
         <label className={labelClass}>Purchase unit<Combobox aria-label="Purchase unit" disabled={!enabled} value={PURCHASE_UNITS.includes(draft.purchaseUnit) ? draft.purchaseUnit : null} options={PURCHASE_UNITS} displayValue={(unit) => unit} getOptionValue={(unit) => unit} onChange={(unit) => change("purchaseUnit", unit || null)} placeholder="Search purchase units" allowClear />{draft.purchaseUnit && !PURCHASE_UNITS.includes(draft.purchaseUnit) && <p className="mt-1 text-xs font-normal text-amber-800">Unrecognized source unit: {draft.purchaseUnit}. Choose a supported English purchase unit.</p>}</label>
         <label className={labelClass}>Package content<input aria-label="Package content" type="number" step="any" className={inputClass} value={draft.baseUnitsPerPurchaseUnit ?? ""} onChange={(event) => numeric("baseUnitsPerPurchaseUnit", event)} /><span className="mt-1 block text-xs font-normal text-stone-500">The total physical content of one purchase package.</span></label>

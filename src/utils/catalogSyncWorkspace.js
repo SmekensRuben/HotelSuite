@@ -10,7 +10,7 @@ export const catalogSyncMessage = (value) => typeof value === "string" && !inter
 const list = (value) => (Array.isArray(value) ? value : []).slice(0, 30).map((item) => catalogSyncMessage(typeof item === "string" ? item : item?.message));
 const productFields = ["name", "brand", "description", "category", "subcategory", "gtin", "internalSku", "storageType", "notes", "imageUrl"];
 export function catalogSyncProduct(value = {}) {
-  return { ...Object.fromEntries(productFields.map((field) => [field, text(value[field])])), active: value.active !== false, inventoryTracked: value.inventoryTracked === true, baseUnit: units.has(value.baseUnit) ? value.baseUnit : "", baseQtyPerUnit: typeof value.baseQtyPerUnit === "number" && Number.isFinite(value.baseQtyPerUnit) && value.baseQtyPerUnit > 0 ? value.baseQtyPerUnit : null, allergens: (Array.isArray(value.allergens) ? value.allergens : []).slice(0, 30).filter((item) => typeof item === "string").map((item) => text(item, 100)) };
+  return { ...Object.fromEntries(productFields.map((field) => [field, text(value[field])])), active: value.active !== false, inventoryTracked: value.inventoryTracked === true, baseUnit: units.has(value.baseUnit) ? value.baseUnit : "", allergens: (Array.isArray(value.allergens) ? value.allergens : []).slice(0, 30).filter((item) => typeof item === "string").map((item) => text(item, 100)) };
 }
 const eachSpec = (value) => value && units.has(value.unit) && typeof value.quantity === "number" && Number.isFinite(value.quantity) && value.quantity > 0 && ["mass", "volume", "count"].includes(value.dimension) ? { unit: value.unit, quantity: value.quantity, dimension: value.dimension } : null;
 function evidence(value = {}) {

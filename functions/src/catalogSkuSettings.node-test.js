@@ -108,7 +108,7 @@ test("renamed and archived SKUs stay reserved and supplier SKUs are never modifi
 
 test("explicit adoption numbers only selected missing SKUs and preserves complete legacy records and historical references", async () => {
   const db = fixture();
-  const legacy = { name: "Legacy juice", baseUnit: "unreviewed-unit", baseQtyPerUnit: "supplier source spelling", originalImport: { supplierSku: "VENDOR-9", row: 42 },
+  const legacy = { name: "Legacy juice", baseUnit: "unreviewed-unit", sourceQuantity: "supplier source spelling", originalImport: { supplierSku: "VENDOR-9", row: 42 },
     currency: "old-currency", active: false, unknownLocalCorrection: "Retain this", revision: 4, createdAt: { seconds: 100 } };
   db.records.set(`${base}/catalogproducts/legacy`, legacy);
   db.records.set(`${base}/catalogproducts/unselected`, { name: "Keep blank", revision: 0 });

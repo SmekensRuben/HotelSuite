@@ -20,7 +20,6 @@ function physicalFacts(value) {
   const facts = { name: boundedText(value?.name, 200), brand: boundedText(value?.brand, 200), description: boundedText(value?.description, 500),
     category: boundedText(value?.category, 100), subcategory: boundedText(value?.subcategory, 100), gtin: boundedText(value?.gtin, 100),
     internalSku: boundedText(value?.internalSku, 100), baseUnit: policy.units[value?.baseUnit] ? value.baseUnit : null,
-    baseQtyPerUnit: typeof value?.baseQtyPerUnit === "number" ? value.baseQtyPerUnit : null,
     allergens: Array.isArray(value?.allergens) ? value.allergens.slice(0, 30).map((item) => boundedText(item, 100)) : [],
     active: value?.active === true, inventoryTracked: value?.inventoryTracked === true, productPolicyVersion: value?.productPolicyVersion ?? null };
   const identity = matching().extractCatalogPhysicalIdentity(value || {}, { knownBrands: value?.brand ? [value.brand] : [] });
@@ -184,7 +183,7 @@ async function readHotelCatalogSyncWorkspaceHandler(request, services = {}) {
     query = query.orderBy(admin.firestore.FieldPath.documentId());
     if (cursor) query = query.startAfter(cursor);
     const [offers, catalogs] = await Promise.all([tx.get(query.select("name", "supplierId", "supplierSku", "supplierProductName", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "purchaseOptions", "catalogProductId",
-      "revision", "productPolicyVersion", "active", "archived", "archivedAt", "hasVariants", "brand", "description", "category", "subcategory", "allergens", "gtin", "internalSku", "baseQtyPerUnit", "inventoryTracked", "notes", "storageType").limit(MAX_SOURCE_SCAN + 1)),
+      "revision", "productPolicyVersion", "active", "archived", "archivedAt", "hasVariants", "brand", "description", "category", "subcategory", "allergens", "gtin", "internalSku", "inventoryTracked", "notes", "storageType").limit(MAX_SOURCE_SCAN + 1)),
       tx.get(db.collection(`hotels/${hotelUid}/catalogproducts`).orderBy(admin.firestore.FieldPath.documentId()).limit(MAX_CATALOG_POOL + 1))]);
     const pool = catalogs.docs.slice(0, MAX_CATALOG_POOL).filter((doc) => activeCanonical(doc.data())).map((doc) => ({ id: doc.id, revision: internals().currentRevision(doc.data()), ...physicalFacts(doc.data()) }));
     const sources = offers.docs.slice(0, MAX_SOURCE_SCAN), rows = [];
@@ -211,10 +210,10 @@ async function readHotelCatalogSyncWorkspaceHandler(request, services = {}) {
       const sourceReviewed = activeCanonical(source) && supplierReferenceValid && physicalReview.allowed;
       const draft = sourceReviewed && suggestion.proposedCatalog ? policy.normalizeCatalogProduct({ name: suggestion.proposedCatalog.name,
         brand: suggestion.proposedCatalog?.brand || "", description: suggestion.proposedCatalog?.description || "", baseUnit: suggestion.proposedCatalog?.baseUnit || source.baseUnit,
-        baseQtyPerUnit: suggestion.proposedCatalog?.baseQtyPerUnit ?? null, active: true, inventoryTracked: true, allergens: suggestion.proposedCatalog?.allergens || [], internalSku: "" }) : null;
+        active: true, inventoryTracked: true, allergens: suggestion.proposedCatalog?.allergens || [], internalSku: "" }) : null;
       const proposedNewProduct = draft ? Object.fromEntries(Object.entries(draft).filter(([field]) => !["productPolicyVersion", "nameLower"].includes(field)))
         : { name: boundedText(source.supplierProductName || source.name, 200), brand: "", description: "", category: "", subcategory: "", gtin: "", internalSku: "", storageType: "", notes: "", imageUrl: "",
-          baseUnit: "", baseQtyPerUnit: null, active: true, inventoryTracked: true, allergens: [] };
+          baseUnit: "", active: true, inventoryTracked: true, allergens: [] };
       rows.push({ rowId: `r-${String(rows.length + 1).padStart(6, "0")}`, supplierProductId: doc.id,
         expectedSupplierRevision: internals().currentRevision(source), reviewRevision: 1, supplierProduct: facts, sourceFingerprint: digest(facts),
         status: sourceReviewed ? suggestion.status : "needs-unit-review", existingMatches: (sourceReviewed ? suggestion.candidates || [] : []).map((candidate) => {

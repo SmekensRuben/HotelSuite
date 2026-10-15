@@ -147,7 +147,7 @@ function netPrice(price, basis, vatRate) {
 const CATALOG_TEXT = { name: 200, brand: 200, description: 4000, category: 100, subcategory: 100,
   gtin: 100, internalSku: 100, storageType: 100, notes: 4000, imageUrl: 1000 };
 function normalizeCatalogProduct(input) {
-  supportedFields(input, [...Object.keys(CATALOG_TEXT), "nameLower", "active", "baseUnit", "baseQtyPerUnit", "allergens", "inventoryTracked"], "catalog product");
+  supportedFields(input, [...Object.keys(CATALOG_TEXT), "nameLower", "active", "baseUnit", "allergens", "inventoryTracked"], "catalog product");
   const result = {};
   for (const [key, max] of Object.entries(CATALOG_TEXT)) result[key] = text(input[key] ?? "", key, max, key === "name");
   result.nameLower = result.name.toLowerCase();
@@ -155,7 +155,6 @@ function normalizeCatalogProduct(input) {
   result.active = boolean(input.active, "active");
   result.inventoryTracked = boolean(input.inventoryTracked, "inventoryTracked");
   result.baseUnit = baseUnit(input.baseUnit);
-  result.baseQtyPerUnit = optionalNumber(input.baseQtyPerUnit, "Base quantity per unit", { maximum: MAX_QUANTITY, positive: true });
   if (!Array.isArray(input.allergens ?? []) || (input.allergens ?? []).length > 30) fail("Use at most 30 allergen labels.");
   result.allergens = [...new Set((input.allergens ?? []).map((value) => text(value, "Allergen", 100, true)))];
   result.productPolicyVersion = PRODUCT_POLICY_VERSION;
@@ -169,11 +168,12 @@ function normalizeOption(input) {
 }
 function normalizeSupplierProduct(input) {
   if (input && Object.hasOwn(input, "imageUrl")) fail("Supplier product images must use the protected image upload workflow; external image URLs are not supported.");
-  supportedFields(input, ["supplierId", "supplierSku", "supplierProductName", "supplierName", "currency", "pricingModel", "pricePerBaseUnit", "pricePerPurchaseUnit", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "catalogProductId", "active", "priceBasis", "vatRate", "purchaseOptions", "priceValidFrom", "priceValidUntil", "gtin"], "supplier product");
+  supportedFields(input, ["supplierId", "supplierSku", "supplierProductName", "brand", "supplierName", "currency", "pricingModel", "pricePerBaseUnit", "pricePerPurchaseUnit", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "catalogProductId", "active", "priceBasis", "vatRate", "purchaseOptions", "priceValidFrom", "priceValidUntil", "gtin"], "supplier product");
   if (!/^[A-Z]{3}$/.test(input.currency ?? "")) fail("Currency must be an explicit three-letter uppercase code.");
   if (!["Per Purchase Unit", "Per Base Unit"].includes(input.pricingModel)) fail("Choose Per Purchase Unit or Per Base Unit pricing.");
   const result = { supplierId: requireDocumentId(input.supplierId, "supplierId"),
     supplierSku: text(input.supplierSku, "Supplier SKU", 150, true), supplierProductName: text(input.supplierProductName, "Supplier product name", 200, true),
+    brand: text(input.brand ?? "", "Brand", 200),
     currency: input.currency, pricingModel: input.pricingModel, baseUnit: baseUnit(input.baseUnit),
     purchaseUnit: purchaseUnitLabel(input.purchaseUnit), gtin: packageGtin(input.gtin),
     baseUnitsPerPurchaseUnit: decimal(input.baseUnitsPerPurchaseUnit, "Base units per purchase unit", { maximum: MAX_QUANTITY, positive: true }),

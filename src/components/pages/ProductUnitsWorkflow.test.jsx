@@ -34,7 +34,7 @@ describe("catalog units, supplier packages and ordering workflow", () => {
     fireEvent.change(screen.getByLabelText("products.fields.baseUnit"), { target: { value: "ml" } });
     fireEvent.click(screen.getByLabelText("Track this item in physical inventory counts"));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ name: "Milk", baseUnit: "ml", inventoryTracked: true, baseQtyPerUnit: null })));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ name: "Milk", baseUnit: "ml", inventoryTracked: true })));
   });
   it("keeps reviewed catalog and supplier units fixed while permitting package-content edits", async () => {
     const catalogView = render(<ProductFormFields hotelUid="hotel-a" initialData={{ id: "milk", productPolicyVersion: 1, name: "Milk", baseUnit: "ml" }} onSubmit={vi.fn()} savingLabel="Saving" submitLabel="Save" />);
@@ -46,22 +46,20 @@ describe("catalog units, supplier packages and ordering workflow", () => {
     expect(screen.getByLabelText(/Supplier content unit/)).toBeDisabled();
     expect(screen.getByLabelText(/Default package content/)).not.toBeDisabled();
   });
-  it("preserves the previous quantity reference when other catalog fields are edited", async () => {
-    const submit = vi.fn().mockResolvedValue(undefined);
-    render(<ProductFormFields hotelUid="hotel-a" initialData={{ id: "milk", productPolicyVersion: 1, name: "Milk", baseUnit: "ml", baseQtyPerUnit: 500 }} onSubmit={submit} savingLabel="Saving" submitLabel="Save" />);
-    fireEvent.click(screen.getByText("Additional information"));
-    expect(screen.getByText(/Previously recorded quantity/)).toHaveTextContent("500");
-    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/products.fields.name/), { target: { value: "Fresh milk" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ name: "Fresh milk", baseQtyPerUnit: 500 })));
-  });
   it("keeps blank supplier prices unknown and permits compatible l/ml catalog links", async () => {
     const submit = vi.fn().mockResolvedValue(undefined);
     render(<SupplierProductFormFields initialData={{ ...validOffer, pricePerPurchaseUnit: null }} onSubmit={submit} savingLabel="Saving" submitLabel="Save" />);
     await screen.findByDisplayValue("Catalog milk (ml)");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ baseUnit: "l", catalogProductId: "milk", pricePerPurchaseUnit: null })));
+  });
+  it("edits the supplier's actual brand separately from the linked catalog article", async () => {
+    const submit = vi.fn().mockResolvedValue(undefined);
+    render(<SupplierProductFormFields initialData={{ ...validOffer, brand: "Campina" }} onSubmit={submit} savingLabel="Saving" submitLabel="Save" />);
+    await screen.findByDisplayValue("Catalog milk (ml)");
+    fireEvent.change(screen.getByLabelText(/Brand \(optional\)/), { target: { value: " Arla " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ brand: "Arla", catalogProductId: "milk" })));
   });
   it("rejects incompatible catalog dimensions before saving", async () => {
     const submit = vi.fn();

@@ -384,10 +384,12 @@ async function searchSupplierProductsWithFirestore(hotelUid, criteria, pageSize,
     products = products.filter((product) => {
       const supplierSku = String(product.supplierSku || "").toLowerCase();
       const supplierProductName = String(product.supplierProductName || "").toLowerCase();
+      const brand = String(product.brand || "").toLowerCase();
       const candidateSupplierName = String(product.supplierName || "").toLowerCase();
       return (
         supplierSku.includes(lowerTerm)
         || supplierProductName.includes(lowerTerm)
+        || brand.includes(lowerTerm)
         || candidateSupplierName.includes(lowerTerm)
       );
     });

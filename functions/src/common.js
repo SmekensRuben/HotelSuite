@@ -172,7 +172,6 @@ function buildCatalogProductDocument(productId, hotelUid, productData = {}) {
     subcategory: String(productData.subcategory || "").trim(),
     active: productData.active !== false,
     imageUrl: String(productData.imageUrl || "").trim(),
-    baseQtyPerUnit: toNumberOrNull(productData.baseQtyPerUnit),
     baseUnit: String(productData.baseUnit || "").trim(),
     price: toNumberOrNull(productData.price),
     updatedAt: toMillisOrNull(productData.updatedAt),
@@ -196,6 +195,7 @@ function buildSupplierProductDocument(productId, hotelUid, productData = {}) {
     purchaseUnit: String(productData.purchaseUnit || "").trim(),
     supplierProductName: String(productData.supplierProductName || "").trim(),
     supplierSku: String(productData.supplierSku || "").trim(),
+    brand: String(productData.brand || "").trim(),
     updatedAt: toMillisOrNull(productData.updatedAt),
   };
 }

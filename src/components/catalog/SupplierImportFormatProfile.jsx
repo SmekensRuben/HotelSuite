@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { saveSupplierPurchaseUnitMappings, applySupplierImportFormat, readSupplierPurchaseUnitMappings } from "../../services/firebaseSupplierImportWorkspace";
 
 const columnFields = [
-  ["supplierSku", "Article number"], ["supplierProductName", "Article name"], ["purchaseUnit", "Purchase package"],
+  ["supplierSku", "Article number"], ["supplierProductName", "Article name"], ["brand", "Brand"], ["purchaseUnit", "Purchase package"],
   ["baseUnitsPerPurchaseUnit", "Total package content"], ["baseUnit", "Physical base unit"],
   ["packCount", "Units in purchase package"], ["contentQuantity", "Content of one unit"], ["contentUnit", "Unit content measure"],
   ["pricePerPurchaseUnit", "Price per purchase package"], ["pricePerBaseUnit", "Price per content unit"],

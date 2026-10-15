@@ -161,6 +161,7 @@ function ScopedSupplierProductDetailPage({ hotelUid, productId }) {
                     <div className="mt-4 flex flex-wrap gap-2">
                       <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">SKU: {product.supplierSku || "-"}</span>
                       <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">Supplier: {product.supplierName || "Supplier name unavailable"}</span>
+                      <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">Brand: {product.brand || "Not supplied"}</span>
                       <span
                         className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
                           product.active !== false && product.archived !== true ? "bg-emerald-400/20 text-emerald-200" : "bg-white/10 text-slate-200"

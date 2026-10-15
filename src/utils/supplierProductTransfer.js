@@ -1,9 +1,9 @@
 // Workbook audit columns describe the source; only protected commands author new audit data.
-export const SUPPLIER_PRODUCT_FIELDS = ["documentId", "revision", "supplierId", "supplierSku", "supplierProductName", "gtin", "currency", "pricingModel", "priceBasis", "vatRate", "priceValidFrom", "priceValidUntil", "pricePerBaseUnit", "pricePerPurchaseUnit", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "purchaseOptions", "catalogProductId", "active", "hasVariants", "variants"];
+export const SUPPLIER_PRODUCT_FIELDS = ["documentId", "revision", "supplierId", "supplierSku", "supplierProductName", "brand", "gtin", "currency", "pricingModel", "priceBasis", "vatRate", "priceValidFrom", "priceValidUntil", "pricePerBaseUnit", "pricePerPurchaseUnit", "purchaseUnit", "baseUnit", "baseUnitsPerPurchaseUnit", "purchaseOptions", "catalogProductId", "active", "hasVariants", "variants"];
 export const SUPPLIER_PRODUCT_AUDIT_FIELDS = ["supplierName", "createdAt", "createdBy", "updatedAt", "updatedBy", "priceUpdatedOn", "managedImageAssetId", "managedImageStatus", "managedImagePolicyVersion", "imageRevision"];
 export const SUPPLIER_PRODUCT_EXPORT_HEADERS = [...SUPPLIER_PRODUCT_FIELDS, ...SUPPLIER_PRODUCT_AUDIT_FIELDS];
 export const SUPPLIER_PRODUCT_TEMPLATE_HEADERS = SUPPLIER_PRODUCT_FIELDS.filter((field) => !["documentId", "revision", "hasVariants", "variants"].includes(field));
-export const SUPPLIER_PRODUCT_TEMPLATE_ROW = { supplierId: "", supplierSku: "", supplierProductName: "", gtin: "", currency: "", pricingModel: "Per Purchase Unit", priceBasis: "unknown", vatRate: "", priceValidFrom: "", priceValidUntil: "", pricePerBaseUnit: "", pricePerPurchaseUnit: "", purchaseUnit: "", baseUnit: "", baseUnitsPerPurchaseUnit: "", purchaseOptions: "[]", catalogProductId: "", active: "true" };
+export const SUPPLIER_PRODUCT_TEMPLATE_ROW = { supplierId: "", supplierSku: "", supplierProductName: "", brand: "", gtin: "", currency: "", pricingModel: "Per Purchase Unit", priceBasis: "unknown", vatRate: "", priceValidFrom: "", priceValidUntil: "", pricePerBaseUnit: "", pricePerPurchaseUnit: "", purchaseUnit: "", baseUnit: "", baseUnitsPerPurchaseUnit: "", purchaseOptions: "[]", catalogProductId: "", active: "true" };
 
 function auditDate(value) {
   if (value == null || value === "") return "";
@@ -17,7 +17,7 @@ export function supplierProductExportRow(product) {
   if (product.purchaseOptions != null && !Array.isArray(product.purchaseOptions)) throw new Error("A product's purchase options need review before export.");
   return {
     documentId: product.id || product.documentId || "", revision,
-    supplierId: product.supplierId || "", supplierSku: product.supplierSku || "", supplierProductName: product.supplierProductName || "", gtin: product.gtin || "",
+    supplierId: product.supplierId || "", supplierSku: product.supplierSku || "", supplierProductName: product.supplierProductName || "", brand: product.brand || "", gtin: product.gtin || "",
     currency: product.currency || "", pricingModel: product.pricingModel || "", priceBasis: product.priceBasis || "unknown", vatRate: product.vatRate ?? "",
     priceValidFrom: product.priceValidFrom || "", priceValidUntil: product.priceValidUntil || "", pricePerBaseUnit: product.pricePerBaseUnit ?? "", pricePerPurchaseUnit: product.pricePerPurchaseUnit ?? "",
     purchaseUnit: product.purchaseUnit || "", baseUnit: product.baseUnit || "", baseUnitsPerPurchaseUnit: product.baseUnitsPerPurchaseUnit ?? "", purchaseOptions: JSON.stringify(product.purchaseOptions || []),
@@ -73,6 +73,7 @@ export function parseSupplierProductRows(rows) {
       if (hasVariants || variants.length) throw new Error("Legacy variants require manual review and explicit purchaseOptions before import.");
       products.push({
         documentId, revision, supplierId: clean(row.supplierId), supplierSku: clean(row.supplierSku), supplierProductName: clean(row.supplierProductName),
+        ...(clean(row.brand) ? { brand: clean(row.brand) } : {}),
         ...(Object.hasOwn(row, "gtin") ? { gtin: clean(row.gtin) || null } : {}),
         currency: clean(row.currency).toUpperCase(), pricingModel: clean(row.pricingModel), priceBasis: clean(row.priceBasis) || "unknown", vatRate: number(row.vatRate, "vatRate") ?? null,
         ...(Object.hasOwn(row, "priceValidFrom") ? { priceValidFrom: clean(row.priceValidFrom) || null } : {}),

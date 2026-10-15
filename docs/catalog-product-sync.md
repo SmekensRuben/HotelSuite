@@ -29,13 +29,24 @@ procurement permissions. A proposal changes no product; existing links are kept.
 
 ## Exchangeability and units
 
-The previous product format's `baseQtyPerUnit` is retained as reference data,
-not a current counting or package conversion factor. Existing values appear
-under collapsed **Additional information** on catalog detail/edit screens and
-are preserved when saving other fields. New forms and import templates do not
-invent this value. Stock counts use the catalog stock unit; receiving converts
-the supplier's package contents into that unit. Matching may still flag an
-ambiguous old individual-item quantity for explicit review.
+Catalog quantities use only the explicit stock-count unit. Receiving converts
+the supplier's package contents into that unit. The obsolete additional quantity
+field has been removed from forms, imports, exports, search and matching.
+
+Supplier Products have an optional **Brand** for the actual manufacturer's brand,
+separate from the supplier's name. Catalog Brand remains an optional hotel brand
+requirement; blank permits reviewed brand variation when physical specifications
+match. Supplier brands are shown separately during sync and used by deterministic
+and optional AI comparisons. A brand is never copied into a generic catalog
+requirement automatically.
+
+Brand can be entered manually or reviewed from a workbook/AI source. Confirmed
+file profiles can map a Brand column. Missing or unknown source values preserve
+the existing brand. A blank workbook cell means not provided; clear a stored
+brand in the product editor or import review. Brand changes are
+product changes requiring individual review, outside bulk price-only approval.
+New AI jobs request source-backed brands; existing paid request bodies keep their
+original extraction schema for safe recovery.
 
 Mass, volume and item counts never convert into one another. Compatible g/kg and
 ml/l conversions use the existing exact six-decimal quantity policy. Default and

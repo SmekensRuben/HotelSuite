@@ -15,7 +15,6 @@ const defaultState = {
   category: "",
   subcategory: "",
   baseUnit: "",
-  baseQtyPerUnit: "",
   gtin: "",
   internalSku: "",
   storageType: "",
@@ -29,10 +28,6 @@ function toFormState(initialData) {
   return {
     ...defaultState,
     ...initialData,
-    baseQtyPerUnit:
-      initialData.baseQtyPerUnit !== undefined && initialData.baseQtyPerUnit !== null
-        ? String(initialData.baseQtyPerUnit)
-        : "",
     allergens: Array.isArray(initialData.allergens)
       ? initialData.allergens.join(", ")
       : initialData.allergens || "",
@@ -115,7 +110,6 @@ export default function ProductFormFields({
       category: formState.category.trim(),
       subcategory: formState.subcategory.trim(),
       baseUnit: formState.baseUnit.trim(),
-      baseQtyPerUnit: formState.baseQtyPerUnit === "" ? null : Number(formState.baseQtyPerUnit),
       gtin: formState.gtin.trim(),
       internalSku: formState.internalSku.trim(),
       storageType: formState.storageType.trim(),
@@ -225,13 +219,6 @@ export default function ProductFormFields({
           </select>
           {initialData?.productPolicyVersion === 1 && <span className="text-xs font-normal text-gray-500">The reviewed stock unit is fixed to protect existing counts and receipts. Create a new catalog identity for a different unit.</span>}
         </label>
-        {formState.baseQtyPerUnit !== "" && (
-          <details className="sm:col-span-2 text-sm text-gray-600">
-            <summary className="cursor-pointer font-semibold">Additional information</summary>
-            <p className="mt-2">Previously recorded quantity: <span className="font-medium text-gray-900">{formState.baseQtyPerUnit}</span></p>
-            <p className="mt-1">Kept for reference from the previous product format. Stock counts use the stock-count unit; package conversions use supplier package contents.</p>
-          </details>
-        )}
       </SectionCard>
 
       <SectionCard title={t("products.sections.identifiers")}>

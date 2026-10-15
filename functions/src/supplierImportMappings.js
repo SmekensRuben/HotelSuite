@@ -10,7 +10,7 @@ const SOURCE_FORMATS = Object.freeze(["csv", "xlsx", "pdf", "docx", "eml", "txt"
 const PURCHASE_UNITS = Object.freeze(require("./supplierPurchaseUnits.json"));
 const UNIT_SUGGESTIONS = Object.freeze({ FL: "Bottle", ZK: "Bag", EM: "Bucket", BK: "Box", TR: "Tray", PT: "Jar", ST: "Piece", DS: "Box", PK: "Pack" });
 const INTERPRETATION_VERSION = 1;
-const INTERPRETATION_COLUMNS = Object.freeze(["supplierSku", "supplierProductName", "purchaseUnit", "baseUnitsPerPurchaseUnit", "baseUnit", "packCount", "contentQuantity", "contentUnit",
+const INTERPRETATION_COLUMNS = Object.freeze(["supplierSku", "supplierProductName", "brand", "purchaseUnit", "baseUnitsPerPurchaseUnit", "baseUnit", "packCount", "contentQuantity", "contentUnit",
   "pricePerPurchaseUnit", "pricePerBaseUnit", "currency", "priceBasis", "vatRate", "priceValidFrom", "priceValidUntil", "sourceIssuedOn", "gtin"]);
 function normalizeInterpretation(value, sourceFormat) {
   const keys = ["version", "header", "sheetName", "columns", "defaults", "assortmentMode", "documentPurpose", "decimalSeparator", "dateFormat"];

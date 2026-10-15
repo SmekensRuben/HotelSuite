@@ -11,6 +11,14 @@ const snapshot = (patch = {}) => mappingSnapshot({ version: 1, supplierId: "supp
   mappings: [{ sourceUnit: "FL", purchaseUnit: "Bottle" }], interpretation, ...patch }, { supplierId: "supplier", sourceFormat: "csv", profileId: "default" });
 const source = async (text) => extractSupplierAiSource({ bytes: Buffer.from(text), fileName: "supplier.csv", mimeType: "text/csv" });
 const row = '0001;Sparkling water;FL;12;0,5;L;"18,60";01/11/2026;14/10/2026';
+test("confirmed Brand columns retain spelling and blank cells remain omitted source evidence", async () => {
+  const headings = [...header, "Brand"], profile = snapshot({ interpretation: { ...interpretation, header: headings, columns: { ...interpretation.columns, brand: header.length } } });
+  const content = await source(headings.join(";") + "\n" + row + ";iQ McCain\n" + row.replace("0001", "0002") + ";");
+  const parsed = interpretSupplierSourceRows(content, profile, { importSettings: settings });
+  assert.equal(parsed.rows[0].brand, "iQ McCain"); assert.equal(parsed.rows[0].sourceInterpretation.providedFields.includes("brand"), true);
+  assert.equal(parsed.rows[1].brand, null); assert.equal(parsed.rows[1].sourceInterpretation.providedFields.includes("brand"), false);
+  assert.equal(interpretationForSources(content, null).sourceFormatCandidate.columns.brand, header.length);
+});
 test("confirmed table format parses exact SKUs, split contents, decimals and future dates without interpretation guesses", async () => {
   const parsed = interpretSupplierSourceRows(await source(header.join(";") + "\n" + row), snapshot(), { importSettings: settings });
   const product = parsed.rows[0]; assert.equal(parsed.sourceInterpretation.status, "confirmed");

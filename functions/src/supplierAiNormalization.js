@@ -4,7 +4,7 @@ const { supplierAiSourceDeclarations } = require("./supplierAiSourceDeclarations
 const { mappingSnapshot, sourceUnitKey, canonicalPurchaseUnit, UNIT_SUGGESTIONS } = require("./supplierImportMappings");
 
 const NORMALIZATION_VERSION = 2;
-const RAW_FIELDS = ["supplierSku", "supplierProductName", "currency", "pricingModel", "purchaseUnit", "baseUnit", "priceBasis", "gtin",
+const RAW_FIELDS = ["supplierSku", "supplierProductName", "brand", "currency", "pricingModel", "purchaseUnit", "baseUnit", "priceBasis", "gtin",
   "priceValidFrom", "priceValidUntil", "pricePerBaseUnit", "pricePerPurchaseUnit", "baseUnitsPerPurchaseUnit", "vatRate"];
 const UNIT_ALIASES = { g: "g", gr: "g", gram: "g", grams: "g", gramme: "g", grammes: "g", kg: "kg", kilo: "kg", kilogram: "kg", kilograms: "kg",
   ml: "ml", milliliter: "ml", millilitre: "ml", milliliters: "ml", millilitres: "ml", l: "l", lt: "l", ltr: "l", liter: "l", litre: "l", liters: "l", litres: "l",

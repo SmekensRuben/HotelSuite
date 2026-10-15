@@ -110,6 +110,7 @@ function ScopedSupplierProductsPage({ hotelUid }) {
     },
     { key: "supplierSku", label: "Supplier SKU" },
     { key: "supplierProductName", label: "Supplier Product Name" },
+    { key: "brand", label: "Brand", render: (product) => product.brand || "Not supplied" },
     { key: "packageContent", label: "Supplier package content", sortable: false, render: (product) => <span className="text-sm">{typeof product.baseUnitsPerPurchaseUnit === "number" ? product.baseUnitsPerPurchaseUnit : "Unknown"} {productUnitLabel(product.baseUnit)}<span className="mt-1 block text-xs text-gray-500">per {product.purchaseUnit || "unknown purchase unit"}</span></span> },
     {
       key: "price",
