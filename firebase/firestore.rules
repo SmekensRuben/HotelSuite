@@ -414,6 +414,8 @@ service cloud.firestore {
       // apply product commands. Browsers cannot manufacture review receipts.
       match /hotelMcpProposalBatches/{document=**} { allow read, write: if false; }
       match /hotelMcpProposalOperations/{document=**} { allow read, write: if false; }
+      match /hotelMcpProposalImages/{document=**} { allow read, write: if false; }
+      match /hotelMcpProposalImageOperations/{document=**} { allow read, write: if false; }
       match /catalogSkuConfiguration/{document=**} { allow read, write: if false; }
       match /catalogSkuKeys/{document=**} { allow read, write: if false; }
       match /catalogSkuLegacyIndex/{document=**} { allow read, write: if false; }

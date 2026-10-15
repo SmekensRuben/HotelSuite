@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import ProductProposalEditor from "./ProductProposalEditor";
+import ProductProposalImageReview from "./ProductProposalImageReview";
 
 const format = (value) => value === null || value === undefined || value === "" ? "Unknown / cleared" : typeof value === "boolean" ? value ? "Yes" : "No" : Array.isArray(value) ? value.length ? value.map((entry) => typeof entry === "object" ? JSON.stringify(entry) : entry).join("; ") : "None recorded" : typeof value === "object" ? JSON.stringify(value) : String(value);
 const label = (value) => value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (character) => character.toUpperCase());
@@ -12,7 +13,7 @@ export function productProposalName(row = {}) {
   return candidates.find((value) => typeof value === "string" && value.trim())?.trim().slice(0, 200) || "Product proposal";
 }
 
-export default function ProductProposalReviewRow({ hotelUid, row, rows, checked, eligible, canEdit, canReadCatalog, canReadSuppliers, disabled, onSelect, onApprove, onSkip, onCorrect }) {
+export default function ProductProposalReviewRow({ hotelUid, batchId, batchRevision, row, rows, checked, eligible, canEdit, canReadCatalog, canReadSuppliers, canReplaceImage, disabled, imageDisabled, onImageAction, onSelect, onApprove, onSkip, onCorrect }) {
   const [editing, setEditing] = useState(false);
   const changedFields = [...new Set([...Object.keys(row.patch || {}), ...Object.keys(row.current || {}).filter((key) => JSON.stringify(row.current[key]) !== JSON.stringify(row.original?.[key]))])];
   const dependency = rows.find((item) => item.rowId === row.catalogRowId);
@@ -30,6 +31,7 @@ export default function ProductProposalReviewRow({ hotelUid, row, rows, checked,
     {!changedFields.length && <p className="text-xs text-stone-500">No source fields were proposed. Existing information is preserved.</p>}
     <p className="text-xs text-stone-500">Fields absent from the source remain {row.action === "update" ? "unchanged" : "unknown"}. Empty or null proposed values explicitly clear information. Price changes use the existing approval and price-history rules.</p>
     {resultId && <p className="text-sm text-green-900">Applied · <Link className="underline" to={`/catalog/${row.kind === "catalog" ? "products" : "supplier-products"}/${encodeURIComponent(resultId)}`}>Open product</Link>{row.result?.internalSku ? ` · ${row.result.internalSku}` : ""}</p>}
+    {row.kind === "supplier" && row.status !== "skipped" && <ProductProposalImageReview hotelUid={hotelUid} batchId={batchId} batchRevision={batchRevision} row={row} canEdit={canEdit} canReplaceExisting={canReplaceImage} disabled={imageDisabled ?? disabled} onImageAction={onImageAction} />}
     {!terminal.has(row.status) && <div className="flex flex-wrap gap-2"><button type="button" className="ht-button-primary" disabled={disabled || !eligible} onClick={onApprove}>{row.status === "failed" ? "Review and retry" : "Approve this proposal"}</button><button type="button" className="ht-button-secondary" disabled={disabled || !canEdit} onClick={() => setEditing(!editing)}>{editing ? "Close correction" : "Correct proposal"}</button><button type="button" className="text-xs text-stone-600 underline" disabled={disabled || !canEdit} onClick={onSkip}>Skip proposal</button>{!canEdit && <p className="self-center text-xs text-stone-500">Product {row.action} permission is required to review this row.</p>}</div>}
     {editing && <ProductProposalEditor key={`${row.rowId}:${row.reviewRevision || ""}:${row.status}`} hotelUid={hotelUid} row={row} rows={rows} disabled={disabled} canReadCatalog={canReadCatalog} canReadSuppliers={canReadSuppliers} onSave={correct} onCancel={() => setEditing(false)} />}
   </article>;

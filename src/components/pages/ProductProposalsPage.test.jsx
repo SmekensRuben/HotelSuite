@@ -1,8 +1,8 @@
 import React from "react";
 import { MemoryRouter } from "react-router-dom";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ hotel: "hotel-a", auth: { currentUser: { uid: "owner" } }, permissions: [], list: vi.fn(), read: vi.fn(), review: vi.fn(), retry: vi.fn(), pending: vi.fn(), taxonomy: vi.fn(), suppliers: vi.fn(), catalog: vi.fn() }));
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({ hotel: "hotel-a", auth: { currentUser: { uid: "owner" } }, permissions: [], list: vi.fn(), read: vi.fn(), review: vi.fn(), retry: vi.fn(), pending: vi.fn(), taxonomy: vi.fn(), suppliers: vi.fn(), catalog: vi.fn(), imagePreview: vi.fn(), imagePending: vi.fn(), imagePrepare: vi.fn(), imageUpload: vi.fn(), imageDecide: vi.fn(), imageRetry: vi.fn() }));
 vi.mock("../../firebaseConfig", () => ({ auth: mocks.auth }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel }) }));
 vi.mock("../../hooks/usePermission", () => ({ usePermission: (feature, action) => mocks.permissions.includes(`${feature}.${action}`) }));
@@ -11,9 +11,12 @@ vi.mock("../../services/firebaseProductProposals", () => ({ listProductProposalB
 vi.mock("../../services/firebaseSettings", () => ({ getCatalogTaxonomy: mocks.taxonomy }));
 vi.mock("../../services/firebaseSuppliers", () => ({ getSuppliers: mocks.suppliers }));
 vi.mock("../../services/firebaseProducts", () => ({ getCatalogProducts: mocks.catalog }));
+vi.mock("../../services/firebaseProductProposalImages", () => ({ getProductProposalImage: mocks.imagePreview, getPendingProductProposalImageAction: mocks.imagePending, prepareProductProposalImage: mocks.imagePrepare, uploadProductProposalImage: mocks.imageUpload, decideProductProposalImage: mocks.imageDecide, retryProductProposalImageAction: mocks.imageRetry, safeProductProposalImageUrl: (value) => typeof value === "string" && value.startsWith("https://") ? value : null }));
+vi.mock("../catalog/SupplierProductImage", () => ({ default: () => <span role="img" aria-label="Managed current image" /> }));
 vi.mock("../layout/PageShell", () => ({ default: ({ children }) => <main>{children}</main> }));
 vi.mock("../shared/Modal", () => ({ default: ({ open, title, children }) => open ? <section role="dialog" aria-label={title}>{children}</section> : null }));
 import ProductProposalsPage from "./ProductProposalsPage";
+const NativeURL = URL;
 
 const row = (overrides = {}) => ({ rowId: "catalog-row", kind: "catalog", action: "create", status: "ready", expectedRevision: 0, original: null, proposed: { name: "Whole milk", baseUnit: "l", active: true, inventoryTracked: true }, patch: { name: "Whole milk", baseUnit: "l", active: true, inventoryTracked: true }, issues: [], ...overrides });
 let batch;
@@ -26,8 +29,11 @@ beforeEach(() => {
   mocks.list.mockResolvedValue({ hotelUid: "hotel-a", batches: [{ ...batch, rows: undefined }], nextCursor: null });
   mocks.taxonomy.mockResolvedValue({ categories: [{ id: "food", name: "Food" }, { id: "drinks", name: "Drinks" }], subcategories: [{ id: "dairy", name: "Dairy", categoryId: "food" }, { id: "juice", name: "Juice", categoryId: "drinks" }] });
   mocks.suppliers.mockResolvedValue([{ id: "supplier-1", name: "Sligro" }]); mocks.catalog.mockResolvedValue({ products: [], hasMore: false });
+  mocks.imagePending.mockReturnValue(null); mocks.imagePreview.mockResolvedValue(new Blob(["private"], { type: "image/webp" })); mocks.imagePrepare.mockResolvedValue({ batchRevision: 2 }); mocks.imageDecide.mockResolvedValue({ batchRevision: 2 });
+  vi.stubGlobal("URL", Object.assign(class extends NativeURL {}, { createObjectURL: vi.fn(() => "blob:private-preview"), revokeObjectURL: vi.fn() }));
   mocks.review.mockImplementation(async (_, __, input) => { batch.revision += 1; if (input.action === "approve") batch.rows = batch.rows.map((item) => input.rowIds.includes(item.rowId) ? { ...item, status: "applied", result: { productId: `created-${item.rowId}` } } : item); if (input.action === "skip") batch.rows = batch.rows.map((item) => input.rowIds.includes(item.rowId) ? { ...item, status: "skipped" } : item); return structuredClone(batch); });
 });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it("lists private batches and opens the selected batch with its source", async () => {
   render(wrap("/catalog/products/proposals")); await screen.findByRole("button", { name: /Sligro list/ }); expect(mocks.read).not.toHaveBeenCalled();
@@ -123,4 +129,22 @@ it("renders validation for malformed source names and uses readable product deta
   batch.rows = [row({ rowId: "supplier-row", kind: "supplier", productId: "technical-product-hash", status: "invalid", proposed: { supplierProductName: { text: "Malformed source name" }, brand: { unexpected: true } }, patch: { supplierProductName: { text: "Malformed source name" }, supplierSku: "SL-001", brand: "Acme", baseUnit: "l" }, original: { supplierProductName: "Existing milk" }, issues: [{ severity: "error", code: "invalid-name", message: "Supplier product name must be text." }] })];
   render(wrap()); await screen.findByRole("heading", { name: "Existing milk" });
   expect(screen.getByText("Supplier Product · SL-001 · Acme · l")).toBeInTheDocument(); expect(screen.getByText(/Supplier product name must be text/)).toBeInTheDocument(); expect(screen.queryByText("technical-product-hash")).not.toBeInTheDocument(); expect(screen.getByRole("checkbox", { name: "Select supplier-row" })).toBeDisabled(); expect(mocks.review).not.toHaveBeenCalled();
+});
+it("waits for a fresh batch after image preparation before allowing product approval", async () => {
+  batch.rows = [row({ rowId: "supplier-row", kind: "supplier", proposed: { supplierProductName: "Milk case" }, patch: { supplierProductName: "Milk case" } })];
+  let reconcile; mocks.read.mockResolvedValueOnce(structuredClone(batch)).mockReturnValueOnce(new Promise((done) => { reconcile = done; }));
+  render(wrap()); await screen.findByRole("heading", { name: "Milk case" }); fireEvent.click(screen.getByRole("button", { name: "Add an image" })); fireEvent.change(screen.getByLabelText("Direct image URL"), { target: { value: "https://supplier.example/image.webp" } }); fireEvent.click(screen.getByRole("button", { name: "Prepare image URL" }));
+  await waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2)); expect(article("Milk case").getByRole("button", { name: "Approve this proposal" })).toBeDisabled(); expect(mocks.review).not.toHaveBeenCalled();
+  await act(async () => { reconcile({ ...structuredClone(batch), revision: 2 }); }); await waitFor(() => expect(article("Milk case").getByRole("button", { name: "Approve this proposal" })).toBeEnabled());
+});
+it("retains optional image failures on applied rows without blocking product approval", async () => {
+  batch.rows = [row({ rowId: "supplier-row", kind: "supplier", proposed: { supplierProductName: "Milk case" }, patch: { supplierProductName: "Milk case" }, image: { assetId: "a".repeat(64), status: "failed", selection: "unselected", decisionRevision: 0, sourceUrl: "https://supplier.example/image.webp", error: { message: "The image source is unavailable." }, attachment: { status: "none" }, currentImage: { assetId: null, status: "none", imageRevision: 0 } } })];
+  render(wrap()); await screen.findByRole("heading", { name: "Milk case" }); fireEvent.click(article("Milk case").getByRole("button", { name: "Approve this proposal" })); fireEvent.click(screen.getByRole("button", { name: "Confirm approval" })); await screen.findByRole("link", { name: "Open product" });
+  expect(screen.getByText("The image source is unavailable.")).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Retry image preparation" })).toBeEnabled(); expect(mocks.imageDecide).not.toHaveBeenCalled(); expect(mocks.review).toHaveBeenCalledTimes(1);
+});
+it("blocks approval after an unreconciled image action until a successful refresh", async () => {
+  batch.rows = [row({ rowId: "supplier-row", kind: "supplier", proposed: { supplierProductName: "Milk case" }, patch: { supplierProductName: "Milk case" } })];
+  mocks.read.mockResolvedValueOnce(structuredClone(batch)).mockRejectedValueOnce(new Error("The batch refresh failed.")).mockResolvedValueOnce({ ...structuredClone(batch), revision: 2 });
+  render(wrap()); await screen.findByRole("heading", { name: "Milk case" }); fireEvent.click(screen.getByRole("button", { name: "Add an image" })); fireEvent.change(screen.getByLabelText("Direct image URL"), { target: { value: "https://supplier.example/image.webp" } }); fireEvent.click(screen.getByRole("button", { name: "Prepare image URL" }));
+  await screen.findByText("The batch refresh failed."); expect(article("Milk case").getByRole("button", { name: "Approve this proposal" })).toBeDisabled(); fireEvent.click(screen.getByRole("button", { name: "Refresh progress" })); await waitFor(() => expect(article("Milk case").getByRole("button", { name: "Approve this proposal" })).toBeEnabled()); expect(mocks.review).not.toHaveBeenCalled();
 });

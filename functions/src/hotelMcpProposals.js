@@ -1,5 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { admin } = require("./config");
+const { admin, logger } = require("./config");
 const { requireDocumentId } = require("./subscriptions");
 const { digest, revision, text, requireCurrentVerifiedUser } = require("./validation");
 const { normalizedPermissions, permissionAllows } = require("./authorization");
@@ -109,7 +109,8 @@ function publicBatch(batch) {
     key === "purchaseOptions" ? Array.isArray(entry) ? entry.map(publicOption) : publicOption(entry) : entry])) : null;
   const rows = batch.rows.map((row) => ({ rowId: row.rowId, kind: row.kind, action: row.action, status: row.status, productId: row.productId,
     expectedRevision: row.expectedRevision, original: publicProduct(row.original), proposed: publicProduct(row.proposed), patch: publicProduct(row.patch),
-    catalogRowId: row.catalogRowId, issues: row.issues, result: row.result, error: row.error, current: publicProduct(row.current), currentRevision: row.currentRevision }));
+    catalogRowId: row.catalogRowId, issues: row.issues, result: row.result, error: row.error, current: publicProduct(row.current), currentRevision: row.currentRevision,
+    image: row.kind === "supplier" && row.image ? require("./hotelMcpProposalImages").publicProposalImage(row.image) : null }));
   return { batchId: batch.batchId, hotelUid: batch.hotelUid, requesterUid: batch.ownerUid, revision: batch.revision, status: batch.status,
     source: batch.source, createdAtMillis: batch.createdAtMillis, updatedAtMillis: batch.updatedAtMillis,
     processing: Boolean(batch.activeReviewId), pendingReview: batch.reviewCommand || null, rows, summary: batch.summary };
@@ -341,6 +342,15 @@ async function readHotelProductProposalBatchHandler(request, services = {}) {
     await authorizeAnyProductRead(db, actor, hotelUid, tx, services);
     const batch = ownedBatch(await tx.get(db.doc(batchPath(hotelUid, batchId))), request.auth.uid);
     await authorizeRows(db, actor, hotelUid, batch.rows, tx, services);
+    // A native image edit has its own revision and does not change the product
+    // proposal revision. Refresh the comparison so a rejected replacement can
+    // be explicitly reviewed against the actual current image.
+    for (const row of batch.rows.filter((entry) => entry.kind === "supplier" && entry.image)) {
+      const productId = row.result?.productId || (row.action === "update" ? row.productId : null);
+      const product = productId ? await tx.get(db.doc(`hotels/${hotelUid}/supplierproducts/${requireDocumentId(productId, "Supplier product ID")}`)) : null;
+      row.image = { ...row.image, currentImage: require("./hotelMcpProposalImages").currentImage(product?.exists ? product.data() : null),
+        ...((row.image.expiresAtMillis ?? Infinity) <= (services.now?.() ?? Date.now()) ? { status: "expired" } : {}) };
+    }
     return publicBatch(batch);
   });
 }
@@ -388,6 +398,32 @@ function priceEvidence(batch, row) {
     allowPriceChange: Object.keys(row.patch).some((key) => ["pricePerBaseUnit", "pricePerPurchaseUnit", "priceBasis", "vatRate", "currency", "priceValidFrom", "priceValidUntil", "purchaseUnit", "baseUnitsPerPurchaseUnit", "purchaseOptions", "pricingModel"].includes(key)),
     sourceReference: batch.source.url || batch.source.label, sourceIssuedOn: batch.source.documentDate,
     sourceImportId: batch.batchId, sourceProposalId: row.rowId };
+}
+async function finishApprovedProposalImages(request, operation, result, services) {
+  if (operation.action !== "approve" || !operation.imageSelections?.length) return result;
+  let failed = false;
+  try {
+    await require("./hotelMcpProposalImages").attachSelectedProposalImages(request, {
+      hotelUid: request.data.hotelUid, batchId: request.data.batchId, rowIds: operation.rowIds,
+      selectionSnapshot: operation.imageSelections,
+    }, services);
+  } catch {
+    // Product commands are already durable. Image I/O cannot roll them back or
+    // turn their exact retry into another product/price/SKU mutation.
+    failed = true;
+    logger.warn("Product proposal data was committed; image attachment needs recovery.");
+  }
+  const current = await readHotelProductProposalBatchHandler({ ...request,
+    data: { hotelUid: request.data.hotelUid, batchId: request.data.batchId } }, services);
+  if (failed) for (const row of current.rows) {
+    if (row.status === "applied" && row.image?.selection === "selected" && row.image.attachment?.status !== "attached"
+      && operation.imageSelections.some((selection) => selection.rowId === row.rowId && selection.assetId === row.image.assetId
+        && selection.decisionRevision === row.image.decisionRevision)) {
+      row.image.attachment = { ...row.image.attachment, status: "failed", error: { code: "image-attachment-unavailable",
+        message: "Product data was approved. The image could not be attached; retry the image without preparing the product again." } };
+    }
+  }
+  return { ...current, requestId: request.data.requestId };
 }
 async function reviewHotelProductProposalsHandler(request, services = {}) {
   if (request.mcpAuth) throw new HttpsError("permission-denied", "Product proposals may only be approved in Hotel Toolkit.");
@@ -468,6 +504,8 @@ async function reviewHotelProductProposalsHandler(request, services = {}) {
       batch.revision += 1; batch.updatedAtMillis = now;
       const operation = { batchId, ownerUid: request.auth.uid, fingerprint, action: input.action, rowIds: [...rowIds].sort((a, b) => (batch.rows.find((row) => row.rowId === a).kind === "catalog" ? 0 : 1) - (batch.rows.find((row) => row.rowId === b).kind === "catalog" ? 0 : 1)), outcomes: [], status: input.action === "approve" ? "applying" : "completed", createdAt: stamp() };
       if (input.action === "approve") {
+        operation.imageSelections = batch.rows.filter((row) => rowIds.includes(row.rowId) && row.kind === "supplier" && row.image?.selection === "selected")
+          .map((row) => ({ rowId: row.rowId, assetId: row.image.assetId, decisionRevision: row.image.decisionRevision }));
         batch.activeReviewId = opRef.path.split("/").at(-1);
         batch.reviewCommand = boundedJson(input);
       }
@@ -477,7 +515,7 @@ async function reviewHotelProductProposalsHandler(request, services = {}) {
       return operation;
     } catch (error) { throw noWrite(error); }
   });
-  if (started.status === "completed") return started.result;
+  if (started.status === "completed") return finishApprovedProposalImages(request, started, started.result, services);
   // Each row and its durable result share the existing product transaction.
   // A crash between rows resumes this exact receipt; it cannot duplicate SKUs,
   // prices or products, nor repeat a previously committed row.
@@ -528,7 +566,7 @@ async function reviewHotelProductProposalsHandler(request, services = {}) {
     });
     await services.afterRow?.(rowId);
   }
-  return db.runTransaction(async (tx) => {
+  const completed = await db.runTransaction(async (tx) => {
     const actor = { ...request };
     await authorizeAnyProductRead(db, actor, hotelUid, tx, services);
     const batch = ownedBatch(await tx.get(ref), request.auth.uid), operation = (await tx.get(opRef)).data();
@@ -540,6 +578,7 @@ async function reviewHotelProductProposalsHandler(request, services = {}) {
     tx.set(ref, { ...batch, updatedAt: stamp() }); tx.set(opRef, operation);
     return operation.result;
   });
+  return finishApprovedProposalImages(request, started, completed, services);
 }
 
 const options = { region: "us-central1", cors: true, timeoutSeconds: 120, memory: "512MiB", concurrency: 4, maxInstances: 5 };

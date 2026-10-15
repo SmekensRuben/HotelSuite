@@ -186,6 +186,21 @@ test("metadata documents supported units, explicit unknowns and backend-only SKU
   assert.equal(f.accesses[0].feature, "supplierproducts"); assert.equal(f.lookups.length, 0); assert.equal(f.queries.length, 0);
 });
 
+test("supplier metadata discovers optional image preparation without allowing image URLs in product patches", async () => {
+  const f = fixture();
+  const supplierMetadata = await reads.getMcpProductWorkflowMetadataHandler(request({ hotelUid: "hotel-a", kind: "supplier" }), f.services);
+  assert.deepEqual(supplierMetadata.imageCapabilities, { supported: true, prepareTool: "prepare_supplier_product_proposal_image", sourceTypes: ["public-direct-image-url"],
+    mimeTypes: ["image/jpeg", "image/png", "image/webp"], maximumSourceBytes: 5 * 1024 * 1024, maximumPixels: 16000000, retentionDays: 7, temporaryStorage: "private",
+    requiresExplicitHumanSelection: true, requiresHotelToolkitApproval: true, replacesExistingImageOnlyAfterExplicitReview: true,
+    imageFailureBlocksProductApproval: false, acceptsImageUrlInProductPatch: false });
+  assert.equal(supplierMetadata.fields.includes("imageUrl"), false);
+  assert.ok(supplierMetadata.rules.some((rule) => rule.includes("protected Sligro images may be unavailable")));
+  assert.ok(supplierMetadata.rules.some((rule) => rule.includes("never selects, attaches, replaces or approves")));
+  const catalogMetadata = await reads.getMcpProductWorkflowMetadataHandler(request({ hotelUid: "hotel-a", kind: "catalog" }), f.services);
+  assert.equal(catalogMetadata.imageCapabilities.supported, false); assert.equal(catalogMetadata.imageCapabilities.prepareTool, null);
+  assert.deepEqual(catalogMetadata.imageCapabilities.sourceTypes, []); assert.deepEqual(catalogMetadata.imageCapabilities.mimeTypes, []);
+});
+
 for (const [name, data] of [
   ["arbitrary paths", { hotelUid: "hotel-a", pageSize: 10, path: "users" }],
   ["unbounded pages", { hotelUid: "hotel-a", pageSize: 1000 }],

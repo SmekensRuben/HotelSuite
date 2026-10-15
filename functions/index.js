@@ -48,7 +48,7 @@ exports.setHotelSubscription = setHotelSubscription;
 exports.listHotelSubscriptions = listHotelSubscriptions;
 exports.searchHotelProducts = searchHotelProducts;
 // Private personal MCP grants and durable human-reviewed product proposals.
-for (const module of ["hotelMcp", "hotelMcpProposals"]) {
+for (const module of ["hotelMcp", "hotelMcpProposals", "hotelMcpProposalImages"]) {
   for (const [name, value] of Object.entries(require(`./src/${module}`))) {
     if (value?.__endpoint) exports[name] = value;
   }
