@@ -399,6 +399,15 @@ service cloud.firestore {
       match /productOperations/{operationId} { allow read, write: if false; }
       match /productSkuKeys/{keyId} { allow read, write: if false; }
       match /productAudit/{auditId} { allow read, write: if false; }
+      // Catalog reconciliation and SKU allocation use scoped backend projections.
+      match /catalogSyncJobs/{document=**} { allow read, write: if false; }
+      match /catalogSyncOperations/{document=**} { allow read, write: if false; }
+      match /catalogSyncAudit/{document=**} { allow read, write: if false; }
+      match /catalogSkuConfiguration/{document=**} { allow read, write: if false; }
+      match /catalogSkuKeys/{document=**} { allow read, write: if false; }
+      match /catalogSkuLegacyIndex/{document=**} { allow read, write: if false; }
+      match /catalogSkuOperations/{document=**} { allow read, write: if false; }
+      match /catalogSkuAudit/{document=**} { allow read, write: if false; }
       match /stockTemplateOperations/{operationId} { allow read, write: if false; }
       match /procurementResourceOperations/{operationId} { allow read, write: if false; }
       match /procurementResourceAudit/{auditId} { allow read, write: if false; }

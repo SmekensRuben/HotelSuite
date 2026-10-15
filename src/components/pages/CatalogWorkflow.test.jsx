@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ProductsPage from "./ProductsPage";
 import SupplierProductsPage from "./SupplierProductsPage";
 
-const mocks = vi.hoisted(() => ({ hotel: "hotel-a", actor: null, permissions: [], catalog: vi.fn(), supplier: vi.fn(), suppliers: vi.fn(), importCatalog: vi.fn(), importSupplier: vi.fn(), read: vi.fn(), parse: vi.fn(), rows: vi.fn(), write: vi.fn() }));
+const mocks = vi.hoisted(() => ({ hotel: "hotel-a", actor: null, permissions: [], navigate: vi.fn(), catalog: vi.fn(), supplier: vi.fn(), suppliers: vi.fn(), importCatalog: vi.fn(), importSupplier: vi.fn(), read: vi.fn(), parse: vi.fn(), rows: vi.fn(), write: vi.fn() }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, permissions: mocks.permissions, isPlatformAdmin: false, subscriptionActive: true, subscription: { modules: ["procurement", "contracts", "frontoffice", "groups", "revenue"], modulePolicyVersion: 1, status: "active", validUntil: null } }) }));
-vi.mock("react-router-dom", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("react-router-dom", () => ({ useNavigate: () => mocks.navigate }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key) => key }) }));
 vi.mock("../../firebaseConfig", () => ({ auth: { get currentUser() { return mocks.actor; } } }));
 vi.mock("../layout/PageShell", () => ({ default: ({ children }) => <main>{children}</main> }));
@@ -26,6 +26,21 @@ const choose = async (input, name) => {
 describe("catalog loading, taxonomy and complete export", () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.actor = null; mocks.permissions = ["catalogproducts.read", "catalogproducts.create", "supplierproducts.read", "supplierproducts.create", "suppliers.read"]; mocks.suppliers.mockResolvedValue([{ id: "supplier", name: "Supplier" }]); mocks.catalog.mockResolvedValue(page([{ id: "early-product", name: "Early product", category: "Early" }])); mocks.supplier.mockResolvedValue(page([])); });
   afterEach(() => vi.restoreAllMocks());
+  it("opens sync from the catalog action and removes it when update access is revoked", async () => {
+    mocks.permissions.push("supplierproducts.update");
+    const view = render(<ProductsPage />);
+    await screen.findByText("Early product");
+    fireEvent.click(screen.getByRole("button", { name: "Catalog sync" }));
+    expect(mocks.navigate).toHaveBeenCalledWith("/catalog/products/sync");
+    mocks.permissions = mocks.permissions.filter((permission) => permission !== "supplierproducts.update");
+    view.rerender(<ProductsPage />);
+    expect(screen.queryByRole("button", { name: "Catalog sync" })).not.toBeInTheDocument();
+    view.unmount();
+    mocks.permissions.push("supplierproducts.update");
+    render(<SupplierProductsPage />);
+    await waitFor(() => expect(mocks.supplier).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Catalog sync" })).not.toBeInTheDocument();
+  });
   it("shows supplier products to a supplierproducts-only reader without forbidden supplier lookups or filters", async () => {
     mocks.permissions = ["supplierproducts.read"];
     mocks.suppliers.mockRejectedValue(new Error("Forbidden supplier read"));

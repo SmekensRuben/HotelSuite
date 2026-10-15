@@ -3,12 +3,13 @@ function memoryDatabase(initial = {}) {
   const records = new Map(Object.entries(initial)), snapshot = (path) => ({ exists: records.has(path), data: () => structuredClone(records.get(path)),
     id: path.split("/").at(-1), ref: doc(path) });
   function doc(path) { return { path, id: path.split("/").at(-1), get: async () => snapshot(path), collection: (name) => collection(`${path}/${name}`) }; }
-  function collection(path, filters = [], orders = [], cursor = null, maximum = Infinity) {
+  function collection(path, filters = [], orders = [], cursor = null, maximum = Infinity, selected = null) {
     const query = { path, isQuery: true, doc: (id = "test-audit") => doc(`${path}/${id}`),
-      where: (field, op, value) => collection(path, [...filters, [field, op, value]], orders, cursor, maximum),
-      orderBy: (field, direction = "asc") => collection(path, filters, [...orders, [typeof field === "string" ? field : "__name__", direction]], cursor, maximum),
-      startAfter: (value) => collection(path, filters, orders, value, maximum),
-      limit: (value) => collection(path, filters, orders, cursor, value),
+      where: (field, op, value) => collection(path, [...filters, [field, op, value]], orders, cursor, maximum, selected),
+      orderBy: (field, direction = "asc") => collection(path, filters, [...orders, [typeof field === "string" ? field : "__name__", direction]], cursor, maximum, selected),
+      startAfter: (value) => collection(path, filters, orders, value, maximum, selected),
+      limit: (value) => collection(path, filters, orders, cursor, value, selected),
+      select: (...fields) => collection(path, filters, orders, cursor, maximum, fields),
       get: async () => {
         const fieldValue = (path, data, field) => field === "__name__" ? path.split("/").at(-1) : data[field];
         let entries = [...records.entries()].filter(([key, row]) => key.startsWith(`${path}/`) && key.slice(path.length + 1).split("/").length === 1
@@ -19,7 +20,7 @@ function memoryDatabase(initial = {}) {
         } return a[0].localeCompare(b[0]); });
         if (cursor) { const cursorId = typeof cursor === "string" ? cursor : cursor.id; const index = entries.findIndex(([key]) => key.split("/").at(-1) === cursorId);
           if (index >= 0) entries = entries.slice(index + 1); }
-        const docs = entries.slice(0, maximum).map(([key]) => snapshot(key)); return { docs, size: docs.length, empty: !docs.length };
+        const docs = entries.slice(0, maximum).map(([key]) => { const source = snapshot(key); return selected ? { ...source, data: () => Object.fromEntries(selected.filter((field) => Object.hasOwn(source.data(), field)).map((field) => [field, source.data()[field]])) } : source; }); return { docs, size: docs.length, empty: !docs.length };
       } };
     return query;
   }

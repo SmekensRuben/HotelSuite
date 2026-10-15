@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ call: vi.fn(), endpoint: vi.fn(), getDoc: vi.fn(), getDocs: vi.fn(), suppliers: vi.fn(), auth: { currentUser: { uid: "hotel-user" } } }));
 vi.mock("../firebaseConfig", () => ({ auth: mocks.auth, functions: {}, httpsCallable: (functions, endpoint) => { mocks.endpoint(endpoint); return mocks.call; }, db: {}, collection: (...parts) => parts.join("/"), doc: (...parts) => parts.join("/"), getDoc: mocks.getDoc, getDocs: mocks.getDocs }));
 vi.mock("./firebaseSuppliers", () => ({ getSuppliers: mocks.suppliers }));
-import { createCatalogProduct, createSupplierProduct, updateSupplierProduct, importCatalogProducts, importSupplierProducts } from "./firebaseProducts";
+import { createCatalogProduct, createSupplierProduct, updateCatalogProduct, updateSupplierProduct, importCatalogProducts, importSupplierProducts } from "./firebaseProducts";
 import { invalidateProcurementReads } from "./procurementReadPool";
 
 const catalog = (name) => ({ name, baseUnit: "each", inventoryTracked: true, active: true });
@@ -23,6 +23,13 @@ describe("protected product commands and exact retry identity", () => {
     await updateSupplierProduct("hotel-a", "stable-id", { supplierSku: "NEW-SKU", pricePerPurchaseUnit: null }, "untrusted-actor", { expectedRevision: 7 });
     expect(mocks.endpoint).toHaveBeenCalledWith("mutateHotelSupplierProduct");
     expect(mocks.call).toHaveBeenCalledWith(expect.objectContaining({ action: "update", productId: "stable-id", expectedRevision: 7, product: { supplierSku: "NEW-SKU", pricePerPurchaseUnit: null } }));
+  });
+  it("keeps automatic SKU and approved price metadata out of edits copied from saved products", async () => {
+    mocks.call.mockResolvedValue({ data: { hotelUid: "hotel-a", productId: "stable-id", revision: 8 } });
+    await updateCatalogProduct("hotel-a", "stable-id", { ...catalog("Milk"), internalSku: "CAT-000017", internalSkuCanonical: "CAT-000017", revision: 7 }, undefined, { expectedRevision: 7 });
+    expect(mocks.call.mock.calls[0][0].product).toEqual({ ...catalog("Milk"), internalSku: "CAT-000017" });
+    await updateSupplierProduct("hotel-a", "stable-id", { supplierSku: "milk", revision: 7, currentPriceVersionId: "approved", latestApprovedPriceVersionId: "future", latestApprovedPurchaseTerms: { pricePerPurchaseUnit: 100 }, priceConfirmedOn: "2026-10-14", priceSourceReference: "review.csv", priceSourceIssuedOn: "2026-10-14", latestPriceSourceIssuedOn: "2026-10-14", priceConfirmationSourceReference: "confirmation.csv", priceOptionReliability: { default: {} } }, undefined, { expectedRevision: 7 });
+    expect(mocks.call.mock.calls[1][0].product).toEqual({ supplierSku: "milk" });
   });
   it("allows corrected input only after the server proves non-commit", async () => {
     mocks.call.mockRejectedValueOnce(Object.assign(new Error("Invalid"), { details: { productRequestUncommitted: true } })).mockResolvedValue({ data: { hotelUid: "hotel-a", productId: "new", revision: 1 } });

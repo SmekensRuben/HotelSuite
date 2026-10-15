@@ -225,18 +225,13 @@ export default function ProductFormFields({
           </select>
           {initialData?.productPolicyVersion === 1 && <span className="text-xs font-normal text-gray-500">The reviewed stock unit is fixed to protect existing counts and receipts. Create a new catalog identity for a different unit.</span>}
         </label>
-        <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
-          Legacy quantity metadata (optional)
-          <input
-            type="number"
-            step="0.000001"
-            min="0.000001"
-            max="1000000"
-            value={formState.baseQtyPerUnit}
-            onChange={(event) => updateField("baseQtyPerUnit", event.target.value)}
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
-          />
-        </label>
+        {formState.baseQtyPerUnit !== "" && (
+          <details className="sm:col-span-2 text-sm text-gray-600">
+            <summary className="cursor-pointer font-semibold">Additional information</summary>
+            <p className="mt-2">Previously recorded quantity: <span className="font-medium text-gray-900">{formState.baseQtyPerUnit}</span></p>
+            <p className="mt-1">Kept for reference from the previous product format. Stock counts use the stock-count unit; package conversions use supplier package contents.</p>
+          </details>
+        )}
       </SectionCard>
 
       <SectionCard title={t("products.sections.identifiers")}>
@@ -255,6 +250,7 @@ export default function ProductFormFields({
             onChange={(event) => updateField("internalSku", event.target.value)}
             className="rounded border border-gray-300 px-3 py-2 text-sm"
           />
+          {!initialData && <span className="text-xs font-normal text-gray-500">Leave blank to use your hotel's automatic SKU settings.</span>}
         </label>
       </SectionCard>
 

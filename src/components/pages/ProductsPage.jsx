@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Plus, X } from "lucide-react";
+import { Plus, RefreshCw, Sparkles, X } from "lucide-react";
 import PageShell from "../layout/PageShell";
 import AsyncError from "../shared/AsyncError";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
@@ -47,7 +47,7 @@ const EXPORT_TEMPLATE_ROW = {
   category: "",
   subcategory: "",
   baseUnit: "",
-  baseQtyPerUnit: "1",
+  baseQtyPerUnit: "",
   gtin: "",
   internalSku: "",
   storageType: "",
@@ -70,6 +70,9 @@ function ScopedProductsPage({ hotelUid }) {
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const fileInputRef = useRef(null);
   const canCreateProducts = usePermission("catalogproducts", "create");
+  const canReadSupplierProducts = usePermission("supplierproducts", "read");
+  const canUpdateSupplierProducts = usePermission("supplierproducts", "update");
+  const canReadSuppliers = usePermission("suppliers", "read");
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
@@ -131,6 +134,7 @@ function ScopedProductsPage({ hotelUid }) {
 
   const columns = [
     { key: "name", label: t("products.columns.name") },
+    { key: "internalSku", label: "Internal SKU" },
     { key: "brand", label: t("products.columns.brand") },
     { key: "category", label: t("products.columns.category") },
     { key: "subcategory", label: t("products.columns.subcategory") },
@@ -326,6 +330,19 @@ function ScopedProductsPage({ hotelUid }) {
             <p className="text-gray-600 mt-1">{t("products.subtitle")}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {canReadSupplierProducts && canUpdateSupplierProducts && canReadSuppliers && (
+              <button
+                type="button"
+                aria-label="Catalog sync"
+                title="Catalog sync — review supplier links with optional AI suggestions"
+                className="relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-violet-200 bg-gradient-to-br from-violet-50 to-indigo-50 text-violet-700 transition-colors hover:border-violet-400 hover:text-violet-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={busy}
+                onClick={() => navigate("/catalog/products/sync")}
+              >
+                <RefreshCw size={20} aria-hidden="true" />
+                <Sparkles size={12} aria-hidden="true" className="absolute right-1 top-1 rounded bg-violet-50 text-violet-500" />
+              </button>
+            )}
             <button
               type="button"
               onClick={handleImportButton}

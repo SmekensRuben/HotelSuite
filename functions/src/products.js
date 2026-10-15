@@ -7,6 +7,7 @@ const { gated, requireSaasRollout } = require("./saasRollout");
 const policy = require("./productPolicy");
 const pricePolicy = require("./supplierPricePolicy");
 const priceVersions = require("./supplierPriceVersions");
+const catalogSkus = require("./catalogSkuSettings");
 const { validTimeZone } = require("./hotelSetupPolicy");
 const { localDate } = require("./importMonitoringPolicy");
 
@@ -49,7 +50,7 @@ function preserveSupplierMetadata(input, previous) {
   return result;
 }
 
-async function prepareProduct(tx, db, hotelUid, collection, productId, action, expected, input, plannedSkus, priceEvidence, services = {}) {
+async function prepareProduct(tx, db, hotelUid, collection, productId, action, expected, input, plannedSkus, priceEvidence, services = {}, catalogAllocationContext) {
   const ref = db.doc(`hotels/${hotelUid}/${collection}/${productId}`);
   const current = await tx.get(ref), previous = current.exists ? current.data() : null;
   if (action === "create" && current.exists) throw new HttpsError("already-exists", "This product ID already exists. Edit the existing product instead.");
@@ -59,7 +60,9 @@ async function prepareProduct(tx, db, hotelUid, collection, productId, action, e
   if (action === "archive") return { ref, previous, next: { ...previous, active: false, archived: true }, expected, action, productId };
   // Older clients/imports predate optional contract bounds and package GTINs.
   // Omission preserves stored metadata; only explicit null/blank clears it.
-  const productInput = collection === "supplierproducts" ? preserveSupplierMetadata(input, previous) : input;
+  const productInput = collection === "supplierproducts" ? preserveSupplierMetadata(input, previous)
+    : previous && input && typeof input === "object" && !Array.isArray(input) && !Object.hasOwn(input, "internalSku")
+      ? { ...input, internalSku: previous.internalSku ?? "" } : input;
   const next = collection === "catalogproducts" ? policy.normalizeCatalogProduct(productInput) : policy.normalizeSupplierProduct(productInput);
   if (previous?.archived === true && next.active) throw new HttpsError("failed-precondition", "Archived product identities cannot be reactivated. Create a distinct product instead.");
   // Canonical inventory units become immutable after the first reviewed save.
@@ -69,6 +72,11 @@ async function prepareProduct(tx, db, hotelUid, collection, productId, action, e
     throw new HttpsError("failed-precondition", "The canonical base unit is immutable. Create a new catalog product for a different unit.");
   }
   const plan = { ref, previous, next, expected, action, productId };
+  if (collection === "catalogproducts") {
+    const allocation = catalogAllocationContext ?? catalogSkus.createAllocationContext();
+    await catalogSkus.prepareCatalogSku(tx, db, hotelUid, plan, allocation);
+    plan.catalogAllocationOwned = !catalogAllocationContext;
+  }
   if (collection === "supplierproducts") {
     const supplier = await tx.get(db.doc(`hotels/${hotelUid}/suppliers/${next.supplierId}`));
     if (!supplier.exists) throw new HttpsError("failed-precondition", "The supplier does not exist in this hotel.");
@@ -140,9 +148,13 @@ function writeProduct(tx, plan, collection, actorUid) {
     if (plan.priceChanged || plan.priceConfirms) tx.create(plan.priceHistoryRef, pricePolicy.historyEntry(plan, actorUid, now));
   }
   tx.set(plan.ref, next);
+  if (collection === "catalogproducts" && plan.action !== "archive") {
+    catalogSkus.writeCatalogSkuReservation(tx, plan, actorUid, now);
+    if (plan.catalogAllocationOwned) catalogSkus.writeAllocation(tx, plan.catalogAllocationContext, actorUid);
+  }
   if (plan.skuRef) tx.set(plan.skuRef, { productId: plan.productId, supplierId: next.supplierId, supplierSku: next.supplierSku, updatedAt: now });
   if (plan.releaseOldSku) tx.delete(plan.oldSkuRef);
-  return { productId: plan.productId, revision: next.revision, ...(plan.action === "archive" ? { archived: true } : {}) };
+  return { productId: plan.productId, revision: next.revision, ...(collection === "catalogproducts" ? { internalSku: next.internalSku ?? "" } : {}), ...(plan.action === "archive" ? { archived: true } : {}) };
 }
 
 async function mutateProduct(request, services, collection) {
@@ -203,7 +215,7 @@ async function importHotelProductsHandler(request, services = {}) {
       supportedFields(input, ["hotelUid", "requestId", "collection", "products", "onExisting"], "product import");
       if (!["skip", "overwrite"].includes(input.onExisting)) throw new HttpsError("invalid-argument", "Choose skip or overwrite for existing products.");
       if (!Array.isArray(input.products) || input.products.length < 1 || input.products.length > MAX_IMPORT_PRODUCTS) throw new HttpsError("invalid-argument", `Import between 1 and ${MAX_IMPORT_PRODUCTS} products per request.`);
-      const plans = [], outcomes = [], ids = new Set(), plannedSkus = new Map();
+      const plans = [], outcomes = [], ids = new Set(), plannedSkus = new Map(), catalogAllocation = catalogSkus.createAllocationContext();
       let requiresUpdate = false;
       for (let index = 0; index < input.products.length; index++) {
         const row = input.products[index];
@@ -224,11 +236,12 @@ async function importHotelProductsHandler(request, services = {}) {
           await requireHotelPermission(db, actor, hotelUid, collection, "update", tx, services.auth);
           requiresUpdate = true;
         }
-        const plan = await prepareProduct(tx, db, hotelUid, collection, productId, current.exists ? "update" : "create", expected, row.product, plannedSkus, undefined, services);
-        plans.push(plan); outcomes.push({ productId, revision: expected + 1 });
+        const plan = await prepareProduct(tx, db, hotelUid, collection, productId, current.exists ? "update" : "create", expected, row.product, plannedSkus, undefined, services, catalogAllocation);
+        plans.push(plan); outcomes.push({ productId, revision: expected + 1, ...(collection === "catalogproducts" ? { internalSku: plan.next.internalSku } : {}) });
       }
       // No transaction writes occur until every row and reference has passed.
       for (const plan of plans) writeProduct(tx, plan, collection, request.auth.uid);
+      if (collection === "catalogproducts") catalogSkus.writeAllocation(tx, catalogAllocation, request.auth.uid);
       const result = { hotelUid, collection, imported: plans.length, skipped: outcomes.length - plans.length, products: outcomes };
       tx.create(operationRef, { actorUid: request.auth.uid, collection, action: "import", requiresUpdate, fingerprint, result, createdAt: stamp() });
       tx.create(db.doc(`hotels/${hotelUid}/productAudit/${commandId}`), { actorUid: request.auth.uid, collection, action: "import", products: outcomes, imported: plans.length, createdAt: stamp() });
@@ -237,9 +250,9 @@ async function importHotelProductsHandler(request, services = {}) {
   });
 }
 
-const options = { region: "us-central1", cors: true, timeoutSeconds: 120 };
+const options = { region: "us-central1", cors: true, timeoutSeconds: 120, memory: "512MiB", concurrency: 4, maxInstances: 5 };
 const mutateHotelCatalogProduct = onCall(options, gated(mutateHotelCatalogProductHandler));
 const mutateHotelSupplierProduct = onCall(options, gated(mutateHotelSupplierProductHandler));
 const importHotelProducts = onCall(options, gated(importHotelProductsHandler));
-module.exports = { supplierProductInternals: { prepareProduct, writeProduct, currentRevision }, MAX_IMPORT_PRODUCTS, mutateHotelCatalogProductHandler, mutateHotelSupplierProductHandler,
+module.exports = { catalogProductInternals: { prepareProduct, writeProduct, currentRevision, createAllocationContext: catalogSkus.createAllocationContext, writeAllocation: catalogSkus.writeAllocation }, supplierProductInternals: { prepareProduct, writeProduct, currentRevision }, MAX_IMPORT_PRODUCTS, mutateHotelCatalogProductHandler, mutateHotelSupplierProductHandler,
   importHotelProductsHandler, mutateHotelCatalogProduct, mutateHotelSupplierProduct, importHotelProducts };

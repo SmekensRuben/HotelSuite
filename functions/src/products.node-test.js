@@ -8,11 +8,12 @@ function memoryDatabase(initial = {}) {
   const snapshot = (path) => ({ exists: records.has(path), id: path.split("/").at(-1), data: () => structuredClone(records.get(path)) });
   let serial = Promise.resolve();
   const db = { records, doc: (path) => ({ path }), collection(path) {
-    const query = (filters = [], maximum = Infinity) => ({ isQuery: true,
-      where: (field, op, value) => { assert.equal(op, "=="); return query([...filters, [field, value]], maximum); },
-      limit: (value) => query(filters, value),
+    const query = (filters = [], maximum = Infinity, selected = null) => ({ isQuery: true,
+      where: (field, op, value) => { assert.equal(op, "=="); return query([...filters, [field, value]], maximum, selected); },
+      limit: (value) => query(filters, value, selected),
+      select: (...fields) => query(filters, maximum, fields),
       get: async () => { const docs = [...records.entries()].filter(([key, value]) => key.startsWith(`${path}/`) && key.slice(path.length + 1).split("/").length === 1 && filters.every(([field, expected]) => value[field] === expected))
-        .slice(0, maximum).map(([key]) => snapshot(key)); return { docs, size: docs.length, empty: docs.length === 0 }; } });
+        .slice(0, maximum).map(([key]) => { const source = snapshot(key); return selected ? { ...source, data: () => Object.fromEntries(selected.filter((field) => Object.hasOwn(source.data(), field)).map((field) => [field, source.data()[field]])) } : source; }); return { docs, size: docs.length, empty: docs.length === 0 }; } });
     return query();
   }, runTransaction(fn) {
     const run = serial.then(async () => {

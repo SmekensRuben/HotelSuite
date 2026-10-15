@@ -898,4 +898,4 @@ const processSupplierProductAiImport = onDocumentCreated({ document: "hotels/{ho
 const cleanupSupplierAiSources = onSchedule({ schedule: "every 15 minutes", region: "us-central1", timeoutSeconds: 540, memory: "512MiB", maxInstances: 1 }, cleanupSupplierAiSourcesHandler);
 module.exports = { supplierProductAiImport, processSupplierProductAiImport, cleanupSupplierAiSources, supplierProductAiImportHandler,
   processSupplierAiImportJobHandler, cleanupSupplierAiSourcesHandler, uploadSupplierAiImport, readSupplierAiImport, runSupplierAiImportJob,
-  publicJob, publicImportError, parseImportSettings, validateImportSettings, normalizeMonth, settleExpiredAttempt, savePrivate, readPrivate, REVIEW_WORKSPACE_VERSION };
+  publicJob, publicImportError, parseImportSettings, validateImportSettings, normalizeMonth, activeState, settleExpiredAttempt, savePrivate, readPrivate, REVIEW_WORKSPACE_VERSION };

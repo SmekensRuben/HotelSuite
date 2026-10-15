@@ -38,6 +38,13 @@ describe("HeaderBar Front Office permissions", () => {
     renderHeader();
     expect(screen.getByText("Front Office")).toBeInTheDocument();
   });
+  it("keeps catalog sync within Catalog Products instead of adding a separate menu item", () => {
+    permissions = ["catalogproducts.read", "supplierproducts.read", "supplierproducts.update", "suppliers.read"];
+    renderHeader();
+    expect(screen.getByRole("link", { name: "Catalog Products" })).toHaveAttribute("href", "/catalog/products");
+    expect(screen.getByRole("link", { name: "Supplier Products" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Catalog sync" })).not.toBeInTheDocument();
+  });
   it("shows movement navigation only for its separate read permission", () => {
     permissions = ["stockcounts.read"];
     const page = renderHeader();
