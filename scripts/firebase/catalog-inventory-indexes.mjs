@@ -20,6 +20,18 @@ const EXPECTED_INDEXES = [
   { collectionGroup: "inventoryMovements", queryScope: "COLLECTION", fields: [{ fieldPath: "locationId", order: "ASCENDING" }, { fieldPath: "sequence", order: "ASCENDING" }] },
   { collectionGroup: "inventoryMovements", queryScope: "COLLECTION", fields: [{ fieldPath: "locationId", order: "ASCENDING" }, { fieldPath: "receivedOn", order: "ASCENDING" }] },
 ];
+// These exact definitions may coexist in the shared manifest. This helper only
+// prepares inventory indexes; a private MCP pilot needs separate index setup.
+const REVIEWED_MCP_INDEXES = [
+  { collectionGroup: "hotelMcpOAuthConnections", queryScope: "COLLECTION", fields: [{ fieldPath: "uid", order: "ASCENDING" }, { fieldPath: "revokedAt", order: "ASCENDING" }, { fieldPath: "expiresAtMs", order: "ASCENDING" }] },
+  { collectionGroup: "hotelMcpProposalBatches", queryScope: "COLLECTION", fields: [{ fieldPath: "ownerUid", order: "ASCENDING" }, { fieldPath: "createdAtMillis", order: "DESCENDING" }, { fieldPath: "__name__", order: "DESCENDING" }] },
+];
+function manifestSignature(index) {
+  // Unlike live API comparisons, an explicit document-name field and its
+  // direction are part of the reviewed manifest and must match exactly.
+  return JSON.stringify({ collectionGroup: index.collectionGroup, queryScope: index.queryScope,
+    fields: index.fields.map((field) => ({ fieldPath: field.fieldPath, order: field.order })) });
+}
 
 function indexFields(fields) {
   if (!Array.isArray(fields)) throw new Error("An index response has no field definition.");
@@ -34,23 +46,27 @@ export function indexSignature(index) {
   return JSON.stringify({ collectionGroup: index.collectionGroup, queryScope: index.queryScope, fields: indexFields(index.fields) });
 }
 export function validateReviewedInventoryIndexes(configuration) {
-  if (!configuration || !Array.isArray(configuration.indexes) || configuration.indexes.length !== EXPECTED_INDEXES.length
+  if (!configuration || !Array.isArray(configuration.indexes)
+    || ![EXPECTED_INDEXES.length, EXPECTED_INDEXES.length + REVIEWED_MCP_INDEXES.length].includes(configuration.indexes.length)
     || !Array.isArray(configuration.fieldOverrides) || configuration.fieldOverrides.length !== 0
     || Object.keys(configuration).some((key) => !["indexes", "fieldOverrides"].includes(key))) {
-    throw new Error("The reviewed inventory index manifest must contain exactly four additive indexes and no field overrides.");
+    throw new Error("The reviewed manifest must contain the four inventory indexes, optionally both reviewed MCP indexes, and no field overrides.");
   }
-  const expected = new Set(EXPECTED_INDEXES.map(indexSignature)), seen = new Set();
+  const expected = new Set(EXPECTED_INDEXES.map(manifestSignature)), auxiliary = new Set(REVIEWED_MCP_INDEXES.map(manifestSignature));
+  const seen = new Set(), inventory = [];
   for (const index of configuration.indexes) {
     if (!index || Object.keys(index).some((key) => !["collectionGroup", "queryScope", "fields"].includes(key))
-      || !Array.isArray(index.fields) || index.fields.length !== 2
+      || !Array.isArray(index.fields)
       || index.fields.some((field) => !field || Object.keys(field).some((key) => !["fieldPath", "order"].includes(key)))) {
-      throw new Error("An inventory index contains an unreviewed option.");
+      throw new Error("An index contains an unreviewed option.");
     }
-    const key = indexSignature(index);
-    if (!expected.has(key) || seen.has(key)) throw new Error("The inventory index manifest differs from this reviewed release policy.");
+    const key = manifestSignature(index);
+    if ((!expected.has(key) && !auxiliary.has(key)) || seen.has(key)) throw new Error("The index manifest differs from this reviewed release policy.");
     seen.add(key);
+    if (expected.has(key)) inventory.push(index);
   }
-  return configuration.indexes.map((index) => structuredClone(index));
+  if (inventory.length !== EXPECTED_INDEXES.length) throw new Error("The manifest must retain all four reviewed inventory indexes.");
+  return inventory.map((index) => structuredClone(index));
 }
 export function validateReviewedInventoryRulesPolicy(policy) {
   if (policy?.saasRulesVersion !== "saas-platform-v6") throw new Error("The reviewed inventory Rules policy must be saas-platform-v6.");

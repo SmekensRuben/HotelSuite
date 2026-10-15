@@ -81,6 +81,11 @@ Cloud Functions use the Firebase project selected at deployment and therefore do
 Firebase's browser SDK does not expose the project's MFA enforcement policy to this application. Keep `VITE_AUTH_REQUIRE_MFA` aligned with each Firebase project's Authentication setting: `false` for the MFA-free test project and `true` only where every verified user must enroll a second factor. Firebase can still return `auth/multi-factor-auth-required` for an account that already has a factor; that challenge is always handled regardless of this enrollment policy.
 
 ## Firebase configuration
+The private [Hotel Toolkit MCP product connection](docs/hotel-toolkit-mcp.md) uses
+personal Firebase identity, OAuth consent and human-reviewed product proposals.
+It is disabled by default; the guide covers test hosting, private ChatGPT/Codex
+registration, revocation and the external checks still required.
+
 Firebase settings are stored in `.firebaserc` and `firebase.json`. The default project alias is `test-breakfast`. Cloud Functions are located in the `functions` directory and run on Node 22.
 
 ## Common npm scripts

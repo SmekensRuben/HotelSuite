@@ -6,6 +6,8 @@ import { createIndexRequest, prepareCatalogInventoryIndexes, validateReviewedInv
 
 const releaseSha = "a".repeat(40);
 const configuration = JSON.parse(readFileSync(new URL("../../firebase/firestore.indexes.json", import.meta.url), "utf8"));
+const inventoryConfiguration = { indexes: configuration.indexes.filter((value) => ["inventoryCheckpoints", "inventoryMovements"].includes(value.collectionGroup)), fieldOverrides: [] };
+const mcpIndexes = configuration.indexes.filter((value) => value.collectionGroup.startsWith("hotelMcp"));
 const resource = `projects/${INDEX_PROJECT}/databases/${INDEX_DATABASE}`;
 const indexResource = (group, id) => `${resource}/collectionGroups/${group}/indexes/${id}`;
 const database = () => ({ name: resource, type: "FIRESTORE_NATIVE", databaseEdition: "STANDARD" });
@@ -64,8 +66,17 @@ describe("reviewed periodic inventory index manifest", () => {
     }
   });
   it("accepts exactly the four reviewed composite indexes with no field overrides", () => {
+    expect(validateReviewedInventoryIndexes(inventoryConfiguration)).toHaveLength(4);
     expect(reviewed()).toHaveLength(4);
     expect(new Set(reviewed().map(indexSignature)).size).toBe(4);
+  });
+  it("validates the complete shared manifest while returning only the four inventory definitions", () => {
+    expect(configuration.indexes).toHaveLength(6);
+    expect(mcpIndexes).toHaveLength(2);
+    expect(reviewed()).toEqual(inventoryConfiguration.indexes);
+    expect(reviewed().every((value) => value.collectionGroup.startsWith("inventory"))).toBe(true);
+    const result = reviewed(); result[0].fields[0].fieldPath = "modified";
+    expect(configuration.indexes[0].fields[0].fieldPath).toBe("locationId");
   });
   it("compares serving fields while excluding Firestore's appended document-name field", () => {
     const definition = reviewed()[0];
@@ -73,12 +84,23 @@ describe("reviewed periodic inventory index manifest", () => {
     expect(indexSignature({ ...definition, fields: [...definition.fields].reverse() })).not.toBe(indexSignature(definition));
   });
   it.each([
-    { ...configuration, indexes: configuration.indexes.slice(1) },
-    { ...configuration, fieldOverrides: [{ collectionGroup: "users", fieldPath: "email", indexes: [] }] },
-    { ...configuration, indexes: [...configuration.indexes.slice(0, 3), configuration.indexes[0]] },
-    { ...configuration, indexes: configuration.indexes.map((value, i) => i ? value : { ...value, collectionGroup: "users" }) },
-    { ...configuration, indexes: configuration.indexes.map((value, i) => i ? value : { ...value, apiScope: "DATASTORE_MODE_API" }) },
+    { ...inventoryConfiguration, indexes: inventoryConfiguration.indexes.slice(1) },
+    { ...inventoryConfiguration, fieldOverrides: [{ collectionGroup: "users", fieldPath: "email", indexes: [] }] },
+    { ...inventoryConfiguration, indexes: [...inventoryConfiguration.indexes.slice(0, 3), inventoryConfiguration.indexes[0]] },
+    { ...inventoryConfiguration, indexes: inventoryConfiguration.indexes.map((value, i) => i ? value : { ...value, collectionGroup: "users" }) },
+    { ...inventoryConfiguration, indexes: inventoryConfiguration.indexes.map((value, i) => i ? value : { ...value, apiScope: "DATASTORE_MODE_API" }) },
   ])("rejects unreviewed index/override definitions", (value) => expect(() => validateReviewedInventoryIndexes(value)).toThrow());
+  it.each([
+    { ...configuration, indexes: [...inventoryConfiguration.indexes, mcpIndexes[0]] },
+    { ...configuration, indexes: [...inventoryConfiguration.indexes, mcpIndexes[0], mcpIndexes[0]] },
+    { ...configuration, indexes: [...inventoryConfiguration.indexes, ...mcpIndexes.map((value, i) => i ? value : { ...value, collectionGroup: "users" })] },
+    { ...configuration, indexes: [...inventoryConfiguration.indexes, ...mcpIndexes.map((value, i) => i ? value : { ...value, queryScope: "COLLECTION_GROUP" })] },
+    { ...configuration, indexes: [...inventoryConfiguration.indexes, ...mcpIndexes.map((value, i) => i ? value : { ...value, fields: [...value.fields].reverse() })] },
+    { ...configuration, indexes: [...inventoryConfiguration.indexes, ...mcpIndexes.map((value, i) => !i ? value : { ...value, fields: value.fields.map((field) => field.fieldPath === "__name__" ? { ...field, order: "ASCENDING" } : field) })] },
+    { ...configuration, indexes: [...inventoryConfiguration.indexes, ...mcpIndexes.map((value, i) => !i ? value : { ...value, fields: value.fields.slice(0, -1) })] },
+    { ...configuration, indexes: [...inventoryConfiguration.indexes, ...mcpIndexes.map((value, i) => i ? value : { ...value, apiScope: "ANY_API" })] },
+    { ...configuration, fieldOverrides: [{ collectionGroup: "hotelMcpOAuthConnections", fieldPath: "uid", indexes: [] }] },
+  ])("rejects incomplete, changed, duplicate or unreviewed auxiliary definitions", (value) => expect(() => validateReviewedInventoryIndexes(value)).toThrow());
 });
 
 describe("private index API diagnostics", () => {
@@ -114,6 +136,15 @@ describe("private index API diagnostics", () => {
 });
 
 describe("additive operator index preparation", () => {
+  it("does not create or require MCP indexes when preparing the complete shared manifest", async () => {
+    const api = fakeApi({ initial: [], readyAfter: 1 });
+    const result = await prepare(api, { mode: "apply" });
+    expect(result.ready).toBe(true); expect(result.created).toBe(4);
+    expect(result.indexes).toHaveLength(4);
+    expect(api.writeCalls().every((call) => /\/collectionGroups\/(inventoryCheckpoints|inventoryMovements)\/indexes$/.test(call.path))).toBe(true);
+    expect(api.stored.some((value) => value.collectionGroup.startsWith("hotelMcp"))).toBe(false);
+    await expect(prepare(api, { mode: "verify" })).resolves.toMatchObject({ ready: true, created: 0 });
+  });
   it("reuses READY indexes with the operator-observed names in a mixed-group inventory", async () => {
     const names = ["CICAgOjXh4EK", "CICAgJiUpoMK", "CICAgJim14AK", "CICAgJjF9oIK"];
     const initial = reviewed().map((definition, number) => {

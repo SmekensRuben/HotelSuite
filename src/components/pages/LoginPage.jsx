@@ -20,6 +20,7 @@ import {
 import { useHotelContext } from "../../contexts/HotelContext";
 import { workspaceHome } from "../../utils/workspace";
 import { purchaseRequestReturnPath } from "../../utils/purchaseRequestLink";
+import { mcpConnectionReturnPath } from "../../utils/mcpConnectionLink";
 import { useTranslation } from "react-i18next";
 
 const SCREENS = {
@@ -72,7 +73,7 @@ export default function LoginPage() {
   const location = useLocation();
   const { hotelUid, hotelUids, isPlatformAdmin, loading, authLoading } =
     useHotelContext();
-  const home = purchaseRequestReturnPath(location.state?.purchaseRequestReturn) || workspaceHome({
+  const home = purchaseRequestReturnPath(location.state?.purchaseRequestReturn) || mcpConnectionReturnPath(location.state?.mcpReturn) || workspaceHome({
     isPlatformAdmin,
     hotelUids: hotelUids || (hotelUid ? [hotelUid] : []),
   });

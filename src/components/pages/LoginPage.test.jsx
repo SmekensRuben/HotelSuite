@@ -16,6 +16,7 @@ const authMocks = vi.hoisted(() => ({
   authPolicy: { requireMfa: true },
   navigate: vi.fn(),
   returnPath: null,
+  mcpReturn: null,
 }));
 
 vi.mock("../../firebaseConfig", () => ({
@@ -48,7 +49,7 @@ vi.mock("firebase/auth", () => ({
 }));
 
 vi.mock("framer-motion", () => ({ motion: { div: ({ children, ...props }) => <div {...props}>{children}</div> } }));
-vi.mock("react-router-dom", () => ({ useNavigate: () => authMocks.navigate, useLocation: () => ({ state: { purchaseRequestReturn: authMocks.returnPath } }) }));
+vi.mock("react-router-dom", () => ({ useNavigate: () => authMocks.navigate, useLocation: () => ({ state: { purchaseRequestReturn: authMocks.returnPath, mcpReturn: authMocks.mcpReturn } }) }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: null, loading: false }) }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key) => key }) }));
 
@@ -65,6 +66,7 @@ describe("LoginPage authentication steps", () => {
     authMocks.sendEmailVerification.mockResolvedValue();
     authMocks.authPolicy.requireMfa = true;
     authMocks.returnPath = null;
+    authMocks.mcpReturn = null;
   });
 
   it("shows the email verification screen and sends a verification email", async () => {
@@ -84,6 +86,13 @@ describe("LoginPage authentication steps", () => {
     authMocks.signIn.mockResolvedValue({ user: { emailVerified: true } });
     render(<LoginPage />); submitCredentials();
     await waitFor(() => expect(authMocks.navigate).toHaveBeenCalledWith(authMocks.returnPath));
+  });
+  it("returns a verified account to its pending personal OAuth consent after signing in", async () => {
+    authMocks.authPolicy.requireMfa = false;
+    authMocks.mcpReturn = `/mcp/authorize?requestId=${"a".repeat(43)}`;
+    authMocks.signIn.mockResolvedValue({ user: { emailVerified: true } });
+    render(<LoginPage />); submitCredentials();
+    await waitFor(() => expect(authMocks.navigate).toHaveBeenCalledWith(authMocks.mcpReturn));
   });
 
   it("starts SMS enrollment for a verified user without a second factor", async () => {

@@ -5,6 +5,9 @@ function importObjectMatchesHotel(objectName, hotelUid) {
 }
 function requireHotelImportTarget(path, hotelUid) {
   const segments = String(path || "").split("/");
+  if (String(segments[2] || "").toLowerCase().startsWith("hotelmcp")) {
+    throw new Error("Import target must not modify personal MCP connections, product proposals or review evidence.");
+  }
   if (["purchaseRequests", "purchaseRequestOperations", "purchaseBudgets", "purchaseRequestAttachments", "purchaseRequestNotifications"].includes(segments[2])) {
     throw new Error("Import target must not modify purchase requests, approval history, budget commitments or private attachments.");
   }

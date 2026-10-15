@@ -47,6 +47,12 @@ for (const name of ["listHotelTeam", "updateHotelMember", "removeHotelMember"]) 
 exports.setHotelSubscription = setHotelSubscription;
 exports.listHotelSubscriptions = listHotelSubscriptions;
 exports.searchHotelProducts = searchHotelProducts;
+// Private personal MCP grants and durable human-reviewed product proposals.
+for (const module of ["hotelMcp", "hotelMcpProposals"]) {
+  for (const [name, value] of Object.entries(require(`./src/${module}`))) {
+    if (value?.__endpoint) exports[name] = value;
+  }
+}
 const products = require("./src/products");
 for (const name of ["mutateHotelCatalogProduct", "mutateHotelSupplierProduct", "importHotelProducts"]) exports[name] = products[name];
 const catalogSync = require("./src/catalogSync");

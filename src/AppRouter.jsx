@@ -19,6 +19,7 @@ const LandingPage = lazy(() => import("./components/pages/LandingPage.jsx"));
 const LoginPage = lazy(() => import("./components/pages/LoginPage.jsx"));
 const DashboardPage = lazy(() => import("./components/pages/DashboardPage.jsx"));
 import ProtectedRoute from "./components/shared/ProtectedRoute.jsx";
+import PersonalAccountRoute from "./components/shared/PersonalAccountRoute.jsx";
 import PurchaseRequestRoute from "./components/shared/PurchaseRequestRoute.jsx";
 const GeneralSettingsPage = lazy(() => import("./components/pages/GeneralSettingsPage.jsx"));
 const RoomTypesPage = lazy(() => import("./components/pages/RoomTypesPage.jsx"));
@@ -26,6 +27,9 @@ const RateCodesPage = lazy(() => import("./components/pages/RateCodesPage.jsx"))
 const MarketSegmentsPage = lazy(() => import("./components/pages/MarketSegmentsPage.jsx"));
 const ProductsPage = lazy(() => import("./components/pages/ProductsPage.jsx"));
 const CatalogSyncPage = lazy(() => import("./components/pages/CatalogSyncPage.jsx"));
+const ProductProposalsPage = lazy(() => import("./components/pages/ProductProposalsPage.jsx"));
+const McpConnectionsPage = lazy(() => import("./components/pages/McpConnectionsPage.jsx"));
+const McpAuthorizePage = lazy(() => import("./components/pages/McpAuthorizePage.jsx"));
 const ProductCreatePage = lazy(() => import("./components/pages/ProductCreatePage.jsx"));
 const ProductDetailPage = lazy(() => import("./components/pages/ProductDetailPage.jsx"));
 const ProductEditPage = lazy(() => import("./components/pages/ProductEditPage.jsx"));
@@ -120,6 +124,8 @@ export default function AppRouter() {
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/mcp/authorize" element={<PersonalAccountRoute><McpAuthorizePage /></PersonalAccountRoute>} />
+      <Route path="/settings/connections" element={<PersonalAccountRoute><McpConnectionsPage /></PersonalAccountRoute>} />
       <Route path="/access" element={<NoHotelAccessPage />} />
       <Route path="/platform" element={<PlatformRoute><PlatformLayout /></PlatformRoute>}>
         <Route index element={<PlatformHotelsPage overview />} />
@@ -167,6 +173,7 @@ export default function AppRouter() {
         }
       />
       <Route path="/catalog/products/sync" element={<ProtectedRoute feature="catalogproducts" action="read"><CatalogSyncPage /></ProtectedRoute>} />
+      <Route path="/catalog/products/proposals" element={<ProtectedRoute anyOf={[{ feature: "catalogproducts", action: "read" }, { feature: "supplierproducts", action: "read" }]}><ProductProposalsPage /></ProtectedRoute>} />
       <Route path="/catalog/sync" element={<LegacyCatalogSyncRedirect />} />
       <Route path="/purchase-requests" element={<PurchaseRequestRoute><PurchaseRequestsPage /></PurchaseRequestRoute>} />
       <Route path="/purchase-requests/new" element={<PurchaseRequestRoute action="create"><PurchaseRequestFormPage /></PurchaseRequestRoute>} />
