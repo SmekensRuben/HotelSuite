@@ -199,6 +199,13 @@ HOTEL_MCP_CLIENTS_JSON='[{"client_id":"chatgpt-private","client_name":"ChatGPT (
 HOTEL_MCP_ALLOWED_ORIGINS_JSON='[]'
 ```
 
+Production CI regenerates `functions/.env.hotel-toolkit` with all four MCP
+parameters explicitly set to their disabled defaults. The non-interactive Firebase
+CLI requires explicit values despite the SDK defaults. Enabling production MCP
+requires a separately reviewed workflow/runtime configuration change; a local
+ignored dotenv edit would be overwritten by CI. See
+[Functions release controls](functions-continuous-deployment.md).
+
 Use the exact callback shown by the ChatGPT client being configured. Add another
 callback only after verifying it belongs to that intended client. Codex uses an
 ephemeral loopback port; the maintained SDK permits the port variation while
