@@ -91,6 +91,60 @@ async function currentApprover(tx, db, hotelUid, uid, settings, stepId, amount, 
   if (!user || user.uid !== undefined && user.uid !== uid || user.disabled || user.emailVerified !== true) throw new HttpsError("permission-denied", "The selected approver needs an active verified account.");
   return { uid, name: String(user.displayName || member.data().displayName || member.data().name || user.email || uid).slice(0, 200), email: String(user.email || "").slice(0, 254) };
 }
+async function submissionApprovalRoute(tx, db, hotelUid, settings, value, overBudget, services) {
+  const accounts = new Map();
+  const currentAuthority = (authority) => {
+    if (!accounts.has(authority.uid)) accounts.set(authority.uid, (async () => {
+      const member = await tx.get(db.doc(`hotels/${hotelUid}/members/${authority.uid}`));
+      const permissions = normalizedPermissions(member.exists ? member.data().permissions : []);
+      if (!member.exists || !permissionAllows(permissions, "purchaserequests", "read") || !permissionAllows(permissions, "purchaserequests", "approve")) return null;
+      let user;
+      try { user = await (services.auth || admin.auth()).getUser(authority.uid); }
+      catch (error) {
+        if (error.code === "auth/user-not-found") return null;
+        // An unavailable account lookup cannot prove that another approver is
+        // ineligible and must never weaken the normal approval chain.
+        throw new HttpsError("unavailable", "Current approval authority could not be verified. Refresh the approval route and try again.");
+      }
+      if (!user || user.uid !== undefined && user.uid !== authority.uid) throw new HttpsError("unavailable", "Current approval authority could not be verified. Refresh the approval route and try again.");
+      if (user.disabled || user.emailVerified !== true) return null;
+      return { uid: authority.uid, name: String(user.displayName || member.data().displayName || member.data().name || user.email || authority.uid).slice(0, 200) };
+    })());
+    return accounts.get(authority.uid);
+  };
+  const eligibleFor = async (stepId) => (await Promise.all(settings.approvers.filter((authority) => policy.authorityAllows(authority, stepId, value.totalMinor)).map(currentAuthority))).filter(Boolean);
+  let steps = policy.requiredSteps(settings, value.totalMinor, overBudget), escalation = null;
+  let eligible = await eligibleFor(steps[0].id);
+  if (eligible.length === 1 && eligible[0].uid === value.requesterUid) {
+    ({ steps, escalation } = policy.escalateFirstStep(settings, steps));
+    eligible = await eligibleFor(steps[0].id);
+  }
+  const approvers = eligible.filter((candidate) => candidate.uid !== value.requesterUid);
+  if (!approvers.length) throw new HttpsError(escalation ? "failed-precondition" : "permission-denied", escalation
+    ? "The requester-only first step can only escalate to the immediately next configured step. That step needs an independent active, verified approver with permission and a sufficient request limit."
+    : "The first required step needs an independent active, verified approver with permission and a sufficient request limit.");
+  const fingerprint = canonicalDigest({ settingsRevision: settings.revision, steps, approvers, escalation });
+  return { steps, approvers, escalation, error: null, fingerprint };
+}
+async function previewSubmissionApprovalRoute(tx, db, hotelUid, value, services) {
+  try {
+    const settings = storedSettings(await tx.get(db.doc(settingsPath(hotelUid))));
+    completeDraft(value, settings);
+    if (value.currency !== settings.currency) throw new HttpsError("failed-precondition", "The request currency changed. Save the draft in the configured currency before submitting.");
+    const after = { state: "pending", bucketId: policy.bucketId(value.budgetMonth, value.budgetCategoryId), amountMinor: value.totalMinor }, budgets = new Map();
+    for (const reservation of [value.reservation, after]) {
+      if (!reservation?.bucketId || reservation.state === "none" || budgets.has(reservation.bucketId)) continue;
+      const separator = reservation.bucketId.indexOf("__");
+      budgets.set(reservation.bucketId, await budgetFor(tx, db, hotelUid, reservation.bucketId.slice(0, separator), reservation.bucketId.slice(separator + 2)));
+    }
+    if (!budgets.get(after.bucketId)?.exists) throw new HttpsError("failed-precondition", "No budget has been configured for this category and month. Ask a budget manager to create it.");
+    const projected = policy.transferBudget(budgets, value.reservation, after).get(after.bucketId);
+    return await submissionApprovalRoute(tx, db, hotelUid, settings, value, projected.remainingMinor < 0, services);
+  } catch (error) {
+    return { steps: [], approvers: [], escalation: null, fingerprint: null,
+      error: { code: error instanceof HttpsError ? error.code : "unavailable", message: error instanceof HttpsError ? error.message : "The approval route could not be verified. Refresh and try again." } };
+  }
+}
 function operation(db, hotelUid, uid, requestId, kind, payload) {
   requestId = requireDocumentId(requestId, "requestId");
   return { ref: db.doc(`hotels/${hotelUid}/purchaseRequestOperations/p-${digest(uid, requestId).slice(0, 48)}`), fingerprint: canonicalDigest({ kind, payload }), requestId };
@@ -143,16 +197,21 @@ async function budgetFor(tx, db, hotelUid, month, categoryId) {
   }
   return policy.budgetProjection(snapshot.exists ? snapshot.data() : null, month, categoryId);
 }
+const lineSupplierId = (line, value) => Object.hasOwn(line, "supplierId") ? line.supplierId : value.supplierId || "";
 async function draftSnapshot(tx, db, hotelUid, id, draft, settings, services) {
-  const result = { ...draft, currency: settings.currency, vatBasis: "net", supplier: null,
+  const result = { ...draft, currency: settings.currency, vatBasis: "net", supplierId: "", supplier: null, suppliers: [],
     costCentreName: settings.costCentres.find((item) => item.id === draft.costCentreId)?.name || "",
     budgetCategoryName: settings.budgetCategories.find((item) => item.id === draft.budgetCategoryId)?.name || "" };
-  let supplier;
-  if (draft.supplierId) {
-    const snapshot = await tx.get(db.doc(`hotels/${hotelUid}/suppliers/${draft.supplierId}`));
-    if (!snapshot.exists || snapshot.data().archived || snapshot.data().archivedAt || snapshot.data().active === false) throw new HttpsError("failed-precondition", "Choose an active supplier from this hotel.");
-    supplier = snapshot.data(); result.supplier = { id: draft.supplierId, name: String(supplier.name || draft.supplierId).slice(0, 200) };
-  }
+  const suppliers = new Map();
+  const getSupplier = async (supplierId) => {
+    if (!supplierId) return null;
+    if (!suppliers.has(supplierId)) {
+      const snapshot = await tx.get(db.doc(`hotels/${hotelUid}/suppliers/${supplierId}`)), supplier = snapshot.exists ? snapshot.data() : null;
+      if (!supplier || supplier.archived || supplier.archivedAt || supplier.active === false) throw new HttpsError("failed-precondition", "Choose an active supplier from this hotel for each purchase line.");
+      suppliers.set(supplierId, supplier);
+    }
+    return suppliers.get(supplierId);
+  };
   let today;
   const getDate = async () => {
     if (today) return today;
@@ -165,12 +224,13 @@ async function draftSnapshot(tx, db, hotelUid, id, draft, settings, services) {
   result.lines = [];
   const priceVersions = new Map();
   for (const line of draft.lines) {
-    let next = { ...line, priceSource: "quote", priceVersionId: null };
+    const supplierId = lineSupplierId(line, draft), supplier = await getSupplier(supplierId);
+    let next = { ...line, supplierId, supplier: supplier ? { id: supplierId, name: String(supplier.name || supplierId).slice(0, 200) } : null, priceSource: "quote", priceVersionId: null };
     if (line.kind === "supplier") {
-      if (!supplier) throw new HttpsError("invalid-argument", "Choose a supplier before adding supplier products.");
+      if (!supplier) throw new HttpsError("invalid-argument", "Choose a supplier for this purchase line before adding a supplier product.");
       const productSnapshot = await tx.get(db.doc(`hotels/${hotelUid}/supplierproducts/${line.supplierProductId}`));
       const product = productSnapshot.exists ? productSnapshot.data() : null;
-      if (!product || product.supplierId !== draft.supplierId || product.active !== true || product.archived || product.archivedAt) throw new HttpsError("failed-precondition", "The selected supplier product must be active and belong to this supplier in this hotel.");
+      if (!product || product.supplierId !== supplierId || product.active !== true || product.archived || product.archivedAt) throw new HttpsError("failed-precondition", "The selected supplier product must be active and belong to this line's supplier in this hotel.");
       let resolved = product, priceInfo = null;
       if (line.unitPrice === undefined) {
         if (!priceVersions.has(line.supplierProductId)) priceVersions.set(line.supplierProductId, await loadSupplierPriceVersions(tx, db, hotelUid, line.supplierProductId));
@@ -200,17 +260,21 @@ async function draftSnapshot(tx, db, hotelUid, id, draft, settings, services) {
     next.lineTotalMinor = policy.lineTotal(next.quantity, next.unitPrice);
     result.lines.push(next);
   }
+  result.suppliers = [...new Map(result.lines.filter((line) => line.supplier).map((line) => [line.supplierId, line.supplier])).values()];
+  if (result.lines.length && result.lines.every((line) => line.supplierId && line.supplierId === result.lines[0].supplierId)) {
+    result.supplierId = result.lines[0].supplierId; result.supplier = result.lines[0].supplier;
+  }
   result.totalMinor = policy.total(result.lines);
   result.attachments = await require("./purchaseRequestFiles").validatePurchaseRequestAttachments(tx, db, hotelUid, id, draft.attachmentIds);
   return result;
 }
 function completeDraft(value, settings) {
-  if (!value.title || !value.motivation || !value.supplierId || !value.budgetMonth || !settings.costCentres.some((row) => row.id === value.costCentreId)
-    || !settings.budgetCategories.some((row) => row.id === value.budgetCategoryId) || !value.lines.length || value.lines.some((line) => !line.description || !line.unit)) throw new HttpsError("failed-precondition", "Complete the title, motivation, supplier, cost centre, budget category, budget month and purchase lines before submitting.");
+  if (!value.title || !value.motivation || !value.budgetMonth || !settings.costCentres.some((row) => row.id === value.costCentreId)
+    || !settings.budgetCategories.some((row) => row.id === value.budgetCategoryId) || !value.lines.length || value.lines.some((line) => !line.description || !line.unit || !lineSupplierId(line, value))) throw new HttpsError("failed-precondition", "Complete the title, motivation, cost centre, budget category, budget month and purchase lines, including a supplier for every line, before submitting.");
 }
 function draftInputFromSnapshot(value) {
   return Object.fromEntries(["supplierId", "title", "description", "motivation", "costCentreId", "budgetCategoryId", "budgetMonth", "attachmentIds"].map((key) => [key, value[key]]).concat([["lines", value.lines.map((line) => {
-    const fields = ["id", "kind", "description", "quantity", "unitPrice", "unit", ...(line.kind === "supplier" ? ["supplierProductId", "purchaseOptionId"] : [])];
+    const fields = ["id", "kind", "description", "quantity", "unitPrice", "unit", ...(Object.hasOwn(line, "supplierId") ? ["supplierId"] : []), ...(line.kind === "supplier" ? ["supplierProductId", "purchaseOptionId"] : [])];
     return Object.fromEntries(fields.map((key) => [key, line[key]]));
   })]]));
 }
@@ -382,12 +446,13 @@ async function getHotelPurchaseRequestHandler(request, services = {}) {
       return event;
     });
     const budget = value.budgetMonth && value.budgetCategoryId ? await budgetFor(tx, db, hotelUid, value.budgetMonth, value.budgetCategoryId) : null;
-    return { hotelUid, request: value, history, historyTruncated: found.docs.length > 100, nextHistoryCursor: found.docs.length > 100 ? history.at(-1).revision : null, budget };
+    const route = value.requesterUid === request.auth.uid && ["draft", "returned"].includes(value.status) ? await previewSubmissionApprovalRoute(tx, db, hotelUid, value, services) : null;
+    return { hotelUid, request: value, history, historyTruncated: found.docs.length > 100, nextHistoryCursor: found.docs.length > 100 ? history.at(-1).revision : null, budget, submissionApprovalRoute: route };
   });
 }
 
 async function mutateHotelPurchaseRequestHandler(request, services = {}) {
-  const input = request.data || {}; policy.exact(input, ["hotelUid", "requestId", "purchaseRequestId", "expectedRevision", "action", "draft", "approverUid", "nextApproverUid", "reason"], "request mutation");
+  const input = request.data || {}; policy.exact(input, ["hotelUid", "requestId", "purchaseRequestId", "expectedRevision", "action", "draft", "approverUid", "nextApproverUid", "reason", "expectedApprovalRouteFingerprint"], "request mutation");
   const actions = REQUEST_ACTIONS;
   if (!Object.hasOwn(actions, input.action)) throw new HttpsError("invalid-argument", "Choose a supported purchase request action.");
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid"), expected = revision(input.expectedRevision), action = input.action, db = services.firestore || admin.firestore();
@@ -396,7 +461,9 @@ async function mutateHotelPurchaseRequestHandler(request, services = {}) {
   const draft = input.draft === undefined ? null : policy.normalizeDraft(input.draft), reason = text(input.reason ?? "", "Decision reason", 2000, ["reject", "return", "revise"].includes(action));
   if (["create", "save"].includes(action) && !draft || !["create", "save", "revise"].includes(action) && draft) throw new HttpsError("invalid-argument", "Only draft creation, saving or an explicit revision may change request content.");
   if (input.approverUid != null && action !== "submit" || input.nextApproverUid != null && action !== "approve") throw new HttpsError("invalid-argument", "Approver selection must belong to its submission or decision.");
-  const op = operation(db, hotelUid, request.auth?.uid, input.requestId, "request", { id, action, expected, draft, approverUid: input.approverUid ?? null, nextApproverUid: input.nextApproverUid ?? null, reason });
+  if (input.expectedApprovalRouteFingerprint !== undefined && (action !== "submit" || typeof input.expectedApprovalRouteFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(input.expectedApprovalRouteFingerprint))) throw new HttpsError("invalid-argument", "A submission approval route fingerprint must come from the current request preview.");
+  const op = operation(db, hotelUid, request.auth?.uid, input.requestId, "request", { id, action, expected, draft, approverUid: input.approverUid ?? null, nextApproverUid: input.nextApproverUid ?? null, reason,
+    ...(input.expectedApprovalRouteFingerprint === undefined ? {} : { expectedApprovalRouteFingerprint: input.expectedApprovalRouteFingerprint }) });
   return db.runTransaction(async (tx) => {
     await requestAuthorization(db, request, hotelUid, actions[action], tx, services);
     const previous = await previousOperation(tx, op, request.auth.uid); if (previous) return previous;
@@ -417,14 +484,14 @@ async function mutateHotelPurchaseRequestHandler(request, services = {}) {
     const now = services.now?.() ?? Date.now();
     let next = before ? { ...before } : { id, purchaseRequestId: id, hotelUid, policyVersion: policy.VERSION, revision: 0, requesterUid: actor.uid,
       requesterName: actor.name, requesterEmail: actor.email, status: "draft", createdAtMillis: now, submittedAtMillis: null, approvedAtMillis: null,
-      approvalSteps: [], approvals: [], currentStepIndex: 0, currentApproverUid: null, currentApproverName: null, reservation: noReservation() };
+      approvalSteps: [], approvalEscalation: null, approvals: [], currentStepIndex: 0, currentApproverUid: null, currentApproverName: null, reservation: noReservation() };
     if (action === "create" || action === "save") {
       if (before && !["draft", "returned"].includes(before.status)) throw new HttpsError("failed-precondition", "Only a draft or returned request may be edited. Start an explicit revision for a submitted request.");
-      next = { ...next, ...await draftSnapshot(tx, db, hotelUid, id, draft, settings, services) };
+      next = { ...next, ...await draftSnapshot(tx, db, hotelUid, id, draft, settings, services), approvalEscalation: null };
     }
     if (action === "revise") {
       if (!["pending", "approved"].includes(before.status)) throw new HttpsError("failed-precondition", "Only a pending or approved request needs a new approval revision.");
-      next = { ...next, ...(draft ? await draftSnapshot(tx, db, hotelUid, id, draft, settings, services) : {}), status: "returned", approvals: [], currentStepIndex: 0,
+      next = { ...next, ...(draft ? await draftSnapshot(tx, db, hotelUid, id, draft, settings, services) : {}), status: "returned", approvalEscalation: null, approvals: [], currentStepIndex: 0,
         currentApproverUid: null, currentApproverName: null, approvedAtMillis: null, reservation: { ...before.reservation, state: "pending" } };
     }
     if (action === "submit") {
@@ -441,7 +508,7 @@ async function mutateHotelPurchaseRequestHandler(request, services = {}) {
       if (before.status !== "pending" || before.currentApproverUid !== actor.uid) throw new HttpsError("permission-denied", "Only the current assigned approver may decide this pending step.");
       await currentApprover(tx, db, hotelUid, actor.uid, settings, before.approvalSteps[before.currentStepIndex]?.id, before.totalMinor, before.requesterUid, before.approvals, services);
       if (action === "reject") { next.status = "rejected"; next.reservation = noReservation(); next.currentApproverUid = null; next.currentApproverName = null; }
-      if (action === "return") { next.status = "returned"; next.approvals = []; next.currentStepIndex = 0; next.currentApproverUid = null; next.currentApproverName = null; }
+      if (action === "return") { next.status = "returned"; next.approvalEscalation = null; next.approvals = []; next.currentStepIndex = 0; next.currentApproverUid = null; next.currentApproverName = null; }
     }
     if (["withdraw", "cancel"].includes(action)) {
       const allowed = action === "withdraw" ? ["pending", "returned"] : ["draft", "pending", "returned", "approved"];
@@ -457,7 +524,9 @@ async function mutateHotelPurchaseRequestHandler(request, services = {}) {
     let changedBudgets = policy.transferBudget(budgets, before?.reservation, next.reservation), currentBudget = next.reservation.state === "none" ? null : changedBudgets.get(next.reservation.bucketId);
     if (action === "submit") {
       if (!currentBudget?.exists) throw new HttpsError("failed-precondition", "No budget has been configured for this category and month. Ask a budget manager to create it.");
-      next.approvalSteps = policy.requiredSteps(settings, next.totalMinor, currentBudget.remainingMinor < 0);
+      const route = await submissionApprovalRoute(tx, db, hotelUid, settings, next, currentBudget.remainingMinor < 0, services);
+      if (input.expectedApprovalRouteFingerprint !== undefined && input.expectedApprovalRouteFingerprint !== route.fingerprint) throw new HttpsError("aborted", "The submission approval route changed. Refresh the request and review the current route before submitting.");
+      next.approvalSteps = route.steps; next.approvalEscalation = route.escalation;
       const assignee = await currentApprover(tx, db, hotelUid, input.approverUid, settings, next.approvalSteps[0].id, next.totalMinor, next.requesterUid, [], services);
       next.currentApproverUid = assignee.uid; next.currentApproverName = assignee.name;
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPurchaseBudgetDraft, changedPurchaseBudgets, purchaseBudgetTotals, purchaseMoneyToMinor } from "./purchaseBudgetDraft";
+import { buildPurchaseBudgetDraft, changedPurchaseBudgets, purchaseBudgetDraftAmounts, purchaseBudgetTotals, purchaseBudgetViewTotals, purchaseMoneyToMinor } from "./purchaseBudgetDraft";
 
 const categories = [{ id: "maintenance", name: "Maintenance" }];
 const budgets = [{ month: "2026-01", categoryId: "maintenance", budgetMinor: 50000, openingUsedMinor: 0, pendingMinor: 15000, committedMinor: 30000, remainingMinor: 5000, revision: 4 }];
@@ -37,5 +37,21 @@ describe("purchase budget draft boundary", () => {
     const manyCategories = Array.from({ length: 21 }, (_, index) => ({ id: `category-${index}` }));
     const draft = Object.fromEntries(manyCategories.flatMap(({ id }) => Array.from({ length: 12 }, (_, index) => [`2026-${String(index + 1).padStart(2, "0")}:${id}`, { budget: "100.00", opening: "0.00" }])));
     expect(() => changedPurchaseBudgets(draft, [], 2026, manyCategories)).toThrow("at most 240");
+  });
+  it("projects draft allocations against saved commitments without using an obsolete saved remaining amount", () => {
+    expect(purchaseBudgetDraftAmounts({ budget: "700.00", opening: "10.00" }, budgets[0])).toEqual({ allocated: 70000, opening: 1000, pending: 15000, committed: 30000, remaining: 24000, configured: true, invalid: false });
+  });
+  it("labels a missing allocation as incomplete while an explicit zero completes the total", () => {
+    const configured = { draft: { budget: "500.00", opening: "0" }, saved: budgets[0] };
+    expect(purchaseBudgetViewTotals([configured, { draft: { budget: "", opening: "" } }])).toEqual({ allocated: 50000, opening: 0, pending: 15000, committed: 30000, remaining: null, configured: 1, count: 2, invalid: 0, complete: false });
+    expect(purchaseBudgetViewTotals([configured, { draft: { budget: "0.00", opening: "" } }])).toMatchObject({ allocated: 50000, remaining: 5000, configured: 2, count: 2, complete: true });
+  });
+  it("keeps invalid opening consumption and invalid allocations unavailable instead of silently rounding them", () => {
+    expect(purchaseBudgetViewTotals([{ draft: { budget: "50.001", opening: "0" } }])).toMatchObject({ allocated: 0, remaining: null, invalid: 1, configured: 0, complete: false });
+    expect(purchaseBudgetViewTotals([{ draft: { budget: "50", opening: "-1" } }])).toMatchObject({ allocated: 5000, opening: null, remaining: null, invalid: 1, configured: 1, complete: false });
+  });
+  it("does not display a rounded aggregate outside the safe minor-unit range", () => {
+    const rows = Array.from({ length: 100 }, () => ({ draft: { budget: "1000000000000.00", opening: "0" } }));
+    expect(purchaseBudgetViewTotals(rows)).toMatchObject({ allocated: null, remaining: null, complete: true });
   });
 });

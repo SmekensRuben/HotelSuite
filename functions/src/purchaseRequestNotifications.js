@@ -13,6 +13,31 @@ function recipientId(value) {
 
 const eventStatuses = Object.freeze({ submit: "pending", approve: "pending", approved: "approved", reject: "rejected", return: "returned" });
 const approvalEvents = new Set(["submit", "approve"]);
+const summaryText = (value, max = 200) => String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max);
+function lineSupplier(line, request) {
+  const explicit = Object.hasOwn(line || {}, "supplierId"), id = explicit ? summaryText(line.supplierId) : null;
+  if (explicit && !id) return null;
+  if (line?.supplier?.id && (!explicit || line.supplier.id === id)) return { id: line.supplier.id, name: summaryText(line.supplier.name) };
+  if (explicit) return { id, name: "" };
+  return request.supplier?.id ? { id: request.supplier.id, name: summaryText(request.supplier.name) } : null;
+}
+function supplierSummaryLines(request) {
+  const lines = Array.isArray(request.lines) ? request.lines.slice(0, 50) : [];
+  const suppliers = new Map();
+  const candidates = lines.length ? lines.map((line) => lineSupplier(line, request))
+    : Array.isArray(request.suppliers) && request.suppliers.length ? request.suppliers.slice(0, 50) : request.supplier ? [request.supplier] : [];
+  let unassigned = 0;
+  for (const supplier of candidates) {
+    if (!supplier?.id) { unassigned += 1; continue; }
+    if (!suppliers.has(supplier.id)) suppliers.set(supplier.id, summaryText(supplier.name) || "Supplier details unavailable");
+  }
+  const names = [...suppliers.values()], label = names.length > 1 ? `Multiple suppliers (${names.length}): ${names.join("; ")}` : names[0] || "Not selected";
+  return [`Suppliers: ${label}${unassigned ? `; ${unassigned} ${unassigned === 1 ? "line without a supplier" : "lines without a supplier"}` : ""}`,
+    ...(lines.length ? ["", "Purchase lines:", ...lines.map((line, index) => {
+      const supplier = lineSupplier(line, request);
+      return `${index + 1}. ${summaryText(line.description || line.supplierProductName, 500) || "Purchase line"} — Supplier: ${supplier ? supplier.name || "Supplier details unavailable" : "Not selected"}`;
+    })] : [])];
+}
 
 function queuePurchaseRequestNotification(tx, { db, hotelUid, requestId, request, event, revision }) {
   if (!Object.hasOwn(eventStatuses, event)) return null;
@@ -64,6 +89,7 @@ async function resolvePurchaseRequestNotification(tx, db, hotelUid, mail, servic
     const summary = [`${states[mail.event]}: ${title}`, "", `Hotel: ${String(hotel.data()?.hotelName || hotelUid).slice(0, 200)}`,
       `Requester: ${String(request.requesterName || request.requesterUid).slice(0, 200)}`, `Amount: ${amount} ${request.currency || "EUR"} excluding VAT`,
       `Budget month: ${request.budgetMonth || "-"}`, `Budget category: ${request.budgetCategoryName || "-"}`, `Cost centre: ${request.costCentreName || "-"}`,
+      ...supplierSummaryLines(request),
       ...(request.lastDecisionReason ? [`Decision note: ${String(request.lastDecisionReason).slice(0, 2000)}`] : []),
       "", "Sign in with your own hotel account to view the request and its current approval requirements.", link];
     return { to: [user.email], subject: `${states[mail.event]} — ${title}`, text: summary.join("\n") };

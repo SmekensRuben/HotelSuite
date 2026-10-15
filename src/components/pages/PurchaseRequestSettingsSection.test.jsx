@@ -71,3 +71,11 @@ it("drops a late settings response when the selected hotel changes", async () =>
   await act(async () => resolveOld(config));
   expect(screen.queryByDisplayValue("Front office")).not.toBeInTheDocument();
 });
+
+it("explains the first-step exception, independent authority and retained later approvals", async () => {
+  show(); await screen.findByDisplayValue("Department");
+  expect(screen.getByText(/requester is the only eligible approver/)).toHaveTextContent("immediately next configured step, even below its threshold");
+  expect(screen.getByText(/requester is the only eligible approver/)).toHaveTextContent("limit covering the full request");
+  expect(screen.getByText(/requester is the only eligible approver/)).toHaveTextContent("No further steps are skipped; additional budget approval remains separate");
+  expect(screen.getByText(/Self-approval is never allowed/)).toHaveTextContent("Each required step must be approved by a different person");
+});

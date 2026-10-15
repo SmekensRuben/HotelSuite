@@ -48,6 +48,7 @@ export async function seedPurchaseRequestRestoreProof({ database, auth, now }) {
       await database.doc(`hotels/${fixture.hotelUid}/members/${uid}`).set({ permissions: grants });
     }
     await database.doc(`hotels/${fixture.hotelUid}/suppliers/restore-pr-supplier`).set({ name: "Fictional restore repair supplier", active: true });
+    await database.doc(`hotels/${fixture.hotelUid}/suppliers/restore-pr-second-supplier`).set({ name: "Fictional restore parts supplier", active: true });
     const settings = { requestId: "restore-pr-settings", expectedRevision: 0, settings: { currency: fixture.currency,
       costCentres: [{ id: "maintenance", name: "Maintenance department" }], budgetCategories: [{ id: "repairs", name: "Equipment repairs" }],
       approvalSteps: [{ id: "manager", name: "Manager", thresholdMinor: 0 }],
@@ -56,15 +57,26 @@ export async function seedPurchaseRequestRestoreProof({ database, auth, now }) {
     const budgets = { requestId: "restore-pr-budget", budgets: [{ month: "2026-10", categoryId: "repairs", budgetMinor: 50000, openingUsedMinor: 5000, expectedRevision: 0 }] };
     await api().saveHotelPurchaseBudgetsHandler(request(fixture, budgets), services);
     const replays = [];
+    let mixedRequestId;
     for (const [name, amount, final] of [["approved", 300, true], ["pending", 100, false]]) {
       const create = { action: "create", requestId: `restore-pr-create-${name}`, expectedRevision: 0, draft: {
         supplierId: "restore-pr-supplier", title: `Fictional ${name} repair`, description: "Repair hotel equipment", motivation: "Keep the equipment operational",
         costCentreId: "maintenance", budgetCategoryId: "repairs", budgetMonth: "2026-10",
-        lines: [{ id: "service", kind: "free", description: "Repair service", quantity: 1, unitPrice: amount, unit: "service" }], attachmentIds: [],
+        lines: final ? [{ id: "service", kind: "free", description: "Repair service", quantity: 1, unitPrice: amount, unit: "service" }] : [
+          { id: "service", kind: "free", supplierId: "restore-pr-supplier", description: "Repair service", quantity: 1, unitPrice: 40, unit: "service" },
+          { id: "parts", kind: "free", supplierId: "restore-pr-second-supplier", description: "Replacement parts", quantity: 1, unitPrice: 60, unit: "service" },
+        ], attachmentIds: [],
       } };
       const created = await api().mutateHotelPurchaseRequestHandler(request(fixture, create), services);
       const submit = { action: "submit", requestId: `restore-pr-submit-${name}`, purchaseRequestId: created.purchaseRequestId, expectedRevision: created.revision, approverUid: approver };
       const submitted = await api().mutateHotelPurchaseRequestHandler(request(fixture, submit), services);
+      if (!final) {
+        mixedRequestId = created.purchaseRequestId;
+        assert.equal(submitted.request.supplierId, ""); assert.equal(submitted.request.supplier, null);
+        assert.deepEqual(submitted.request.suppliers, [{ id: "restore-pr-supplier", name: "Fictional restore repair supplier" }, { id: "restore-pr-second-supplier", name: "Fictional restore parts supplier" }]);
+        assert.deepEqual(submitted.request.lines.map((line) => line.supplier), submitted.request.suppliers);
+        assert.equal(submitted.request.totalMinor, 10000);
+      }
       replays.push({ command: create, result: json(created), approver: false }, { command: submit, result: json(submitted), approver: false });
       if (final) {
         const approve = { action: "approve", requestId: "restore-pr-final-approval", purchaseRequestId: created.purchaseRequestId, expectedRevision: submitted.revision };
@@ -74,7 +86,7 @@ export async function seedPurchaseRequestRestoreProof({ database, auth, now }) {
     }
     const budgetPath = `hotels/${fixture.hotelUid}/purchaseBudgets/2026-10__repairs`;
     assertBudget((await database.doc(budgetPath).get()).data());
-    proof[fixture.hotelUid] = { fixture, budgetPath, replays, records: await records(database, fixture) };
+    proof[fixture.hotelUid] = { fixture, budgetPath, mixedRequestId, replays, records: await records(database, fixture) };
   }
   return proof;
 }
@@ -93,6 +105,12 @@ export async function verifyPurchaseRequestRestoreProof({ database, auth, now },
     assert.deepEqual(await records(database, fixture), entry.records, "Exact request replay must not change approvals, history or budgets.");
     const after = await database.doc(budgetPath).get();
     assert.equal(after.updateTime.isEqual(before.updateTime), true, "Restored request replay must not debit the budget twice.");
+    const mixed = await api().getHotelPurchaseRequestHandler(request(fixture, { purchaseRequestId: entry.mixedRequestId }), services);
+    assert.equal(mixed.request.status, "pending"); assert.equal(mixed.request.totalMinor, 10000);
+    assert.equal(mixed.request.supplierId, ""); assert.equal(mixed.request.supplier, null);
+    assert.deepEqual(mixed.request.suppliers, [{ id: "restore-pr-supplier", name: "Fictional restore repair supplier" }, { id: "restore-pr-second-supplier", name: "Fictional restore parts supplier" }]);
+    assert.deepEqual(mixed.request.lines.map((line) => line.supplier), mixed.request.suppliers);
+    assert.deepEqual(mixed.history.find((event) => event.event === "submit").snapshot.lines, mixed.request.lines);
     const otherFixture = fixtures.find((other) => other.hotelUid !== fixture.hotelUid);
     const first = replays.find((replay) => replay.command.purchaseRequestId);
     await assert.rejects(api().getHotelPurchaseRequestHandler({ ...request(otherFixture, {}), data: { hotelUid: fixture.hotelUid, purchaseRequestId: first.command.purchaseRequestId } }, services), { code: "permission-denied" });

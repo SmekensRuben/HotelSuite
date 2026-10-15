@@ -42,6 +42,14 @@ test("required step thresholds keep configured order and append separate over-bu
   assert.throws(() => policy.requiredSteps({ ...settings, overBudgetMode: "block" }, 9999, true));
   assert.throws(() => policy.requiredSteps({ ...settings, approvalSteps: [] }, 9999, false));
 });
+test("first-step escalation promotes only the immediate configured successor and preserves required budget authority", () => {
+  const settings = { revision: 4, approvalSteps: [{ id: "department", name: "Department", thresholdMinor: 0 }, { id: "finance", name: "Finance", thresholdMinor: 10000 }, { id: "director", name: "Director", thresholdMinor: 50000 }], overBudgetMode: "approval" };
+  const low = policy.escalateFirstStep(settings, policy.requiredSteps(settings, 100, true));
+  assert.deepEqual(low.steps.map((step) => step.id), ["finance", "over-budget"]);
+  assert.deepEqual(low.escalation, { reason: "requester-only-first-step", fromStepId: "department", fromStepName: "Department", toStepId: "finance", toStepName: "Finance", settingsRevision: 4 });
+  assert.deepEqual(policy.escalateFirstStep(settings, policy.requiredSteps(settings, 50000, false)).steps.map((step) => step.id), ["finance", "director"]);
+  assert.throws(() => policy.escalateFirstStep({ ...settings, approvalSteps: [settings.approvalSteps[0]] }, [{ id: "department", name: "Department" }]));
+});
 test("settings reject unsupported currency scales, forged step authority and reserved extra-step identities", () => {
   const valid = { ...policy.DEFAULT_SETTINGS, currency: "EUR", approvalSteps: [{ id: "manager", name: "Manager", thresholdMinor: 0 }], approvers: [{ uid: "manager", stepIds: ["manager"], limitMinor: 10000, canApproveOverBudget: false }] };
   assert.equal(policy.normalizeSettings(valid).currency, "EUR");
@@ -55,4 +63,14 @@ test("drafts retain explicit zero quotes while rejecting arbitrary audit fields 
   assert.throws(() => policy.normalizeDraft({ lines: [line], totalMinor: 1 }));
   assert.throws(() => policy.normalizeDraft({ lines: [line, line] }));
   assert.throws(() => policy.normalizeDraft({ lines: [{ ...line, approved: true }] }));
+});
+test("line supplier references preserve absent legacy payload keys and explicit unfinished selections", () => {
+  const line = { id: "line", kind: "free", description: "Repair", quantity: 1, unitPrice: 10, unit: "service" };
+  const legacy = policy.normalizeDraft({ supplierId: "old-vendor", lines: [line] });
+  assert.equal(Object.hasOwn(legacy.lines[0], "supplierId"), false);
+  assert.equal(legacy.supplierId, "old-vendor");
+  assert.equal(policy.normalizeDraft({ supplierId: "old-vendor", lines: [{ ...line, supplierId: "" }] }).lines[0].supplierId, "");
+  assert.equal(policy.normalizeDraft({ lines: [{ ...line, supplierId: "line-vendor" }] }).lines[0].supplierId, "line-vendor");
+  for (const supplierId of ["foreign/path", "..", 123]) assert.throws(() => policy.normalizeDraft({ lines: [{ ...line, supplierId }] }));
+  assert.throws(() => policy.normalizeDraft({ lines: [{ ...line, supplier: { id: "forged", name: "Forged" } }] }));
 });

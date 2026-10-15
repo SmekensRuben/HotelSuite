@@ -19,6 +19,35 @@ export function purchaseRequestPriceValidity(value) {
 export function purchaseRequestPriceReviewReason(value) {
   return ({ "supplier-pricing-date-agreement-unknown": "Confirm whether the supplier prices by order or delivery date.", "price-source-date-unknown": "The price source date is unknown.", "purchase-option-price-confirmation-unknown": "The purchase option price needs confirmation.", "delivery-date-required": "A delivery-date agreement needs an explicit quotation for this internal request.", "price-validity-unknown": "The price validity dates are unknown.", "price-validity-future": "The price is not yet valid.", "price-validity-expired": "The price has expired.", "price-validity-unavailable": "No current unit price is available.", "price-validity-invalid": "Correct the price validity dates before using this source." })[value] || "Confirm the current quotation with the supplier.";
 }
+// Historical requests predate per-line suppliers. Only an absent supplierId may
+// inherit their saved header; an explicit blank is a deliberately unassigned line.
+export function purchaseRequestLineSupplier(line, request) {
+  const hasSupplierId = Object.prototype.hasOwnProperty.call(line || {}, "supplierId");
+  const supplierId = hasSupplierId ? String(line.supplierId || "").trim() : null;
+  if (hasSupplierId && !supplierId) return null;
+  if (line?.supplier?.id && (!hasSupplierId || line.supplier.id === supplierId)) return { id: line.supplier.id, name: line.supplier.name || "" };
+  if (hasSupplierId) return { id: supplierId, name: "" };
+  return request?.supplier?.id ? { id: request.supplier.id, name: request.supplier.name || "" } : null;
+}
+export function purchaseRequestLineSupplierLabel(line, request) {
+  const supplier = purchaseRequestLineSupplier(line, request);
+  return supplier ? supplier.name || "Supplier details unavailable" : "Supplier not selected";
+}
+export function purchaseRequestSupplierSummary(request) {
+  const lines = Array.isArray(request?.lines) ? request.lines : [];
+  const suppliers = [], seen = new Set();
+  let unassignedLineCount = 0;
+  const candidates = lines.length ? lines.map((line) => purchaseRequestLineSupplier(line, request))
+    : Array.isArray(request?.suppliers) && request.suppliers.length ? request.suppliers : request?.supplier ? [request.supplier] : [];
+  for (const supplier of candidates) {
+    if (!supplier?.id) { unassignedLineCount += 1; continue; }
+    if (!seen.has(supplier.id)) { seen.add(supplier.id); suppliers.push({ id: supplier.id, name: supplier.name || "" }); }
+  }
+  const names = suppliers.map((supplier) => supplier.name || "Supplier details unavailable");
+  const label = suppliers.length > 1 ? `Multiple suppliers (${suppliers.length})` : names[0] || "Supplier not selected";
+  const details = [...(suppliers.length > 1 ? [names.join(" · ")] : []), ...(unassignedLineCount ? [`${unassignedLineCount} ${unassignedLineCount === 1 ? "line without a supplier" : "lines without a supplier"}`] : [])].join(" · ");
+  return { suppliers, unassignedLineCount, label, details };
+}
 export function requestLineTotalMinor(lines) {
   const micro = (value, positive) => {
     const raw = typeof value === "number" && Number.isFinite(value) ? String(value) : value;

@@ -67,3 +67,34 @@ export function purchaseBudgetTotals(budgets = []) {
     remaining: total.remaining + (row.remainingMinor ?? row.budgetMinor - (row.openingUsedMinor || 0) - (row.pendingMinor || 0) - (row.committedMinor || 0)),
   }), { allocated: 0, opening: 0, pending: 0, committed: 0, remaining: 0 });
 }
+
+/** Project one visible allocation without treating a blank or invalid draft as zero. */
+export function purchaseBudgetDraftAmounts(draft = {}, saved = {}) {
+  const allocationText = String(draft.budget ?? "").trim();
+  let allocated = null, opening = null, invalid = false;
+  try { if (allocationText) allocated = purchaseMoneyToMinor(allocationText); }
+  catch { invalid = true; }
+  try { opening = purchaseMoneyToMinor(String(draft.opening ?? "").trim() || "0"); }
+  catch { invalid = true; }
+  const pending = saved.pendingMinor ?? 0, committed = saved.committedMinor ?? 0;
+  const remaining = allocated !== null && opening !== null ? allocated - opening - pending - committed : null;
+  return { allocated, opening, pending, committed, remaining, invalid, configured: allocated !== null };
+}
+
+/** Totals cover exactly the visible category/month cells; incomplete availability stays unknown. */
+export function purchaseBudgetViewTotals(rows = []) {
+  const amounts = rows.map(({ draft, saved }) => purchaseBudgetDraftAmounts(draft, saved));
+  const sum = (field, allowMissing = false) => {
+    if (!allowMissing && amounts.some((row) => row[field] === null)) return null;
+    const total = amounts.reduce((value, row) => value + (row[field] ?? 0), 0);
+    return Number.isSafeInteger(total) ? total : null;
+  };
+  const configured = amounts.filter((row) => row.configured).length;
+  const invalid = amounts.filter((row) => row.invalid).length;
+  const complete = rows.length > 0 && configured === rows.length && invalid === 0;
+  return {
+    allocated: sum("allocated", true), opening: sum("opening"), pending: sum("pending"), committed: sum("committed"),
+    remaining: complete ? sum("remaining") : null,
+    configured, count: rows.length, invalid, complete,
+  };
+}

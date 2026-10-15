@@ -38,6 +38,151 @@ const submit = (db, value, extra = {}) => command(db, value, "submit", { approve
 const budget = (db, id = "2026-10__maintenance") => db.records.get(`${base}/purchaseBudgets/${id}`);
 const current = (db, value) => db.records.get(`${base}/purchaseRequests/${value.purchaseRequestId}`);
 const get = (db, value, uid = "buyer") => api.getHotelPurchaseRequestHandler(request({ purchaseRequestId: value.purchaseRequestId }, uid), services(db));
+const requesterOnlySettings = (patch = {}) => settings({ approvers: [authority("buyer", ["manager"]), authority("finance", ["finance"]), authority("director", [], true)], ...patch });
+
+test("a sole eligible requester escalates below threshold to an independent next-step approver without self approval", async () => {
+  const db = fixture(requesterOnlySettings()), created = await create(db, draft(50)), detail = await get(db, created), route = detail.submissionApprovalRoute;
+  assert.deepEqual(route.steps, [{ id: "finance", name: "Finance approval" }]);
+  assert.deepEqual(route.approvers, [{ uid: "finance", name: "finance" }]);
+  assert.deepEqual(route.escalation, { reason: "requester-only-first-step", fromStepId: "manager", fromStepName: "Manager approval", toStepId: "finance", toStepName: "Finance approval", settingsRevision: 1 });
+  assert.match(route.fingerprint, /^[a-f0-9]{64}$/); assert.equal(route.error, null);
+  assert.equal((await get(db, created, "finance")).submissionApprovalRoute, null);
+  const pending = await submit(db, created, { approverUid: "finance", expectedApprovalRouteFingerprint: route.fingerprint });
+  assert.deepEqual(pending.request.approvalEscalation, route.escalation); assert.deepEqual(pending.request.approvalSteps, route.steps);
+  assert.equal(pending.request.status, "pending"); assert.equal(budget(db).pendingMinor, 5000); assert.equal(budget(db).committedMinor, 0);
+  assert.equal((await get(db, pending)).submissionApprovalRoute, null);
+  const mails = [...db.records.values()].filter((value) => value.type === "purchase-request");
+  assert.equal(mails.length, 1); assert.equal(mails[0].recipientUid, "finance"); assert.equal(mails[0].event, "submit");
+  await assert.rejects(command(db, pending, "approve", {}, "buyer"), { code: "permission-denied" });
+  const approved = await command(db, pending, "approve", {}, "finance");
+  assert.equal(approved.request.status, "approved"); assert.equal(budget(db).pendingMinor, 0); assert.equal(budget(db).committedMinor, 5000);
+  assert.deepEqual(approved.request.approvals.map((approval) => approval.approverUid), ["finance"]);
+});
+test("a promoted step already required by amount appears once and retains a separate over-budget decision", async () => {
+  const db = fixture(requesterOnlySettings({ overBudgetMode: "approval" })), created = await create(db, draft(600)), pending = await submit(db, created, { approverUid: "finance" });
+  assert.deepEqual(pending.request.approvalSteps.map((step) => step.id), ["finance", "over-budget"]);
+  assert.equal(pending.request.approvalEscalation.toStepId, "finance");
+  await assert.rejects(command(db, pending, "approve", { nextApproverUid: "finance" }, "finance"), { code: "permission-denied" });
+  const extra = await command(db, pending, "approve", { nextApproverUid: "director" }, "finance");
+  assert.equal(extra.request.status, "pending"); assert.equal(budget(db).committedMinor, 0); assert.equal(budget(db).pendingMinor, 60000);
+  const approved = await command(db, extra, "approve", {}, "director");
+  assert.equal(approved.request.status, "approved"); assert.deepEqual(approved.request.approvals.map((approval) => approval.stepId), ["finance", "over-budget"]);
+});
+test("another current eligible first-step approver preserves the ordinary route and cannot opt into escalation", async () => {
+  const db = fixture(requesterOnlySettings({ approvers: [authority("buyer", ["manager"]), authority("manager", ["manager"]), authority("finance", ["finance"])] })), created = await create(db, draft(50));
+  const route = (await get(db, created)).submissionApprovalRoute;
+  assert.deepEqual(route.steps.map((step) => step.id), ["manager"]); assert.deepEqual(route.approvers.map((member) => member.uid), ["manager"]); assert.equal(route.escalation, null);
+  const before = structuredClone([...db.records]);
+  await assert.rejects(submit(db, created, { approverUid: "finance" }), { code: "permission-denied" });
+  await assert.rejects(submit(db, created, { approverUid: "buyer" }), { code: "permission-denied" });
+  await assert.rejects(command(db, created, "submit", { approverUid: "finance", skipFirstStep: true }), { code: "invalid-argument" });
+  assert.deepEqual(structuredClone([...db.records]), before);
+  const ordinary = await submit(db, created); assert.equal(ordinary.request.approvalEscalation, null);
+});
+test("no eligible first-step authority and an ineligible requester never enable escalation", async () => {
+  for (const change of ["missing-authority", "insufficient-limit", "no-approve-permission"]) {
+    const db = fixture(requesterOnlySettings()), created = await create(db, draft(50)), config = db.records.get(`${base}/settings/purchaseRequests`);
+    if (change === "missing-authority") config.approvers = config.approvers.filter((row) => row.uid !== "buyer");
+    if (change === "insufficient-limit") config.approvers.find((row) => row.uid === "buyer").limitMinor = 4999;
+    if (change === "no-approve-permission") db.records.get(`${base}/members/buyer`).permissions = permissions.filter((permission) => permission !== "purchaserequests.approve");
+    const route = (await get(db, created)).submissionApprovalRoute, before = structuredClone([...db.records]);
+    assert.equal(route.escalation, null); assert.ok(route.error); assert.equal(route.fingerprint, null);
+    await assert.rejects(submit(db, created, { approverUid: "finance" }), { code: "permission-denied" });
+    assert.deepEqual(structuredClone([...db.records]), before);
+  }
+});
+test("escalation cannot skip an unstaffed immediate successor or use insufficient or foreign authority", async () => {
+  for (const change of ["no-next-step", "missing-target", "insufficient-limit", "missing-membership", "revoked-read", "foreign-hotel"]) {
+    const db = fixture(requesterOnlySettings()), created = await create(db, draft(50)), config = db.records.get(`${base}/settings/purchaseRequests`);
+    if (change === "no-next-step") { config.approvalSteps = config.approvalSteps.slice(0, 1); config.approvers = config.approvers.filter((row) => row.uid === "buyer"); }
+    if (change === "missing-target") config.approvers = config.approvers.filter((row) => row.uid !== "finance");
+    if (change === "insufficient-limit") config.approvers.find((row) => row.uid === "finance").limitMinor = 4999;
+    if (change === "missing-membership") db.records.delete(`${base}/members/finance`);
+    if (change === "revoked-read") db.records.get(`${base}/members/finance`).permissions = ["purchaserequests.approve"];
+    if (change === "foreign-hotel") { db.records.delete(`${base}/members/finance`); db.records.set("hotels/hotel-b/members/finance", { permissions }); }
+    const route = (await get(db, created)).submissionApprovalRoute, before = structuredClone([...db.records]);
+    assert.ok(route.error, change); assert.equal(route.fingerprint, null);
+    await assert.rejects(submit(db, created, { approverUid: "director" }), { code: "failed-precondition" });
+    assert.deepEqual(structuredClone([...db.records]), before);
+  }
+});
+test("candidate account state is current and unavailable Auth never proves a sole eligible requester", async () => {
+  for (const condition of ["disabled", "unverified", "not-found", "unavailable"]) {
+    const db = fixture(requesterOnlySettings()), created = await create(db, draft(50));
+    const scoped = services(db, { auth: { getUser: async (uid) => {
+      const user = await auth.getUser(uid); if (uid !== "finance") return user;
+      if (condition === "disabled") return { ...user, disabled: true };
+      if (condition === "unverified") return { ...user, emailVerified: false };
+      throw Object.assign(new Error("lookup failed"), { code: condition === "not-found" ? "auth/user-not-found" : "auth/internal-error" });
+    } } });
+    const detail = await api.getHotelPurchaseRequestHandler(request({ purchaseRequestId: created.purchaseRequestId }), scoped), before = structuredClone([...db.records]);
+    assert.ok(detail.submissionApprovalRoute.error); assert.equal(detail.submissionApprovalRoute.error.code, condition === "unavailable" ? "unavailable" : "failed-precondition");
+    await assert.rejects(api.mutateHotelPurchaseRequestHandler(request({ action: "submit", requestId: "blocked", purchaseRequestId: created.purchaseRequestId, expectedRevision: 1, approverUid: "finance" }), scoped), { code: condition === "unavailable" ? "unavailable" : "failed-precondition" });
+    assert.deepEqual(structuredClone([...db.records]), before);
+  }
+  const db = fixture(requesterOnlySettings({ approvers: [authority("buyer", ["manager"]), authority("manager", ["manager"]), authority("finance", ["finance"])] })), created = await create(db, draft(50));
+  const scoped = services(db, { auth: { getUser: async (uid) => { if (uid === "manager") throw Object.assign(new Error("temporary outage"), { code: "auth/internal-error" }); return auth.getUser(uid); } } });
+  const detail = await api.getHotelPurchaseRequestHandler(request({ purchaseRequestId: created.purchaseRequestId }), scoped);
+  assert.equal(detail.submissionApprovalRoute.error.code, "unavailable"); assert.equal(detail.submissionApprovalRoute.escalation, null);
+  await assert.rejects(api.mutateHotelPurchaseRequestHandler(request({ action: "submit", requestId: "unknown-alternate", purchaseRequestId: created.purchaseRequestId, expectedRevision: 1, approverUid: "finance" }), scoped), { code: "unavailable" });
+});
+test("route previews reject stale settings and candidate changes before reserving budget", async () => {
+  for (const change of ["settings", "new-alternate"]) {
+    const db = fixture(requesterOnlySettings()), created = await create(db, draft(50)), route = (await get(db, created)).submissionApprovalRoute, config = db.records.get(`${base}/settings/purchaseRequests`);
+    if (change === "settings") { config.revision++; config.approvalSteps[1].name = "Finance review"; }
+    if (change === "new-alternate") { config.approvers.push(authority("manager", ["manager"])); config.approvers.find((row) => row.uid === "finance").stepIds.push("manager"); }
+    const before = structuredClone([...db.records]);
+    await assert.rejects(submit(db, created, { approverUid: "finance", expectedApprovalRouteFingerprint: route.fingerprint }), { code: "aborted" });
+    assert.deepEqual(structuredClone([...db.records]), before);
+    const fresh = (await get(db, created)).submissionApprovalRoute;
+    assert.notEqual(fresh.fingerprint, route.fingerprint);
+    const pending = await submit(db, created, { approverUid: "finance", expectedApprovalRouteFingerprint: fresh.fingerprint });
+    assert.equal(pending.request.currentApproverUid, "finance");
+  }
+});
+test("a returned preview accounts for its held reservation once and recomputes routing evidence on resubmission", async () => {
+  const db = fixture(requesterOnlySettings()), created = await create(db, draft(400)), route = (await get(db, created)).submissionApprovalRoute, pending = await submit(db, created, { approverUid: "finance", expectedApprovalRouteFingerprint: route.fingerprint });
+  assert.deepEqual(await submit(db, created, { approverUid: "finance", expectedApprovalRouteFingerprint: route.fingerprint }), pending);
+  const returned = await command(db, pending, "return", { reason: "Please add a quotation." }, "finance");
+  assert.equal(returned.request.approvalEscalation, null); assert.equal(budget(db).pendingMinor, 40000);
+  const detail = await get(db, returned); assert.equal(detail.submissionApprovalRoute.error, null);
+  assert.equal(detail.submissionApprovalRoute.escalation.reason, "requester-only-first-step");
+  assert.deepEqual(detail.history.find((event) => event.event === "submit").snapshot.approvalEscalation, pending.request.approvalEscalation);
+  const saved = await command(db, returned, "save", { draft: draft(450) });
+  assert.equal((await get(db, saved)).submissionApprovalRoute.error, null);
+  const config = db.records.get(`${base}/settings/purchaseRequests`); config.approvers.push(authority("manager", ["manager"])); config.revision++;
+  const fresh = (await get(db, saved)).submissionApprovalRoute; assert.equal(fresh.escalation, null);
+  const resubmitted = await submit(db, saved, { expectedApprovalRouteFingerprint: fresh.fingerprint });
+  assert.equal(resubmitted.request.approvalEscalation, null); assert.deepEqual(resubmitted.request.approvalSteps.map((step) => step.id), ["manager", "finance"]); assert.equal(budget(db).pendingMinor, 45000);
+});
+test("pending routes retain immutable escalation evidence after configuration changes and decisions recheck current permission", async () => {
+  const db = fixture(requesterOnlySettings()), pending = await submit(db, await create(db, draft(50)), { approverUid: "finance" }), evidence = structuredClone(pending.request.approvalEscalation);
+  db.records.get(`${base}/settings/purchaseRequests`).approvers.push(authority("manager", ["manager"]));
+  assert.deepEqual((await get(db, pending)).request.approvalSteps.map((step) => step.id), ["finance"]); assert.deepEqual(current(db, pending).approvalEscalation, evidence);
+  db.records.get(`${base}/members/finance`).permissions = ["purchaserequests.read"];
+  const before = structuredClone([...db.records]); await assert.rejects(command(db, pending, "approve", {}, "finance"), { code: "permission-denied" }); assert.deepEqual(structuredClone([...db.records]), before);
+  db.records.get(`${base}/members/finance`).permissions = permissions;
+  const approved = await command(db, pending, "approve", {}, "finance"), revised = await command(db, approved, "revise", { reason: "A new quote is required." });
+  assert.equal(revised.request.approvalEscalation, null);
+  assert.deepEqual((await get(db, revised)).history.find((event) => event.event === "approved").snapshot.approvalEscalation, evidence);
+});
+test("incomplete drafts and missing or inconsistent route settings remain readable with a non-actionable preview", async () => {
+  for (const change of ["incomplete", "missing-budget", "invalid-settings"]) {
+    const db = fixture(requesterOnlySettings()), created = await create(db, change === "incomplete" ? draft(50, { motivation: "" }) : draft(50));
+    if (change === "missing-budget") db.records.delete(`${base}/purchaseBudgets/2026-10__maintenance`);
+    if (change === "invalid-settings") db.records.get(`${base}/settings/purchaseRequests`).approvalSteps = null;
+    const detail = await get(db, created); assert.equal(detail.request.id, created.purchaseRequestId); assert.equal(detail.history.length, 1);
+    assert.ok(detail.submissionApprovalRoute.error); assert.equal(detail.submissionApprovalRoute.fingerprint, null); assert.deepEqual(detail.submissionApprovalRoute.approvers, []);
+  }
+});
+test("legacy command receipts preserve their pre-route payload fingerprints and result snapshots", async () => {
+  const db = fixture(), created = await create(db, draft(), "legacy-create"), path = `${base}/purchaseRequestOperations/p-${digest("buyer", "legacy-create").slice(0, 48)}`, receipt = db.records.get(path);
+  const payload = { id: created.purchaseRequestId, action: "create", expected: 0, draft: require("./purchaseRequestPolicy").normalizeDraft(draft()), approverUid: null, nextApproverUid: null, reason: "" };
+  assert.equal(receipt.fingerprint, api.purchaseRequestInternals.canonicalDigest({ kind: "request", payload }));
+  const legacyResult = structuredClone(receipt.result); delete legacyResult.request.approvalEscalation;
+  receipt.result = legacyResult; receipt.resultFingerprint = api.purchaseRequestInternals.canonicalDigest(legacyResult);
+  assert.deepEqual(await create(db, draft(), "legacy-create"), legacyResult);
+});
 
 test("draft creation does not reserve budget and saves one immutable audited revision", async () => {
   const db = fixture(), value = await create(db);
@@ -189,6 +334,81 @@ test("foreign supplier products and fabricated attachment metadata never become 
   await assert.rejects(create(db, draft(1, { attachmentIds: ["a".repeat(32)] })), { code: "failed-precondition" });
   assert.deepEqual([...db.records], before);
 });
+const freeSupplierLine = (id, supplierId, unitPrice = 50) => ({ id, kind: "free", supplierId, description: `${id} service`, quantity: 1, unitPrice, unit: "service" });
+const twoSupplierDraft = (patch = {}) => draft(0, { supplierId: "", lines: [freeSupplierLine("repair", "vendor", 50), freeSupplierLine("installation", "second", 75)], ...patch });
+function twoSupplierFixture() {
+  const db = fixture(); db.records.set(`${base}/suppliers/second`, { name: "Second supplier", active: true, priceDateBasis: "delivery-date", email: "private@example.com", internalNotes: "Private supplier notes" }); return db;
+}
+test("multiple line suppliers are authoritative snapshots with one request total and one budget reservation", async () => {
+  const db = twoSupplierFixture(), input = twoSupplierDraft(); delete input.supplierId;
+  input.lines.push(freeSupplierLine("support", "vendor", 25));
+  const created = await create(db, input), snapshot = created.request;
+  assert.equal(snapshot.supplierId, ""); assert.equal(snapshot.supplier, null);
+  assert.deepEqual(snapshot.suppliers, [{ id: "vendor", name: "Vendor" }, { id: "second", name: "Second supplier" }]);
+  assert.deepEqual(snapshot.lines.map((line) => ({ supplierId: line.supplierId, supplier: line.supplier })), [
+    { supplierId: "vendor", supplier: { id: "vendor", name: "Vendor" } }, { supplierId: "second", supplier: { id: "second", name: "Second supplier" } }, { supplierId: "vendor", supplier: { id: "vendor", name: "Vendor" } },
+  ]);
+  assert.equal(snapshot.totalMinor, 15000); assert.equal(budget(db).pendingMinor, 0);
+  const pending = await submit(db, created); assert.equal(pending.request.totalMinor, 15000); assert.equal(budget(db).pendingMinor, 15000);
+  const second = await command(db, pending, "approve", { nextApproverUid: "finance" }, "manager"), approved = await command(db, second, "approve", {}, "finance");
+  assert.equal(approved.request.status, "approved"); assert.equal(budget(db).pendingMinor, 0); assert.equal(budget(db).committedMinor, 15000);
+  assert.deepEqual(approved.request.suppliers, snapshot.suppliers); assert.deepEqual(approved.request.lines, snapshot.lines);
+});
+test("common supplier summaries require every line to have the same nonblank supplier", async () => {
+  const db = twoSupplierFixture(), mixed = await create(db, twoSupplierDraft());
+  const common = await command(db, mixed, "save", { draft: twoSupplierDraft({ lines: [freeSupplierLine("repair", "second"), freeSupplierLine("support", "second")] }) });
+  assert.equal(common.request.supplierId, "second"); assert.deepEqual(common.request.supplier, { id: "second", name: "Second supplier" }); assert.deepEqual(common.request.suppliers, [common.request.supplier]);
+  const unfinished = await command(db, common, "save", { draft: twoSupplierDraft({ supplierId: "second", lines: [freeSupplierLine("repair", "second"), freeSupplierLine("support", "")] }) });
+  assert.equal(unfinished.request.supplierId, ""); assert.equal(unfinished.request.supplier, null); assert.equal(unfinished.request.lines[1].supplierId, ""); assert.equal(unfinished.request.lines[1].supplier, null);
+  assert.equal((await get(db, unfinished)).submissionApprovalRoute.error.code, "failed-precondition");
+  const before = JSON.stringify([...db.records]); await assert.rejects(submit(db, unfinished), { code: "failed-precondition" }); assert.equal(JSON.stringify([...db.records]), before);
+});
+test("an explicit blank line supplier never inherits a legacy request header", async () => {
+  const db = twoSupplierFixture(), created = await create(db, draft(0, { supplierId: "vendor", lines: [freeSupplierLine("repair", "")] }));
+  assert.equal(created.request.lines[0].supplierId, ""); assert.equal(created.request.lines[0].supplier, null);
+  await assert.rejects(submit(db, created), { code: "failed-precondition" });
+  const legacy = await create(db, draft(10), "legacy-line"); assert.equal(legacy.request.lines[0].supplierId, "vendor"); assert.deepEqual(legacy.request.lines[0].supplier, { id: "vendor", name: "Vendor" });
+  const extracted = api.purchaseRequestInternals.draftInputFromSnapshot(created.request); assert.equal(extracted.lines[0].supplierId, "");
+});
+test("line supplier selection rejects foreign, missing, inactive and archived suppliers atomically", async () => {
+  for (const state of ["foreign", "missing", "inactive", "archived", "archivedAt"]) {
+    const db = twoSupplierFixture();
+    if (state === "foreign") { db.records.set("hotels/hotel-b/suppliers/second", db.records.get(`${base}/suppliers/second`)); db.records.delete(`${base}/suppliers/second`); }
+    if (state === "missing") db.records.delete(`${base}/suppliers/second`);
+    if (state === "inactive") db.records.get(`${base}/suppliers/second`).active = false;
+    if (state === "archived") db.records.get(`${base}/suppliers/second`).archived = true;
+    if (state === "archivedAt") db.records.get(`${base}/suppliers/second`).archivedAt = { seconds: 1 };
+    const before = JSON.stringify([...db.records]); await assert.rejects(create(db, twoSupplierDraft()), { code: "failed-precondition" }); assert.equal(JSON.stringify([...db.records]), before);
+  }
+});
+test("each supplier product must belong to its own line supplier even with an explicit quote or another valid header", async () => {
+  const db = twoSupplierFixture(); db.records.set(`${base}/supplierproducts/offer`, { supplierId: "vendor", supplierProductName: "Coffee", active: true, purchaseUnit: "case", baseUnit: "kg", baseUnitsPerPurchaseUnit: 6 });
+  const input = twoSupplierDraft({ supplierId: "vendor", lines: [{ id: "wrong", kind: "supplier", supplierId: "second", supplierProductId: "offer", quantity: 1, unitPrice: 10 }] }), before = JSON.stringify([...db.records]);
+  await assert.rejects(create(db, input), { code: "failed-precondition" }); assert.equal(JSON.stringify([...db.records]), before);
+  await assert.rejects(create(db, { ...input, lines: [{ ...input.lines[0], supplierId: "" }] }), { code: "invalid-argument" });
+  db.records.set("hotels/hotel-b/supplierproducts/foreign-offer", { supplierId: "second", active: true });
+  await assert.rejects(create(db, { ...input, lines: [{ ...input.lines[0], supplierProductId: "foreign-offer" }] }), { code: "failed-precondition" });
+});
+test("mixed supplier names, quoted prices and package identities stay frozen through submit and historical decisions", async () => {
+  const db = twoSupplierFixture(); db.records.set(`${base}/supplierproducts/offer`, { supplierId: "second", supplierSku: "SECOND-1", supplierProductName: "Coffee", active: true, currency: "EUR", priceBasis: "net", pricePerPurchaseUnit: 10,
+    purchaseUnit: "case", baseUnit: "kg", baseUnitsPerPurchaseUnit: 6, purchaseOptions: [{ id: "bag", purchaseUnit: "bag", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 2 }], catalogProductId: "coffee", revision: 1, productPolicyVersion: 1 });
+  db.records.set(`${base}/catalogproducts/coffee`, { name: "Coffee beans", internalSku: "CAT-000001", baseUnit: "kg" });
+  const input = twoSupplierDraft({ lines: [freeSupplierLine("repair", "vendor", 50), { id: "coffee", kind: "supplier", supplierId: "second", supplierProductId: "offer", purchaseOptionId: "bag", quantity: 2, unitPrice: 12.5 }] });
+  const created = await create(db, input), frozen = structuredClone(created.request.lines);
+  db.records.get(`${base}/suppliers/second`).name = "Renamed supplier"; db.records.get(`${base}/suppliers/second`).archived = true;
+  Object.assign(db.records.get(`${base}/supplierproducts/offer`), { supplierId: "other", active: false, pricePerPurchaseUnit: 999, supplierProductName: "Replaced", purchaseOptions: [] });
+  db.records.get(`${base}/catalogproducts/coffee`).name = "Renamed catalog";
+  const pending = await submit(db, created), approved = await command(db, pending, "approve", {}, "manager");
+  assert.deepEqual(approved.request.lines, frozen); assert.equal(approved.request.totalMinor, 7500); assert.equal(approved.request.lines[1].supplier.name, "Second supplier");
+  const detail = await get(db, approved); assert.deepEqual(detail.history.find((event) => event.event === "create").snapshot.lines, frozen); assert.deepEqual(detail.history.find((event) => event.event === "approved").snapshot.lines, frozen);
+});
+test("saving and revising line suppliers changes only the new reviewed version and keeps a single reservation", async () => {
+  const db = twoSupplierFixture(), created = await create(db, twoSupplierDraft()), pending = await submit(db, created), finance = await command(db, pending, "approve", { nextApproverUid: "finance" }, "manager"), approved = await command(db, finance, "approve", {}, "finance");
+  const revised = await command(db, approved, "revise", { reason: "Different supplier and quote", draft: twoSupplierDraft({ lines: [freeSupplierLine("repair", "second", 200), freeSupplierLine("installation", "vendor", 25)] }) });
+  assert.equal(revised.request.status, "returned"); assert.equal(revised.request.totalMinor, 22500); assert.equal(budget(db).pendingMinor, 12500); assert.equal(budget(db).committedMinor, 0);
+  const next = await submit(db, revised); assert.equal(budget(db).pendingMinor, 22500); assert.equal(next.request.lines[0].supplierId, "second");
+  const history = (await get(db, next)).history; assert.equal(history.find((event) => event.event === "approved").snapshot.lines[0].supplierId, "vendor"); assert.equal(history.find((event) => event.event === "approved").snapshot.totalMinor, 12500);
+});
 test("all list filters remain hotel scoped and awaiting approval selects the authenticated assignee", async () => {
   const db = fixture(), first = await submit(db, await create(db)), second = await create(db, draft(50, { budgetMonth: "2026-11", budgetCategoryId: "china" }), "second");
   const list = (input, uid = "buyer") => api.listHotelPurchaseRequestsHandler(request(input, uid), services(db));
@@ -211,6 +431,41 @@ function priceFixture() {
   }
   return db;
 }
+test("price estimates use each line supplier's date agreement and quotation currency independently", async () => {
+  const db = priceFixture(); db.records.set(`${base}/suppliers/second`, { name: "Second supplier", active: true, priceDateBasis: "delivery-date" });
+  db.records.set(`${base}/supplierproducts/tea`, { supplierId: "second", supplierSku: "TEA", supplierProductName: "Tea", active: true, productPolicyVersion: 1,
+    currency: "USD", priceBasis: "net", pricingModel: "Per Purchase Unit", pricePerPurchaseUnit: 40, baseUnit: "kg", purchaseUnit: "box", baseUnitsPerPurchaseUnit: 2,
+    purchaseOptions: [{ id: "bag", purchaseUnit: "tea bag pack", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 20 }], revision: 1 });
+  const input = draft(0, { supplierId: "", lines: [{ id: "coffee", kind: "supplier", supplierId: "vendor", supplierProductId: "coffee", purchaseOptionId: "bag", quantity: 2 },
+    { id: "tea", kind: "supplier", supplierId: "second", supplierProductId: "tea", purchaseOptionId: "bag", quantity: 1 }] });
+  await assert.rejects(create(db, input), (error) => error.code === "failed-precondition" && /delivery date/.test(error.message));
+  const quoted = { ...input, lines: [input.lines[0], { ...input.lines[1], unitPrice: 15 }] }, created = await create(db, quoted);
+  assert.equal(created.request.lines[0].unitPrice, 1); assert.equal(created.request.lines[0].priceVersionId, "v1"); assert.equal(created.request.lines[0].priceSource, "supplier"); assert.equal(created.request.lines[0].unit, "bag");
+  assert.equal(created.request.lines[1].unitPrice, 15); assert.equal(created.request.lines[1].priceSource, "quote"); assert.equal(created.request.lines[1].unit, "tea bag pack"); assert.equal(created.request.currency, "EUR"); assert.equal(created.request.totalMinor, 1700);
+  db.records.get(`${base}/suppliers/second`).priceDateBasis = "order-date";
+  await assert.rejects(create(db, input, "usd-without-quote"), (error) => error.code === "failed-precondition" && /another currency/.test(error.message));
+  const explicit = await create(db, quoted, "usd-explicit-quote"); assert.equal(explicit.request.lines[1].unitPrice, 15);
+});
+test("legacy header-only snapshots and exact command receipts retain their original shapes until explicitly saved", async () => {
+  const db = fixture(), input = draft(50), created = await create(db, input, "legacy-header"), snapshot = structuredClone(created.request);
+  delete snapshot.suppliers; delete snapshot.approvalEscalation;
+  for (const line of snapshot.lines) { delete line.supplierId; delete line.supplier; }
+  const fingerprint = api.purchaseRequestInternals.canonicalDigest(snapshot), path = `${base}/purchaseRequests/${created.purchaseRequestId}`;
+  db.records.set(path, { ...snapshot, snapshotFingerprint: fingerprint });
+  const certificate = db.records.get(`${path}/history/000001`); certificate.snapshot = snapshot; certificate.snapshotFingerprint = fingerprint;
+  const receipt = db.records.get(`${base}/purchaseRequestOperations/p-${digest("buyer", "legacy-header").slice(0, 48)}`), legacyResult = { ...created, request: snapshot };
+  receipt.result = legacyResult; receipt.resultFingerprint = api.purchaseRequestInternals.canonicalDigest(legacyResult);
+  const payload = { id: created.purchaseRequestId, action: "create", expected: 0, draft: require("./purchaseRequestPolicy").normalizeDraft(input), approverUid: null, nextApproverUid: null, reason: "" };
+  assert.equal(receipt.fingerprint, api.purchaseRequestInternals.canonicalDigest({ kind: "request", payload })); assert.equal(Object.hasOwn(payload.draft.lines[0], "supplierId"), false);
+  assert.deepEqual(await create(db, input, "legacy-header"), legacyResult);
+  const read = await get(db, created); assert.equal(Object.hasOwn(read.request.lines[0], "supplierId"), false); assert.equal(Object.hasOwn(read.request, "suppliers"), false); assert.equal(read.submissionApprovalRoute.error, null);
+  const pending = await submit(db, created); assert.equal(Object.hasOwn(pending.request.lines[0], "supplierId"), false); assert.equal(Object.hasOwn(pending.request.lines[0], "supplier"), false);
+  const approved = await command(db, pending, "approve", {}, "manager"); assert.equal(Object.hasOwn(approved.request.lines[0], "supplierId"), false);
+  const history = (await get(db, approved)).history; assert.deepEqual(history.find((event) => event.event === "create").snapshot, snapshot); assert.equal(Object.hasOwn(history.find((event) => event.event === "approved").snapshot.lines[0], "supplierId"), false);
+  const draftInput = api.purchaseRequestInternals.draftInputFromSnapshot(approved.request); assert.equal(draftInput.supplierId, "vendor"); assert.equal(Object.hasOwn(draftInput.lines[0], "supplierId"), false);
+  const revised = await command(db, approved, "revise", { reason: "Review the supplier", draft: draftInput });
+  assert.equal(revised.request.lines[0].supplierId, "vendor"); assert.deepEqual(revised.request.lines[0].supplier, { id: "vendor", name: "Vendor" });
+});
 test("product picker and default estimates use applicable approved versions and exact net prices rather than raw projections", async () => {
   const db = priceFixture(), context = await api.getHotelPurchaseRequestContextHandler(request({ supplierId: "vendor", query: "coffee" }), services(db));
   assert.equal(context.supplierProducts[0].pricePerPurchaseUnit, 12); assert.equal(context.supplierProducts[0].purchaseOptions[0].pricePerPurchaseUnit, 1);
