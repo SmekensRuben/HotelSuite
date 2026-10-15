@@ -15,7 +15,10 @@ import PurchaseRequestsPage from "./PurchaseRequestsPage";
 import PurchaseRequestFormPage from "./PurchaseRequestFormPage";
 import PurchaseRequestDetailPage from "./PurchaseRequestDetailPage";
 
-let request, context, budget, history;
+let request, context, budget, history, submissionApprovalRoute;
+const routeFingerprint = "a".repeat(64);
+const firstStepEscalation = { reason: "requester-only-first-step", fromStepId: "manager", fromStepName: "Department manager", toStepId: "finance", toStepName: "Finance", settingsRevision: 4 };
+const escalatedSubmissionRoute = () => ({ steps: [{ id: "finance", name: "Finance" }], approvers: [{ uid: "finance", name: "Robin Finance" }], escalation: firstStepEscalation, error: null, fingerprint: routeFingerprint });
 function Location() { const location = useLocation(); return <output data-testid="location">{location.pathname}</output>; }
 function tree(path = "/purchase-requests/request-a") { return <MemoryRouter initialEntries={[path]}><Location /><Routes><Route path="/purchase-requests" element={<PurchaseRequestsPage />} /><Route path="/purchase-requests/new" element={<PurchaseRequestFormPage />} /><Route path="/purchase-requests/:purchaseRequestId" element={<PurchaseRequestDetailPage />} /><Route path="/purchase-requests/:purchaseRequestId/edit" element={<PurchaseRequestFormPage />} /></Routes></MemoryRouter>; }
 beforeEach(() => {
@@ -24,9 +27,10 @@ beforeEach(() => {
   budget = { exists: true, id: "2026-10__chinaware", month: "2026-10", categoryId: "chinaware", budgetMinor: 50000, openingUsedMinor: 0, pendingMinor: 0, committedMinor: 30000, remainingMinor: 20000 };
   request = { id: "request-a", hotelUid: "hotel-a", revision: 2, status: "draft", requesterUid: "requester", requesterName: "Sam Requester", currency: "EUR", supplierId: "supplier", supplier: { id: "supplier", name: "Hotel Supplies" }, title: "Replacement plates", description: "Replace damaged dinner plates", motivation: "Maintain enough plates for dinner service", costCentreId: "restaurant", costCentreName: "Restaurant", budgetCategoryId: "chinaware", budgetCategoryName: "Chinaware", budgetMonth: "2026-10", totalMinor: 15000, lines: [{ id: "line-a", kind: "free", description: "Dinner plates", quantity: 10, unitPrice: 15, unit: "each", lineTotalMinor: 15000 }], attachmentIds: [], attachments: [], approvals: [], approvalSteps: [], currentStepIndex: 0, reservation: { state: "none", amountMinor: 0 } };
   history = [{ revision: 2, event: "save", actorName: "Sam Requester", createdAtMillis: 1792051200000, snapshot: structuredClone(request) }];
+  submissionApprovalRoute = undefined;
   mocks.pending.mockReturnValue(null);
   mocks.context.mockImplementation(async (_, options = {}) => structuredClone({ ...context, ...(options.budgetMonth && options.budgetCategoryId ? { budget } : {}) }));
-  mocks.detail.mockImplementation(async () => structuredClone({ request, history, budget }));
+  mocks.detail.mockImplementation(async () => structuredClone({ request, history, budget, ...(submissionApprovalRoute === undefined ? {} : { submissionApprovalRoute }) }));
   mocks.list.mockImplementation(async () => ({ requests: [structuredClone(request)], nextCursor: null }));
   mocks.mutate.mockImplementation(async (_, input) => {
     if (input.draft) request = { ...request, ...input.draft };
@@ -212,4 +216,110 @@ it("keeps another requester's draft read-only even when the user can edit their 
   expect(await screen.findByRole("alert")).toHaveTextContent("Only the requester can edit this draft");
   expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
   expect(mocks.mutate).not.toHaveBeenCalled();
+});
+
+it("uses the verified escalated route and candidates even when the context contains an old first-step authority", async () => {
+  submissionApprovalRoute = escalatedSubmissionRoute();
+  render(tree());
+  const progress = await screen.findByRole("region", { name: "Approval progress" });
+  expect(progress).toHaveTextContent("Department manager will be escalated to Finance");
+  expect(progress).toHaveTextContent("The requester cannot approve their own request");
+  expect(within(progress).getAllByRole("listitem")).toHaveLength(1);
+  expect(progress).toHaveTextContent("1. Finance");
+  fireEvent.click(screen.getByRole("button", { name: "Submit request" }));
+  const dialog = await screen.findByRole("dialog", { name: "Submit request" });
+  const picker = within(dialog).getByLabelText("First approver · Finance");
+  expect(within(picker).getByRole("option", { name: "Robin Finance" })).toBeInTheDocument();
+  expect(within(picker).queryByRole("option", { name: "Alex Manager" })).not.toBeInTheDocument();
+  expect(within(picker).queryByRole("option", { name: "Requester" })).not.toBeInTheDocument();
+  fireEvent.change(picker, { target: { value: "finance" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm submit" }));
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("hotel-a", { purchaseRequestId: "request-a", expectedRevision: 2, action: "submit", approverUid: "finance", expectedApprovalRouteFingerprint: routeFingerprint }));
+});
+it("keeps a route verification error readable and blocks submission until a successful refresh", async () => {
+  submissionApprovalRoute = { steps: [], approvers: [], escalation: null, error: { code: "failed-precondition", message: "No independent Finance approver can review the full request." }, fingerprint: null };
+  render(tree());
+  expect(await screen.findByRole("heading", { name: "Replacement plates" })).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("No independent Finance approver");
+  expect(screen.getByRole("button", { name: "Submit request" })).toBeDisabled();
+  expect(screen.getByRole("region", { name: "Purchase lines" })).toHaveTextContent("Dinner plates");
+  expect(mocks.mutate).not.toHaveBeenCalled();
+  submissionApprovalRoute = escalatedSubmissionRoute();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh approval route" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Submit request" })).toBeEnabled());
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+it("does not replace an empty authoritative candidate list with candidates from the context", async () => {
+  submissionApprovalRoute = { ...escalatedSubmissionRoute(), approvers: [] };
+  render(tree());
+  expect(await screen.findByRole("button", { name: "Submit request" })).toBeDisabled();
+  expect(screen.getByRole("alert")).toHaveTextContent("No eligible first approver is configured");
+  expect(mocks.mutate).not.toHaveBeenCalled();
+});
+it("refreshes a changed approval route and requires a new selection and fingerprint before another submit", async () => {
+  submissionApprovalRoute = escalatedSubmissionRoute();
+  mocks.mutate.mockRejectedValueOnce(new Error("The approval route changed. Refresh the request before submitting."));
+  render(tree()); fireEvent.click(await screen.findByRole("button", { name: "Submit request" }));
+  let dialog = await screen.findByRole("dialog", { name: "Submit request" });
+  fireEvent.change(within(dialog).getByLabelText("First approver · Finance"), { target: { value: "finance" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm submit" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("approval route changed");
+  submissionApprovalRoute = { steps: [{ id: "manager", name: "Department manager" }], approvers: [{ uid: "manager", name: "Alex Manager" }], escalation: null, error: null, fingerprint: "b".repeat(64) };
+  fireEvent.click(within(dialog).getByRole("button", { name: "Back" }));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh request" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Submit request" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Submit request" }));
+  dialog = await screen.findByRole("dialog", { name: "Submit request" });
+  expect(within(dialog).getByLabelText("First approver · Department manager")).toHaveValue("");
+  expect(within(dialog).getByRole("button", { name: "Confirm submit" })).toBeDisabled();
+  fireEvent.change(within(dialog).getByLabelText("First approver · Department manager"), { target: { value: "manager" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm submit" }));
+  await waitFor(() => expect(mocks.mutate).toHaveBeenLastCalledWith("hotel-a", expect.objectContaining({ approverUid: "manager", expectedApprovalRouteFingerprint: "b".repeat(64) })));
+  expect(mocks.mutate).toHaveBeenCalledTimes(2);
+});
+it("retains the submitted escalation and route when current settings change, including the frozen history evidence", async () => {
+  mocks.auth.currentUser = { uid: "finance" }; request.status = "pending"; request.currentApproverUid = "finance"; request.currentApproverName = "Robin Finance";
+  request.approvalSteps = [{ id: "finance", name: "Finance" }, { id: "director", name: "General manager" }]; request.approvalEscalation = firstStepEscalation;
+  history = [{ revision: 2, event: "submit", actorName: "Sam Requester", snapshot: structuredClone(request) }];
+  submissionApprovalRoute = null;
+  context.settings.approvalSteps = [{ id: "changed", name: "New department step", thresholdMinor: 0 }];
+  context.approvers.push({ uid: "director", name: "Taylor Director", stepIds: ["director"], limitMinor: 100000, eligible: true });
+  render(tree());
+  const progress = await screen.findByRole("region", { name: "Approval progress" });
+  expect(progress).toHaveTextContent("Department manager was escalated to Finance");
+  expect(progress).toHaveTextContent("1. Finance"); expect(progress).toHaveTextContent("2. General manager");
+  expect(progress).not.toHaveTextContent("New department step");
+  expect(progress).not.toHaveTextContent("Approved by Sam Requester");
+  const timeline = screen.getByRole("region", { name: "Request timeline" });
+  fireEvent.click(within(timeline).getByText("View frozen version"));
+  expect(timeline).toHaveTextContent("Department manager was escalated to Finance");
+  expect(timeline).toHaveTextContent("Approval route: Finance → General manager");
+  fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+  const dialog = await screen.findByRole("dialog", { name: "Approve" });
+  expect(within(dialog).getByLabelText("Next approver · General manager")).toBeInTheDocument();
+  expect(within(dialog).getByRole("option", { name: "Taylor Director" })).toBeInTheDocument();
+});
+it("previews a returned request's new route rather than its earlier submitted route", async () => {
+  request.status = "returned"; request.approvalSteps = [{ id: "manager", name: "Department manager" }]; request.approvals = [{ stepId: "finance", approverUid: "finance", approverName: "Robin Finance" }];
+  submissionApprovalRoute = escalatedSubmissionRoute();
+  render(tree());
+  const progress = await screen.findByRole("region", { name: "Approval progress" });
+  expect(progress).toHaveTextContent("1. Finance");
+  expect(progress).not.toHaveTextContent("1. Department manager");
+  expect(progress).toHaveTextContent("will be escalated to Finance");
+  expect(progress).not.toHaveTextContent("Approved by Robin Finance");
+});
+it("does not invent an escalation for a legacy response without a verified submission route", async () => {
+  context.approvers = context.approvers.filter((person) => person.uid !== "manager");
+  render(tree());
+  expect(await screen.findByRole("button", { name: "Submit request" })).toBeDisabled();
+  expect(screen.queryByText(/will be escalated/)).not.toBeInTheDocument();
+  expect(mocks.mutate).not.toHaveBeenCalled();
+});
+it("blocks an unverifiable route fingerprint without hiding the request", async () => {
+  submissionApprovalRoute = { ...escalatedSubmissionRoute(), fingerprint: null };
+  render(tree());
+  expect(await screen.findByRole("button", { name: "Submit request" })).toBeDisabled();
+  expect(screen.getByRole("alert")).toHaveTextContent("approval route could not be verified");
+  expect(screen.getByRole("region", { name: "Purchase lines" })).toBeInTheDocument();
 });

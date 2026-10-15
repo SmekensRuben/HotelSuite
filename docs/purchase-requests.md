@@ -7,13 +7,15 @@ Purchase Requests add internal purchasing decisions to Purchasing & Inventory. A
 1. Grant the relevant team members the **Purchase Requester**, **Purchase Approver** or **Budget Manager** permissions within the active Purchasing & Inventory module. Approver permission alone does not grant unlimited financial authority.
 2. Open **Module settings → Purchase Requests** (`/settings/procurement?section=purchase-requests`). Choose the hotel's single budget currency and over-budget policy.
 3. Configure **Cost centres**, which identify the responsible department/accounting centre, separately from **Budget categories**, which identify the type of expense. A Front Office purchase can, for example, use the Maintenance budget category. These lists use stable IDs; they are independent of physical inventory outlets and locations. Labels may change without rewriting old requests.
-4. Add the required approval steps in order. A threshold of `0.00` makes the step apply to every submitted request. A threshold of `1,000.00` adds the step for requests totalling at least that amount. Configure at least one applicable step for every intended request amount.
+4. Add the required approval steps in order. A threshold of `0.00` makes the step apply to every submitted request. A threshold of `1,000.00` adds the step for requests totalling at least that amount. Configure at least one applicable step for every intended request amount. Top-to-bottom order also defines the next higher step for the requester-only escalation described below.
 5. Add eligible hotel members as approval authorities. Select their authorized steps and set a net amount limit covering the entire request, rather than only its increment. The optional additional budget authority permits the extra over-budget approval; it does not bypass the normal steps or limit.
 6. Open **Purchase budgets** (`/purchase-budgets`) and enter the allocations for each category and month. Add opening consumption for money already spent before adopting the workflow.
 
 Every financial value is **net, excluding VAT**. The initial implementation supports EUR, USD, GBP, CHF, CAD and AUD, all using two decimal currency places. It does not convert currencies. Currency becomes locked when the first budget or request is saved.
 
-The year view shows twelve months for the selected budget category, with saved hotel-wide annual totals. A blank allocation means **not configured** and differs from an explicit `0.00` allocation. Missing budgets prevent submission. Existing allocations cannot be cleared to make them disappear; use an explicit zero if appropriate.
+**Purchase budgets** opens in **By month** view: choose a year and month to see all budget categories together, their allocations, opening consumption, pending requests, approved commitments and remaining amounts. The summary totals cover that month across categories. Switch to **By category** for the selected category's twelve-month view and annual totals. Both views edit the same draft; switching the view, month or category preserves unsaved changes. On small screens the allocation rows display as labelled cards.
+
+Totals clearly identify their scope and reflect draft allocations/opening amounts together with saved request reservations and commitments. When allocations are missing or invalid, the known allocation subtotal is labelled and complete remaining funds stay unavailable. A blank allocation means **not configured** and differs from an explicit `0.00` allocation. Missing budgets prevent submission. Existing allocations cannot be cleared to make them disappear; use an explicit zero if appropriate.
 
 **Copy allocations** applies one month's allocation to selected months, or copies the same category's allocations from another year. These operations change a draft. Review and save before they take effect. Opening consumption, pending amounts and approved commitments are never copied. Changing the year is paused while there are unsaved changes or an uncertain save.
 
@@ -33,6 +35,35 @@ Saved category and cost-centre IDs already referenced by requests cannot be remo
 An approver cannot approve their own request, skip a required step or approve multiple steps of the same request. Select separate authorized people for successive steps. An over-budget request in **Require additional budget authority** mode adds a final required budget-approval step; **Block submission** mode refuses the excess instead.
 
 The list supports status, month, cost centre and **Awaiting my approval** filters. The details show the submitted information, attachments, current approver, budget state and decision/change timeline. Email links open this authenticated workflow and do not grant approval rights themselves.
+
+### When the requester is the only first-step approver
+
+Submission checks the first applicable step against current hotel membership,
+approval permissions, verified active accounts and authority for the entire net
+request amount. If the requester is its only eligible approver, the request is
+escalated to the **immediately following configured step**. The higher step is
+required even when the amount is below its normal threshold. If another eligible
+first-step approver exists, the ordinary route remains required.
+
+For example, configure **Department approval** from EUR 0, **Finance approval**
+from EUR 1,000 and **General Manager approval** from EUR 5,000. A department head
+who is the only eligible Department approver submits EUR 400 to an independent
+Finance approver. For EUR 7,500, Finance approval is followed by a different
+General Manager approver. Department approval is recorded as escalated, never as
+self-approved; Finance does not appear twice in the route.
+
+The exception does not skip further unavailable steps or grant financial
+authority. If there is no next configured step or no independent eligible person
+for it, submission stays blocked with an explanation. Configure another approver
+or an appropriate higher step. Actual approval steps still require different
+people, and any additional over-budget approval remains separate and mandatory.
+
+The submission dialog previews the server-calculated route and escalation before
+the requester chooses the first approver. Submission recalculates current
+authority and rejects a stale reviewed route. A successful submission freezes the
+escalation reason, original and promoted step names/IDs and settings revision in
+its request history. Existing pending and historical routes are not rewritten;
+returning, revising or resubmitting a request requires a fresh routing decision.
 
 ## Budget accounting
 

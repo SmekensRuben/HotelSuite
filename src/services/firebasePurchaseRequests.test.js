@@ -22,6 +22,19 @@ it("reconciles a saved create command after an Auth instance changes without cre
   const original = mocks.call.mock.calls[0][0]; mocks.auth.currentUser = { uid: "requester" };
   await retryPurchaseRequestCommand("hotel-a"); expect(mocks.call.mock.calls[1][0]).toEqual(original);
 });
+it("recovers the original reviewed approval route after reload instead of sending a newly calculated route", async () => {
+  const reviewed = { ...input(), approverUid: "finance", expectedApprovalRouteFingerprint: "a".repeat(64) };
+  mocks.call.mockRejectedValueOnce(new Error("Response lost")).mockImplementation(success);
+  await expect(mutatePurchaseRequest("hotel-a", reviewed)).rejects.toThrow("Response lost");
+  const original = mocks.call.mock.calls[0][0];
+  mocks.auth.currentUser = { uid: "requester" };
+  await expect(mutatePurchaseRequest("hotel-a", { ...reviewed, expectedApprovalRouteFingerprint: "b".repeat(64) })).rejects.toThrow("previous result is uncertain");
+  expect(mocks.call).toHaveBeenCalledTimes(1);
+  await retryPurchaseRequestCommand("hotel-a", "request-a");
+  expect(mocks.call.mock.calls[1][0]).toEqual(original);
+  expect(mocks.call.mock.calls[1][0].expectedApprovalRouteFingerprint).toBe(reviewed.expectedApprovalRouteFingerprint);
+  expect(getPendingPurchaseRequestCommand("hotel-a", "request-a")).toBeNull();
+});
 it("unlocks a conflict only with explicit server proof that the command did not commit", async () => {
   mocks.call.mockRejectedValueOnce(Object.assign(new Error("Changed"), { details: { purchaseRequestUncommitted: true } }));
   await expect(mutatePurchaseRequest("hotel-a", input())).rejects.toThrow("Changed");

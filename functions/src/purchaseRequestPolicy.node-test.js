@@ -42,6 +42,14 @@ test("required step thresholds keep configured order and append separate over-bu
   assert.throws(() => policy.requiredSteps({ ...settings, overBudgetMode: "block" }, 9999, true));
   assert.throws(() => policy.requiredSteps({ ...settings, approvalSteps: [] }, 9999, false));
 });
+test("first-step escalation promotes only the immediate configured successor and preserves required budget authority", () => {
+  const settings = { revision: 4, approvalSteps: [{ id: "department", name: "Department", thresholdMinor: 0 }, { id: "finance", name: "Finance", thresholdMinor: 10000 }, { id: "director", name: "Director", thresholdMinor: 50000 }], overBudgetMode: "approval" };
+  const low = policy.escalateFirstStep(settings, policy.requiredSteps(settings, 100, true));
+  assert.deepEqual(low.steps.map((step) => step.id), ["finance", "over-budget"]);
+  assert.deepEqual(low.escalation, { reason: "requester-only-first-step", fromStepId: "department", fromStepName: "Department", toStepId: "finance", toStepName: "Finance", settingsRevision: 4 });
+  assert.deepEqual(policy.escalateFirstStep(settings, policy.requiredSteps(settings, 50000, false)).steps.map((step) => step.id), ["finance", "director"]);
+  assert.throws(() => policy.escalateFirstStep({ ...settings, approvalSteps: [settings.approvalSteps[0]] }, [{ id: "department", name: "Department" }]));
+});
 test("settings reject unsupported currency scales, forged step authority and reserved extra-step identities", () => {
   const valid = { ...policy.DEFAULT_SETTINGS, currency: "EUR", approvalSteps: [{ id: "manager", name: "Manager", thresholdMinor: 0 }], approvers: [{ uid: "manager", stepIds: ["manager"], limitMinor: 10000, canApproveOverBudget: false }] };
   assert.equal(policy.normalizeSettings(valid).currency, "EUR");

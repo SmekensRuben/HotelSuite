@@ -120,8 +120,14 @@ function requiredSteps(settings, amount, overBudget) {
   }
   return steps;
 }
+function escalateFirstStep(settings, steps) {
+  const first = steps[0], index = settings.approvalSteps.findIndex((step) => step.id === first?.id), target = settings.approvalSteps[index + 1];
+  if (index < 0 || !target) throw new HttpsError("failed-precondition", "The requester is the only current approver for the first step. Configure an independent approver for the next approval step before submitting.");
+  return { steps: [{ id: target.id, name: target.name }, ...steps.slice(1).filter((step) => step.id !== target.id)],
+    escalation: { reason: "requester-only-first-step", fromStepId: first.id, fromStepName: first.name, toStepId: target.id, toStepName: target.name, settingsRevision: settings.revision } };
+}
 function authorityAllows(authority, stepId, amount) {
   return !!authority && authority.limitMinor >= amount && (stepId === "over-budget" ? authority.canApproveOverBudget === true : authority.stepIds.includes(stepId));
 }
 module.exports = { VERSION, MAX_MONEY_MINOR, CURRENCIES, DEFAULT_SETTINGS, SETTINGS_FIELDS, exact, id, money, month, micro, decimal, lineTotal, total,
-  normalizeSettings, normalizeDraft, bucketId, budgetProjection, transferBudget, requiredSteps, authorityAllows };
+  normalizeSettings, normalizeDraft, bucketId, budgetProjection, transferBudget, requiredSteps, escalateFirstStep, authorityAllows };
