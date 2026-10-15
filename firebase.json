@@ -34,6 +34,13 @@
       "**/node_modules/**"
     ],
     "rewrites": [
+      { "source": "/mcp", "function": { "functionId": "hotelMcp", "region": "us-central1" } },
+      { "source": "/authorize", "function": { "functionId": "hotelMcp", "region": "us-central1" } },
+      { "source": "/token", "function": { "functionId": "hotelMcp", "region": "us-central1" } },
+      { "source": "/revoke", "function": { "functionId": "hotelMcp", "region": "us-central1" } },
+      { "source": "/.well-known/oauth-authorization-server", "function": { "functionId": "hotelMcp", "region": "us-central1" } },
+      { "source": "/.well-known/oauth-protected-resource", "function": { "functionId": "hotelMcp", "region": "us-central1" } },
+      { "source": "/.well-known/oauth-protected-resource/mcp", "function": { "functionId": "hotelMcp", "region": "us-central1" } },
       { "source": "**", "destination": "/index.html" }
     ]
   }

@@ -50,6 +50,7 @@ function dataPathModule(path) {
     return "core";
   }
   const aliases = { upselling: "frontoffice", groupsettings: "groups", groupmarketsegments: "groups", subsegments: "groups",
+    hotelmcpproposalbatches: "procurement", hotelmcpproposaloperations: "procurement",
     demandcalendarevents: "revenue", localevents: "revenue", quotes: "revenue", competitorgroupquotes: "revenue",
     purchaserequestoperations: "procurement", purchaserequestattachments: "procurement",
     purchaserequestnotifications: "procurement" };

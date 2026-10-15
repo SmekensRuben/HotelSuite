@@ -13,6 +13,7 @@ import {
   LayoutDashboard,
   LogOut,
   Package,
+  Plug,
   Settings2,
   ShoppingBasket,
   Sparkles,
@@ -229,6 +230,12 @@ export default function HeaderBar({ today, onLogout }) {
     {
       label: "Administration",
       items: visible([
+        {
+          to: "/settings/connections",
+          label: "AI connections",
+          icon: Plug,
+          visible: true,
+        },
         {
           to: "/contracts",
           label: "Contracts",

@@ -6,9 +6,9 @@ import AppRouter from "./AppRouter";
 
 const route = vi.hoisted(() => {
   let resolve;
-  return { access: "denied", imports: 0, reviewImports: 0, syncImports: 0, guards: [], loaded: new Promise((done) => { resolve = done; }), resolve: () => resolve() };
+  return { access: "denied", imports: 0, reviewImports: 0, syncImports: 0, proposalImports: 0, guards: [], loaded: new Promise((done) => { resolve = done; }), resolve: () => resolve() };
 });
-vi.mock("./components/shared/ProtectedRoute.jsx", () => ({ default: ({ children, feature, action }) => { route.guards.push({ feature, action }); return route.access === "allowed" ? children : <p>{route.access === "checking" ? "Checking hotel access..." : "Access denied"}</p>; } }));
+vi.mock("./components/shared/ProtectedRoute.jsx", () => ({ default: ({ children, feature, action, anyOf }) => { route.guards.push(anyOf?.length ? { anyOf } : { feature, action }); return route.access === "allowed" ? children : <p>{route.access === "checking" ? "Checking hotel access..." : "Access denied"}</p>; } }));
 vi.mock("./components/pages/ProductsPage.jsx", async () => {
   route.imports += 1;
   await route.loaded;
@@ -28,8 +28,26 @@ vi.mock("./components/pages/CatalogSyncPage.jsx", async () => {
     return <p>Catalog review at {pathname}{search}{hash}</p>;
   } };
 });
+vi.mock("./components/pages/ProductProposalsPage.jsx", async () => {
+  const { useSearchParams } = await import("react-router-dom");
+  route.proposalImports += 1;
+  return { default: () => <p>Private product proposals: {useSearchParams()[0].get("batchId")}</p> };
+});
 
 describe("route loading boundary", () => {
+  it("opens a private proposal link only after the catalog-or-supplier read boundary", async () => {
+    route.access = "denied";
+    const initialEntries = ["/catalog/products/proposals?batchId=private-batch"];
+    const view = render(<MemoryRouter initialEntries={initialEntries}><AppRouter /></MemoryRouter>);
+    expect(screen.getByText("Access denied")).toBeInTheDocument();
+    expect(route.proposalImports).toBe(0);
+    expect(route.guards.at(-1)).toEqual({ anyOf: [{ feature: "catalogproducts", action: "read" }, { feature: "supplierproducts", action: "read" }] });
+    route.access = "allowed";
+    view.rerender(<MemoryRouter initialEntries={initialEntries}><AppRouter /></MemoryRouter>);
+    expect(await screen.findByText("Private product proposals: private-batch")).toBeInTheDocument();
+    expect(route.proposalImports).toBe(1);
+    route.access = "denied";
+  });
   it("redirects old sync links with their context before the protected lazy catalog review", async () => {
     route.access = "denied";
     const initialEntries = ["/catalog/sync?supplierId=vendor%2Fone#review"];

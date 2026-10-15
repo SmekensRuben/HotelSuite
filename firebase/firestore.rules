@@ -410,6 +410,10 @@ service cloud.firestore {
       match /catalogSyncJobs/{document=**} { allow read, write: if false; }
       match /catalogSyncOperations/{document=**} { allow read, write: if false; }
       match /catalogSyncAudit/{document=**} { allow read, write: if false; }
+      // AI clients stage private proposals; only protected human review can
+      // apply product commands. Browsers cannot manufacture review receipts.
+      match /hotelMcpProposalBatches/{document=**} { allow read, write: if false; }
+      match /hotelMcpProposalOperations/{document=**} { allow read, write: if false; }
       match /catalogSkuConfiguration/{document=**} { allow read, write: if false; }
       match /catalogSkuKeys/{document=**} { allow read, write: if false; }
       match /catalogSkuLegacyIndex/{document=**} { allow read, write: if false; }
@@ -590,6 +594,11 @@ service cloud.firestore {
       match /{document=**} { allow read, write: if false; }
     }
 
+    // Personal OAuth grants and hashed bearer material have no browser API.
+    match /hotelMcpOAuthAuthorizations/{document=**} { allow read, write: if false; }
+    match /hotelMcpOAuthCodes/{document=**} { allow read, write: if false; }
+    match /hotelMcpOAuthTokens/{document=**} { allow read, write: if false; }
+    match /hotelMcpOAuthConnections/{document=**} { allow read, write: if false; }
     match /{document=**} {
       allow read, write: if false;
     }

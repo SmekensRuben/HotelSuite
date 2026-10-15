@@ -11,6 +11,12 @@
     ] },
     { "collectionGroup": "inventoryMovements", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "locationId", "order": "ASCENDING" }, { "fieldPath": "receivedOn", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "hotelMcpOAuthConnections", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "uid", "order": "ASCENDING" }, { "fieldPath": "revokedAt", "order": "ASCENDING" }, { "fieldPath": "expiresAtMs", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "hotelMcpProposalBatches", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "ownerUid", "order": "ASCENDING" }, { "fieldPath": "createdAtMillis", "order": "DESCENDING" }, { "fieldPath": "__name__", "order": "DESCENDING" }
     ] }
   ],
   "fieldOverrides": []

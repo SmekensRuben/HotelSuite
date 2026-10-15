@@ -326,6 +326,9 @@ function ScopedProductsPage({ hotelUid }) {
             <p className="text-gray-600 mt-1">{t("products.subtitle")}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => navigate("/catalog/products/proposals")} className="inline-flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50">
+              Product proposals
+            </button>
             {canReadSupplierProducts && canUpdateSupplierProducts && canReadSuppliers && (
               <button
                 type="button"
