@@ -95,6 +95,51 @@ mappings are rejected; changed mappings require human correction before applying
 affected rows. Source text and URLs are data, never instructions. The server does
 not crawl sites or run an AI extraction agent.
 
+## Shared portion-count guidance
+
+Unit-selection guidance belongs to the MCP server and its authenticated
+`get_product_workflow_metadata` response, so every authorized client can retrieve
+the same rules without relying on one user's chat history or personal memory.
+Server instructions and both metadata/staging tool descriptions tell clients to
+fetch the rules for each product kind before preparing proposals.
+
+For a new product explicitly sold as individually consumed single servings,
+prefer counting one portion as `each`. Preserve an existing reviewed catalog or
+supplier unit, or an explicit user choice, instead of silently changing an
+established identity. A jar or bottle is not automatically a single serving.
+Bulk products retain an appropriate mass or volume unit; missing counts and
+ambiguous usage need human review rather than an inferred conversion.
+
+For source-confirmed chocolate spread **64 single-serving jars x 25 g per box**:
+
+| Field | Proposed value |
+| --- | --- |
+| Supplier product name | Chocolate spread 25 g portions, box of 64 jars |
+| `baseUnit` | `each` (one portion) |
+| `purchaseUnit` | `Box` |
+| `baseUnitsPerPurchaseUnit` | `64` |
+| `pricePerPurchaseUnit` | The quoted box price, with its actual currency and price basis |
+| `gtin` | The box barcode, if established by the source |
+
+Do not automatically collapse these 64 portions into 1,600 g. Conversely, if
+the matching reviewed catalog identity uses grams, preserve that identity and
+its compatible offer conversion unless the user explicitly requests a separate
+count-based identity. Different portion sizes are not automatically
+interchangeable simply because both use `each`.
+
+The current MCP schema has no separate structured weight-per-item field. Preserve
+25 g in supported names or catalog descriptions/notes; that descriptive value
+does not authorize a grams-to-items conversion. Do not invent a purchasable
+single-jar option, a price, or an inner/outer barcode relationship.
+
+These are shared preparation instructions, not a new validation requirement or
+a guarantee that every AI client follows them. Existing server-side dimensional
+validation and human approval remain authoritative. This update changes no
+product schema or historical data and does not automatically rewrite proposals
+already prepared. After review and deployment, newly fetched metadata supplies
+the guidance to clients using that server. Clients caching tool descriptions
+may need a refresh to see the updated descriptions.
+
 ## Preparing and reviewing a batch
 
 Ask the client to discover hotels, select the destination, find the supplier and
