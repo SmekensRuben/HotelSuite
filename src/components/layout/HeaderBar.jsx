@@ -36,7 +36,6 @@ export default function HeaderBar({ today, onLogout }) {
   } = useHotelContext();
   const canViewCatalogProducts = usePermission("catalogproducts", "read");
   const canViewSupplierProducts = usePermission("supplierproducts", "read");
-  const canSyncSupplierProducts = usePermission("supplierproducts", "update");
   const canViewSuppliers = usePermission("suppliers", "read");
   const canViewOrders = usePermission("orders", "read");
   const canViewContracts = usePermission("contracts", "read");
@@ -120,12 +119,6 @@ export default function HeaderBar({ today, onLogout }) {
           label: "Supplier Products",
           icon: Package,
           visible: canViewSupplierProducts,
-        },
-        {
-          to: "/catalog/sync",
-          label: "Catalog sync",
-          icon: Sparkles,
-          visible: canViewCatalogProducts && canViewSupplierProducts && canSyncSupplierProducts && canViewSuppliers,
         },
         {
           to: "/catalog/suppliers",

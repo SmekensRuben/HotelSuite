@@ -15,7 +15,7 @@ import CatalogSyncPage from "./CatalogSyncPage";
 const product = { name: "Milk", baseUnit: "l", brand: "", active: true, inventoryTracked: true, allergens: [] };
 const row = (number = 1) => ({ rowId: `r-${String(number).padStart(6, "0")}`, supplierProductId: `offer-${number}`, expectedSupplierRevision: 3, reviewRevision: 1, supplierProduct: { supplierId: "supplier", supplierSku: `00${number}`, supplierProductName: `Milk offer ${number}`, baseUnit: "l", baseUnitsPerPurchaseUnit: 12, purchaseUnit: "Box", allergens: [], purchaseOptions: [] }, status: "suggested", existingMatches: [{ catalogProductId: "catalog-1", expectedCatalogRevision: 4, product, status: "suggested", matchKind: "physical-identity", reasons: ["Physical article words agree."], warnings: [], evidence: {} }], proposedNewProduct: { ...product }, groupKey: "same-milk-group", warnings: [], applied: null });
 let data;
-const wrap = () => <MemoryRouter initialEntries={["/catalog/sync?supplierId=supplier"]}><CatalogSyncPage /></MemoryRouter>;
+const wrap = () => <MemoryRouter initialEntries={["/catalog/products/sync?supplierId=supplier"]}><CatalogSyncPage /></MemoryRouter>;
 const mount = () => render(wrap());
 const article = (number = 1) => screen.getByRole("article", { name: `Catalog proposal: Milk offer ${number}` });
 function reviewExisting(number = 1) { const scope = within(article(number)); fireEvent.click(scope.getByRole("button", { name: "Link existing article" })); fireEvent.click(scope.getByRole("button", { name: /Milk l \(litres\)/ })); fireEvent.click(scope.getByRole("checkbox", { name: `Confirm exchangeability for 00${number}` })); fireEvent.click(scope.getByRole("button", { name: "Add reviewed choice" })); }

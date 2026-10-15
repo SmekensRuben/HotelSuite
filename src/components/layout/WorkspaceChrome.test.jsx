@@ -21,14 +21,19 @@ const groups = [
     ],
   },
 ];
-const show = () =>
+const show = (initialPath = "/dashboard") =>
   render(
-    <MemoryRouter initialEntries={["/dashboard"]}>
+    <MemoryRouter initialEntries={[initialPath]}>
       <WorkspaceChrome groups={groups} subtitle="Hotel workspace" />
     </MemoryRouter>,
   );
 afterEach(() => vi.unstubAllGlobals());
 describe("workspace navigation", () => {
+  it("keeps Catalog Products active while reviewing catalog sync", () => {
+    show("/catalog/products/sync");
+    expect(screen.getByRole("link", { name: "Catalog Products" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Overview" })).not.toHaveAttribute("aria-current");
+  });
   it("identifies the active route and preserves link destinations", () => {
     show();
     expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute(

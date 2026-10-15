@@ -6,9 +6,11 @@ procurement permissions. A proposal changes no product; existing links are kept.
 
 ## Daily workflow
 
-1. Open **Catalog sync** from Catalog Products, Supplier Products or the purchasing
-   navigation. Supplier Products carries its supplier filter through. After a
-   supplier import, **Continue to catalog sync** opens that supplier's offers.
+1. Open **Catalog sync** using the sync icon with a subtle sparkle accent on
+   **Catalog Products**. It is a catalog action with a single entry point.
+   The review keeps Catalog Products active in the navigation and returns there.
+   Existing `/catalog/sync` links redirect to `/catalog/products/sync`, retaining
+   supplier filters and recovery context.
 2. Compare an unlinked offer with suggested existing articles, or search the
    selected hotel's catalog. Review reasons, physical differences and exact
    package-to-catalog conversions. A purchase box is not the physical article.
@@ -26,6 +28,14 @@ procurement permissions. A proposal changes no product; existing links are kept.
    movements and valuations retain their snapshots.
 
 ## Exchangeability and units
+
+The previous product format's `baseQtyPerUnit` is retained as reference data,
+not a current counting or package conversion factor. Existing values appear
+under collapsed **Additional information** on catalog detail/edit screens and
+are preserved when saving other fields. New forms and import templates do not
+invent this value. Stock counts use the catalog stock unit; receiving converts
+the supplier's package contents into that unit. Matching may still flag an
+ambiguous old individual-item quantity for explicit review.
 
 Mass, volume and item counts never convert into one another. Compatible g/kg and
 ml/l conversions use the existing exact six-decimal quantity policy. Default and

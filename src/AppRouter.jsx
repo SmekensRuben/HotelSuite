@@ -1,7 +1,7 @@
 import React, { lazy, Suspense } from "react";
 const HotelOnboardingPage = lazy(() => import("./components/pages/HotelOnboardingPage.jsx"));
 const HotelTeamPage = lazy(() => import("./components/pages/HotelTeamPage.jsx"));
-import { Routes, Route, Navigate, useParams } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 const SubscriptionsPage = lazy(() => import("./components/pages/SubscriptionsPage.jsx"));
 import PlatformRoute from "./components/shared/PlatformRoute";
 const PlatformLayout = lazy(() => import("./components/platform/PlatformLayout"));
@@ -104,6 +104,11 @@ function LegacyUserRedirect() {
   return <Navigate to={`/platform/users/${encodeURIComponent(userId)}`} replace />;
 }
 
+function LegacyCatalogSyncRedirect() {
+  const { search, hash } = useLocation();
+  return <Navigate to={{ pathname: "/catalog/products/sync", search, hash }} replace />;
+}
+
 export default function AppRouter() {
   return (
     <Suspense fallback={<div role="status" className="p-6 text-gray-600">Loading page...</div>}>
@@ -156,7 +161,8 @@ export default function AppRouter() {
           </ProtectedRoute>
         }
       />
-      <Route path="/catalog/sync" element={<ProtectedRoute feature="catalogproducts" action="read"><CatalogSyncPage /></ProtectedRoute>} />
+      <Route path="/catalog/products/sync" element={<ProtectedRoute feature="catalogproducts" action="read"><CatalogSyncPage /></ProtectedRoute>} />
+      <Route path="/catalog/sync" element={<LegacyCatalogSyncRedirect />} />
       <Route
         path="/catalog/products/new"
         element={

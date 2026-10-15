@@ -56,8 +56,6 @@ function ScopedSupplierProductsPage({ hotelUid }) {
   const current = () => mounted.current && auth.currentUser === actorAtMount;
   const fileInputRef = useRef(null);
   const canCreateProducts = usePermission("supplierproducts", "create");
-  const canReadCatalogProducts = usePermission("catalogproducts", "read");
-  const canSyncSupplierProducts = usePermission("supplierproducts", "update");
   const canReadSuppliers = usePermission("suppliers", "read");
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
@@ -246,7 +244,6 @@ function ScopedSupplierProductsPage({ hotelUid }) {
             <p className="text-gray-600 mt-1">{t("products.subtitle")}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {canReadCatalogProducts && canSyncSupplierProducts && canReadSuppliers && <button type="button" className="ht-button-secondary" disabled={busy} onClick={() => navigate(`/catalog/sync${selectedSupplierId ? `?supplierId=${encodeURIComponent(selectedSupplierId)}` : ""}`)}>Catalog sync</button>}
             <button
               type="button"
               onClick={handleImportButton}
