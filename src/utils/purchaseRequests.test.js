@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { eligibleRequestApprovers, requestBudgetImpact, requestLineTotalMinor } from "./purchaseRequests";
+import { eligibleRequestApprovers, purchaseRequestLineSupplier, purchaseRequestLineSupplierLabel, purchaseRequestSupplierSummary, requestBudgetImpact, requestLineTotalMinor } from "./purchaseRequests";
 
 it("rounds each net purchase line half up using the same six-decimal arithmetic as the server", () => {
   expect(requestLineTotalMinor([{ quantity: "1", unitPrice: "1.005" }])).toBe(101);
@@ -23,4 +23,26 @@ it("replaces the held returned amount when previewing a resubmission without cou
 it("offers only non-requester currently eligible approvers with the step and amount authority", () => {
   const context = { approvers: [{ uid: "requester", stepIds: ["manager"], limitMinor: 50000 }, { uid: "revoked", stepIds: ["manager"], limitMinor: 50000, eligible: false }, { uid: "small", stepIds: ["manager"], limitMinor: 100 }, { uid: "wrong", stepIds: ["finance"], limitMinor: 50000 }, { uid: "manager", stepIds: ["manager"], limitMinor: 50000, eligible: true }] };
   expect(eligibleRequestApprovers(context, "requester", "manager", 15000).map((row) => row.uid)).toEqual(["manager"]);
+});
+it("summarizes distinct saved line suppliers in first-line order without hiding mixed requests", () => {
+  const a = { id: "a", name: "Hotel Supplies" }, b = { id: "b", name: "Local Repairs" };
+  expect(purchaseRequestSupplierSummary({ supplier: null, lines: [{ supplierId: "b", supplier: b }, { supplierId: "a", supplier: a }, { supplierId: "b", supplier: b }] })).toEqual({
+    suppliers: [b, a], unassignedLineCount: 0, label: "Multiple suppliers (2)", details: "Local Repairs · Hotel Supplies",
+  });
+  expect(purchaseRequestSupplierSummary({ supplier: a, lines: [{ supplierId: "a", supplier: a }, { supplierId: "", supplier: null }] })).toEqual({
+    suppliers: [a], unassignedLineCount: 1, label: "Hotel Supplies", details: "1 line without a supplier",
+  });
+});
+it("inherits only legacy absent line suppliers and preserves explicit blanks and incomplete snapshots", () => {
+  const request = { supplier: { id: "old", name: "Saved supplier name" } };
+  expect(purchaseRequestLineSupplierLabel({}, request)).toBe("Saved supplier name");
+  expect(purchaseRequestLineSupplier({ supplierId: "", supplier: { id: "old", name: "Wrong inherited value" } }, request)).toBeNull();
+  expect(purchaseRequestLineSupplierLabel({ supplierId: null }, request)).toBe("Supplier not selected");
+  expect(purchaseRequestLineSupplierLabel({ supplierId: "different", supplier: request.supplier }, request)).toBe("Supplier details unavailable");
+  expect(purchaseRequestLineSupplierLabel({ supplier: { id: "line", name: "Frozen line supplier" } }, request)).toBe("Frozen line supplier");
+  expect(purchaseRequestSupplierSummary({ ...request, lines: [{}, {}] }).label).toBe("Saved supplier name");
+});
+it("uses supplier snapshots for line-free summaries without consulting mutable supplier records", () => {
+  expect(purchaseRequestSupplierSummary({ suppliers: [{ id: "a", name: "Historic A" }, { id: "b", name: "Historic B" }] }).label).toBe("Multiple suppliers (2)");
+  expect(purchaseRequestSupplierSummary({}).label).toBe("Supplier not selected");
 });

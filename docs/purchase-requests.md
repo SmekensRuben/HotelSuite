@@ -1,6 +1,6 @@
 # Purchase Requests
 
-Purchase Requests add internal purchasing decisions to Purchasing & Inventory. A request reserves a monthly category budget and follows named, ordered approval steps. Final approval records a commitment; it does not send a supplier order, receive goods, change inventory or recognize an invoice cost.
+Purchase Requests add internal purchasing decisions to Purchasing & Inventory. Each purchase line selects its own supplier, so one request can cover several suppliers. The combined request reserves one monthly category budget and follows named, ordered approval steps. Final approval records a commitment; it does not send supplier orders, receive goods, change inventory or recognize an invoice cost.
 
 ## Hotel setup
 
@@ -25,14 +25,29 @@ Saved category and cost-centre IDs already referenced by requests cannot be remo
 
 ## Daily workflow
 
-1. Open **Purchase Requests**, create a draft and select the supplier, cost centre, budget category and explicit budget month. Enter a title, description and business reason.
-2. Add supplier products and their purchase options, or free lines for services, repairs and uncatalogued goods. Review each quoted net unit price and quantity. A supplier price in another currency must not be treated as the hotel's budget currency.
+1. Open **Purchase Requests**, create a draft and select the cost centre, budget category and explicit budget month. Enter a title, description and business reason.
+2. Select a **Supplier** on each purchase line. Use **Choose supplier product** to find that supplier's products and purchase options, or enter services, repairs and uncatalogued goods as free lines. Different lines can select different suppliers. Review each quoted net unit price and quantity. A supplier price in another currency must not be treated as the hotel's budget currency.
 3. Save the draft before adding quotes or other supporting documents. Save again to attach uploaded documents to the request revision. Up to ten documents of 10 MiB each are supported: PDF, PNG, JPEG, DOCX, XLSX, TXT and CSV. Documents download as private attachments rather than executable previews.
 4. Review the budget impact and choose a first eligible approver. Submission reserves the request total as pending. The chosen budget month stays fixed even when approvals happen later.
 5. The current approver reviews the frozen request and its budget impact. They approve, reject or return it with a decision note. When another step is required, they choose an eligible next approver. The server checks membership, current permission, financial limit, step authority and the remaining sequence again at the action boundary.
 6. Final approval moves pending budget into approved commitments. Rejection, withdrawal and cancellation release the associated amount. Returned requests keep their reservation while the requester makes corrections; resubmission adjusts that reservation to the newly submitted amount.
 
 An approver cannot approve their own request, skip a required step or approve multiple steps of the same request. Select separate authorized people for successive steps. An over-budget request in **Require additional budget authority** mode adds a final required budget-approval step; **Block submission** mode refuses the excess instead.
+
+An unfinished draft can leave a line's supplier unselected; submission requires
+a supplier for every line. The product picker is scoped to the selected line and
+supplier. Changing a line's supplier clears its linked product, purchase option
+and quoted price, so the previous supplier's values are not silently reused.
+Descriptions and quantities, and all other lines, remain available. Choose the
+new product or enter a fresh quotation before saving the completed line.
+
+The list and request summary identify multiple suppliers, and current/frozen
+line details show their saved supplier names. Existing requests retain their
+original supplier and price evidence; editing an older draft initially shows its
+previous shared supplier on the corresponding lines. Approval thresholds and
+financial authority apply to the **combined request total**, not separate
+supplier subtotals. The budget month, category, cost centre and currency remain
+request-level choices.
 
 The list supports status, month, cost centre and **Awaiting my approval** filters. The details show the submitted information, attachments, current approver, budget state and decision/change timeline. Email links open this authenticated workflow and do not grant approval rights themselves.
 
@@ -92,7 +107,7 @@ An insufficient allocation is an approval policy question, not an invoice accoun
 
 ## Prices, changes and recovery
 
-Submission freezes the request's lines, selected supplier/package information, quantities, net prices, budget month and decision requirements. Subsequent catalog imports and supplier price updates do not rewrite submitted evidence. An explicit revision follows the approval process again and retains earlier revisions and attachment evidence.
+Submission freezes the request's lines, each line's supplier identity/name and selected package information, quantities, net prices, budget month and decision requirements. Subsequent catalog imports, supplier renames and supplier price updates do not rewrite submitted evidence. An explicit revision follows the approval process again and retains earlier revisions and attachment evidence.
 
 The browser retains the exact command reference and input when a save has an uncertain result. **Verify original save** retries that operation before another edit is allowed. A timeout is not evidence that an operation failed. Replaying an acknowledged command returns the same result, without reserving budget or sending decision notifications twice.
 

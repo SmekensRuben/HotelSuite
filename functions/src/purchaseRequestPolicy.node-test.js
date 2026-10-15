@@ -64,3 +64,13 @@ test("drafts retain explicit zero quotes while rejecting arbitrary audit fields 
   assert.throws(() => policy.normalizeDraft({ lines: [line, line] }));
   assert.throws(() => policy.normalizeDraft({ lines: [{ ...line, approved: true }] }));
 });
+test("line supplier references preserve absent legacy payload keys and explicit unfinished selections", () => {
+  const line = { id: "line", kind: "free", description: "Repair", quantity: 1, unitPrice: 10, unit: "service" };
+  const legacy = policy.normalizeDraft({ supplierId: "old-vendor", lines: [line] });
+  assert.equal(Object.hasOwn(legacy.lines[0], "supplierId"), false);
+  assert.equal(legacy.supplierId, "old-vendor");
+  assert.equal(policy.normalizeDraft({ supplierId: "old-vendor", lines: [{ ...line, supplierId: "" }] }).lines[0].supplierId, "");
+  assert.equal(policy.normalizeDraft({ lines: [{ ...line, supplierId: "line-vendor" }] }).lines[0].supplierId, "line-vendor");
+  for (const supplierId of ["foreign/path", "..", 123]) assert.throws(() => policy.normalizeDraft({ lines: [{ ...line, supplierId }] }));
+  assert.throws(() => policy.normalizeDraft({ lines: [{ ...line, supplier: { id: "forged", name: "Forged" } }] }));
+});

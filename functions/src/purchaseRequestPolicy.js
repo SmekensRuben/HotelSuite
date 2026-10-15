@@ -69,10 +69,13 @@ function normalizeDraft(input) {
   const reference = (value, label) => value == null || value === "" ? "" : id(value, label);
   if (!Array.isArray(input.lines) || input.lines.length > 50) throw new HttpsError("invalid-argument", "A request may contain at most 50 purchase lines.");
   const lines = input.lines.map((line) => {
-    exact(line, ["id", "kind", "supplierProductId", "purchaseOptionId", "description", "quantity", "unitPrice", "unit"], "purchase line");
+    exact(line, ["id", "kind", "supplierId", "supplierProductId", "purchaseOptionId", "description", "quantity", "unitPrice", "unit"], "purchase line");
     if (!["free", "supplier"].includes(line.kind)) throw new HttpsError("invalid-argument", "Choose a supplier product or a free purchase line.");
     const result = { id: id(line.id, "Line ID"), kind: line.kind, description: text(line.description ?? "", "Line description", 500),
       quantity: decimal(line.quantity, "Quantity", true), unit: text(line.unit ?? "", "Line unit", 100) };
+    // Preserve absent keys in legacy commands so their operation fingerprints
+    // and exact retry receipts remain valid across this schema extension.
+    if (Object.hasOwn(line, "supplierId")) result.supplierId = reference(line.supplierId, "Line supplier ID");
     if (line.unitPrice !== undefined && line.unitPrice !== null && line.unitPrice !== "") result.unitPrice = decimal(line.unitPrice, "Net unit price");
     if (line.kind === "free" && result.unitPrice === undefined) throw new HttpsError("invalid-argument", "Enter a net unit price for each free line.");
     if (line.kind === "supplier") {

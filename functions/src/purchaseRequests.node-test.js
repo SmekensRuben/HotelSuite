@@ -334,6 +334,81 @@ test("foreign supplier products and fabricated attachment metadata never become 
   await assert.rejects(create(db, draft(1, { attachmentIds: ["a".repeat(32)] })), { code: "failed-precondition" });
   assert.deepEqual([...db.records], before);
 });
+const freeSupplierLine = (id, supplierId, unitPrice = 50) => ({ id, kind: "free", supplierId, description: `${id} service`, quantity: 1, unitPrice, unit: "service" });
+const twoSupplierDraft = (patch = {}) => draft(0, { supplierId: "", lines: [freeSupplierLine("repair", "vendor", 50), freeSupplierLine("installation", "second", 75)], ...patch });
+function twoSupplierFixture() {
+  const db = fixture(); db.records.set(`${base}/suppliers/second`, { name: "Second supplier", active: true, priceDateBasis: "delivery-date", email: "private@example.com", internalNotes: "Private supplier notes" }); return db;
+}
+test("multiple line suppliers are authoritative snapshots with one request total and one budget reservation", async () => {
+  const db = twoSupplierFixture(), input = twoSupplierDraft(); delete input.supplierId;
+  input.lines.push(freeSupplierLine("support", "vendor", 25));
+  const created = await create(db, input), snapshot = created.request;
+  assert.equal(snapshot.supplierId, ""); assert.equal(snapshot.supplier, null);
+  assert.deepEqual(snapshot.suppliers, [{ id: "vendor", name: "Vendor" }, { id: "second", name: "Second supplier" }]);
+  assert.deepEqual(snapshot.lines.map((line) => ({ supplierId: line.supplierId, supplier: line.supplier })), [
+    { supplierId: "vendor", supplier: { id: "vendor", name: "Vendor" } }, { supplierId: "second", supplier: { id: "second", name: "Second supplier" } }, { supplierId: "vendor", supplier: { id: "vendor", name: "Vendor" } },
+  ]);
+  assert.equal(snapshot.totalMinor, 15000); assert.equal(budget(db).pendingMinor, 0);
+  const pending = await submit(db, created); assert.equal(pending.request.totalMinor, 15000); assert.equal(budget(db).pendingMinor, 15000);
+  const second = await command(db, pending, "approve", { nextApproverUid: "finance" }, "manager"), approved = await command(db, second, "approve", {}, "finance");
+  assert.equal(approved.request.status, "approved"); assert.equal(budget(db).pendingMinor, 0); assert.equal(budget(db).committedMinor, 15000);
+  assert.deepEqual(approved.request.suppliers, snapshot.suppliers); assert.deepEqual(approved.request.lines, snapshot.lines);
+});
+test("common supplier summaries require every line to have the same nonblank supplier", async () => {
+  const db = twoSupplierFixture(), mixed = await create(db, twoSupplierDraft());
+  const common = await command(db, mixed, "save", { draft: twoSupplierDraft({ lines: [freeSupplierLine("repair", "second"), freeSupplierLine("support", "second")] }) });
+  assert.equal(common.request.supplierId, "second"); assert.deepEqual(common.request.supplier, { id: "second", name: "Second supplier" }); assert.deepEqual(common.request.suppliers, [common.request.supplier]);
+  const unfinished = await command(db, common, "save", { draft: twoSupplierDraft({ supplierId: "second", lines: [freeSupplierLine("repair", "second"), freeSupplierLine("support", "")] }) });
+  assert.equal(unfinished.request.supplierId, ""); assert.equal(unfinished.request.supplier, null); assert.equal(unfinished.request.lines[1].supplierId, ""); assert.equal(unfinished.request.lines[1].supplier, null);
+  assert.equal((await get(db, unfinished)).submissionApprovalRoute.error.code, "failed-precondition");
+  const before = JSON.stringify([...db.records]); await assert.rejects(submit(db, unfinished), { code: "failed-precondition" }); assert.equal(JSON.stringify([...db.records]), before);
+});
+test("an explicit blank line supplier never inherits a legacy request header", async () => {
+  const db = twoSupplierFixture(), created = await create(db, draft(0, { supplierId: "vendor", lines: [freeSupplierLine("repair", "")] }));
+  assert.equal(created.request.lines[0].supplierId, ""); assert.equal(created.request.lines[0].supplier, null);
+  await assert.rejects(submit(db, created), { code: "failed-precondition" });
+  const legacy = await create(db, draft(10), "legacy-line"); assert.equal(legacy.request.lines[0].supplierId, "vendor"); assert.deepEqual(legacy.request.lines[0].supplier, { id: "vendor", name: "Vendor" });
+  const extracted = api.purchaseRequestInternals.draftInputFromSnapshot(created.request); assert.equal(extracted.lines[0].supplierId, "");
+});
+test("line supplier selection rejects foreign, missing, inactive and archived suppliers atomically", async () => {
+  for (const state of ["foreign", "missing", "inactive", "archived", "archivedAt"]) {
+    const db = twoSupplierFixture();
+    if (state === "foreign") { db.records.set("hotels/hotel-b/suppliers/second", db.records.get(`${base}/suppliers/second`)); db.records.delete(`${base}/suppliers/second`); }
+    if (state === "missing") db.records.delete(`${base}/suppliers/second`);
+    if (state === "inactive") db.records.get(`${base}/suppliers/second`).active = false;
+    if (state === "archived") db.records.get(`${base}/suppliers/second`).archived = true;
+    if (state === "archivedAt") db.records.get(`${base}/suppliers/second`).archivedAt = { seconds: 1 };
+    const before = JSON.stringify([...db.records]); await assert.rejects(create(db, twoSupplierDraft()), { code: "failed-precondition" }); assert.equal(JSON.stringify([...db.records]), before);
+  }
+});
+test("each supplier product must belong to its own line supplier even with an explicit quote or another valid header", async () => {
+  const db = twoSupplierFixture(); db.records.set(`${base}/supplierproducts/offer`, { supplierId: "vendor", supplierProductName: "Coffee", active: true, purchaseUnit: "case", baseUnit: "kg", baseUnitsPerPurchaseUnit: 6 });
+  const input = twoSupplierDraft({ supplierId: "vendor", lines: [{ id: "wrong", kind: "supplier", supplierId: "second", supplierProductId: "offer", quantity: 1, unitPrice: 10 }] }), before = JSON.stringify([...db.records]);
+  await assert.rejects(create(db, input), { code: "failed-precondition" }); assert.equal(JSON.stringify([...db.records]), before);
+  await assert.rejects(create(db, { ...input, lines: [{ ...input.lines[0], supplierId: "" }] }), { code: "invalid-argument" });
+  db.records.set("hotels/hotel-b/supplierproducts/foreign-offer", { supplierId: "second", active: true });
+  await assert.rejects(create(db, { ...input, lines: [{ ...input.lines[0], supplierProductId: "foreign-offer" }] }), { code: "failed-precondition" });
+});
+test("mixed supplier names, quoted prices and package identities stay frozen through submit and historical decisions", async () => {
+  const db = twoSupplierFixture(); db.records.set(`${base}/supplierproducts/offer`, { supplierId: "second", supplierSku: "SECOND-1", supplierProductName: "Coffee", active: true, currency: "EUR", priceBasis: "net", pricePerPurchaseUnit: 10,
+    purchaseUnit: "case", baseUnit: "kg", baseUnitsPerPurchaseUnit: 6, purchaseOptions: [{ id: "bag", purchaseUnit: "bag", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 2 }], catalogProductId: "coffee", revision: 1, productPolicyVersion: 1 });
+  db.records.set(`${base}/catalogproducts/coffee`, { name: "Coffee beans", internalSku: "CAT-000001", baseUnit: "kg" });
+  const input = twoSupplierDraft({ lines: [freeSupplierLine("repair", "vendor", 50), { id: "coffee", kind: "supplier", supplierId: "second", supplierProductId: "offer", purchaseOptionId: "bag", quantity: 2, unitPrice: 12.5 }] });
+  const created = await create(db, input), frozen = structuredClone(created.request.lines);
+  db.records.get(`${base}/suppliers/second`).name = "Renamed supplier"; db.records.get(`${base}/suppliers/second`).archived = true;
+  Object.assign(db.records.get(`${base}/supplierproducts/offer`), { supplierId: "other", active: false, pricePerPurchaseUnit: 999, supplierProductName: "Replaced", purchaseOptions: [] });
+  db.records.get(`${base}/catalogproducts/coffee`).name = "Renamed catalog";
+  const pending = await submit(db, created), approved = await command(db, pending, "approve", {}, "manager");
+  assert.deepEqual(approved.request.lines, frozen); assert.equal(approved.request.totalMinor, 7500); assert.equal(approved.request.lines[1].supplier.name, "Second supplier");
+  const detail = await get(db, approved); assert.deepEqual(detail.history.find((event) => event.event === "create").snapshot.lines, frozen); assert.deepEqual(detail.history.find((event) => event.event === "approved").snapshot.lines, frozen);
+});
+test("saving and revising line suppliers changes only the new reviewed version and keeps a single reservation", async () => {
+  const db = twoSupplierFixture(), created = await create(db, twoSupplierDraft()), pending = await submit(db, created), finance = await command(db, pending, "approve", { nextApproverUid: "finance" }, "manager"), approved = await command(db, finance, "approve", {}, "finance");
+  const revised = await command(db, approved, "revise", { reason: "Different supplier and quote", draft: twoSupplierDraft({ lines: [freeSupplierLine("repair", "second", 200), freeSupplierLine("installation", "vendor", 25)] }) });
+  assert.equal(revised.request.status, "returned"); assert.equal(revised.request.totalMinor, 22500); assert.equal(budget(db).pendingMinor, 12500); assert.equal(budget(db).committedMinor, 0);
+  const next = await submit(db, revised); assert.equal(budget(db).pendingMinor, 22500); assert.equal(next.request.lines[0].supplierId, "second");
+  const history = (await get(db, next)).history; assert.equal(history.find((event) => event.event === "approved").snapshot.lines[0].supplierId, "vendor"); assert.equal(history.find((event) => event.event === "approved").snapshot.totalMinor, 12500);
+});
 test("all list filters remain hotel scoped and awaiting approval selects the authenticated assignee", async () => {
   const db = fixture(), first = await submit(db, await create(db)), second = await create(db, draft(50, { budgetMonth: "2026-11", budgetCategoryId: "china" }), "second");
   const list = (input, uid = "buyer") => api.listHotelPurchaseRequestsHandler(request(input, uid), services(db));
@@ -356,6 +431,41 @@ function priceFixture() {
   }
   return db;
 }
+test("price estimates use each line supplier's date agreement and quotation currency independently", async () => {
+  const db = priceFixture(); db.records.set(`${base}/suppliers/second`, { name: "Second supplier", active: true, priceDateBasis: "delivery-date" });
+  db.records.set(`${base}/supplierproducts/tea`, { supplierId: "second", supplierSku: "TEA", supplierProductName: "Tea", active: true, productPolicyVersion: 1,
+    currency: "USD", priceBasis: "net", pricingModel: "Per Purchase Unit", pricePerPurchaseUnit: 40, baseUnit: "kg", purchaseUnit: "box", baseUnitsPerPurchaseUnit: 2,
+    purchaseOptions: [{ id: "bag", purchaseUnit: "tea bag pack", baseUnitsPerPurchaseUnit: 1, pricePerPurchaseUnit: 20 }], revision: 1 });
+  const input = draft(0, { supplierId: "", lines: [{ id: "coffee", kind: "supplier", supplierId: "vendor", supplierProductId: "coffee", purchaseOptionId: "bag", quantity: 2 },
+    { id: "tea", kind: "supplier", supplierId: "second", supplierProductId: "tea", purchaseOptionId: "bag", quantity: 1 }] });
+  await assert.rejects(create(db, input), (error) => error.code === "failed-precondition" && /delivery date/.test(error.message));
+  const quoted = { ...input, lines: [input.lines[0], { ...input.lines[1], unitPrice: 15 }] }, created = await create(db, quoted);
+  assert.equal(created.request.lines[0].unitPrice, 1); assert.equal(created.request.lines[0].priceVersionId, "v1"); assert.equal(created.request.lines[0].priceSource, "supplier"); assert.equal(created.request.lines[0].unit, "bag");
+  assert.equal(created.request.lines[1].unitPrice, 15); assert.equal(created.request.lines[1].priceSource, "quote"); assert.equal(created.request.lines[1].unit, "tea bag pack"); assert.equal(created.request.currency, "EUR"); assert.equal(created.request.totalMinor, 1700);
+  db.records.get(`${base}/suppliers/second`).priceDateBasis = "order-date";
+  await assert.rejects(create(db, input, "usd-without-quote"), (error) => error.code === "failed-precondition" && /another currency/.test(error.message));
+  const explicit = await create(db, quoted, "usd-explicit-quote"); assert.equal(explicit.request.lines[1].unitPrice, 15);
+});
+test("legacy header-only snapshots and exact command receipts retain their original shapes until explicitly saved", async () => {
+  const db = fixture(), input = draft(50), created = await create(db, input, "legacy-header"), snapshot = structuredClone(created.request);
+  delete snapshot.suppliers; delete snapshot.approvalEscalation;
+  for (const line of snapshot.lines) { delete line.supplierId; delete line.supplier; }
+  const fingerprint = api.purchaseRequestInternals.canonicalDigest(snapshot), path = `${base}/purchaseRequests/${created.purchaseRequestId}`;
+  db.records.set(path, { ...snapshot, snapshotFingerprint: fingerprint });
+  const certificate = db.records.get(`${path}/history/000001`); certificate.snapshot = snapshot; certificate.snapshotFingerprint = fingerprint;
+  const receipt = db.records.get(`${base}/purchaseRequestOperations/p-${digest("buyer", "legacy-header").slice(0, 48)}`), legacyResult = { ...created, request: snapshot };
+  receipt.result = legacyResult; receipt.resultFingerprint = api.purchaseRequestInternals.canonicalDigest(legacyResult);
+  const payload = { id: created.purchaseRequestId, action: "create", expected: 0, draft: require("./purchaseRequestPolicy").normalizeDraft(input), approverUid: null, nextApproverUid: null, reason: "" };
+  assert.equal(receipt.fingerprint, api.purchaseRequestInternals.canonicalDigest({ kind: "request", payload })); assert.equal(Object.hasOwn(payload.draft.lines[0], "supplierId"), false);
+  assert.deepEqual(await create(db, input, "legacy-header"), legacyResult);
+  const read = await get(db, created); assert.equal(Object.hasOwn(read.request.lines[0], "supplierId"), false); assert.equal(Object.hasOwn(read.request, "suppliers"), false); assert.equal(read.submissionApprovalRoute.error, null);
+  const pending = await submit(db, created); assert.equal(Object.hasOwn(pending.request.lines[0], "supplierId"), false); assert.equal(Object.hasOwn(pending.request.lines[0], "supplier"), false);
+  const approved = await command(db, pending, "approve", {}, "manager"); assert.equal(Object.hasOwn(approved.request.lines[0], "supplierId"), false);
+  const history = (await get(db, approved)).history; assert.deepEqual(history.find((event) => event.event === "create").snapshot, snapshot); assert.equal(Object.hasOwn(history.find((event) => event.event === "approved").snapshot.lines[0], "supplierId"), false);
+  const draftInput = api.purchaseRequestInternals.draftInputFromSnapshot(approved.request); assert.equal(draftInput.supplierId, "vendor"); assert.equal(Object.hasOwn(draftInput.lines[0], "supplierId"), false);
+  const revised = await command(db, approved, "revise", { reason: "Review the supplier", draft: draftInput });
+  assert.equal(revised.request.lines[0].supplierId, "vendor"); assert.deepEqual(revised.request.lines[0].supplier, { id: "vendor", name: "Vendor" });
+});
 test("product picker and default estimates use applicable approved versions and exact net prices rather than raw projections", async () => {
   const db = priceFixture(), context = await api.getHotelPurchaseRequestContextHandler(request({ supplierId: "vendor", query: "coffee" }), services(db));
   assert.equal(context.supplierProducts[0].pricePerPurchaseUnit, 12); assert.equal(context.supplierProducts[0].purchaseOptions[0].pricePerPurchaseUnit, 1);

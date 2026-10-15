@@ -55,7 +55,7 @@ it("requires an explicit month in a new draft and previews exact quoted prices b
   render(tree("/purchase-requests/new")); await screen.findByLabelText("Title");
   expect(screen.getByLabelText("Budget month")).toHaveValue("");
   fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Glass repair" } });
-  fireEvent.change(screen.getByLabelText("Supplier"), { target: { value: "supplier" } });
+  fireEvent.change(screen.getByLabelText("Line 1 supplier"), { target: { value: "supplier" } });
   fireEvent.change(screen.getByLabelText("Cost centre / department"), { target: { value: "restaurant" } });
   fireEvent.change(screen.getByLabelText("Budget category"), { target: { value: "chinaware" } });
   fireEvent.change(screen.getByLabelText("Budget month"), { target: { value: "2026-11" } });
@@ -83,22 +83,24 @@ it("does not credit an old returned reservation to a newly selected budget month
 it("keeps missing budgets distinct from configured zero and does not invent unavailable quote prices", async () => {
   budget = { exists: false }; context.supplierProducts = [{ id: "delivery-product", supplierProductName: "Delivery-date quotation", supplierSku: "D-001", pricePerPurchaseUnit: null, purchaseUnit: "box", requiresQuote: true, priceValidity: "unknown", currency: "EUR", purchaseOptions: [{ id: "case", label: "Case", purchaseUnit: "case", pricePerPurchaseUnit: null }] }];
   render(tree("/purchase-requests/request-a/edit"));
+  fireEvent.click(await screen.findByRole("button", { name: "Choose supplier product" }));
   await screen.findByText("Delivery-date quotation");
   expect(await screen.findByRole("region", { name: "Budget impact" })).toHaveTextContent("No budget is configured");
-  fireEvent.click(screen.getByRole("button", { name: "Add Case" }));
-  expect(screen.getAllByLabelText("Net unit price (EUR)")[1]).toHaveValue(null);
+  fireEvent.click(screen.getByRole("button", { name: "Use Case · Enter quoted price" }));
+  expect(screen.getByLabelText("Net unit price (EUR)")).toHaveValue(null);
   expect(screen.getByText("An explicit net quotation in EUR is required.")).toBeInTheDocument();
   expect(screen.getByText(/Enter valid quantities and net unit prices/)).toBeInTheDocument();
 });
 it("continues through empty bounded supplier search windows to reach later matching articles", async () => {
   mocks.context.mockImplementation(async (_, options = {}) => ({ ...structuredClone(context), budget: structuredClone(budget), supplierProducts: options.cursor ? [{ id: "later", supplierProductName: "Later supplier article", supplierSku: "901", purchaseUnit: "box", pricePerPurchaseUnit: "1.005", currency: "EUR" }] : [], nextProductCursor: options.supplierId && !options.cursor ? "after-200" : null }));
   render(tree("/purchase-requests/request-a/edit"));
+  fireEvent.click(await screen.findByRole("button", { name: "Choose supplier product" }));
   fireEvent.click(await screen.findByRole("button", { name: "More supplier products" }));
   await screen.findByText("Later supplier article");
   expect(mocks.context).toHaveBeenLastCalledWith("hotel-a", expect.objectContaining({ cursor: "after-200", supplierId: "supplier" }));
-  expect(screen.getByRole("button", { name: "Add box · €1.01" })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Add box · €1.01" }));
-  expect(screen.getAllByLabelText("Net unit price (EUR)")[1]).toHaveValue(1.005);
+  expect(screen.getByRole("button", { name: "Use box · €1.005" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Use box · €1.005" }));
+  expect(screen.getByLabelText("Net unit price (EUR)")).toHaveValue(1.005);
 });
 it("requires a separate submission confirmation and an eligible non-self first approver", async () => {
   render(tree()); await screen.findByRole("button", { name: "Submit request" });
@@ -156,7 +158,7 @@ it("preserves the frozen version and attachment evidence in the timeline", async
   const timeline = screen.getByRole("region", { name: "Request timeline" });
   fireEvent.click(within(timeline).getByText("View frozen version"));
   expect(timeline).toHaveTextContent("Replacement plates · €150.00 net · 2026-10");
-  expect(timeline).toHaveTextContent("Dinner plates: 10 each × 15 EUR net = €150.00");
+  expect(timeline).toHaveTextContent("Dinner plates · Supplier: Hotel Supplies: 10 each × 15 EUR net = €150.00");
 });
 it("keeps uploaded supporting documents in the draft until the reviewed IDs are saved", async () => {
   const attachment = { fileId: "a".repeat(32), fileName: "Quote.pdf", sha256: "b".repeat(64), generation: "12", size: 20 };
@@ -322,4 +324,177 @@ it("blocks an unverifiable route fingerprint without hiding the request", async 
   expect(await screen.findByRole("button", { name: "Submit request" })).toBeDisabled();
   expect(screen.getByRole("alert")).toHaveTextContent("approval route could not be verified");
   expect(screen.getByRole("region", { name: "Purchase lines" })).toBeInTheDocument();
+});
+it("prepares supplier products from two suppliers in one request and sends each line's explicit supplier and pack", async () => {
+  context.suppliers.push({ id: "repairs", name: "Local Repairs" });
+  mocks.context.mockImplementation(async (_, options = {}) => structuredClone({ ...context, ...(options.budgetMonth ? { budget } : {}), supplierProducts: options.supplierId === "supplier" ? [{ id: "plates", supplierProductName: "White plates", supplierSku: "P-1", purchaseUnit: "each", pricePerPurchaseUnit: "1.005001", currency: "EUR", purchaseOptions: [{ id: "carton", label: "Carton", purchaseUnit: "carton", pricePerPurchaseUnit: "12.345678" }] }] : options.supplierId === "repairs" ? [{ id: "service", supplierProductName: "Repair service", purchaseUnit: "hour", pricePerPurchaseUnit: "25.123456", currency: "EUR" }] : [] }));
+  render(tree("/purchase-requests/request-a/edit"));
+  const first = await screen.findByRole("article", { name: "Purchase line 1" });
+  fireEvent.click(within(first).getByRole("button", { name: "Choose supplier product" }));
+  fireEvent.click(await within(first).findByRole("button", { name: "Use Carton · €12.345678" }));
+  expect(within(first).getByLabelText("Quantity")).toHaveValue(10);
+  expect(within(first).getByLabelText("Unit")).toHaveValue("carton");
+  fireEvent.click(screen.getByRole("button", { name: "Add purchase line" }));
+  const second = screen.getByRole("article", { name: "Purchase line 2" });
+  fireEvent.change(within(second).getByLabelText("Line 2 supplier"), { target: { value: "repairs" } });
+  fireEvent.click(within(second).getByRole("button", { name: "Choose supplier product" }));
+  expect(within(second).queryByText("White plates")).not.toBeInTheDocument();
+  fireEvent.click(await within(second).findByRole("button", { name: "Use hour · €25.123456" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalled());
+  const saved = mocks.mutate.mock.calls[0][1].draft;
+  expect(saved).not.toHaveProperty("supplierId");
+  expect(saved.lines).toEqual([
+    { id: "line-a", kind: "supplier", supplierId: "supplier", supplierProductId: "plates", purchaseOptionId: "carton", description: "White plates", quantity: "10", unitPrice: "12.345678", unit: "carton" },
+    { id: expect.any(String), kind: "supplier", supplierId: "repairs", supplierProductId: "service", description: "Repair service", quantity: "1", unitPrice: "25.123456", unit: "hour" },
+  ]);
+});
+it("clears only the changed line's supplier identities, quotation and package unit while preserving descriptions and quantities", async () => {
+  context.suppliers.push({ id: "repairs", name: "Local Repairs" });
+  request.lines = [{ ...request.lines[0], kind: "supplier", supplierId: "supplier", supplierProductId: "old-plates", purchaseOptionId: "old-case", unit: "case" }, { id: "line-b", kind: "free", supplierId: "repairs", description: "Fix shelf", quantity: 2, unitPrice: "8.765432", unit: "hour" }];
+  render(tree("/purchase-requests/request-a/edit"));
+  const first = await screen.findByRole("article", { name: "Purchase line 1" }), second = screen.getByRole("article", { name: "Purchase line 2" });
+  fireEvent.change(within(first).getByLabelText("Line 1 supplier"), { target: { value: "repairs" } });
+  expect(within(first).getByLabelText("Line 1 description")).toHaveValue("Dinner plates");
+  expect(within(first).getByLabelText("Quantity")).toHaveValue(10);
+  expect(within(first).getByLabelText("Net unit price (EUR)")).toHaveValue(null);
+  expect(within(first).getByLabelText("Unit")).toHaveValue("each");
+  expect(within(first).getByRole("status")).toHaveTextContent("Supplier changed");
+  expect(within(second).getByLabelText("Net unit price (EUR)")).toHaveValue(8.765432);
+  expect(within(second).getByLabelText("Unit")).toHaveValue("hour");
+  fireEvent.change(within(first).getByLabelText("Net unit price (EUR)"), { target: { value: "1.234567" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalled());
+  expect(mocks.mutate.mock.calls[0][1].draft.lines).toEqual([
+    { id: "line-a", kind: "free", supplierId: "repairs", description: "Dinner plates", quantity: "10", unitPrice: "1.234567", unit: "each" },
+    { id: "line-b", kind: "free", supplierId: "repairs", description: "Fix shelf", quantity: "2", unitPrice: "8.765432", unit: "hour" },
+  ]);
+});
+it("also clears a free line's quotation when its supplier changes", async () => {
+  context.suppliers.push({ id: "repairs", name: "Local Repairs" });
+  request.lines[0].unit = "hour";
+  render(tree("/purchase-requests/request-a/edit"));
+  fireEvent.change(await screen.findByLabelText("Line 1 supplier"), { target: { value: "repairs" } });
+  expect(screen.getByLabelText("Net unit price (EUR)")).toHaveValue(null);
+  expect(screen.getByLabelText("Line 1 description")).toHaveValue("Dinner plates");
+  expect(screen.getByLabelText("Unit")).toHaveValue("hour");
+});
+it("ignores an old supplier's delayed product results after changing the line supplier", async () => {
+  context.suppliers.push({ id: "repairs", name: "Local Repairs" });
+  let resolveOld;
+  mocks.context.mockImplementation(async (_, options = {}) => {
+    if (options.supplierId === "supplier") return new Promise((resolve) => { resolveOld = resolve; });
+    return structuredClone({ ...context, ...(options.budgetMonth ? { budget } : {}), supplierProducts: options.supplierId === "repairs" ? [{ id: "service", supplierProductName: "Current repair service", purchaseUnit: "hour", pricePerPurchaseUnit: "20", currency: "EUR" }] : [] });
+  });
+  render(tree("/purchase-requests/request-a/edit"));
+  fireEvent.click(await screen.findByRole("button", { name: "Choose supplier product" }));
+  await waitFor(() => expect(resolveOld).toBeDefined());
+  fireEvent.change(screen.getByLabelText("Line 1 supplier"), { target: { value: "repairs" } });
+  fireEvent.click(screen.getByRole("button", { name: "Choose supplier product" }));
+  await screen.findByText("Current repair service");
+  await act(async () => resolveOld({ ...context, supplierProducts: [{ id: "stale", supplierProductName: "Old supplier product", purchaseUnit: "case", pricePerPurchaseUnit: "999" }] }));
+  expect(screen.queryByText("Old supplier product")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Use hour · €20.00" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("hotel-a", expect.objectContaining({ draft: expect.objectContaining({ lines: [expect.objectContaining({ supplierId: "repairs", supplierProductId: "service", unitPrice: "20" })] }) })));
+});
+it("cancels an in-flight product choice without changing the line or showing late results", async () => {
+  let resolveProducts;
+  mocks.context.mockImplementation(async (_, options = {}) => options.supplierId ? new Promise((resolve) => { resolveProducts = resolve; }) : structuredClone({ ...context, ...(options.budgetMonth ? { budget } : {}) }));
+  render(tree("/purchase-requests/request-a/edit"));
+  fireEvent.click(await screen.findByRole("button", { name: "Choose supplier product" }));
+  await waitFor(() => expect(resolveProducts).toBeDefined());
+  fireEvent.click(screen.getByRole("button", { name: "Cancel product selection" }));
+  await act(async () => resolveProducts({ ...context, supplierProducts: [{ id: "late", supplierProductName: "Canceled product", pricePerPurchaseUnit: 999 }] }));
+  expect(screen.queryByText("Canceled product")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Find supplier products")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Line 1 description")).toHaveValue("Dinner plates");
+  expect(screen.getByLabelText("Net unit price (EUR)")).toHaveValue(15);
+});
+it("removes an in-flight product picker with its line and keeps the remaining line unchanged", async () => {
+  let resolveProducts;
+  request.lines.push({ id: "line-b", kind: "free", supplierId: "supplier", description: "Keep this line", quantity: 2, unitPrice: 4, unit: "each" });
+  mocks.context.mockImplementation(async (_, options = {}) => options.supplierId ? new Promise((resolve) => { resolveProducts = resolve; }) : structuredClone({ ...context, ...(options.budgetMonth ? { budget } : {}) }));
+  render(tree("/purchase-requests/request-a/edit"));
+  const first = await screen.findByRole("article", { name: "Purchase line 1" });
+  fireEvent.click(within(first).getByRole("button", { name: "Choose supplier product" }));
+  await waitFor(() => expect(resolveProducts).toBeDefined());
+  fireEvent.click(within(first).getByRole("button", { name: "Remove line 1" }));
+  await act(async () => resolveProducts({ ...context, supplierProducts: [{ id: "removed", supplierProductName: "Removed line result" }] }));
+  expect(screen.queryByText("Removed line result")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Line 1 description")).toHaveValue("Keep this line");
+  expect(screen.getByLabelText("Net unit price (EUR)")).toHaveValue(4);
+});
+it("keeps the budget preview independent of choosing a supplier and saves an explicit unknown line supplier in a draft", async () => {
+  request.lines[0].supplierId = "";
+  render(tree("/purchase-requests/request-a/edit"));
+  expect(await screen.findByLabelText("Line 1 supplier")).toHaveValue("");
+  expect(await screen.findByRole("region", { name: "Budget impact" })).toHaveTextContent("€50.00");
+  expect(mocks.context.mock.calls.every(([, options]) => !options?.supplierId)).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("hotel-a", expect.objectContaining({ draft: expect.objectContaining({ lines: [expect.objectContaining({ supplierId: "" })] }) })));
+});
+it("hydrates an old header supplier only for lines without a supplier field and preserves an explicit unknown supplier", async () => {
+  request.lines.push({ id: "line-b", kind: "free", supplierId: "", description: "Still choosing supplier", quantity: 1, unitPrice: 5, unit: "each" });
+  render(tree("/purchase-requests/request-a/edit"));
+  expect(await screen.findByLabelText("Line 1 supplier")).toHaveValue("supplier");
+  expect(screen.getByLabelText("Line 2 supplier")).toHaveValue("");
+});
+it("shows an unavailable saved supplier by its snapshot name and allows an active replacement", async () => {
+  request.supplierId = "inactive"; request.supplier = { id: "inactive", name: "Former Hotel Supplies" };
+  render(tree("/purchase-requests/request-a/edit"));
+  expect(await screen.findByRole("option", { name: "Former Hotel Supplies · Unavailable" })).toBeInTheDocument();
+  expect(screen.getByText(/This saved supplier is no longer available/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Choose supplier product" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Line 1 supplier"), { target: { value: "supplier" } });
+  expect(screen.getByRole("button", { name: "Choose supplier product" })).toBeEnabled();
+  expect(screen.queryByText(/This saved supplier is no longer available/)).not.toBeInTheDocument();
+});
+it("drops delayed product results when hotel access changes", async () => {
+  let resolveProducts;
+  mocks.context.mockImplementation(async (_, options = {}) => options.supplierId ? new Promise((resolve) => { resolveProducts = resolve; }) : structuredClone({ ...context, ...(options.budgetMonth ? { budget } : {}) }));
+  const view = render(tree("/purchase-requests/request-a/edit"));
+  fireEvent.click(await screen.findByRole("button", { name: "Choose supplier product" }));
+  await waitFor(() => expect(resolveProducts).toBeDefined());
+  mocks.hotel = "hotel-b"; mocks.permissions = [];
+  view.rerender(tree("/purchase-requests/request-a/edit"));
+  await act(async () => resolveProducts({ ...context, supplierProducts: [{ id: "private", supplierProductName: "Previous hotel's product" }] }));
+  expect(screen.queryByText("Previous hotel's product")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Line 1 description")).not.toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("permission to edit purchase requests");
+});
+it("keeps product currency warnings and requires a quotation rather than copying a foreign source price", async () => {
+  context.supplierProducts = [{ id: "foreign", supplierProductName: "Foreign quoted article", purchaseUnit: "box", pricePerPurchaseUnit: "12.345678", currency: "USD", requiresQuote: true, priceValidity: "unknown", priceReviewReasons: ["price-source-date-unknown"] }];
+  render(tree("/purchase-requests/request-a/edit"));
+  fireEvent.click(await screen.findByRole("button", { name: "Choose supplier product" }));
+  await screen.findByText("Foreign quoted article");
+  fireEvent.click(screen.getByRole("button", { name: "Use box · $12.345678" }));
+  expect(screen.getByLabelText("Net unit price (EUR)")).toHaveValue(null);
+  expect(screen.getByText(/The source uses USD/)).toBeInTheDocument();
+  expect(screen.getByText(/An explicit net quotation in EUR is required/)).toHaveTextContent("price source date is unknown");
+  expect(screen.getByText("Price validity: Dates unknown")).toBeInTheDocument();
+});
+
+it("keeps Enter in the inline supplier search from saving the outer request form", async () => {
+  render(tree("/purchase-requests/request-a/edit"));
+  fireEvent.click(await screen.findByRole("button", { name: "Choose supplier product" }));
+  const search = screen.getByLabelText("Find supplier products");
+  fireEvent.change(search, { target: { value: "plate" } });
+  const submitEvent = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  expect(fireEvent(search, submitEvent)).toBe(false);
+  expect(submitEvent.defaultPrevented).toBe(true);
+  await waitFor(() => expect(mocks.context).toHaveBeenCalledWith("hotel-a", { supplierId: "supplier", query: "plate" }));
+  expect(mocks.mutate).not.toHaveBeenCalled();
+  expect(screen.getByTestId("location")).toHaveTextContent("/purchase-requests/request-a/edit");
+});
+
+it("keeps a supplier-only line and requires its quotation before saving instead of dropping the supplier choice", async () => {
+  render(tree("/purchase-requests/new"));
+  fireEvent.change(await screen.findByLabelText("Line 1 supplier"), { target: { value: "supplier" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Enter a positive quantity and a net unit price for each line");
+  expect(screen.getByLabelText("Line 1 supplier")).toHaveValue("supplier");
+  expect(screen.getByRole("article", { name: "Purchase line 1" })).toBeInTheDocument();
+  expect(mocks.mutate).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
 });

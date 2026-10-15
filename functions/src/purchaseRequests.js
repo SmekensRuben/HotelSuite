@@ -197,16 +197,21 @@ async function budgetFor(tx, db, hotelUid, month, categoryId) {
   }
   return policy.budgetProjection(snapshot.exists ? snapshot.data() : null, month, categoryId);
 }
+const lineSupplierId = (line, value) => Object.hasOwn(line, "supplierId") ? line.supplierId : value.supplierId || "";
 async function draftSnapshot(tx, db, hotelUid, id, draft, settings, services) {
-  const result = { ...draft, currency: settings.currency, vatBasis: "net", supplier: null,
+  const result = { ...draft, currency: settings.currency, vatBasis: "net", supplierId: "", supplier: null, suppliers: [],
     costCentreName: settings.costCentres.find((item) => item.id === draft.costCentreId)?.name || "",
     budgetCategoryName: settings.budgetCategories.find((item) => item.id === draft.budgetCategoryId)?.name || "" };
-  let supplier;
-  if (draft.supplierId) {
-    const snapshot = await tx.get(db.doc(`hotels/${hotelUid}/suppliers/${draft.supplierId}`));
-    if (!snapshot.exists || snapshot.data().archived || snapshot.data().archivedAt || snapshot.data().active === false) throw new HttpsError("failed-precondition", "Choose an active supplier from this hotel.");
-    supplier = snapshot.data(); result.supplier = { id: draft.supplierId, name: String(supplier.name || draft.supplierId).slice(0, 200) };
-  }
+  const suppliers = new Map();
+  const getSupplier = async (supplierId) => {
+    if (!supplierId) return null;
+    if (!suppliers.has(supplierId)) {
+      const snapshot = await tx.get(db.doc(`hotels/${hotelUid}/suppliers/${supplierId}`)), supplier = snapshot.exists ? snapshot.data() : null;
+      if (!supplier || supplier.archived || supplier.archivedAt || supplier.active === false) throw new HttpsError("failed-precondition", "Choose an active supplier from this hotel for each purchase line.");
+      suppliers.set(supplierId, supplier);
+    }
+    return suppliers.get(supplierId);
+  };
   let today;
   const getDate = async () => {
     if (today) return today;
@@ -219,12 +224,13 @@ async function draftSnapshot(tx, db, hotelUid, id, draft, settings, services) {
   result.lines = [];
   const priceVersions = new Map();
   for (const line of draft.lines) {
-    let next = { ...line, priceSource: "quote", priceVersionId: null };
+    const supplierId = lineSupplierId(line, draft), supplier = await getSupplier(supplierId);
+    let next = { ...line, supplierId, supplier: supplier ? { id: supplierId, name: String(supplier.name || supplierId).slice(0, 200) } : null, priceSource: "quote", priceVersionId: null };
     if (line.kind === "supplier") {
-      if (!supplier) throw new HttpsError("invalid-argument", "Choose a supplier before adding supplier products.");
+      if (!supplier) throw new HttpsError("invalid-argument", "Choose a supplier for this purchase line before adding a supplier product.");
       const productSnapshot = await tx.get(db.doc(`hotels/${hotelUid}/supplierproducts/${line.supplierProductId}`));
       const product = productSnapshot.exists ? productSnapshot.data() : null;
-      if (!product || product.supplierId !== draft.supplierId || product.active !== true || product.archived || product.archivedAt) throw new HttpsError("failed-precondition", "The selected supplier product must be active and belong to this supplier in this hotel.");
+      if (!product || product.supplierId !== supplierId || product.active !== true || product.archived || product.archivedAt) throw new HttpsError("failed-precondition", "The selected supplier product must be active and belong to this line's supplier in this hotel.");
       let resolved = product, priceInfo = null;
       if (line.unitPrice === undefined) {
         if (!priceVersions.has(line.supplierProductId)) priceVersions.set(line.supplierProductId, await loadSupplierPriceVersions(tx, db, hotelUid, line.supplierProductId));
@@ -254,17 +260,21 @@ async function draftSnapshot(tx, db, hotelUid, id, draft, settings, services) {
     next.lineTotalMinor = policy.lineTotal(next.quantity, next.unitPrice);
     result.lines.push(next);
   }
+  result.suppliers = [...new Map(result.lines.filter((line) => line.supplier).map((line) => [line.supplierId, line.supplier])).values()];
+  if (result.lines.length && result.lines.every((line) => line.supplierId && line.supplierId === result.lines[0].supplierId)) {
+    result.supplierId = result.lines[0].supplierId; result.supplier = result.lines[0].supplier;
+  }
   result.totalMinor = policy.total(result.lines);
   result.attachments = await require("./purchaseRequestFiles").validatePurchaseRequestAttachments(tx, db, hotelUid, id, draft.attachmentIds);
   return result;
 }
 function completeDraft(value, settings) {
-  if (!value.title || !value.motivation || !value.supplierId || !value.budgetMonth || !settings.costCentres.some((row) => row.id === value.costCentreId)
-    || !settings.budgetCategories.some((row) => row.id === value.budgetCategoryId) || !value.lines.length || value.lines.some((line) => !line.description || !line.unit)) throw new HttpsError("failed-precondition", "Complete the title, motivation, supplier, cost centre, budget category, budget month and purchase lines before submitting.");
+  if (!value.title || !value.motivation || !value.budgetMonth || !settings.costCentres.some((row) => row.id === value.costCentreId)
+    || !settings.budgetCategories.some((row) => row.id === value.budgetCategoryId) || !value.lines.length || value.lines.some((line) => !line.description || !line.unit || !lineSupplierId(line, value))) throw new HttpsError("failed-precondition", "Complete the title, motivation, cost centre, budget category, budget month and purchase lines, including a supplier for every line, before submitting.");
 }
 function draftInputFromSnapshot(value) {
   return Object.fromEntries(["supplierId", "title", "description", "motivation", "costCentreId", "budgetCategoryId", "budgetMonth", "attachmentIds"].map((key) => [key, value[key]]).concat([["lines", value.lines.map((line) => {
-    const fields = ["id", "kind", "description", "quantity", "unitPrice", "unit", ...(line.kind === "supplier" ? ["supplierProductId", "purchaseOptionId"] : [])];
+    const fields = ["id", "kind", "description", "quantity", "unitPrice", "unit", ...(Object.hasOwn(line, "supplierId") ? ["supplierId"] : []), ...(line.kind === "supplier" ? ["supplierProductId", "purchaseOptionId"] : [])];
     return Object.fromEntries(fields.map((key) => [key, line[key]]));
   })]]));
 }

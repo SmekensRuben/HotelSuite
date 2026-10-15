@@ -35,6 +35,22 @@ it("recovers the original reviewed approval route after reload instead of sendin
   expect(mocks.call.mock.calls[1][0].expectedApprovalRouteFingerprint).toBe(reviewed.expectedApprovalRouteFingerprint);
   expect(getPendingPurchaseRequestCommand("hotel-a", "request-a")).toBeNull();
 });
+it("recovers the original per-line suppliers and quotations after an uncertain draft save", async () => {
+  const saved = { purchaseRequestId: "request-a", expectedRevision: 2, action: "save", draft: { lines: [
+    { id: "repair", kind: "free", supplierId: "supplier-a", description: "Repair", quantity: "1", unitPrice: "100", unit: "service" },
+    { id: "plates", kind: "supplier", supplierId: "supplier-b", supplierProductId: "plates", purchaseOptionId: "case", quantity: "2", unitPrice: "15.25", unit: "case" },
+  ] } };
+  mocks.call.mockRejectedValueOnce(new Error("Response lost")).mockImplementation(success);
+  await expect(mutatePurchaseRequest("hotel-a", saved)).rejects.toThrow("Response lost");
+  const original = mocks.call.mock.calls[0][0];
+  mocks.auth.currentUser = { uid: "requester" };
+  const changed = structuredClone(saved); changed.draft.lines[0].supplierId = "supplier-b";
+  await expect(mutatePurchaseRequest("hotel-a", changed)).rejects.toThrow("previous result is uncertain");
+  expect(mocks.call).toHaveBeenCalledTimes(1);
+  await retryPurchaseRequestCommand("hotel-a", "request-a");
+  expect(mocks.call.mock.calls[1][0]).toEqual(original);
+  expect(getPendingPurchaseRequestCommand("hotel-a", "request-a")).toBeNull();
+});
 it("unlocks a conflict only with explicit server proof that the command did not commit", async () => {
   mocks.call.mockRejectedValueOnce(Object.assign(new Error("Changed"), { details: { purchaseRequestUncommitted: true } }));
   await expect(mutatePurchaseRequest("hotel-a", input())).rejects.toThrow("Changed");
