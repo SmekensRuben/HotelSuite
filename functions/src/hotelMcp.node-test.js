@@ -15,6 +15,7 @@ const enabled = { HOTEL_MCP_ENABLED: "true", HOTEL_MCP_PUBLIC_ORIGIN: "https://m
 test("private MCP is disabled without adding required operator parameters or exposing a server", () => {
   configuration({}, () => assert.deepEqual(readHotelMcpRuntimeConfig(), { enabled: false }));
   assert.ok(hotelMcp.__endpoint.httpsTrigger);
+  assert.ok(hotelMcp.__endpoint.concurrency <= 2, "Image preparation must not inherit the platform's high request concurrency.");
   for (const callable of [getHotelMcpConsent, completeHotelMcpConsent, listHotelMcpConnections, revokeHotelMcpConnection]) assert.ok(callable.__endpoint.callableTrigger);
 });
 

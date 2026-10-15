@@ -267,6 +267,6 @@ async function processSupplierProductImageHandler(event, services = {}) {
     throw error;
   }
 }
-module.exports = { MAX_ATTEMPTS, strictId, assetIdOf, generationOf, sourcePath, variantPath, references, resultOf, processImageAsset,
+module.exports = { MAX_ATTEMPTS, strictId, assetIdOf, generationOf, sourcePath, variantPath, references, resultOf, savePrivateObject, processImageAsset,
   uploadSupplierProductImage, readSupplierProductImage, supplierProductImageHandler, processSupplierProductImageHandler,
   supplierProductImage: onRequest(options, supplierProductImageHandler), processSupplierProductImage: onObjectFinalized(storageOptions, processSupplierProductImageHandler) };

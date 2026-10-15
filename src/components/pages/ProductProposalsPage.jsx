@@ -25,6 +25,7 @@ function ScopedProductProposalsPage({ hotelUid, batchId, openBatch }) {
   const supplierRead = usePermission("supplierproducts", "read"), supplierCreate = usePermission("supplierproducts", "create"), supplierUpdate = usePermission("supplierproducts", "update"), suppliersRead = usePermission("suppliers", "read");
   const permitted = Boolean(hotelUid && (catalogRead || supplierRead));
   const [cursor, setCursor] = useState(null), [selection, setSelection] = useState([]), [filter, setFilter] = useState("all"), [error, setError] = useState(null), [busy, setBusy] = useState(false), [notice, setNotice] = useState(""), [pending, setPending] = useState(null), [confirmation, setConfirmation] = useState(null);
+  const [imageRefreshRequired, setImageRefreshRequired] = useState(false);
   const actor = useRef(auth.currentUser).current, alive = useRef(true), operation = useRef(false);
   const current = useCallback(() => alive.current && auth.currentUser === actor, [actor]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -32,6 +33,12 @@ function ScopedProductProposalsPage({ hotelUid, batchId, openBatch }) {
   const list = useScopedAsync({ scopeKey: `${hotelUid}:${cursor || "first"}`, enabled: permitted && !batchId, load: loadList });
   const loadBatch = useCallback(() => readProductProposalBatch(hotelUid, batchId), [hotelUid, batchId]);
   const detail = useScopedAsync({ scopeKey: `${hotelUid}:${batchId}`, enabled: permitted && Boolean(batchId), retainData: true, load: loadBatch });
+  const refresh = async () => {
+    setSelection([]);
+    const result = await (batchId ? detail : list).retry();
+    if (current() && result) setImageRefreshRequired(false);
+    return result;
+  };
   useEffect(() => {
     if (!batchId || !permitted) return;
     try { setPending(getPendingProductProposalReview(hotelUid, batchId)); } catch (failure) { setError(failure); }
@@ -77,13 +84,29 @@ function ScopedProductProposalsPage({ hotelUid, batchId, openBatch }) {
     const rowIds = withDependencies(ids);
     if (!busy && !pending && rowIds.length) setConfirmation({ rowIds, revision: batch.revision });
   };
+  const imageAction = async (action) => {
+    if (!current() || operation.current || !permitted || pending || batch?.processing || detail.loading || confirmation) throw new Error("Finish the current product review before changing its image.");
+    operation.current = true; setBusy(true); setNotice("");
+    let result, failure;
+    try { result = await action(); }
+    catch (error) { failure = error; }
+    try {
+      if (!current()) throw new Error("Hotel access changed. Reopen this product proposal.");
+      setSelection([]); setConfirmation(null);
+      const fresh = await detail.retry();
+      if (current()) setImageRefreshRequired(!fresh);
+      if (!fresh) throw new Error("Refresh product proposals before approving. The image action result could not be reconciled.");
+      if (failure) throw failure;
+      return result;
+    } finally { if (current()) { operation.current = false; setBusy(false); } }
+  };
   const visibleRows = rows.filter((row) => filter === "all" || row.status === filter);
   const loading = batchId ? detail.loading : list.loading;
-  const locked = busy || loading || Boolean(pending) || Boolean(batch?.processing);
+  const locked = busy || loading || Boolean(pending) || Boolean(batch?.processing) || imageRefreshRequired;
   return <PageShell variant="procurement" className="space-y-5">
-    <header className="flex flex-wrap items-start justify-between gap-3"><div><Link to={catalogRead ? "/catalog/products" : "/catalog/supplier-products"} className="text-sm text-stone-500">{catalogRead ? "← Catalog Products" : "← Supplier Products"}</Link><h1 className="mt-2 font-display text-3xl text-brand-950">Product proposals</h1><p className="mt-1 max-w-2xl text-sm text-stone-600">Review products prepared by your connected AI client. Nothing becomes an active product until you approve it here.</p></div><button type="button" className="ht-button-secondary" disabled={!permitted || busy || loading || Boolean(pending)} onClick={() => { setSelection([]); (batchId ? detail : list).retry(); }}>Refresh progress</button></header>
+    <header className="flex flex-wrap items-start justify-between gap-3"><div><Link to={catalogRead ? "/catalog/products" : "/catalog/supplier-products"} className="text-sm text-stone-500">{catalogRead ? "← Catalog Products" : "← Supplier Products"}</Link><h1 className="mt-2 font-display text-3xl text-brand-950">Product proposals</h1><p className="mt-1 max-w-2xl text-sm text-stone-600">Review products prepared by your connected AI client. Nothing becomes an active product until you approve it here.</p></div><button type="button" className="ht-button-secondary" disabled={!permitted || busy || loading || Boolean(pending)} onClick={refresh}>Refresh progress</button></header>
     {!permitted && <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm">Select a hotel with catalog-product or supplier-product read permission to view your private proposal batches.</p>}
-    <AsyncError error={error || detail.error || list.error} onRetry={pending ? () => mutate(pending.input.action, [], null, true) : () => (batchId ? detail : list).retry()} label="The product proposal review could not be verified." />
+    <AsyncError error={error || detail.error || list.error} onRetry={pending ? () => mutate(pending.input.action, [], null, true) : refresh} label="The product proposal review could not be verified." />
     {notice && <p role="status" className="rounded-xl bg-green-50 p-4 text-sm text-green-950">{notice}</p>}
     {pending && <section aria-label="Recover product review" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><h2 className="font-semibold">The previous review result needs confirmation</h2><p className="mt-1">Recover its original {pending.input.action} request before editing or approving other proposals. Already applied products are reused and cannot be duplicated by this retry.</p><button type="button" className="ht-button-secondary mt-3" disabled={busy} onClick={() => mutate(pending.input.action, [], null, true)}>Retry original review</button></section>}
     {loading && permitted && !(batchId && batch) && <p role="status" className="rounded-xl bg-stone-50 p-5 text-sm">Loading your private product proposals…</p>}
@@ -92,7 +115,7 @@ function ScopedProductProposalsPage({ hotelUid, batchId, openBatch }) {
       <button type="button" className="text-sm text-stone-500 underline" disabled={busy} onClick={() => openBatch(null)}>All my proposal batches</button>
       <section aria-label="Proposal batch overview" className="space-y-3 rounded-2xl border bg-white p-4"><div className="flex flex-wrap justify-between gap-2"><h2 className="font-semibold text-brand-950">{batch.source?.label || "Product proposal batch"}</h2><span className="text-xs text-stone-500">{batch.status} · revision {batch.revision}</span></div><p className="text-sm text-stone-600">{rows.length} proposals · {rows.filter((row) => row.status === "applied").length} applied · {rows.filter((row) => row.status === "skipped").length} skipped · {rows.filter((row) => ["invalid", "conflict", "failed"].includes(row.status)).length} exceptions</p>{batch.source?.url && <p className="break-all text-xs text-stone-500">Source: {safeSourceUrl(batch.source.url) ? <a className="underline" href={safeSourceUrl(batch.source.url)} target="_blank" rel="noreferrer">{batch.source.url}</a> : batch.source.url}</p>}{batch.source?.documentDate && <p className="text-xs text-stone-500">Source document date: {batch.source.documentDate}</p>}<p className="text-xs text-stone-500">Approvals check current access and product revisions again. Conflicts and invalid rows remain available for correction. You can return to this batch to resume partial results.</p></section>
       <div className="flex flex-wrap items-center justify-between gap-3"><label className="flex items-center gap-2 text-xs font-semibold">Show<select aria-label="Filter proposals" className="rounded-lg border bg-white px-3 py-2" value={filter} onChange={(event) => setFilter(event.target.value)}>{statuses.map((status) => <option key={status} value={status}>{status === "all" ? "All proposals" : status === "ready" ? "New products and changes" : status.charAt(0).toUpperCase() + status.slice(1)}</option>)}</select></label><div className="flex flex-wrap gap-2"><button type="button" className="ht-button-secondary" disabled={locked || !validRows.length} onClick={() => setSelection(withDependencies(validRows.map((row) => row.rowId)))}>Select valid proposals ({validRows.length})</button>{selection.length > 0 && <button type="button" className="ht-button-secondary" disabled={locked} onClick={() => setSelection([])}>Clear selection</button>}</div></div>
-      <div className="space-y-4">{visibleRows.map((row) => <ProductProposalReviewRow key={`${batchId}:${row.rowId}:${batch.revision}`} hotelUid={hotelUid} row={row} rows={rows} checked={selected.includes(row.rowId)} eligible={eligible(row)} canEdit={canEdit(row)} canReadCatalog={catalogRead} canReadSuppliers={suppliersRead} disabled={locked} onSelect={(checked) => toggle(row, checked)} onApprove={() => confirm([row.rowId])} onSkip={() => mutate("skip", [row.rowId])} onCorrect={(correction) => mutate("correct", [row.rowId], [correction])} />)}</div>
+      <div className="space-y-4">{visibleRows.map((row) => <ProductProposalReviewRow key={`${batchId}:${row.rowId}:${batch.revision}`} hotelUid={hotelUid} batchId={batchId} batchRevision={batch.revision} row={row} rows={rows} checked={selected.includes(row.rowId)} eligible={eligible(row)} canEdit={canEdit(row)} canReadCatalog={catalogRead} canReadSuppliers={suppliersRead} canReplaceImage={supplierUpdate} disabled={locked} imageDisabled={locked || Boolean(confirmation)} onImageAction={imageAction} onSelect={(checked) => toggle(row, checked)} onApprove={() => confirm([row.rowId])} onSkip={() => mutate("skip", [row.rowId])} onCorrect={(correction) => mutate("correct", [row.rowId], [correction])} />)}</div>
       {!visibleRows.length && <p className="rounded-xl bg-stone-50 p-5 text-sm text-stone-600">No proposals match this view.</p>}
       <footer className="sticky bottom-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brand-100 bg-brand-50 p-4 shadow-sm"><p className="text-sm font-semibold">{selected.length} valid proposals selected</p><button type="button" className="ht-button-primary" disabled={locked || !selected.length} onClick={() => confirm(selected)}>Review approval ({selected.length})</button></footer>
     </>}

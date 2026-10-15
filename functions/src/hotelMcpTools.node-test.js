@@ -25,17 +25,25 @@ function exampleBatch(extra = {}) {
       issues: [{ code: "product-invalid", message: "Base unit is required.", severity: "error" }], result: null, error: null, current: null, currentRevision: null }],
     summary: { total: 1, ready: 0, invalid: 1, unchanged: 0, applied: 0, skipped: 0, conflict: 0, failed: 0 }, ...extra };
 }
+function exampleImage(extra = {}) {
+  return { assetId: "a".repeat(64), status: "ready", selection: "unselected", decisionRevision: 0,
+    sourceUrl: "https://images.example/water.jpg", sourcePageUrl: "https://supplier.example/water", mimeType: "image/jpeg", width: 800, height: 600, error: null,
+    attachment: { status: "none", productId: null, imageRevision: null, error: null }, expiresAtMillis: 1760604800000,
+    currentImage: { assetId: null, status: "none", imageRevision: 0 }, ...extra };
+}
 
-test("registry exposes twelve focused tools and no approval, deletion, query or platform tool", () => {
+test("registry exposes thirteen focused tools and no approval, deletion, query or platform tool", () => {
   const { server } = serverWithProduct();
   const names = Object.keys(server._registeredTools);
-  assert.equal(names.length, 12);
-  assert.deepEqual(names.sort(), ["discover_hotels", "get_catalog_product", "get_product_proposal_batch", "get_product_workflow_metadata", "get_supplier_product", "list_catalog_products", "list_product_proposal_batches", "list_product_references", "list_supplier_products", "search_catalog_products", "search_supplier_products", "stage_product_proposals"].sort());
+  assert.equal(names.length, 13);
+  assert.deepEqual(names.sort(), ["discover_hotels", "get_catalog_product", "get_product_proposal_batch", "get_product_workflow_metadata", "get_supplier_product", "list_catalog_products", "list_product_proposal_batches", "list_product_references", "list_supplier_products", "prepare_supplier_product_proposal_image", "search_catalog_products", "search_supplier_products", "stage_product_proposals"].sort());
   for (const [name, tool] of Object.entries(server._registeredTools)) {
+    const writesProposal = ["stage_product_proposals", "prepare_supplier_product_proposal_image"].includes(name);
     assert.ok(tool.description.length > 100); assert.ok(tool.inputSchema); assert.ok(tool.outputSchema);
-    assert.equal(tool.annotations.readOnlyHint, name !== "stage_product_proposals");
+    assert.equal(tool.annotations.readOnlyHint, !writesProposal);
     assert.equal(tool.annotations.destructiveHint, false); assert.equal(tool.annotations.idempotentHint, true);
-    assert.deepEqual(tool._meta.securitySchemes, [{ type: "oauth2", scopes: name === "stage_product_proposals" ? ["hotel-toolkit:read", "hotel-toolkit:propose"] : ["hotel-toolkit:read"] }]);
+    assert.equal(tool.annotations.openWorldHint, name === "prepare_supplier_product_proposal_image");
+    assert.deepEqual(tool._meta.securitySchemes, [{ type: "oauth2", scopes: writesProposal ? ["hotel-toolkit:read", "hotel-toolkit:propose"] : ["hotel-toolkit:read"] }]);
     assert.equal(z.toJSONSchema(tool.inputSchema).additionalProperties, false);
     assert.equal(z.toJSONSchema(tool.outputSchema).additionalProperties, false);
   }
@@ -143,6 +151,56 @@ test("batch output schemas reject private metadata accidentally added by a handl
   assert.equal(schemas.batch.safeParse(product).success, false);
 });
 
+test("prepared supplier image descriptors are backward compatible and never permit private media handles", () => {
+  const oldBatch = exampleBatch();
+  assert.equal(schemas.batch.safeParse(oldBatch).success, true);
+  oldBatch.rows[0].image = null;
+  assert.equal(schemas.batch.safeParse(oldBatch).success, true);
+  const supplierBatch = exampleBatch(); supplierBatch.rows[0].kind = "supplier"; supplierBatch.rows[0].image = exampleImage();
+  assert.deepEqual(schemas.batch.parse(supplierBatch).rows[0].image, exampleImage());
+  for (const privateField of ["storagePath", "downloadUrl", "downloadURL", "accessToken", "token", "variants"]) {
+    const image = exampleImage({ [privateField]: "private" });
+    assert.equal(schemas.proposalImage.safeParse(image).success, false, privateField);
+  }
+  const attached = exampleImage(); attached.attachment.downloadUrl = "https://private.example/token";
+  assert.equal(schemas.proposalImage.safeParse(attached).success, false);
+  assert.equal(schemas.proposalImage.safeParse(exampleImage({ sourceUrl: "https://images.example/water.jpg?token=private" })).success, false);
+  assert.equal(schemas.proposalImage.safeParse(exampleImage({ sourcePageUrl: "https://supplier.example/water#private" })).success, false);
+});
+
+test("image preparation has a dedicated strict input and cannot select, approve or mutate a product patch", () => {
+  const { server } = serverWithProduct();
+  const schema = server._registeredTools.prepare_supplier_product_proposal_image.inputSchema;
+  const input = { hotelUid: "hotel-a", batchId: "batch-a", rowId: "water", requestId: "image-request", imageUrl: "https://images.example/water.jpg", sourcePageUrl: "https://supplier.example/water" };
+  assert.deepEqual(schema.parse(input), input);
+  const prefix = "https://images.example/";
+  const maximumUrl = prefix + "x".repeat(2048 - prefix.length);
+  assert.equal(schema.safeParse({ ...input, imageUrl: maximumUrl, sourcePageUrl: maximumUrl }).success, true);
+  assert.equal(schema.safeParse({ ...input, imageUrl: `${maximumUrl}x` }).success, false);
+  assert.equal(schemas.proposalImage.safeParse(exampleImage({ sourceUrl: maximumUrl, sourcePageUrl: maximumUrl })).success, true);
+  for (const action of [{ selected: true }, { selection: "selected" }, { approve: true }, { replaceExisting: true }, { productId: "product-a" }, { auth: { uid: "other" } }, { storagePath: "private" }]) {
+    assert.equal(schema.safeParse({ ...input, ...action }).success, false);
+  }
+  for (const imageUrl of ["http://images.example/water.jpg", "https://user:password@images.example/water.jpg", "file:///tmp/water.jpg", "data:image/png;base64,data", "javascript:alert(1)"]) {
+    assert.equal(schema.safeParse({ ...input, imageUrl }).success, false);
+  }
+  assert.equal(schemas.supplierPatch.safeParse({ imageUrl: input.imageUrl }).success, false);
+  assert.equal(schemas.catalogPatch.safeParse({ imageUrl: input.imageUrl }).success, false);
+});
+
+test("failed or expired image preparation remains a readable nonblocking product proposal result", () => {
+  const batch = exampleBatch(); batch.rows[0].kind = "supplier"; batch.rows[0].status = "ready"; batch.rows[0].issues = [];
+  batch.summary.ready = 1; batch.summary.invalid = 0;
+  const productSummary = structuredClone(batch.summary);
+  const imageError = { code: "source-unavailable", message: "The image is protected. Continue without an image or upload one in Hotel Toolkit." };
+  for (const status of ["failed", "expired"]) {
+    batch.rows[0].image = exampleImage({ status, mimeType: null, width: null, height: null, error: imageError });
+    const parsed = schemas.batch.parse(batch);
+    assert.equal(parsed.rows[0].image.status, status); assert.equal(parsed.rows[0].status, "ready");
+    assert.deepEqual(parsed.summary, productSummary);
+  }
+});
+
 test("review output preserves invalid source types for validation while product inputs remain typed", () => {
   const invalid = exampleBatch();
   invalid.rows[0].proposed = { name: "Water", baseUnit: "bottle", pricePerPurchaseUnit: "not a price" };
@@ -197,13 +255,20 @@ test("maintained SDK client discovers precise contracts and executes a structure
   try {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     const { tools } = await client.listTools();
-    assert.equal(tools.length, 12);
+    assert.equal(tools.length, 13);
     const detail = tools.find((tool) => tool.name === "get_catalog_product");
     assert.deepEqual(detail.inputSchema.required, ["hotelUid", "productId"]);
     assert.equal(detail.inputSchema.additionalProperties, false); assert.equal(detail.outputSchema.additionalProperties, false);
     assert.deepEqual(detail._meta.securitySchemes, [{ type: "oauth2", scopes: ["hotel-toolkit:read"] }]);
+    const imagePreparer = tools.find((tool) => tool.name === "prepare_supplier_product_proposal_image");
+    assert.equal(imagePreparer.annotations.openWorldHint, true);
+    assert.deepEqual(imagePreparer._meta.securitySchemes, [{ type: "oauth2", scopes: ["hotel-toolkit:read", "hotel-toolkit:propose"] }]);
     const result = await client.callTool({ name: "get_catalog_product", arguments: { hotelUid: "hotel-a", productId: "water" } });
     assert.equal(result.isError, undefined); assert.equal(result.structuredContent.product.name, "Water");
+    const metadata = await client.callTool({ name: "get_product_workflow_metadata", arguments: { hotelUid: "hotel-a", kind: "supplier" } });
+    assert.equal(metadata.isError, undefined);
+    assert.equal(metadata.structuredContent.imageCapabilities.prepareTool, "prepare_supplier_product_proposal_image");
+    assert.equal(metadata.structuredContent.imageCapabilities.imageFailureBlocksProductApproval, false);
     const forbidden = await client.callTool({ name: "get_catalog_product", arguments: { hotelUid: "hotel-a", productId: "water", userId: "other" } });
     assert.equal(forbidden.isError, true);
   } finally { await Promise.all([server.close(), client.close()]); }

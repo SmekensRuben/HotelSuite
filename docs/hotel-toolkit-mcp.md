@@ -53,7 +53,7 @@ current product permissions and reject MCP authentication contexts.
 
 ## Tools and product contracts
 
-All tools have strict input and output schemas, bounded responses and focused
+All 13 tools have strict input and output schemas, bounded responses and focused
 descriptions. There is no arbitrary path, query, document mutation, approval or
 platform-management tool.
 
@@ -63,8 +63,9 @@ platform-management tool.
 | `list_catalog_products`, `search_catalog_products`, `get_catalog_product` | Read canonical catalog data and revisions. |
 | `list_supplier_products`, `search_supplier_products`, `get_supplier_product` | Read canonical supplier articles and purchase terms. |
 | `list_product_references` | Read suppliers, taxonomy, or an exact supplier/source-format mapping profile. |
-| `get_product_workflow_metadata` | Read supported fields, physical units and validation rules for one product kind. |
+| `get_product_workflow_metadata` | Read supported fields, physical units, validation rules and supplier image capabilities. |
 | `stage_product_proposals` | Save up to 25 create/update proposals, with a stable request ID. |
+| `prepare_supplier_product_proposal_image` | Prepare one optional private image candidate for a staged supplier row; never selects or attaches it. |
 | `get_product_proposal_batch`, `list_product_proposal_batches` | Read the requester's own validation, progress and results. |
 
 Every hotel action requires an explicit `hotelUid`. Discovery reads the current
@@ -157,8 +158,15 @@ and nested fields. An explicit `[]` deliberately clears all additional options.
 Deleting one existing option is outside this pilot's proposal contract; use the
 normal Supplier Product editor for that change. The proposal editor labels and
 enforces this distinction. Internal SKU allocation, unique reservations, audit
-fields and price evidence use the existing protected backend. Images can be
-uploaded through the existing supported workflow after approval.
+fields and price evidence use the existing protected backend. After staging a
+supplier row, an MCP client can optionally prepare a direct public image with
+`prepare_supplier_product_proposal_image`. Never put `imageUrl` in a product
+patch. A human must select the private preview in Hotel Toolkit before approval;
+replacing an existing image also requires explicit confirmation and its current
+image revision. Image failures do not block product data, and attachment can be
+retried separately without repeating product/price/SKU commands. See
+[Supplier product proposal images](mcp-product-proposal-images.md) for the full
+flow, limits, upload alternative, retention and recovery.
 
 Only explicitly supplied unit prices create price confirmations. Descriptive
 changes do not refresh price evidence. Existing approved versions, future prices,
@@ -186,6 +194,14 @@ The following commands are operator actions after this change is reviewed and
 merged. This change does not set live variables or publish anything. Existing
 SaaS memberships, procurement access, Rules and indexes remain prerequisites.
 Follow [Functions release controls](functions-continuous-deployment.md).
+
+Supplier proposal image support uses the same personal scopes and client
+registrations. Its native preparation/decision/preview endpoints and scheduled
+cleanup must be included in the reviewed Functions release, with the matching
+frontend and explicit deny Rules. It requires no additional MCP gateway rewrite
+or image-specific Firestore index. See the
+[image release requirements](mcp-product-proposal-images.md#retention-and-release-requirements)
+before testing the optional media flow.
 
 ### Repository variables
 
@@ -475,12 +491,17 @@ retain their existing classification rather than being treated as index failures
 
 The implementation is separated into `hotelMcpAuth` (identity/grants),
 `hotelMcpServer` (protocol), `hotelMcpAccess` (operational authorization),
-`hotelMcpReads`/`hotelMcpTools` (bounded contracts), and `hotelMcpProposals` (durable
-review). Future domains should add focused tools and their own permissions.
+`hotelMcpReads`/`hotelMcpTools` (bounded contracts), `hotelMcpProposals` (durable
+review), `hotelMcpImageDownload` (bounded public image fetching) and
+`hotelMcpProposalImages` (private preparation, native decisions and image-only
+attachment/recovery). Future domains should add focused tools and their own
+permissions.
 Platform tools must use an independent platform authorization policy; they cannot
 reuse operational hotel discovery or infer access from a platform claim. Orders,
 stock mutations, supplier management, direct price auto-approval and arbitrary
-uploads remain outside this connection.
+uploads remain outside this connection. Optional proposal-image preparation is a
+focused separate tool, and all compatible clients discover it through MCP tools,
+server instructions and workflow metadata.
 
 ## Validation and remaining external checks
 

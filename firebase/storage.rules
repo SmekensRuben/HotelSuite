@@ -59,6 +59,9 @@ service firebase.storage {
     // Purchase-request quotes and attachments never expose browser download
     // tokens; authorized backend endpoints validate current hotel access.
     match /private/purchase-requests/{allPaths=**} { allow read, write: if false; }
+    // Temporary MCP proposal images are previewed only through owner-scoped
+    // backend endpoints; browser SDKs cannot mint download tokens or alter them.
+    match /private/mcp-proposal-images/{allPaths=**} { allow read, write: if false; }
     match /hotels/{hotelUid}/contracts/{allPaths=**} { allow read, write: if false; }
 
     match /hotels/{hotelUid}/catalogproducts/{allPaths=**} {

@@ -58,6 +58,11 @@ const catalog = (patch = {}) => ({ name: "Milk", brand: "Campina", category: "Fo
 const offer = (patch = {}) => ({ supplierId: "dairy", supplierSku: "MILK6", supplierProductName: "Milk six pack", currency: "EUR", pricingModel: "Per Purchase Unit", pricePerPurchaseUnit: 12,
   baseUnit: "l", purchaseUnit: "Case", baseUnitsPerPurchaseUnit: 6, active: true, priceBasis: "net", ...patch });
 const source = { label: "Supplier price list", documentDate: "2026-10-15" };
+const proposalImage = (selection = "selected") => ({ assetId: "a".repeat(64), status: "ready", selection, decisionRevision: 1,
+  sourceUrl: "https://supplier.example/image.jpg", sourcePageUrl: "https://supplier.example/product", mimeType: "image/webp",
+  width: 100, height: 100, error: null, expiresAtMillis: now() + 7 * 86400000,
+  currentImage: { assetId: null, status: "none", imageRevision: 0 },
+  attachment: { status: "none", productId: null, imageRevision: null, error: null } });
 const catalogRow = (patch = {}) => ({ rowId: "catalog-milk", kind: "catalog", action: "create", product: catalog(), ...patch });
 const supplierRow = (patch = {}) => ({ rowId: "offer-one", kind: "supplier", action: "create", product: offer(), catalogRowId: "catalog-milk", ...patch });
 const propose = (services, rows = [catalogRow(), supplierRow()], patch = {}) => stage(request({ hotelUid, requestId: "stage-1", source, rows, ...patch }), services);
@@ -387,4 +392,79 @@ test("public proposal snapshots filter nested package metadata while retaining i
   assert.equal(Object.hasOwn(loaded.rows[0].current.purchaseOptions[0], "privateSupplierMetadata"), false);
   assert.deepEqual(require("./hotelMcpTools").schemas.batch.parse(loaded), loaded);
   assert.deepEqual(services.firestore.records.get(`${root}/hotelMcpProposalBatches/${batch.batchId}`).rows[0].original.purchaseOptions[0], storedOption);
+});
+
+test("image attachment runs after durable product approval with its original human-selected snapshot and actual product IDs", async (t) => {
+  const services = fixture(), batch = await propose(services, [supplierRow({ catalogRowId: null })]);
+  const stored = services.firestore.records.get(`${root}/hotelMcpProposalBatches/${batch.batchId}`);
+  stored.rows[0].image = proposalImage();
+  const images = require("./hotelMcpProposalImages");
+  let calls = 0;
+  t.mock.method(images, "attachSelectedProposalImages", async (_request, input, dependencies) => {
+    calls++;
+    assert.equal(dependencies, services);
+    assert.deepEqual(input.selectionSnapshot, [{ rowId: "offer-one", assetId: "a".repeat(64), decisionRevision: 1 }]);
+    const current = services.firestore.records.get(`${root}/hotelMcpProposalBatches/${batch.batchId}`), row = current.rows[0];
+    assert.equal(row.status, "applied"); assert.equal(current.activeReviewId, null);
+    assert.ok(services.firestore.records.has(`${root}/supplierproducts/${row.result.productId}`));
+    row.image.attachment = { status: "attached", productId: row.result.productId, imageRevision: 1, error: null };
+  });
+  const result = await act(services, batch);
+  assert.equal(calls, 1); assert.equal(result.rows[0].status, "applied");
+  assert.equal(result.rows[0].image.attachment.productId, result.rows[0].result.productId);
+  assert.equal(result.rows[0].image.attachment.status, "attached");
+  const operation = [...services.firestore.records.values()].find((value) => value.action === "approve" && value.imageSelections);
+  assert.deepEqual(operation.imageSelections, [{ rowId: "offer-one", assetId: "a".repeat(64), decisionRevision: 1 }]);
+});
+
+test("an image attachment outage cannot undo product approval and exact retry recovers only its image", async (t) => {
+  const services = fixture(), batch = await propose(services, [supplierRow({ catalogRowId: null })]);
+  services.firestore.records.get(`${root}/hotelMcpProposalBatches/${batch.batchId}`).rows[0].image = proposalImage();
+  const images = require("./hotelMcpProposalImages");
+  let calls = 0;
+  t.mock.method(require("./config").logger, "warn", () => {});
+  t.mock.method(images, "attachSelectedProposalImages", async () => {
+    if (++calls === 1) throw new Error("private Storage provider payload");
+    const row = services.firestore.records.get(`${root}/hotelMcpProposalBatches/${batch.batchId}`).rows[0];
+    row.image.attachment = { status: "attached", productId: row.result.productId, imageRevision: 1, error: null };
+  });
+  const first = await act(services, batch);
+  assert.equal(first.rows[0].status, "applied"); assert.equal(first.rows[0].image.attachment.status, "failed");
+  assert.match(first.rows[0].image.attachment.error.message, /Product data was approved/);
+  assert.equal(JSON.stringify(first).includes("private Storage"), false);
+  const productState = JSON.stringify(products(services, "supplierproducts"));
+  const historyState = JSON.stringify(products(services, "supplierPriceHistory"));
+  const retried = await act(services, batch);
+  assert.equal(calls, 2); assert.equal(retried.rows[0].image.attachment.status, "attached");
+  assert.equal(JSON.stringify(products(services, "supplierproducts")), productState);
+  assert.equal(JSON.stringify(products(services, "supplierPriceHistory")), historyState);
+});
+
+test("failed or unselected optional images do not block product data or trigger attachment", async (t) => {
+  const services = fixture(), batch = await propose(services, [supplierRow({ catalogRowId: null })]);
+  const row = services.firestore.records.get(`${root}/hotelMcpProposalBatches/${batch.batchId}`).rows[0];
+  row.image = { ...proposalImage("unselected"), status: "failed", error: { code: "download-failed", message: "The image could not be downloaded. Retry or choose another image." } };
+  const images = require("./hotelMcpProposalImages");
+  const attachment = t.mock.method(images, "attachSelectedProposalImages", async () => { throw new Error("Unselected images must not be attached"); });
+  const result = await act(services, batch);
+  assert.equal(result.rows[0].status, "applied"); assert.equal(result.rows[0].image.status, "failed");
+  assert.equal(products(services, "supplierproducts").length, 1);
+  assert.equal(attachment.mock.callCount(), 0);
+});
+
+test("refresh compares the actual current image and expires old previews without rewriting proposal evidence", async () => {
+  const services = fixture(), batch = await propose(services, [supplierRow({ catalogRowId: null })]);
+  const approved = await act(services, batch), productId = approved.rows[0].result.productId;
+  const stored = services.firestore.records.get(`${root}/hotelMcpProposalBatches/${batch.batchId}`);
+  stored.rows[0].image = proposalImage("unselected");
+  const product = services.firestore.records.get(`${root}/supplierproducts/${productId}`);
+  product.image = { assetId: "b".repeat(64), status: "ready", policyVersion: 1, display: { path: "private/never-returned" } };
+  product.imageRevision = 3;
+  const evidence = JSON.stringify(stored);
+  const refreshed = await read(request({ hotelUid, batchId: batch.batchId }), services);
+  assert.deepEqual(refreshed.rows[0].image.currentImage, { assetId: "b".repeat(64), status: "ready", imageRevision: 3 });
+  assert.equal(JSON.stringify(refreshed).includes("private/never-returned"), false);
+  const expired = await read(request({ hotelUid, batchId: batch.batchId }), { ...services, now: () => now() + 8 * 86400000 });
+  assert.equal(expired.rows[0].image.status, "expired");
+  assert.equal(JSON.stringify(stored), evidence);
 });
