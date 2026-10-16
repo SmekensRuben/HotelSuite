@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
 import { doc, getDoc, getDocs, collection, updateDoc, setDoc } from "firebase/firestore";
+import { permitInjectedTransports } from "./helpers/fake-external-actions.mjs";
 
 // This suite must never reach a production project or an external mail/SFTP server.
 const projectId = "demo-hotel-suite-a00";
@@ -226,7 +227,8 @@ describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
     await confirmOrderHandler(request(approverA, { hotelUid: "hotel-a", orderId: id, requestId: nextId(), expectedRevision: 2 }), services);
   });
 
-  it("preserves a fast mail worker's processing state while the dispatch event is still returning", async () => {
+  it("preserves a fast mail worker's processing state while the dispatch event is still returning", async (t) => {
+    permitInjectedTransports(t, { actions: ["Supplier deliveries", "Email deliveries"], mailQueue: true });
     const id = await order();
     const result = await confirm(id);
     const snapshot = await db.doc(`hotels/hotel-a/orders/${id}`).get();
@@ -343,7 +345,8 @@ describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
     await rejected(createOrdersFromCartHandler(request(purchaserA, { hotelUid: "hotel-a", ...fresh, deliveryDate: "2026-10-13", requestId: nextId() }), services), "aborted");
   });
 
-  it("delivers one email through duplicate order and mail events and finalizes only after provider acknowledgement", async () => {
+  it("delivers one email through duplicate order and mail events and finalizes only after provider acknowledgement", async (t) => {
+    permitInjectedTransports(t, { actions: ["Supplier deliveries", "Email deliveries"], mailQueue: true });
     const id = await order(); await confirm(id);
     const snapshot = await db.doc(`hotels/hotel-a/orders/${id}`).get();
     await Promise.all([dispatchOrderHandler(eventFor(snapshot), services), dispatchOrderHandler(eventFor(snapshot), services)]);
@@ -358,7 +361,8 @@ describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
     assert.equal(final.status, "Ordered"); assert.equal(final.dispatchStatus, "sent");
   });
 
-  it("keeps an ambiguous email result under review and never sends a duplicate on event retry", async () => {
+  it("keeps an ambiguous email result under review and never sends a duplicate on event retry", async (t) => {
+    permitInjectedTransports(t, { actions: ["Supplier deliveries", "Email deliveries"], mailQueue: true });
     const id = await order(); await confirm(id);
     const snapshot = await db.doc(`hotels/hotel-a/orders/${id}`).get();
     await dispatchOrderHandler(eventFor(snapshot), services);
@@ -380,7 +384,8 @@ describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
     assert.equal(calls, 1);
   });
 
-  it("retries preparation only when no external send occurred and blocks sending after approver revocation", async () => {
+  it("retries preparation only when no external send occurred and blocks sending after approver revocation", async (t) => {
+    permitInjectedTransports(t, { actions: ["Supplier deliveries", "Email deliveries"], mailQueue: true });
     const id = await order(); await confirm(id);
     let snapshot = await db.doc(`hotels/hotel-a/orders/${id}`).get();
     await dispatchOrderHandler(eventFor(snapshot), services);
@@ -401,7 +406,8 @@ describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
     assert.equal(calls, 0); assert.equal((await snapshot.ref.get()).data().dispatchStatus, "blocked");
   });
 
-  it("dispatches one SFTP order with private credentials through duplicated events", async () => {
+  it("dispatches one SFTP order with private credentials through duplicated events", async (t) => {
+    permitInjectedTransports(t, { actions: ["Supplier deliveries", "Email deliveries"], mailQueue: true });
     const id = await order();
     const orderData = (await db.doc(`hotels/hotel-a/orders/${id}`).get()).data();
     await db.doc(`hotels/hotel-a/suppliers/${orderData.supplierId}`).update({ orderSystem: "SFTP csv" });

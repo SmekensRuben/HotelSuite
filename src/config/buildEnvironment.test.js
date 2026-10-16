@@ -18,6 +18,8 @@ const validate = (values = {}) => execFileSync(process.execPath, ["scripts/valid
     VITE_FIREBASE_APP_ID: "fictional-build-app",
     EXPECTED_FIREBASE_PROJECT_ID: "demo-hotel-suite-a00",
     PRODUCTION_FIREBASE_PROJECT_ID: "hotel-toolkit",
+    RELEASE_TARGET: "",
+    VITE_RELEASE_SHA: "",
     ...values,
   },
   stdio: "pipe",
@@ -36,10 +38,10 @@ describe("Firebase build environment", () => {
     expect(() => validate({ NODE_ENV: "production", VITE_DEPLOYMENT_ENV: "test" })).toThrow();
   });
 
-  it("allows a Vercel preview to intentionally use the production Firebase project", () => {
-    expect(validate({ NODE_ENV: "production", VERCEL_ENV: "preview", GITHUB_REF_NAME: "",
+  it("rejects a Vercel preview using the production Firebase project", () => {
+    expect(() => validate({ NODE_ENV: "production", VERCEL_ENV: "preview", GITHUB_REF_NAME: "",
       VITE_DEPLOYMENT_ENV: "production", VITE_FIREBASE_PROJECT_ID: "hotel-toolkit",
-      EXPECTED_FIREBASE_PROJECT_ID: "hotel-toolkit" })).toContain("Validated production client build for Firebase project hotel-toolkit.");
+      EXPECTED_FIREBASE_PROJECT_ID: "hotel-toolkit" })).toThrow(/previews cannot use the production/);
   });
 
   it("allows a Vercel preview to use a separate test Firebase project", () => {
@@ -56,9 +58,26 @@ describe("Firebase build environment", () => {
     expect(() => validate({ NODE_ENV: "production", VERCEL_ENV: "production", GITHUB_REF_NAME: "" })).toThrow(/a production release build/);
   });
 
-  it("retains the explicit project match and required-variable checks for shared previews", () => {
+  it("retains the explicit project match and required-variable checks for previews", () => {
     const preview = { VERCEL_ENV: "preview", VITE_DEPLOYMENT_ENV: "production", VITE_FIREBASE_PROJECT_ID: "hotel-toolkit" };
     expect(() => validate(preview)).toThrow(/does not match EXPECTED_FIREBASE_PROJECT_ID/);
     expect(() => validate({ ...preview, EXPECTED_FIREBASE_PROJECT_ID: "hotel-toolkit", VITE_FIREBASE_API_KEY: "" })).toThrow(/missing VITE_FIREBASE_API_KEY/);
+  });
+
+  const staging = { NODE_ENV: "production", RELEASE_TARGET: "staging", VITE_DEPLOYMENT_ENV: "staging",
+    VITE_FIREBASE_PROJECT_ID: "hotel-toolkit-staging", EXPECTED_FIREBASE_PROJECT_ID: "hotel-toolkit-staging",
+    VITE_FIREBASE_AUTH_DOMAIN: "hotel-toolkit-staging.firebaseapp.com",
+    VITE_FIREBASE_STORAGE_BUCKET: "hotel-toolkit-staging.firebasestorage.app", VITE_RELEASE_SHA: "a".repeat(40) };
+  it("allows the explicit staging route from main and from a preview", () => {
+    expect(validate(staging)).toContain("Validated staging client build for Firebase project hotel-toolkit-staging.");
+    expect(validate({ ...staging, VERCEL_ENV: "preview" })).toContain("Validated staging");
+  });
+  it("refuses implicit staging, missing source identity and production destinations", () => {
+    for (const override of [{ RELEASE_TARGET: "" }, { VITE_RELEASE_SHA: "" }, { VITE_RELEASE_SHA: "main" },
+      { VERCEL_ENV: "production" }, { VITE_FIREBASE_AUTH_DOMAIN: "hotel-toolkit.firebaseapp.com" },
+      { VITE_FIREBASE_STORAGE_BUCKET: "hotel-toolkit.appspot.com" },
+      { VITE_FIREBASE_PROJECT_ID: "hotel-toolkit", EXPECTED_FIREBASE_PROJECT_ID: "hotel-toolkit" }]) {
+      expect(() => validate({ ...staging, ...override })).toThrow();
+    }
   });
 });

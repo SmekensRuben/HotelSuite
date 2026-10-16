@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
 import { doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
 import { ref, uploadBytes, getBytes } from "firebase/storage";
+import { permitInjectedTransports } from "./helpers/fake-external-actions.mjs";
 
 if (!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_AUTH_EMULATOR_HOST || !process.env.FIREBASE_STORAGE_EMULATOR_HOST) throw new Error("Local Auth, Firestore and Storage emulators are required.");
 const projectId = "demo-hotel-suite-a00";
@@ -212,7 +213,8 @@ describe("module subscriptions and delegated hotel administration", () => {
     assert.deepEqual((await db.doc(`users/${buyer.uid}`).get()).data().hotelUid, ["hotel-b"]);
     assert.equal((await auth.getUser(buyer.uid)).disabled, false);
   });
-  it("resends without replacing roles and rechecks the hotel invitation actor at delivery", async () => {
+  it("resends without replacing roles and rechecks the hotel invitation actor at delivery", async (t) => {
+    permitInjectedTransports(t, { actions: ["Email deliveries"], mailQueue: true });
     const previous = (await member(buyer).get()).data();
     const id = next();
     await inviteHotelUserHandler(req(adminA, { hotelUid: "hotel-a", email: buyer.token.email, resend: true, requestId: id, moduleRoles: {} }), services);

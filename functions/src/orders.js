@@ -308,7 +308,8 @@ async function confirmOrderHandler(request, services = {}) {
     const order = snap.data();
     const approver = await tx.get(db.doc(`hotels/${hotelUid}/outlets/${requireDocumentId(order.outletId, "Order outlet")}/approvers/${request.auth.uid}`));
     if (!approver.exists) throw new HttpsError("permission-denied", "Only designated outlet approvers can confirm this order.");
-    if (order.dispatchRequestId === dispatchId) return { dispatchId, status: order.dispatchStatus };
+    if (order.dispatchRequestId === dispatchId) return { dispatchId, status: order.dispatchStatus,
+      ...(order.dispatchMode === "simulation" && order.dispatchEnvironment === "staging" ? { simulated: true, environment: "staging" } : {}) };
     editable(order);
     if ((order.revision || 0) !== expected) throw new HttpsError("aborted", "Order changed. Reload before confirming.");
     const [supplier, hotel] = await Promise.all([tx.get(db.doc(`hotels/${hotelUid}/suppliers/${requireDocumentId(order.supplierId, "Order supplier")}`)), tx.get(db.doc(`hotels/${hotelUid}`))]);
@@ -334,7 +335,8 @@ async function confirmOrderHandler(request, services = {}) {
     if (lines.some((p, i) => !sameOrderContract(p, order.products[i], order))) {
       throw new HttpsError("failed-precondition", "Pricing, packaging or inventory terms changed. Edit and review this order before confirming.");
     }
-    const simulation = await require("./demoDataPolicy").demoSupplierMode(db, hotelUid, order.supplierId, tx);
+    const staging = require("./environmentPolicy").isStagingEnvironment();
+    const simulation = staging || await require("./demoDataPolicy").demoSupplierMode(db, hotelUid, order.supplierId, tx);
     const confirmedProducts = order.products.map((line, index) => ({ ...line, pricingDate: lines[index].pricingDate }));
     const snapshot = { id: orderId, products: confirmedProducts, deliveryDate: dateOnly(order.deliveryDate), orderDate,
       supplierId: order.supplierId, supplierName: publicSupplier.name, outletId: order.outletId, outletName: order.outletName,
@@ -342,12 +344,14 @@ async function confirmOrderHandler(request, services = {}) {
       hotelName: hotel.data().hotelName || hotel.data().name || hotelUid,
       dispatchRequestedByEmail: request.auth.token?.email || "", supplierOrderReference: orderId };
     tx.create(db.doc(`hotels/${hotelUid}/dispatches/${dispatchId}`), { orderId, status: simulation ? "simulated" : "pending", externalAttempt: false, deliveryMode: simulation ? "simulation" : "external", actorUid: request.auth.uid,
+      ...(staging ? { environment: "staging", simulationReason: "Staging simulation: no supplier contacted", completedAt: stamp() } : {}),
       order: snapshot, supplier: publicSupplier, createdAt: stamp() });
     tx.update(ref, { dispatchRequestId: dispatchId, dispatchStatus: simulation ? "sent" : "pending", dispatchMode: simulation ? "simulation" : "external",
-      ...(simulation ? { status: "Ordered" } : {}), orderDate, products: confirmedProducts, dispatchProgress: simulation ? 100 : 5, dispatchStep: simulation ? "Demo simulation: no supplier contacted" : "Awaiting delivery worker",
+      ...(simulation ? { status: "Ordered" } : {}), ...(staging ? { dispatchEnvironment: "staging" } : {}), orderDate, products: confirmedProducts, dispatchProgress: simulation ? 100 : 5,
+      dispatchStep: staging ? "Staging simulation: no supplier contacted" : simulation ? "Demo simulation: no supplier contacted" : "Awaiting delivery worker",
       dispatchError: "", dispatchRequestedByEmail: snapshot.dispatchRequestedByEmail, revision: expected + 1, updatedAt: stamp(), updatedBy: request.auth.uid });
     tx.create(db.doc(`hotels/${hotelUid}/orderAudit/${dispatchId}`), { orderId, action: "approve", actorUid: request.auth.uid, revision: expected + 1, createdAt: stamp() });
-    return { dispatchId, status: simulation ? "sent" : "pending" };
+    return { dispatchId, status: simulation ? "sent" : "pending", ...(staging ? { simulated: true, environment: "staging" } : {}) };
   });
 }
 

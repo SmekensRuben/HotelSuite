@@ -1,3 +1,4 @@
+require("../testSupport/productionEnvironment").activateProductionTestEnvironment();
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { milli, receivingState, normalizeReceipt, applyReceipt, applyReversal, finalizeState, summary } = require("./orderReceivingPolicy");

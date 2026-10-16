@@ -3,6 +3,7 @@ const dns = require("node:dns/promises");
 const tls = require("node:tls");
 const { BlockList, isIP } = require("node:net");
 const { HttpsError } = require("firebase-functions/v2/https");
+const { requireExternalActions } = require("./environmentPolicy");
 
 const MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024;
 const MAX_DOWNLOAD_MS = 15_000;
@@ -146,6 +147,7 @@ function readImage({ url, hostname }, address, request, signal) {
 }
 
 async function downloadProposalImage(value, services = {}) {
+  requireExternalActions("Proposal image downloads");
   const timeout = Number.isFinite(services.timeoutMs) && services.timeoutMs > 0 ? Math.min(MAX_DOWNLOAD_MS, services.timeoutMs) : MAX_DOWNLOAD_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);

@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "test-breakfast"
+    "default": "test-breakfast",
+    "production": "hotel-toolkit",
+    "staging": "hotel-toolkit-staging"
   }
 }

@@ -31,6 +31,7 @@ function publicIpv4(address) {
 }
 
 async function sendOrderBySftp(order, credentials, context = {}, services = {}) {
+  require("./environmentPolicy").requireExternalActions("SFTP deliveries");
   const config = resolveSftpConnectionOptions(credentials);
   const addresses = await (services.lookup || dns.lookup)(config.host, { all: true, family: 4 });
   if (!addresses.length || addresses.some(({ address }) => !publicIpv4(address))) throw new Error("SFTP must resolve to a public IPv4 address.");

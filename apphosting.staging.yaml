@@ -1,0 +1,19 @@
+# Applied only to the backend whose App Hosting environment is staging.
+# The reviewed deployment controller injects VITE_RELEASE_SHA into its isolated
+# source bundle. No production credentials or web-app overrides belong here.
+env:
+  - variable: VITE_DEPLOYMENT_ENV
+    value: staging
+    availability: [BUILD]
+  - variable: RELEASE_TARGET
+    value: staging
+    availability: [BUILD]
+  - variable: VITE_AUTH_REQUIRE_MFA
+    value: "false"
+    availability: [BUILD]
+  - variable: EXPECTED_FIREBASE_PROJECT_ID
+    value: hotel-toolkit-staging
+    availability: [BUILD]
+  - variable: PRODUCTION_FIREBASE_PROJECT_ID
+    value: hotel-toolkit
+    availability: [BUILD]

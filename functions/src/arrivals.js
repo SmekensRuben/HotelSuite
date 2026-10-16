@@ -1,6 +1,6 @@
 const { getFirestore } = require("firebase-admin/firestore");
 const { HttpsError, onCall } = require("firebase-functions/v2/https");
-const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onSchedule } = require("./config");
 const logger = require("firebase-functions/logger");
 const { requireHotelPermission } = require("./authorization");
 

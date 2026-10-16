@@ -49,24 +49,11 @@ Use the tracked `.env.example` as the variable-name template. `.env` is intentio
 
 ## Vercel previews and Firebase project selection
 
-Vercel's hosting environment and the Firebase data environment are separate choices. The current intended setup uses Firebase project `hotel-toolkit` for both Vercel Preview and Production. Set `VITE_DEPLOYMENT_ENV=production` for both: a preview URL does not make its Firebase data a test environment. Changes made through either frontend use the same backend and data.
+Production uses `hotel-toolkit`. Staging uses the separate `hotel-toolkit-staging` project, with the same source repository and security logic. Follow [Staging quick start](docs/staging-quickstart.md) and [Staging and safe releases](docs/staging-safe-releases.md) for provisioning, selected-commit deployments, fictional accounts and the test checklist.
 
-Configure the matching Firebase web-app values for the Vercel scopes that should use that project:
+New Vercel Preview builds **reject production backends**, even when labeled `production`. The previous shared-backend preview configuration is superseded. Disable old previews and remove production values from Vercel's Preview scope; a repository change cannot change already deployed bundles. Use the controlled App Hosting staging workflow for full-stack testing. A Vercel preview can use an isolated test project, or the staging project only with matching web-app values, `VITE_DEPLOYMENT_ENV=staging`, `RELEASE_TARGET=staging` and the complete `VITE_RELEASE_SHA`. A staging frontend only opens when the release document confirms the same deployed backend and frontend SHA.
 
-| Variable | Shared Firebase value |
-| --- | --- |
-| `VITE_DEPLOYMENT_ENV` | `production` |
-| `VITE_AUTH_REQUIRE_MFA` | Match the actual Authentication policy of `hotel-toolkit` |
-| `VITE_FIREBASE_API_KEY` | Firebase web-app API key |
-| `VITE_FIREBASE_AUTH_DOMAIN` | Firebase web-app Auth domain |
-| `VITE_FIREBASE_PROJECT_ID` | `hotel-toolkit` |
-| `VITE_FIREBASE_STORAGE_BUCKET` | Exact bucket from the same web-app configuration |
-| `VITE_FIREBASE_MESSAGING_SENDER_ID` | Sender ID from the same web-app configuration |
-| `VITE_FIREBASE_APP_ID` | App ID from the same web-app configuration |
-| `EXPECTED_FIREBASE_PROJECT_ID` | `hotel-toolkit` |
-| `PRODUCTION_FIREBASE_PROJECT_ID` | `hotel-toolkit`; build-only test-environment guard |
-
-A preview may alternatively use a separate Firebase test project with `VITE_DEPLOYMENT_ENV=test` and all matching test web-app values. Test builds still reject the known production project and any configured production project. Every build requires complete Firebase values and an exact expected-project match.
+Production retains `VITE_DEPLOYMENT_ENV=production` and `EXPECTED_FIREBASE_PROJECT_ID=hotel-toolkit`. Staging requires `EXPECTED_FIREBASE_PROJECT_ID=hotel-toolkit-staging`, its own Auth domain and bucket, and an explicit MFA policy. App Hosting obtains all six Firebase web-app fields from its own linked app. Never copy production credentials into staging.
 
 Callables must be deployed to the same Firebase project as the selected browser configuration. Adding an Auth authorized domain is a separate project setting; build success alone does not configure sign-in redirects. See `docs/firebase-environments.md`.
 

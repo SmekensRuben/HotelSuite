@@ -10,8 +10,8 @@ const REQUIRED_FIREBASE_VARIABLES = [
 /** @param {Record<string, string | undefined>} environment */
 export function readClientEnvironment(environment) {
   const deploymentEnvironment = String(environment.VITE_DEPLOYMENT_ENV || "").trim();
-  if (!['test', 'production'].includes(deploymentEnvironment)) {
-    throw new Error('VITE_DEPLOYMENT_ENV must be explicitly set to "test" or "production".');
+  if (!['test', 'staging', 'production'].includes(deploymentEnvironment)) {
+    throw new Error('VITE_DEPLOYMENT_ENV must be explicitly set to "test", "staging" or "production".');
   }
 
   const missing = REQUIRED_FIREBASE_VARIABLES.filter(
@@ -26,6 +26,20 @@ export function readClientEnvironment(environment) {
     throw new Error('VITE_AUTH_REQUIRE_MFA must be explicitly set to "true" or "false".');
   }
 
+  const projectId = String(environment.VITE_FIREBASE_PROJECT_ID).trim();
+  const authDomain = String(environment.VITE_FIREBASE_AUTH_DOMAIN).trim();
+  const storageBucket = String(environment.VITE_FIREBASE_STORAGE_BUCKET).trim();
+  if (deploymentEnvironment !== 'production' && projectId === 'hotel-toolkit') {
+    throw new Error('A non-production client cannot use the production Firebase project.');
+  }
+  if (deploymentEnvironment === 'staging' || projectId === 'hotel-toolkit-staging') {
+    if (deploymentEnvironment !== 'staging' || projectId !== 'hotel-toolkit-staging'
+      || authDomain !== 'hotel-toolkit-staging.firebaseapp.com'
+      || !['hotel-toolkit-staging.firebasestorage.app', 'hotel-toolkit-staging.appspot.com'].includes(storageBucket)) {
+      throw new Error('Staging must use only the reviewed staging Firebase project, Auth domain and Storage bucket.');
+    }
+  }
+
   return {
     deploymentEnvironment,
     authPolicy: {
@@ -33,9 +47,9 @@ export function readClientEnvironment(environment) {
     },
     firebaseConfig: {
       apiKey: String(environment.VITE_FIREBASE_API_KEY).trim(),
-      authDomain: String(environment.VITE_FIREBASE_AUTH_DOMAIN).trim(),
-      projectId: String(environment.VITE_FIREBASE_PROJECT_ID).trim(),
-      storageBucket: String(environment.VITE_FIREBASE_STORAGE_BUCKET).trim(),
+      authDomain,
+      projectId,
+      storageBucket,
       messagingSenderId: String(environment.VITE_FIREBASE_MESSAGING_SENDER_ID).trim(),
       appId: String(environment.VITE_FIREBASE_APP_ID).trim(),
     },

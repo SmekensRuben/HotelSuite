@@ -1,4 +1,5 @@
 import { loadEnv } from "vite";
+import { readClientEnvironment } from "../src/config/clientEnvironment.js";
 
 const environment = {
   ...loadEnv(process.env.NODE_ENV || "production", process.cwd(), ""),
@@ -24,8 +25,8 @@ if (missing.length) {
 const deploymentEnvironment = environment.VITE_DEPLOYMENT_ENV.trim();
 const projectId = environment.VITE_FIREBASE_PROJECT_ID.trim();
 const expectedProjectId = environment.EXPECTED_FIREBASE_PROJECT_ID.trim();
-if (!['test', 'production'].includes(deploymentEnvironment)) {
-  throw new Error('Build stopped: VITE_DEPLOYMENT_ENV must be "test" or "production".');
+if (!['test', 'staging', 'production'].includes(deploymentEnvironment)) {
+  throw new Error('Build stopped: VITE_DEPLOYMENT_ENV must be "test", "staging" or "production".');
 }
 if (!['true', 'false'].includes(environment.VITE_AUTH_REQUIRE_MFA.trim().toLowerCase())) {
   throw new Error('Build stopped: VITE_AUTH_REQUIRE_MFA must be "true" or "false".');
@@ -33,17 +34,24 @@ if (!['true', 'false'].includes(environment.VITE_AUTH_REQUIRE_MFA.trim().toLower
 if (projectId !== expectedProjectId) {
   throw new Error(`Build stopped: Firebase project ${projectId} does not match EXPECTED_FIREBASE_PROJECT_ID.`);
 }
-// Vercel's hosting target and the Firebase data environment are independent.
-// Previews may intentionally share the production backend, provided the build
-// declares production explicitly instead of labeling live data as test data.
-if ((environment.GITHUB_REF_NAME === "main" || environment.VERCEL_ENV === "production")
+// Main remains a production route unless the explicit, isolated staging route is used.
+const stagingRoute = environment.RELEASE_TARGET === "staging" && deploymentEnvironment === "staging"
+  && projectId === "hotel-toolkit-staging" && expectedProjectId === "hotel-toolkit-staging";
+if (((environment.GITHUB_REF_NAME === "main" && !stagingRoute) || environment.VERCEL_ENV === "production")
   && process.env.NODE_ENV !== "test" && deploymentEnvironment !== "production") {
   throw new Error("Build stopped: a production release build must use VITE_DEPLOYMENT_ENV=production.");
 }
 const productionProjectId = String(environment.PRODUCTION_FIREBASE_PROJECT_ID || "").trim();
-if (deploymentEnvironment === "test"
+if (deploymentEnvironment !== "production"
   && (projectId === "hotel-toolkit" || (productionProjectId && projectId === productionProjectId))) {
   throw new Error("Build stopped: a test build points at the production Firebase project.");
+}
+if (environment.VERCEL_ENV === "preview" && deploymentEnvironment === "production") {
+  throw new Error("Build stopped: previews cannot use the production Firebase backend. Deploy this version to staging.");
+}
+readClientEnvironment(environment);
+if (deploymentEnvironment === "staging" && (!stagingRoute || !/^[a-f0-9]{40}$/.test(environment.VITE_RELEASE_SHA || ""))) {
+  throw new Error("Build stopped: staging requires RELEASE_TARGET=staging and a complete VITE_RELEASE_SHA.");
 }
 
 console.log(`Validated ${deploymentEnvironment} client build for Firebase project ${projectId}.`);

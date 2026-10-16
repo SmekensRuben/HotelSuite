@@ -70,11 +70,13 @@ async function completeDispatch(db, hotelUid, orderId, dispatchId, status, detai
       status = "needs-review";
       detail = { ...detail, externalAttempt: true, error: "The transport may have received this order. Check the transport receipt before recovery." };
     }
-    const sent = status === "sent";
+    const simulated = status === "simulated";
+    const sent = status === "sent" || simulated;
     const stamp = admin.firestore.FieldValue.serverTimestamp();
     tx.update(dispatchRef, { status, completedAt: stamp, ...detail });
-    tx.update(orderRef, { ...(sent ? { status: "Ordered", dispatchedAt: stamp, dispatchedVia: detail.via || "email" } : {}),
-      dispatchStatus: status, dispatchProgress: 100, dispatchStep: sent ? "Transport accepted; supplier acceptance tracked separately" : "Delivery review required",
+    tx.update(orderRef, { ...(sent ? { status: "Ordered", dispatchedAt: stamp, dispatchedVia: simulated ? "simulation" : detail.via || "email" } : {}),
+      ...(simulated ? { dispatchMode: "simulation", dispatchEnvironment: "staging" } : {}),
+      dispatchStatus: simulated ? "sent" : status, dispatchProgress: 100, dispatchStep: simulated ? "Staging simulation: no supplier contacted" : sent ? "Transport accepted; supplier acceptance tracked separately" : "Delivery review required",
       dispatchError: sent ? "" : (detail.error || "Delivery could not be confirmed. Do not resend before checking the provider."), updatedAt: stamp });
     return true;
   });

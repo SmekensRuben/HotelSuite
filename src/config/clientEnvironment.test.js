@@ -35,4 +35,16 @@ describe("readClientEnvironment", () => {
     expect(() => readClientEnvironment({ ...completeEnvironment, VITE_AUTH_REQUIRE_MFA: "" }))
       .toThrow("VITE_AUTH_REQUIRE_MFA");
   });
+
+  it("also enforces staging isolation in the browser", () => {
+    const staging = { ...completeEnvironment, VITE_DEPLOYMENT_ENV: "staging",
+      VITE_FIREBASE_PROJECT_ID: "hotel-toolkit-staging", VITE_FIREBASE_AUTH_DOMAIN: "hotel-toolkit-staging.firebaseapp.com",
+      VITE_FIREBASE_STORAGE_BUCKET: "hotel-toolkit-staging.firebasestorage.app" };
+    expect(readClientEnvironment(staging).deploymentEnvironment).toBe("staging");
+    for (const override of [{ VITE_FIREBASE_PROJECT_ID: "hotel-toolkit" }, { VITE_DEPLOYMENT_ENV: "production" },
+      { VITE_FIREBASE_AUTH_DOMAIN: "hotel-toolkit.firebaseapp.com" }, { VITE_FIREBASE_STORAGE_BUCKET: "hotel-toolkit.appspot.com" }]) {
+      expect(() => readClientEnvironment({ ...staging, ...override })).toThrow();
+    }
+    expect(() => readClientEnvironment({ ...completeEnvironment, VITE_FIREBASE_PROJECT_ID: "hotel-toolkit" })).toThrow();
+  });
 });

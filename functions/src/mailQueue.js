@@ -551,6 +551,22 @@ async function processMailQueueHandler(event, services = {}) {
     await finishOrder("blocked", { externalAttempt: false, error: "Hotel subscription or delivery authorization is no longer valid." });
     return;
   }
+  const policy = require("./environmentPolicy");
+  if (!policy.externalActionsAllowed()) {
+    const simulated = policy.isStagingEnvironment();
+    const status = simulated ? "simulated" : "blocked";
+    await db.runTransaction(async (tx) => {
+      const current = await tx.get(ref);
+      if (current.data()?.status !== "processing") return;
+      tx.update(ref, { status, externalAttempt: false, environment: policy.runtimePolicy().environment,
+        provider: simulated ? "staging-simulator" : "none", completedAt: admin.firestore.FieldValue.serverTimestamp(),
+        simulationReason: simulated ? "Staging simulation: no email sent" : "External actions are disabled in this environment." });
+    });
+    await finishOrder(status, { externalAttempt: false, deliveryMode: simulated ? "simulation" : "blocked", environment: policy.runtimePolicy().environment,
+      error: simulated ? "" : "External actions are disabled in this environment." });
+    logger.info(simulated ? "Staging email simulated" : "Email blocked by environment policy", { hotelUid, mailId, externalAttempt: false });
+    return;
+  }
   let externalAttempt = false;
   try {
     const from = services.from || String(RESEND_FROM.value() || "").trim();

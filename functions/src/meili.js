@@ -2,6 +2,7 @@ const { onDocumentWritten, logger, admin, MEILI_API_KEY, MEILI_HOST, MEILI_INDEX
 const { getIndexUid, buildCatalogProductDocument, buildSupplierProductDocument, productSearchId, meiliRequest, meiliJson } = require("./common");
 
 const { syncImportProjection } = require("./importRouting");
+const { externalActionsAllowed } = require("./environmentPolicy");
 
 const ensuredIndexUids = new Set();
 
@@ -42,6 +43,7 @@ const syncCatalogProductsToMeili = onDocumentWritten(
     secrets: [MEILI_API_KEY, MEILI_HOST, MEILI_INDEX],
   },
   async (event) => {
+    if (!externalActionsAllowed()) return;
     const { hotelUid, productId } = event.params;
     const indexUid = getIndexUid();
 
@@ -89,6 +91,7 @@ const syncSupplierProductsToMeili = onDocumentWritten(
     secrets: [MEILI_API_KEY, MEILI_HOST],
   },
   async (event) => {
+    if (!externalActionsAllowed()) return;
     const { hotelUid, productId } = event.params;
     const indexUid = SUPPLIER_PRODUCTS_INDEX_UID;
 

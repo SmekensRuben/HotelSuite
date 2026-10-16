@@ -29,6 +29,7 @@ const { mutateHotelSupplierProductHandler } = require("../../functions/src/produ
 const { mutateShoppingCartHandler } = require("../../functions/src/shoppingCarts");
 const { requireHotelImportTarget } = require("../../functions/src/fileImportTypes");
 const { digest } = require("../../functions/src/validation");
+const environmentPolicy = require("../../functions/src/environmentPolicy");
 const db = admin.firestore(), auth = admin.auth(), bucket = admin.storage().bucket();
 const baseServices = { firestore: db, auth, bucket };
 const subscription = { modules: ["procurement"], modulePolicyVersion: 1, status: "active", validUntil: null };
@@ -107,6 +108,25 @@ beforeEach(async () => {
 });
 after(async () => environment.cleanup());
 describe("supplier AI import with ordinary hotel accounts and real Firebase boundaries", () => {
+  beforeEach((context) => {
+    const requireExternalActions = environmentPolicy.requireExternalActions;
+    // The suite injects fake AI responses while retaining real emulator Auth,
+    // Firestore and Storage. Actual provider transports remain disabled.
+    context.mock.method(environmentPolicy, "requireExternalActions", (action) => {
+      if (action !== "AI supplier imports") return requireExternalActions(action);
+    });
+  });
+  it("keeps real provider requests blocked while the injected import provider exercises authorization", () => {
+    assert.equal(environmentPolicy.runtimePolicy().environment, "emulator");
+    assert.equal(environmentPolicy.externalActionsAllowed(), false);
+    assert.doesNotThrow(() => environmentPolicy.requireExternalActions("AI supplier imports"));
+    for (const action of ["Supplier AI requests", "AI catalog suggestions", "Supplier deliveries"]) {
+      assert.throws(() => environmentPolicy.requireExternalActions(action), { code: "failed-precondition" });
+    }
+    const { createSupplierAiProvider } = require("../../functions/src/supplierAiProvider");
+    assert.throws(() => createSupplierAiProvider({ apiKey: "fictional-key", fetchImpl: () => assert.fail("Emulator tests must never contact a provider.") }),
+      { code: "failed-precondition" });
+  });
   it("imports and approves kg offers for an ordinary hotel user, accepts fractional purchases and rejects false mass contracts", async () => {
     const sourceBytes = Buffer.from("SKU,Name,Eenheid verpakking,Inhoud verpakking,Inhoud,Eenheid,Net price per kg,Currency\nWEIGH1,Fictional weighed item,KG,1,1,ST,8,EUR\n");
     const kgServices = { ...services, provider: { countInput: provider.countInput, respond: async (body) => {

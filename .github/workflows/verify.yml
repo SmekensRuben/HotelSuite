@@ -51,6 +51,9 @@ jobs:
       - name: Functions tests
         run: npm --prefix functions test
 
+      - name: Staging isolation, release and bootstrap safeguards
+        run: npm run test:staging
+
       - name: Settings migration safeguards
         run: node --test scripts/migrate-domain-settings.test.mjs
 

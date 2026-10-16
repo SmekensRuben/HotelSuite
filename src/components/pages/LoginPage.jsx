@@ -175,6 +175,10 @@ export default function LoginPage() {
   const sendVerification = useCallback(
     async (user, { respectCooldown = true } = {}) => {
       if (!user) throw new Error("auth/no-current-user");
+      if (import.meta.env.VITE_DEPLOYMENT_ENV === "staging") {
+        setNotice(t("stagingVerificationDisabled", { defaultValue: "Staging does not send verification email. Use a verified test account from the staging credentials file." }));
+        return false;
+      }
 
       const key = verificationStorageKey(user);
       const lastSentAt = Number(localStorage.getItem(key)) || 0;
