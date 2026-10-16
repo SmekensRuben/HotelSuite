@@ -35,6 +35,16 @@ it("recovers the original reviewed approval route after reload instead of sendin
   expect(mocks.call.mock.calls[1][0].expectedApprovalRouteFingerprint).toBe(reviewed.expectedApprovalRouteFingerprint);
   expect(getPendingPurchaseRequestCommand("hotel-a", "request-a")).toBeNull();
 });
+it("recovers an uncertain self-approval with the exact reason and route instead of creating another registration", async () => {
+  const reviewed = { purchaseRequestId: "request-a", expectedRevision: 2, action: "selfapprove", reason: "GM replacement within authority", expectedApprovalRouteFingerprint: "a".repeat(64) };
+  mocks.call.mockRejectedValueOnce(new Error("Response lost")).mockImplementation(success);
+  await expect(mutatePurchaseRequest("hotel-a", reviewed)).rejects.toThrow("Response lost");
+  const original = mocks.call.mock.calls[0][0]; mocks.auth.currentUser = { uid: "requester" };
+  await expect(mutatePurchaseRequest("hotel-a", { ...reviewed, reason: "Changed reason" })).rejects.toThrow("previous result is uncertain");
+  await retryPurchaseRequestCommand("hotel-a", "request-a");
+  expect(mocks.call.mock.calls[1][0]).toEqual(original);
+  expect(getPendingPurchaseRequestCommand("hotel-a", "request-a")).toBeNull();
+});
 it("recovers the original per-line suppliers and quotations after an uncertain draft save", async () => {
   const saved = { purchaseRequestId: "request-a", expectedRevision: 2, action: "save", draft: { lines: [
     { id: "repair", kind: "free", supplierId: "supplier-a", description: "Repair", quantity: "1", unitPrice: "100", unit: "service" },

@@ -45,16 +45,16 @@ export async function seedPurchaseRequestRestoreProof({ database, auth, now }) {
     const { requester, approver } = actors(fixture);
     for (const uid of [requester, approver]) {
       await auth.createUser({ uid, email: `${uid}@example.test`, emailVerified: true });
-      await database.doc(`hotels/${fixture.hotelUid}/members/${uid}`).set({ permissions: grants });
+      await database.doc(`hotels/${fixture.hotelUid}/members/${uid}`).set({ permissions: uid === requester ? [...grants, "purchaserequests.selfapprove"] : grants });
     }
     await database.doc(`hotels/${fixture.hotelUid}/suppliers/restore-pr-supplier`).set({ name: "Fictional restore repair supplier", active: true });
     await database.doc(`hotels/${fixture.hotelUid}/suppliers/restore-pr-second-supplier`).set({ name: "Fictional restore parts supplier", active: true });
     const settings = { requestId: "restore-pr-settings", expectedRevision: 0, settings: { currency: fixture.currency,
-      costCentres: [{ id: "maintenance", name: "Maintenance department" }], budgetCategories: [{ id: "repairs", name: "Equipment repairs" }],
+      costCentres: [{ id: "maintenance", name: "Maintenance department", approverUids: [approver], substituteUids: [] }], budgetCategories: [{ id: "repairs", name: "Equipment repairs" }],
       approvalSteps: [{ id: "manager", name: "Manager", thresholdMinor: 0 }],
-      approvers: [{ uid: approver, stepIds: ["manager"], limitMinor: 1000000, canApproveOverBudget: false }], overBudgetMode: "block" } };
+      approvers: [{ uid: approver, stepIds: ["manager"], limitMinor: 1000000, canApproveOverBudget: false }, { uid: requester, stepIds: [], limitMinor: 0, canApproveOverBudget: false, selfApprovalLimitMinor: 20000 }], overBudgetMode: "block" } };
     await api().saveHotelPurchaseRequestSettingsHandler(request(fixture, settings), services);
-    const budgets = { requestId: "restore-pr-budget", budgets: [{ month: "2026-10", categoryId: "repairs", budgetMinor: 50000, openingUsedMinor: 5000, expectedRevision: 0 }] };
+    const budgets = { requestId: "restore-pr-budget", budgets: [{ month: "2026-10", categoryId: "repairs", budgetMinor: 50000, openingUsedMinor: 5000, expectedRevision: 0 }, { month: "2026-11", categoryId: "repairs", budgetMinor: 20000, openingUsedMinor: 0, expectedRevision: 0 }] };
     await api().saveHotelPurchaseBudgetsHandler(request(fixture, budgets), services);
     const replays = [];
     let mixedRequestId;
@@ -84,9 +84,18 @@ export async function seedPurchaseRequestRestoreProof({ database, auth, now }) {
         replays.push({ command: approve, result: json(approved), approver: true });
       }
     }
+    const selfCreate = { action: "create", requestId: "restore-pr-self-create", expectedRevision: 0, draft: {
+      supplierId: "restore-pr-supplier", title: "Fictional directly registered repair", description: "Self-approval recovery proof", motivation: "Delegated authority",
+      costCentreId: "maintenance", budgetCategoryId: "repairs", budgetMonth: "2026-11", lines: [{ id: "repair", kind: "free", description: "Repair", quantity: 1, unitPrice: 100, unit: "service" }], attachmentIds: [],
+    } };
+    const selfCreated = await api().mutateHotelPurchaseRequestHandler(request(fixture, selfCreate), services);
+    const selfCommand = { action: "selfapprove", requestId: "restore-pr-self-approve", purchaseRequestId: selfCreated.purchaseRequestId, expectedRevision: selfCreated.revision, reason: "Fictional GM authority for recovery verification" };
+    const selfApproved = await api().mutateHotelPurchaseRequestHandler(request(fixture, selfCommand), services);
+    assert.equal(selfApproved.request.status, "approved"); assert.equal(selfApproved.request.selfApproval.approverUid, requester);
+    replays.push({ command: selfCreate, result: json(selfCreated), approver: false }, { command: selfCommand, result: json(selfApproved), approver: false });
     const budgetPath = `hotels/${fixture.hotelUid}/purchaseBudgets/2026-10__repairs`;
     assertBudget((await database.doc(budgetPath).get()).data());
-    proof[fixture.hotelUid] = { fixture, budgetPath, mixedRequestId, replays, records: await records(database, fixture) };
+    proof[fixture.hotelUid] = { fixture, budgetPath, mixedRequestId, selfRequestId: selfApproved.purchaseRequestId, replays, records: await records(database, fixture) };
   }
   return proof;
 }
@@ -111,6 +120,11 @@ export async function verifyPurchaseRequestRestoreProof({ database, auth, now },
     assert.deepEqual(mixed.request.suppliers, [{ id: "restore-pr-supplier", name: "Fictional restore repair supplier" }, { id: "restore-pr-second-supplier", name: "Fictional restore parts supplier" }]);
     assert.deepEqual(mixed.request.lines.map((line) => line.supplier), mixed.request.suppliers);
     assert.deepEqual(mixed.history.find((event) => event.event === "submit").snapshot.lines, mixed.request.lines);
+    const selfApproved = await api().getHotelPurchaseRequestHandler(request(fixture, { purchaseRequestId: entry.selfRequestId }), services);
+    assert.equal(selfApproved.request.status, "approved"); assert.equal(selfApproved.request.selfApproval.reason, "Fictional GM authority for recovery verification");
+    assert.equal(selfApproved.history[0].event, "selfapproved");
+    const selfBudget = (await database.doc(`hotels/${fixture.hotelUid}/purchaseBudgets/2026-11__repairs`).get()).data();
+    assert.equal(selfBudget.committedMinor, 10000); assert.equal(selfBudget.pendingMinor, 0);
     const otherFixture = fixtures.find((other) => other.hotelUid !== fixture.hotelUid);
     const first = replays.find((replay) => replay.command.purchaseRequestId);
     await assert.rejects(api().getHotelPurchaseRequestHandler({ ...request(otherFixture, {}), data: { hotelUid: fixture.hotelUid, purchaseRequestId: first.command.purchaseRequestId } }, services), { code: "permission-denied" });

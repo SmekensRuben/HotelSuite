@@ -5,6 +5,7 @@ const { requireDocumentId } = require("./subscriptions");
 const { digest, text, revision, requireCurrentVerifiedUser } = require("./validation");
 const { gated, requireSaasRollout } = require("./saasRollout");
 const policy = require("./purchaseRequestPolicy");
+const routing = require("./purchaseApprovalRouting");
 const products = require("./productPolicy");
 const { loadSupplierPriceVersions, resolveSupplierPriceVersion } = require("./supplierPriceVersions");
 const { localDate } = require("./importMonitoringPolicy");
@@ -14,8 +15,12 @@ const settingsPath = (hotelUid) => `hotels/${hotelUid}/settings/purchaseRequests
 const requestPath = (hotelUid, id) => `hotels/${hotelUid}/purchaseRequests/${id}`;
 const budgetPath = (hotelUid, id) => `hotels/${hotelUid}/purchaseBudgets/${id}`;
 const noReservation = () => ({ state: "none", bucketId: null, amountMinor: 0 });
+// Keep history bounded: preview candidate names are live choices, while actual
+// assignments and decisions retain their own immutable person/authority evidence.
+const routeEvidence = (route, settings) => ({ approvalRoutePlan: route.plan.map(({ id, name, candidates }) => ({ id, name, eligibleCount: candidates.length })),
+  approvalRouteFingerprint: route.fingerprint, approvalSettingsRevision: settings.revision });
 const settingsValues = (settings) => Object.fromEntries(policy.SETTINGS_FIELDS.map((key) => [key, settings[key]]));
-const REQUEST_ACTIONS = { create: "create", save: "update", revise: "update", submit: "submit", approve: "approve", reject: "approve", return: "approve", withdraw: "cancel", cancel: "cancel" };
+const REQUEST_ACTIONS = { create: "create", save: "update", revise: "update", submit: "submit", selfapprove: "selfapprove", approve: "approve", reject: "approve", return: "approve", withdraw: "cancel", cancel: "cancel" };
 function canonicalDigest(value) {
   const canonical = (item) => Array.isArray(item) ? item.map(canonical) : item && typeof item === "object"
     ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, canonical(item[key])])) : item;
@@ -68,6 +73,7 @@ async function memberChoices(tx, db, hotelUid) {
     const name = String(membership.displayName || membership.name || user.displayName || user.name || membership.email || user.email || snapshot.id).slice(0, 200);
     const permissions = normalizedPermissions(membership.permissions);
     return { uid: snapshot.id, name, displayName: name, email: String(membership.email || user.email || "").slice(0, 254),
+      selfApprovalEligible: permissionAllows(permissions, "purchaserequests", "read") && permissionAllows(permissions, "purchaserequests", "selfapprove"),
       eligible: permissionAllows(permissions, "purchaserequests", "read") && permissionAllows(permissions, "purchaserequests", "approve") };
   }));
 }
@@ -77,12 +83,15 @@ function publicSettings(settings, members = []) {
     approvers: settings.approvers.map((authority) => ({ ...authority, ...(byUid.get(authority.uid) || { uid: authority.uid, name: authority.uid, displayName: authority.uid, email: "", eligible: false }) })),
     users: members };
 }
-async function currentApprover(tx, db, hotelUid, uid, settings, stepId, amount, requesterUid, previous, services) {
+async function currentApprover(tx, db, hotelUid, uid, settings, stepId, amount, requesterUid, previous, services, costCentreId) {
   if (uid == null || uid === "") throw new HttpsError("failed-precondition", "Choose the authorized approver for the next required step.");
   uid = requireDocumentId(uid, "Approver user ID");
   if (uid === requesterUid || previous.some((approval) => approval.approverUid === uid)) throw new HttpsError("permission-denied", "Choose an approver other than the requester and the people who already approved this version.");
   const authority = settings.approvers.find((candidate) => candidate.uid === uid);
-  if (!policy.authorityAllows(authority, stepId, amount)) throw new HttpsError("permission-denied", "The selected approver lacks the authority or amount limit for this required step.");
+  if (!(costCentreId === undefined ? policy.authorityAllows(authority, stepId, amount) : routing.assignmentAuthority(settings, uid, stepId, amount, costCentreId))) throw new HttpsError("permission-denied", "The selected approver lacks the authority or amount limit for this required step.");
+  return approvalPerson(tx, db, hotelUid, uid, services);
+}
+async function approvalPerson(tx, db, hotelUid, uid, services) {
   const member = await tx.get(db.doc(`hotels/${hotelUid}/members/${uid}`));
   const permissions = normalizedPermissions(member.exists ? member.data().permissions : []);
   if (!member.exists || !permissionAllows(permissions, "purchaserequests", "read") || !permissionAllows(permissions, "purchaserequests", "approve")) throw new HttpsError("permission-denied", "The selected approver is not currently authorized to read and approve requests in this hotel.");
@@ -91,7 +100,7 @@ async function currentApprover(tx, db, hotelUid, uid, settings, stepId, amount, 
   if (!user || user.uid !== undefined && user.uid !== uid || user.disabled || user.emailVerified !== true) throw new HttpsError("permission-denied", "The selected approver needs an active verified account.");
   return { uid, name: String(user.displayName || member.data().displayName || member.data().name || user.email || uid).slice(0, 200), email: String(user.email || "").slice(0, 254) };
 }
-async function submissionApprovalRoute(tx, db, hotelUid, settings, value, overBudget, services) {
+async function submissionApprovalRoute(tx, db, hotelUid, settings, value, overBudget, services, options = {}) {
   const accounts = new Map();
   const currentAuthority = (authority) => {
     if (!accounts.has(authority.uid)) accounts.set(authority.uid, (async () => {
@@ -112,24 +121,45 @@ async function submissionApprovalRoute(tx, db, hotelUid, settings, value, overBu
     })());
     return accounts.get(authority.uid);
   };
-  const eligibleFor = async (stepId) => (await Promise.all(settings.approvers.filter((authority) => policy.authorityAllows(authority, stepId, value.totalMinor)).map(currentAuthority))).filter(Boolean);
-  let steps = policy.requiredSteps(settings, value.totalMinor, overBudget), escalation = null;
-  let eligible = await eligibleFor(steps[0].id);
-  if (eligible.length === 1 && eligible[0].uid === value.requesterUid) {
-    ({ steps, escalation } = policy.escalateFirstStep(settings, steps));
-    eligible = await eligibleFor(steps[0].id);
+  const eligibleFor = async (stepId) => (await Promise.all(settings.approvers.map(async (authority) => {
+    const assignment = routing.assignmentAuthority(settings, authority.uid, stepId, value.totalMinor, value.costCentreId);
+    if (!assignment) return null;
+    const person = await currentAuthority(authority);
+    return person ? { ...person, ...assignment } : null;
+  }))).filter(Boolean);
+  let steps = options.steps || policy.requiredSteps(settings, value.totalMinor, overBudget), escalation = null;
+  if (options.selfApproval) steps = steps.filter((step) => step.id === "over-budget" || settings.approvalSteps.find((row) => row.id === step.id)?.independentRequired === true);
+  if (!options.steps && !options.selfApproval && steps.length) {
+    const eligible = await eligibleFor(steps[0].id);
+    if (eligible.length === 1 && eligible[0].uid === value.requesterUid) ({ steps, escalation } = policy.escalateFirstStep(settings, steps));
   }
-  const approvers = eligible.filter((candidate) => candidate.uid !== value.requesterUid);
-  if (!approvers.length) throw new HttpsError(escalation ? "failed-precondition" : "permission-denied", escalation
-    ? "The requester-only first step can only escalate to the immediately next configured step. That step needs an independent active, verified approver with permission and a sufficient request limit."
-    : "The first required step needs an independent active, verified approver with permission and a sufficient request limit.");
-  const fingerprint = canonicalDigest({ settingsRevision: settings.revision, steps, approvers, escalation });
-  return { steps, approvers, escalation, error: null, fingerprint };
+  const excluded = new Set([value.requesterUid, ...(options.previous || []).map((approval) => approval.approverUid)]);
+  const lists = await Promise.all(steps.map(async (step) => (await eligibleFor(step.id)).filter((person) => !excluded.has(person.uid))));
+  if (!routing.canComplete(lists)) {
+    const empty = steps.filter((_, index) => !lists[index].length).map((step) => step.name);
+    throw new HttpsError(escalation ? "failed-precondition" : "permission-denied", empty.length
+      ? `No independent authorized approver with a sufficient request limit is available for: ${empty.join(", ")}. Configure a substitute or higher approval level.`
+      : "The full approval route needs different authorized people for every required control. Configure substitutes or higher approval levels; one person cannot approve twice.");
+  }
+  const viable = routing.viableCandidates(lists);
+  const plan = steps.map((step, index) => ({ ...step, candidates: viable[index] }));
+  const approvers = (plan[0]?.candidates || []).map(({ uid, name }) => ({ uid, name }));
+  const fingerprint = canonicalDigest({ settingsRevision: settings.revision, steps, plan, escalation, selfApproval: options.selfApproval === true });
+  return { steps, approvers, plan, escalation, error: null, fingerprint };
 }
-async function previewSubmissionApprovalRoute(tx, db, hotelUid, value, services) {
+async function requireSelfApproval(tx, db, hotelUid, settings, value) {
+  const authority = settings.approvers.find((person) => person.uid === value.requesterUid);
+  const member = await tx.get(db.doc(`hotels/${hotelUid}/members/${value.requesterUid}`));
+  const permissions = normalizedPermissions(member.exists ? member.data().permissions : []);
+  if (!permissionAllows(permissions, "purchaserequests", "read") || !permissionAllows(permissions, "purchaserequests", "selfapprove") || !Number.isSafeInteger(authority?.selfApprovalLimitMinor) || authority.selfApprovalLimitMinor < value.totalMinor) throw new HttpsError("permission-denied", "Direct self-approval requires explicit Self-approve permission and a self-approval limit covering the full request.");
+  return authority;
+}
+
+async function previewSubmissionApprovalRoute(tx, db, hotelUid, value, services, selfApproval = false) {
   try {
     const settings = storedSettings(await tx.get(db.doc(settingsPath(hotelUid))));
     completeDraft(value, settings);
+    if (selfApproval) await requireSelfApproval(tx, db, hotelUid, settings, value);
     if (value.currency !== settings.currency) throw new HttpsError("failed-precondition", "The request currency changed. Save the draft in the configured currency before submitting.");
     const after = { state: "pending", bucketId: policy.bucketId(value.budgetMonth, value.budgetCategoryId), amountMinor: value.totalMinor }, budgets = new Map();
     for (const reservation of [value.reservation, after]) {
@@ -139,9 +169,9 @@ async function previewSubmissionApprovalRoute(tx, db, hotelUid, value, services)
     }
     if (!budgets.get(after.bucketId)?.exists) throw new HttpsError("failed-precondition", "No budget has been configured for this category and month. Ask a budget manager to create it.");
     const projected = policy.transferBudget(budgets, value.reservation, after).get(after.bucketId);
-    return await submissionApprovalRoute(tx, db, hotelUid, settings, value, projected.remainingMinor < 0, services);
+    return await submissionApprovalRoute(tx, db, hotelUid, settings, value, projected.remainingMinor < 0, services, { selfApproval });
   } catch (error) {
-    return { steps: [], approvers: [], escalation: null, fingerprint: null,
+    return { steps: [], approvers: [], plan: [], escalation: null, fingerprint: null,
       error: { code: error instanceof HttpsError ? error.code : "unavailable", message: error instanceof HttpsError ? error.message : "The approval route could not be verified. Refresh and try again." } };
   }
 }
@@ -300,9 +330,18 @@ async function saveHotelPurchaseRequestSettingsHandler(request, services = {}) {
     if (before.currencyLocked && before.currency !== settings.currency) throw new HttpsError("failed-precondition", "The request currency cannot change after budgets or reservations have been recorded.");
     if (before.usedCategoryIds.some((id) => !settings.budgetCategories.some((row) => row.id === id)) || before.usedCostCentreIds.some((id) => !settings.costCentres.some((row) => row.id === id))) throw new HttpsError("failed-precondition", "Keep the stable IDs of budget categories and cost centres already used by requests or budgets.");
     for (const authority of settings.approvers) {
+      const substitute = [...settings.approvalSteps, ...settings.costCentres].some((row) => row.substituteUids?.includes(authority.uid));
       const first = authority.stepIds[0] || (authority.canApproveOverBudget ? "over-budget" : null);
-      if (!first) throw new HttpsError("invalid-argument", "An approver needs at least one standard step or additional budget authority.");
-      await currentApprover(tx, db, hotelUid, authority.uid, settings, first, 0, "", [], services);
+      if (!first && !substitute && authority.selfApprovalLimitMinor == null) throw new HttpsError("invalid-argument", "An authority needs an approved step, substitute assignment, additional budget authority or a self-approval limit.");
+      if (first || substitute) {
+        if (first) await currentApprover(tx, db, hotelUid, authority.uid, settings, first, 0, "", [], services);
+        else await approvalPerson(tx, db, hotelUid, authority.uid, services);
+      }
+      if (authority.selfApprovalLimitMinor != null) {
+        await requireSelfApproval(tx, db, hotelUid, settings, { requesterUid: authority.uid, totalMinor: 0 });
+        const user = await (services.auth || admin.auth()).getUser(authority.uid);
+        if (!user || user.uid !== undefined && user.uid !== authority.uid || user.disabled || user.emailVerified !== true) throw new HttpsError("permission-denied", "Self-approval requires an active verified account.");
+      }
     }
     const next = { ...before, ...settings, revision: before.revision + 1, updatedAt: stamp(), updatedBy: request.auth.uid };
     const result = { hotelUid, requestId: op.requestId, ...publicSettings(next, await memberChoices(tx, db, hotelUid)) };
@@ -447,8 +486,27 @@ async function getHotelPurchaseRequestHandler(request, services = {}) {
     });
     const budget = value.budgetMonth && value.budgetCategoryId ? await budgetFor(tx, db, hotelUid, value.budgetMonth, value.budgetCategoryId) : null;
     const route = value.requesterUid === request.auth.uid && ["draft", "returned"].includes(value.status) ? await previewSubmissionApprovalRoute(tx, db, hotelUid, value, services) : null;
-    return { hotelUid, request: value, history, historyTruncated: found.docs.length > 100, nextHistoryCursor: found.docs.length > 100 ? history.at(-1).revision : null, budget, submissionApprovalRoute: route };
+    const selfApprovalRoute = value.requesterUid === request.auth.uid && ["draft", "returned"].includes(value.status) ? await previewSubmissionApprovalRoute(tx, db, hotelUid, value, services, true) : null;
+    let decisionApprovalRoute = null;
+    if (value.status === "pending" && value.currentApproverUid === request.auth.uid) {
+      try {
+        const settings = storedSettings(await tx.get(db.doc(settingsPath(hotelUid))));
+        await currentApprover(tx, db, hotelUid, request.auth.uid, settings, value.approvalSteps[value.currentStepIndex].id, value.totalMinor, value.requesterUid, value.approvals, services, value.costCentreId);
+        const steps = remainingDecisionSteps(settings, value, budget);
+        decisionApprovalRoute = await submissionApprovalRoute(tx, db, hotelUid, settings, value, false, services, { steps, previous: [...value.approvals, { approverUid: request.auth.uid }] });
+      } catch (error) { decisionApprovalRoute = { steps: [], approvers: [], plan: [], fingerprint: null, error: { code: error.code || "unavailable", message: error instanceof HttpsError ? error.message : "The remaining approval route could not be verified." } }; }
+    }
+    return { hotelUid, request: value, history, historyTruncated: found.docs.length > 100, nextHistoryCursor: found.docs.length > 100 ? history.at(-1).revision : null, budget, submissionApprovalRoute: route, selfApprovalRoute, decisionApprovalRoute };
   });
+}
+
+function remainingDecisionSteps(settings, value, budget) {
+  const steps = value.approvalSteps.slice(value.currentStepIndex + 1);
+  if (budget?.remainingMinor < 0) {
+    if (settings.overBudgetMode === "block") throw new HttpsError("failed-precondition", "The available budget changed and is exceeded. A budget manager must resolve it before approval.");
+    if (!value.approvalSteps.some((step) => step.id === "over-budget")) steps.push({ id: "over-budget", name: "Additional budget approval" });
+  }
+  return steps;
 }
 
 async function mutateHotelPurchaseRequestHandler(request, services = {}) {
@@ -458,10 +516,10 @@ async function mutateHotelPurchaseRequestHandler(request, services = {}) {
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid"), expected = revision(input.expectedRevision), action = input.action, db = services.firestore || admin.firestore();
   const id = action === "create" ? `p-${digest(request.auth?.uid, requireDocumentId(input.requestId, "requestId")).slice(0, 40)}` : requireDocumentId(input.purchaseRequestId, "purchaseRequestId");
   if (action === "create" && input.purchaseRequestId != null) throw new HttpsError("invalid-argument", "The server assigns the identity of a new request.");
-  const draft = input.draft === undefined ? null : policy.normalizeDraft(input.draft), reason = text(input.reason ?? "", "Decision reason", 2000, ["reject", "return", "revise"].includes(action));
+  const draft = input.draft === undefined ? null : policy.normalizeDraft(input.draft), reason = text(input.reason ?? "", "Decision reason", 2000, ["reject", "return", "revise", "selfapprove"].includes(action));
   if (["create", "save"].includes(action) && !draft || !["create", "save", "revise"].includes(action) && draft) throw new HttpsError("invalid-argument", "Only draft creation, saving or an explicit revision may change request content.");
-  if (input.approverUid != null && action !== "submit" || input.nextApproverUid != null && action !== "approve") throw new HttpsError("invalid-argument", "Approver selection must belong to its submission or decision.");
-  if (input.expectedApprovalRouteFingerprint !== undefined && (action !== "submit" || typeof input.expectedApprovalRouteFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(input.expectedApprovalRouteFingerprint))) throw new HttpsError("invalid-argument", "A submission approval route fingerprint must come from the current request preview.");
+  if (input.approverUid != null && !["submit", "selfapprove"].includes(action) || input.nextApproverUid != null && action !== "approve") throw new HttpsError("invalid-argument", "Approver selection must belong to its submission or decision.");
+  if (input.expectedApprovalRouteFingerprint !== undefined && (!["submit", "selfapprove", "approve"].includes(action) || typeof input.expectedApprovalRouteFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(input.expectedApprovalRouteFingerprint))) throw new HttpsError("invalid-argument", "A submission approval route fingerprint must come from the current request preview.");
   const op = operation(db, hotelUid, request.auth?.uid, input.requestId, "request", { id, action, expected, draft, approverUid: input.approverUid ?? null, nextApproverUid: input.nextApproverUid ?? null, reason,
     ...(input.expectedApprovalRouteFingerprint === undefined ? {} : { expectedApprovalRouteFingerprint: input.expectedApprovalRouteFingerprint }) });
   return db.runTransaction(async (tx) => {
@@ -480,23 +538,24 @@ async function mutateHotelPurchaseRequestHandler(request, services = {}) {
     }
     if (before?.revision >= 10000) throw new HttpsError("resource-exhausted", "This request has reached its supported history limit.");
     const actorUser = await requireCurrentVerifiedUser(request, services.auth), actor = { uid: request.auth.uid, name: String(actorUser.displayName || actorUser.email || request.auth.uid).slice(0, 200), email: String(actorUser.email || "").slice(0, 254) };
-    if (before && ["save", "revise", "submit", "withdraw", "cancel"].includes(action) && before.requesterUid !== actor.uid) throw new HttpsError("permission-denied", "Only the requester may change, submit, withdraw or cancel this request.");
+    if (before && ["save", "revise", "submit", "selfapprove", "withdraw", "cancel"].includes(action) && before.requesterUid !== actor.uid) throw new HttpsError("permission-denied", "Only the requester may change, submit, withdraw or cancel this request.");
     const now = services.now?.() ?? Date.now();
     let next = before ? { ...before } : { id, purchaseRequestId: id, hotelUid, policyVersion: policy.VERSION, revision: 0, requesterUid: actor.uid,
       requesterName: actor.name, requesterEmail: actor.email, status: "draft", createdAtMillis: now, submittedAtMillis: null, approvedAtMillis: null,
-      approvalSteps: [], approvalEscalation: null, approvals: [], currentStepIndex: 0, currentApproverUid: null, currentApproverName: null, reservation: noReservation() };
+      approvalSteps: [], approvalEscalation: null, selfApproval: null, approvalRoutePlan: [], approvalRouteFingerprint: null, approvalSettingsRevision: null, currentAssignment: null, approvals: [], currentStepIndex: 0, currentApproverUid: null, currentApproverName: null, reservation: noReservation() };
     if (action === "create" || action === "save") {
       if (before && !["draft", "returned"].includes(before.status)) throw new HttpsError("failed-precondition", "Only a draft or returned request may be edited. Start an explicit revision for a submitted request.");
-      next = { ...next, ...await draftSnapshot(tx, db, hotelUid, id, draft, settings, services), approvalEscalation: null };
+      next = { ...next, ...await draftSnapshot(tx, db, hotelUid, id, draft, settings, services), approvalEscalation: null, selfApproval: null, approvalRoutePlan: [], approvalRouteFingerprint: null, approvalSettingsRevision: null, currentAssignment: null };
     }
     if (action === "revise") {
       if (!["pending", "approved"].includes(before.status)) throw new HttpsError("failed-precondition", "Only a pending or approved request needs a new approval revision.");
-      next = { ...next, ...(draft ? await draftSnapshot(tx, db, hotelUid, id, draft, settings, services) : {}), status: "returned", approvalEscalation: null, approvals: [], currentStepIndex: 0,
+      next = { ...next, ...(draft ? await draftSnapshot(tx, db, hotelUid, id, draft, settings, services) : {}), status: "returned", approvalEscalation: null, selfApproval: null, approvalRoutePlan: [], approvalRouteFingerprint: null, approvalSettingsRevision: null, currentAssignment: null, approvals: [], currentStepIndex: 0,
         currentApproverUid: null, currentApproverName: null, approvedAtMillis: null, reservation: { ...before.reservation, state: "pending" } };
     }
-    if (action === "submit") {
+    if (["submit", "selfapprove"].includes(action)) {
       if (!["draft", "returned"].includes(before.status)) throw new HttpsError("failed-precondition", "Only a draft or returned request may be submitted.");
       completeDraft(before, settings);
+      if (action === "selfapprove") await requireSelfApproval(tx, db, hotelUid, settings, before);
       // Keep saved, explicitly reviewed price and identity snapshots; source
       // catalog updates never silently replace an internal estimate on submit.
       next.attachments = await require("./purchaseRequestFiles").validatePurchaseRequestAttachments(tx, db, hotelUid, id, before.attachmentIds);
@@ -506,9 +565,9 @@ async function mutateHotelPurchaseRequestHandler(request, services = {}) {
     }
     if (["approve", "reject", "return"].includes(action)) {
       if (before.status !== "pending" || before.currentApproverUid !== actor.uid) throw new HttpsError("permission-denied", "Only the current assigned approver may decide this pending step.");
-      await currentApprover(tx, db, hotelUid, actor.uid, settings, before.approvalSteps[before.currentStepIndex]?.id, before.totalMinor, before.requesterUid, before.approvals, services);
+      await currentApprover(tx, db, hotelUid, actor.uid, settings, before.approvalSteps[before.currentStepIndex]?.id, before.totalMinor, before.requesterUid, before.approvals, services, before.costCentreId);
       if (action === "reject") { next.status = "rejected"; next.reservation = noReservation(); next.currentApproverUid = null; next.currentApproverName = null; }
-      if (action === "return") { next.status = "returned"; next.approvalEscalation = null; next.approvals = []; next.currentStepIndex = 0; next.currentApproverUid = null; next.currentApproverName = null; }
+      if (action === "return") { next.status = "returned"; next.approvalEscalation = null; next.selfApproval = null; next.currentAssignment = null; next.approvalRoutePlan = []; next.approvalRouteFingerprint = null; next.approvalSettingsRevision = null; next.approvals = []; next.currentStepIndex = 0; next.currentApproverUid = null; next.currentApproverName = null; }
     }
     if (["withdraw", "cancel"].includes(action)) {
       const allowed = action === "withdraw" ? ["pending", "returned"] : ["draft", "pending", "returned", "approved"];
@@ -522,29 +581,41 @@ async function mutateHotelPurchaseRequestHandler(request, services = {}) {
       budgets.set(reservation.bucketId, await budgetFor(tx, db, hotelUid, budgetMonth, categoryId));
     }
     let changedBudgets = policy.transferBudget(budgets, before?.reservation, next.reservation), currentBudget = next.reservation.state === "none" ? null : changedBudgets.get(next.reservation.bucketId);
-    if (action === "submit") {
+    if (["submit", "selfapprove"].includes(action)) {
       if (!currentBudget?.exists) throw new HttpsError("failed-precondition", "No budget has been configured for this category and month. Ask a budget manager to create it.");
-      const route = await submissionApprovalRoute(tx, db, hotelUid, settings, next, currentBudget.remainingMinor < 0, services);
+      const route = await submissionApprovalRoute(tx, db, hotelUid, settings, next, currentBudget.remainingMinor < 0, services, { selfApproval: action === "selfapprove" });
       if (input.expectedApprovalRouteFingerprint !== undefined && input.expectedApprovalRouteFingerprint !== route.fingerprint) throw new HttpsError("aborted", "The submission approval route changed. Refresh the request and review the current route before submitting.");
-      next.approvalSteps = route.steps; next.approvalEscalation = route.escalation;
-      const assignee = await currentApprover(tx, db, hotelUid, input.approverUid, settings, next.approvalSteps[0].id, next.totalMinor, next.requesterUid, [], services);
-      next.currentApproverUid = assignee.uid; next.currentApproverName = assignee.name;
+      next.approvalSteps = route.steps; next.approvalEscalation = route.escalation; Object.assign(next, routeEvidence(route, settings)); next.selfApproval = null;
+      if (action === "selfapprove") next.selfApproval = { approverUid: actor.uid, approverName: actor.name, approvedAtMillis: now, reason,
+        limitMinor: settings.approvers.find((person) => person.uid === actor.uid).selfApprovalLimitMinor, settingsRevision: settings.revision,
+        coveredSteps: policy.requiredSteps(settings, next.totalMinor, false).filter((step) => !route.steps.some((required) => required.id === step.id)) };
+      if (route.steps.length) {
+        const assignee = routing.selectAssignee(route, input.approverUid);
+        next.currentApproverUid = assignee.uid; next.currentApproverName = assignee.name; next.currentAssignment = assignee;
+      } else {
+        if (input.approverUid) throw new HttpsError("invalid-argument", "Direct registration has no independent next approver.");
+        next.status = "approved"; next.currentApproverUid = null; next.currentApproverName = null; next.currentAssignment = null; next.approvedAtMillis = now;
+        next.reservation = { ...next.reservation, state: "committed" };
+        changedBudgets = policy.transferBudget(budgets, before.reservation, next.reservation); currentBudget = changedBudgets.get(next.reservation.bucketId);
+      }
     }
-    let event = action;
+    let event = action === "selfapprove" && next.status === "approved" ? "selfapproved" : action;
     if (action === "approve") {
       if (!currentBudget?.exists) throw new HttpsError("failed-precondition", "The reserved budget is missing.");
-      if (currentBudget.remainingMinor < 0) {
-        if (settings.overBudgetMode === "block") throw new HttpsError("failed-precondition", "The available budget changed and is exceeded. A budget manager must resolve it before approval.");
-        if (!next.approvalSteps.some((step) => step.id === "over-budget")) next.approvalSteps = [...next.approvalSteps, { id: "over-budget", name: "Additional budget approval" }];
-      }
-      next.approvals = [...before.approvals, { stepId: before.approvalSteps[before.currentStepIndex].id, approverUid: actor.uid, approverName: actor.name, approvedAtMillis: now }];
+      const remaining = remainingDecisionSteps(settings, before, currentBudget);
+      const route = await submissionApprovalRoute(tx, db, hotelUid, settings, before, false, services, { steps: remaining, previous: [...before.approvals, { approverUid: actor.uid }] });
+      if (input.expectedApprovalRouteFingerprint !== undefined && input.expectedApprovalRouteFingerprint !== route.fingerprint) throw new HttpsError("aborted", "The remaining approval route changed. Refresh before approving.");
+      next.approvalSteps = [...before.approvalSteps.slice(0, before.currentStepIndex + 1), ...remaining];
+      Object.assign(next, routeEvidence(route, settings));
+      next.approvals = [...before.approvals, { stepId: before.approvalSteps[before.currentStepIndex].id, approverUid: actor.uid, approverName: actor.name, approvedAtMillis: now,
+        ...routing.assignmentAuthority(settings, actor.uid, before.approvalSteps[before.currentStepIndex].id, before.totalMinor, before.costCentreId) }];
       next.currentStepIndex = before.currentStepIndex + 1;
       if (next.currentStepIndex < next.approvalSteps.length) {
-        const assignee = await currentApprover(tx, db, hotelUid, input.nextApproverUid, settings, next.approvalSteps[next.currentStepIndex].id, next.totalMinor, next.requesterUid, next.approvals, services);
-        next.currentApproverUid = assignee.uid; next.currentApproverName = assignee.name;
+        const assignee = routing.selectAssignee(route, input.nextApproverUid);
+        next.currentApproverUid = assignee.uid; next.currentApproverName = assignee.name; next.currentAssignment = assignee;
       } else {
         if (input.nextApproverUid != null && input.nextApproverUid !== "") throw new HttpsError("invalid-argument", "A completed approval has no next approver.");
-        next.status = "approved"; next.currentApproverUid = null; next.currentApproverName = null; next.approvedAtMillis = now;
+        next.status = "approved"; next.currentApproverUid = null; next.currentApproverName = null; next.approvedAtMillis = now; next.currentAssignment = null;
         next.reservation = { ...next.reservation, state: "committed" }; event = "approved";
         changedBudgets = policy.transferBudget(budgets, before.reservation, next.reservation); currentBudget = changedBudgets.get(next.reservation.bucketId);
       }

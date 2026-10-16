@@ -79,6 +79,121 @@ beforeEach(async () => {
 });
 after(async () => environment.cleanup());
 
+describe("department routing, complete routes and direct self-approval", () => {
+  it("restricts initial assignment to the selected department and auto-assigns a sole qualified person", async () => {
+    const settings = baseSettings();
+    settings.costCentres = [{ id: "kitchen", name: "Kitchen", approverUids: ["alternate"] }, { id: "rooms", name: "Rooms", approverUids: ["finance"] }];
+    settings.approvers = [authority("alternate", ["department"]), authority("finance", ["department", "finance"]), authority("gm", ["gm"])];
+    await configure({ settings });
+    const created = await create(), original = await financialEvidence(created);
+    assert.deepEqual((await route(created)).approvers.map((person) => person.uid), ["alternate"]);
+    await rejected(transition("submit", created, { approverUid: "finance" }), "permission-denied");
+    assert.deepEqual(await financialEvidence(created), original);
+    const submitted = await transition("submit", created);
+    assert.equal(submitted.request.currentApproverUid, "alternate");
+    assert.equal((await transition("approve", submitted, {}, "alternate")).request.status, "approved");
+  });
+  it("blocks a later requester conflict before reservation, then uses an explicitly configured substitute", async () => {
+    const settings = baseSettings();
+    settings.approvers = [authority("alternate", ["department"]), authority("requester", ["finance"]), authority("gm", ["gm"])];
+    await configure({ settings });
+    const created = await create(1500), original = await financialEvidence(created);
+    assert.match((await route(created)).error.message, /Finance approval/);
+    await rejected(transition("submit", created), "permission-denied");
+    assert.deepEqual(await financialEvidence(created), original);
+    settings.approvalSteps[1].substituteUids = ["gm"];
+    await saveSettings(settings);
+    const pending = await transition("submit", created), handoff = await transition("approve", pending, {}, "alternate");
+    assert.equal(handoff.request.currentApproverUid, "gm"); assert.equal(handoff.request.currentAssignment.kind, "substitute");
+    const mail = (await db.collection("hotels/hotel-a/mailQueue").where("revision", "==", handoff.revision).get()).docs[0].data();
+    const notification = await db.runTransaction((tx) => resolvePurchaseRequestNotification(tx, db, "hotel-a", mail, services));
+    assert.deepEqual(notification.to, ["gm@example.test"]);
+    const approved = await transition("approve", handoff, {}, "gm");
+    assert.equal(approved.request.approvals[1].kind, "substitute");
+    assert.equal((await budget()).pendingMinor, 0); assert.equal((await budget()).committedMinor, 150000);
+  });
+  it("filters a tempting first choice that would consume the only later approver", async () => {
+    const settings = baseSettings(); settings.approvers = [authority("alternate", ["department", "finance"]), authority("finance", ["department"])];
+    await configure({ settings });
+    const created = await create(1500);
+    assert.deepEqual((await route(created)).approvers.map((person) => person.uid), ["finance"]);
+    await rejected(transition("submit", created, { approverUid: "alternate" }), "permission-denied");
+    const pending = await transition("submit", created), handoff = await transition("approve", pending, {}, "finance");
+    assert.equal(handoff.request.currentApproverUid, "alternate");
+  });
+  it("supports a higher-level replacement while keeping its separate amount-required control", async () => {
+    const settings = baseSettings(); settings.approvalSteps[1].fallbackStepId = "gm";
+    settings.approvers = [authority("alternate", ["department"]), authority("requester", ["finance"]), authority("gm", ["gm"])];
+    await configure({ settings });
+    const low = await create(1500); assert.equal((await route(low)).plan[1].candidates[0].kind, "higher-level");
+    const high = await create(7500); assert.ok((await route(high)).error, "one GM cannot fill both controls");
+    await rejected(transition("submit", high)); assert.equal((await budget()).pendingMinor || 0, 0);
+  });
+  async function enableSelf({ independent = false, budgetMinor = 50000, overBudgetMode = "block" } = {}) {
+    await db.doc("hotels/hotel-a/members/requester").update({ permissions: [...grants, "purchaserequests.selfapprove"] });
+    const settings = baseSettings(); settings.overBudgetMode = overBudgetMode;
+    settings.approvers[0].selfApprovalLimitMinor = 100000;
+    settings.approvalSteps[1].thresholdMinor = 10000; settings.approvalSteps[1].independentRequired = independent;
+    await configure({ settings, budgetMinor }); return settings;
+  }
+  it("records direct self-approval with immutable evidence, one commitment, one notification and exact retries", async () => {
+    await enableSelf(); const created = await create();
+    const preview = (await detail(created)).selfApprovalRoute; assert.equal(preview.error, null); assert.deepEqual(preview.steps, []);
+    const input = { hotelUid: "hotel-a", action: "selfapprove", requestId: next(), purchaseRequestId: created.purchaseRequestId, expectedRevision: created.revision, reason: "GM delegated replacement", expectedApprovalRouteFingerprint: preview.fingerprint };
+    const approved = await api().mutateHotelPurchaseRequestHandler(request(input), services);
+    const evidence = await financialEvidence(approved);
+    assert.equal(approved.request.status, "approved"); assert.equal(approved.request.selfApproval.reason, input.reason);
+    assert.equal(evidence.budget.pendingMinor || 0, 0); assert.equal(evidence.budget.committedMinor, 15000);
+    assert.equal(evidence.mail.length, 1); assert.equal(evidence.mail[0][1].event, "selfapproved");
+    assert.deepEqual(await api().mutateHotelPurchaseRequestHandler(request(input), services), approved);
+    assert.deepEqual(await financialEvidence(approved), evidence);
+    await rejected(api().mutateHotelPurchaseRequestHandler(request({ ...input, reason: "Different rationale" }), services), "already-exists");
+    const notification = await db.runTransaction((tx) => resolvePurchaseRequestNotification(tx, db, "hotel-a", evidence.mail[0][1], services));
+    assert.match(notification.text, /Self-approved by: requester/);
+    await rejected(detail(approved, "foreign"), "permission-denied");
+  });
+  it("retains independent Finance and over-budget controls after self-approval with distinct actors", async () => {
+    await enableSelf({ independent: true, overBudgetMode: "approval", budgetMinor: 0 });
+    const pending = await transition("selfapprove", await create(), { reason: "Urgent GM repair; independent review" });
+    assert.equal(pending.request.currentApproverUid, "finance"); assert.deepEqual(stepIds(pending.request.approvalSteps), ["finance", "over-budget"]);
+    assert.equal((await budget()).pendingMinor, 15000); assert.equal((await budget()).committedMinor || 0, 0);
+    await rejected(transition("approve", pending), "permission-denied");
+    const next = await transition("approve", pending, {}, "finance"); assert.equal(next.request.currentApproverUid, "gm");
+    const approved = await transition("approve", next, {}, "gm");
+    assert.equal(approved.request.status, "approved"); assert.equal(approved.request.selfApproval.approverUid, "requester");
+    assert.equal((await budget()).pendingMinor, 0); assert.equal((await budget()).committedMinor, 15000);
+  });
+  it("rechecks explicit self permission, current account, limits and budget without changing financial evidence", async () => {
+    const settings = await enableSelf(), created = await create(), original = await financialEvidence(created);
+    await db.doc("hotels/hotel-a/members/requester").update({ permissions: [...grants, "purchaserequests.*"] });
+    await rejected(transition("selfapprove", created, { reason: "GM" }), "permission-denied");
+    assert.deepEqual(await financialEvidence(created), original);
+    await db.doc("hotels/hotel-a/members/requester").update({ permissions: [...grants, "purchaserequests.selfapprove"] });
+    await auth.updateUser("requester", { disabled: true });
+    await rejected(transition("selfapprove", created, { reason: "GM" }), "permission-denied");
+    await auth.updateUser("requester", { disabled: false });
+    settings.approvers[0].selfApprovalLimitMinor = 14999; await saveSettings(settings);
+    await rejected(transition("selfapprove", created, { reason: "GM" }), "permission-denied");
+    settings.approvers[0].selfApprovalLimitMinor = 100000; await saveSettings(settings);
+    await db.doc("hotels/hotel-a/purchaseBudgets/2026-10__maintenance").update({ budgetMinor: 0 });
+    await rejected(transition("selfapprove", created, { reason: "GM" }), "failed-precondition");
+    assert.equal((await budget()).pendingMinor || 0, 0); assert.equal((await budget()).committedMinor || 0, 0);
+    assert.equal((await detail(created)).history.length, 1);
+  });
+  it("serializes competing direct registrations against the same last available budget", async () => {
+    await enableSelf({ budgetMinor: 20000 }); const first = await create(), second = await create();
+    const outcomes = await Promise.allSettled([transition("selfapprove", first, { reason: "Repair one" }), transition("selfapprove", second, { reason: "Repair two" })]);
+    assert.equal(outcomes.filter((outcome) => outcome.status === "fulfilled").length, 1);
+    assert.equal((await budget()).committedMinor, 15000); assert.equal((await budget()).pendingMinor || 0, 0);
+    assert.equal((await db.collection("hotels/hotel-a/mailQueue").get()).size, 1);
+  });
+  it("cannot grant a self-approval limit through settings without the separate hotel permission", async () => {
+    const settings = baseSettings(); settings.approvers[0].selfApprovalLimitMinor = 100000;
+    await rejected(saveSettings(settings), "permission-denied");
+    assert.equal((await db.doc("hotels/hotel-a/settings/purchaseRequests").get()).exists, false);
+  });
+});
+
 describe("requester-only first approval escalation with real Auth and Firestore", () => {
   it("promotes the immediate next configured step below its threshold, records evidence and commits only once", async () => {
     await configure();
@@ -256,8 +371,7 @@ describe("requester-only first approval escalation with real Auth and Firestore"
     assert.deepEqual(stepIds(preview.steps), ["finance", "over-budget"]);
     const submitted = await transition("submit", created, { approverUid: "finance" });
     await rejected(transition("approve", submitted, { nextApproverUid: "finance" }, "finance"));
-    await rejected(transition("approve", submitted, {}, "finance"));
-    const intermediate = await transition("approve", submitted, { nextApproverUid: "gm" }, "finance");
+    const intermediate = await transition("approve", submitted, {}, "finance");
     assert.equal((await budget()).pendingMinor, 15000); assert.equal((await budget()).committedMinor || 0, 0);
     const approved = await transition("approve", intermediate, {}, "gm");
     assert.deepEqual(approved.request.approvals.map((entry) => entry.stepId), ["finance", "over-budget"]);

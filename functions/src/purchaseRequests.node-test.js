@@ -40,6 +40,152 @@ const current = (db, value) => db.records.get(`${base}/purchaseRequests/${value.
 const get = (db, value, uid = "buyer") => api.getHotelPurchaseRequestHandler(request({ purchaseRequestId: value.purchaseRequestId }, uid), services(db));
 const requesterOnlySettings = (patch = {}) => settings({ approvers: [authority("buyer", ["manager"]), authority("finance", ["finance"]), authority("director", [], true)], ...patch });
 
+test("cost centre routing isolates department heads and automatically assigns the only complete route", async () => {
+  const db = fixture({ costCentres: [{ id: "kitchen", name: "Kitchen", approverUids: ["manager"] }, { id: "bar", name: "Bar", approverUids: ["director"] }],
+    approvers: [authority("manager", ["manager"]), authority("director", ["manager"]), authority("finance", ["finance"])] });
+  const kitchen = await create(db), bar = await create(db, draft(50, { costCentreId: "bar" }), "bar");
+  assert.deepEqual((await get(db, kitchen)).submissionApprovalRoute.approvers.map((person) => person.uid), ["manager"]);
+  assert.deepEqual((await get(db, bar)).submissionApprovalRoute.approvers.map((person) => person.uid), ["director"]);
+  await assert.rejects(submit(db, bar), { code: "permission-denied" });
+  assert.equal((await command(db, bar, "submit")).request.currentApproverUid, "director");
+  const pending = await command(db, kitchen, "submit", {}, "buyer", "submit-kitchen");
+  assert.equal((await command(db, pending, "approve", {}, "manager")).request.currentApproverUid, "finance");
+});
+test("an explicitly unstaffed department never inherits another department's head", async () => {
+  const db = fixture({ costCentres: [{ id: "kitchen", name: "Kitchen", approverUids: [] }] }), created = await create(db);
+  assert.ok((await get(db, created)).submissionApprovalRoute.error);
+  await assert.rejects(submit(db, created), { code: "permission-denied" });
+  assert.equal(budget(db).pendingMinor, 0);
+});
+test("full routing reserves the only later authority instead of greedily assigning them first", async () => {
+  const db = fixture({ approvers: [authority("manager", ["manager", "finance"]), authority("finance", ["manager"])] }), created = await create(db);
+  const route = (await get(db, created)).submissionApprovalRoute;
+  assert.deepEqual(route.approvers.map((person) => person.uid), ["finance"]);
+  assert.deepEqual(route.plan[1].candidates.map((person) => person.uid), ["manager"]);
+  await assert.rejects(submit(db, created), { code: "permission-denied" });
+  const pending = await command(db, created, "submit"), finalStep = await command(db, pending, "approve", {}, "finance");
+  assert.equal(finalStep.request.currentApproverUid, "manager");
+  assert.equal((await command(db, finalStep, "approve", {}, "manager")).request.status, "approved");
+});
+test("a requester assigned only to a later control blocks submission before any reservation", async () => {
+  const db = fixture({ approvers: [authority("manager", ["manager"]), authority("buyer", ["finance"])] }), created = await create(db);
+  const before = structuredClone([...db.records]), route = (await get(db, created)).submissionApprovalRoute;
+  assert.match(route.error.message, /Finance approval/);
+  await assert.rejects(submit(db, created), { code: "permission-denied" });
+  assert.deepEqual(structuredClone([...db.records]), before);
+});
+test("explicit substitutes can perform a later requester control and are recorded in the immutable decision", async () => {
+  const db = fixture({ approvalSteps: settings().approvalSteps.map((step) => step.id === "finance" ? { ...step, substituteUids: ["director"] } : step),
+    approvers: [authority("manager", ["manager"]), authority("buyer", ["finance"]), authority("director", [])] });
+  const pending = await submit(db, await create(db)), next = await command(db, pending, "approve", {}, "manager");
+  assert.equal(next.request.currentApproverUid, "director"); assert.equal(next.request.currentAssignment.kind, "substitute");
+  const approved = await command(db, next, "approve", {}, "director");
+  assert.equal(approved.request.approvals[1].kind, "substitute");
+  assert.equal((await get(db, approved)).history[0].snapshot.approvals[1].kind, "substitute");
+});
+test("a configured higher level performs a control without silently deleting any other required control", async () => {
+  const db = fixture({ approvalSteps: [...settings().approvalSteps.map((step) => step.id === "finance" ? { ...step, fallbackStepId: "gm" } : step), { id: "gm", name: "General Manager", thresholdMinor: 50000 }],
+    approvers: [authority("manager", ["manager"]), authority("buyer", ["finance"]), authority("director", ["gm"])] });
+  const low = await create(db), route = (await get(db, low)).submissionApprovalRoute;
+  assert.deepEqual(route.steps.map((step) => step.id), ["manager", "finance"]);
+  assert.equal(route.plan[1].candidates[0].kind, "higher-level");
+  const pending = await submit(db, low), finance = await command(db, pending, "approve", {}, "manager");
+  assert.equal((await command(db, finance, "approve", {}, "director")).request.approvals[1].authorityStepId, "gm");
+  const high = await create(db, draft(500), "high");
+  assert.ok((await get(db, high)).submissionApprovalRoute.error, "the same director cannot perform Finance and GM controls");
+});
+test("a department substitute is used before the legacy requester-only escalation", async () => {
+  const db = fixture(requesterOnlySettings({ costCentres: [{ id: "kitchen", name: "Kitchen", approverUids: ["buyer"], substituteUids: ["manager"] }],
+    approvers: [authority("buyer", ["manager"]), authority("manager", []), authority("finance", ["finance"])] }));
+  const created = await create(db, draft(50)), route = (await get(db, created)).submissionApprovalRoute;
+  assert.equal(route.escalation, null); assert.equal(route.plan[0].candidates[0].kind, "substitute");
+  assert.equal((await command(db, created, "submit")).request.currentApproverUid, "manager");
+});
+test("changed later access blocks the current approval atomically and remains readable for repair", async () => {
+  const db = fixture({ approvers: [authority("manager", ["manager"]), authority("finance", ["finance"])] }), pending = await submit(db, await create(db));
+  db.records.get(`${base}/members/finance`).permissions = ["purchaserequests.read"];
+  const before = structuredClone([...db.records]);
+  assert.ok((await get(db, pending, "manager")).decisionApprovalRoute.error);
+  await assert.rejects(command(db, pending, "approve", {}, "manager"), { code: "permission-denied" });
+  assert.deepEqual(structuredClone([...db.records]), before);
+});
+function allowSelf(db, limitMinor = 50000) {
+  db.records.get(`${base}/members/buyer`).permissions = [...permissions, "purchaserequests.selfapprove"];
+  db.records.get(`${base}/settings/purchaseRequests`).approvers.push({ ...authority("buyer", []), selfApprovalLimitMinor: limitMinor });
+  return db;
+}
+test("explicit GM self-approval registers exactly once with actor time reason coverage and notification", async () => {
+  const db = allowSelf(fixture()), created = await create(db), route = (await get(db, created)).selfApprovalRoute;
+  assert.equal(route.error, null); assert.deepEqual(route.steps, []);
+  const input = { reason: "GM replacement within delegated authority", expectedApprovalRouteFingerprint: route.fingerprint };
+  const approved = await command(db, created, "selfapprove", input);
+  assert.equal(approved.request.status, "approved"); assert.equal(budget(db).pendingMinor, 0); assert.equal(budget(db).committedMinor, 15000);
+  assert.equal(approved.request.selfApproval.approverUid, "buyer"); assert.equal(approved.request.selfApproval.approvedAtMillis, services(db).now());
+  assert.equal(approved.request.selfApproval.reason, input.reason); assert.equal(approved.request.selfApproval.limitMinor, 50000);
+  assert.deepEqual(approved.request.selfApproval.coveredSteps.map((step) => step.id), ["manager", "finance"]);
+  assert.deepEqual(await command(db, created, "selfapprove", input), approved);
+  assert.equal((await get(db, approved)).history[0].event, "selfapproved");
+  const mail = [...db.records.values()].find((row) => row.type === "purchase-request");
+  assert.equal(mail.event, "selfapproved"); assert.equal(mail.recipientUid, "buyer");
+  const delivered = await require("./purchaseRequestNotifications").resolvePurchaseRequestNotification({ get: (ref) => db.runTransaction((tx) => tx.get(ref)) }, db, "hotel-a", mail, { auth, appBaseUrl: "https://hotel.example.test" });
+  assert.match(delivered.text, /Self-approved by: buyer/);
+});
+test("self-approval respects an independent Finance control before transferring pending to committed", async () => {
+  const db = allowSelf(fixture({ approvalSteps: settings().approvalSteps.map((step) => step.id === "finance" ? { ...step, independentRequired: true } : step), approvers: [authority("finance", ["finance"])] }));
+  const created = await create(db), route = (await get(db, created)).selfApprovalRoute;
+  assert.deepEqual(route.steps.map((step) => step.id), ["finance"]);
+  const pending = await command(db, created, "selfapprove", { reason: "Delegated GM authority" });
+  assert.equal(pending.request.currentApproverUid, "finance"); assert.equal(pending.request.status, "pending");
+  assert.equal(budget(db).pendingMinor, 15000); assert.equal(budget(db).committedMinor, 0);
+  await assert.rejects(command(db, pending, "approve", {}, "buyer"), { code: "permission-denied" });
+  const approved = await command(db, pending, "approve", {}, "finance");
+  assert.equal(approved.request.status, "approved"); assert.equal(budget(db).pendingMinor, 0); assert.equal(budget(db).committedMinor, 15000);
+  assert.equal(approved.request.selfApproval.reason, "Delegated GM authority");
+});
+test("self-approval cannot bypass explicit zero budgets or independent additional budget authority", async () => {
+  const blocked = allowSelf(fixture()), created = await create(blocked); budget(blocked).budgetMinor = 0;
+  await assert.rejects(command(blocked, created, "selfapprove", { reason: "GM" }), { code: "failed-precondition" });
+  assert.equal(budget(blocked).committedMinor, 0);
+  const db = allowSelf(fixture({ overBudgetMode: "approval" })), second = await create(db); budget(db).budgetMinor = 0;
+  const pending = await command(db, second, "selfapprove", { reason: "Urgent repair; independent budget review required" });
+  assert.deepEqual(pending.request.approvalSteps.map((step) => step.id), ["over-budget"]); assert.equal(pending.request.currentApproverUid, "director");
+  assert.equal(budget(db).pendingMinor, 15000); assert.equal(budget(db).committedMinor, 0);
+  const final = await command(db, pending, "approve", {}, "director");
+  assert.equal(final.request.status, "approved"); assert.equal(budget(db).pendingMinor, 0); assert.equal(budget(db).committedMinor, 15000);
+});
+test("self-approval fails closed without its explicit permission, sufficient limit, owner or reason", async () => {
+  for (const variant of ["wildcard", "normal-approve", "limit", "no-limit", "foreign-owner", "reason"]) {
+    const db = allowSelf(fixture()), created = await create(db);
+    if (variant === "wildcard") db.records.get(`${base}/members/buyer`).permissions = ["purchaserequests.*"];
+    if (variant === "normal-approve") db.records.get(`${base}/members/buyer`).permissions = permissions;
+    if (variant === "limit") db.records.get(`${base}/settings/purchaseRequests`).approvers.at(-1).selfApprovalLimitMinor = 14999;
+    if (variant === "no-limit") delete db.records.get(`${base}/settings/purchaseRequests`).approvers.at(-1).selfApprovalLimitMinor;
+    if (variant === "foreign-owner") db.records.get(`${base}/members/manager`).permissions = [...permissions, "purchaserequests.selfapprove"];
+    const before = structuredClone([...db.records]);
+    await assert.rejects(command(db, created, "selfapprove", { reason: variant === "reason" ? "" : "GM authority" }, variant === "foreign-owner" ? "manager" : "buyer"), { code: variant === "reason" ? "invalid-argument" : "permission-denied" });
+    assert.deepEqual(structuredClone([...db.records]), before, variant);
+  }
+});
+test("a returned self-approved version credits its old reservation once and retains original evidence", async () => {
+  const db = allowSelf(fixture({ approvalSteps: settings().approvalSteps.map((step) => step.id === "finance" ? { ...step, independentRequired: true } : step), approvers: [authority("finance", ["finance"])] }));
+  const pending = await command(db, await create(db), "selfapprove", { reason: "Original GM authority" });
+  const returned = await command(db, pending, "return", { reason: "Adjust estimate" }, "finance");
+  assert.equal(returned.request.selfApproval, null); assert.equal(budget(db).pendingMinor, 15000);
+  const saved = await command(db, returned, "save", { draft: draft(90) });
+  const approved = await command(db, saved, "selfapprove", { reason: "Corrected GM estimate" });
+  assert.equal(approved.request.status, "approved"); assert.equal(budget(db).pendingMinor, 0); assert.equal(budget(db).committedMinor, 9000);
+  const history = (await get(db, approved)).history;
+  assert.equal(history.find((row) => row.revision === pending.revision).snapshot.selfApproval.reason, "Original GM authority");
+});
+test("self-approval cannot supply its own independent or over-budget control", async () => {
+  const db = allowSelf(fixture({ overBudgetMode: "approval", approvers: [] }));
+  db.records.get(`${base}/settings/purchaseRequests`).approvers[0].canApproveOverBudget = true;
+  budget(db).budgetMinor = 0;
+  const created = await create(db), route = (await get(db, created)).selfApprovalRoute;
+  assert.ok(route.error); assert.match(route.error.message, /Additional budget approval/);
+  await assert.rejects(command(db, created, "selfapprove", { reason: "GM" }), { code: "permission-denied" });
+});
+
 test("a sole eligible requester escalates below threshold to an independent next-step approver without self approval", async () => {
   const db = fixture(requesterOnlySettings()), created = await create(db, draft(50)), detail = await get(db, created), route = detail.submissionApprovalRoute;
   assert.deepEqual(route.steps, [{ id: "finance", name: "Finance approval" }]);
@@ -332,7 +478,7 @@ test("foreign supplier products and fabricated attachment metadata never become 
   const before = structuredClone([...db.records]);
   await assert.rejects(create(db, draft(1, { lines: [{ id: "wrong", kind: "supplier", supplierProductId: "foreign-offer", quantity: 1, unitPrice: 1 }] })), { code: "failed-precondition" });
   await assert.rejects(create(db, draft(1, { attachmentIds: ["a".repeat(32)] })), { code: "failed-precondition" });
-  assert.deepEqual([...db.records], before);
+  assert.deepEqual(structuredClone([...db.records]), before);
 });
 const freeSupplierLine = (id, supplierId, unitPrice = 50) => ({ id, kind: "free", supplierId, description: `${id} service`, quantity: 1, unitPrice, unit: "service" });
 const twoSupplierDraft = (patch = {}) => draft(0, { supplierId: "", lines: [freeSupplierLine("repair", "vendor", 50), freeSupplierLine("installation", "second", 75)], ...patch });

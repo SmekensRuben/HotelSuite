@@ -15,22 +15,84 @@ import PurchaseRequestsPage from "./PurchaseRequestsPage";
 import PurchaseRequestFormPage from "./PurchaseRequestFormPage";
 import PurchaseRequestDetailPage from "./PurchaseRequestDetailPage";
 
-let request, context, budget, history, submissionApprovalRoute;
+let request, context, budget, history, submissionApprovalRoute, selfApprovalRoute, decisionApprovalRoute;
 const routeFingerprint = "a".repeat(64);
 const firstStepEscalation = { reason: "requester-only-first-step", fromStepId: "manager", fromStepName: "Department manager", toStepId: "finance", toStepName: "Finance", settingsRevision: 4 };
 const escalatedSubmissionRoute = () => ({ steps: [{ id: "finance", name: "Finance" }], approvers: [{ uid: "finance", name: "Robin Finance" }], escalation: firstStepEscalation, error: null, fingerprint: routeFingerprint });
 function Location() { const location = useLocation(); return <output data-testid="location">{location.pathname}</output>; }
 function tree(path = "/purchase-requests/request-a") { return <MemoryRouter initialEntries={[path]}><Location /><Routes><Route path="/purchase-requests" element={<PurchaseRequestsPage />} /><Route path="/purchase-requests/new" element={<PurchaseRequestFormPage />} /><Route path="/purchase-requests/:purchaseRequestId" element={<PurchaseRequestDetailPage />} /><Route path="/purchase-requests/:purchaseRequestId/edit" element={<PurchaseRequestFormPage />} /></Routes></MemoryRouter>; }
+const checkedRoute = (steps = [], candidates = []) => ({ steps, approvers: candidates.map(({ uid, name }) => ({ uid, name })), plan: steps.map((step) => ({ ...step, candidates })), error: null, escalation: null, fingerprint: routeFingerprint });
+
+it("uses server-filtered full-route candidates and keeps a real choice when several people remain", async () => {
+  submissionApprovalRoute = checkedRoute([{ id: "manager", name: "Department manager" }], [{ uid: "manager", name: "Alex Manager", kind: "standard" }, { uid: "finance", name: "Robin Finance", kind: "substitute" }]);
+  render(tree()); fireEvent.click(await screen.findByRole("button", { name: "Submit request" }));
+  const dialog = await screen.findByRole("dialog", { name: "Submit request" });
+  expect(dialog).toHaveTextContent("Full route checked"); expect(dialog).toHaveTextContent("Designated substitute");
+  expect(within(dialog).getByLabelText("First approver · Department manager")).toHaveValue("");
+  expect(within(dialog).getByRole("button", { name: "Confirm submit" })).toBeDisabled();
+  fireEvent.change(within(dialog).getByLabelText("First approver · Department manager"), { target: { value: "finance" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm submit" }));
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("hotel-a", expect.objectContaining({ approverUid: "finance", expectedApprovalRouteFingerprint: routeFingerprint })));
+});
+it("requires a reason and a verified dedicated route before direct self-approved registration", async () => {
+  mocks.permissions.push("purchaserequests.selfapprove"); selfApprovalRoute = checkedRoute();
+  render(tree()); fireEvent.click(await screen.findByRole("button", { name: "Approve & register" }));
+  const dialog = await screen.findByRole("dialog", { name: "Approve & register" });
+  expect(within(dialog).queryByRole("combobox")).not.toBeInTheDocument();
+  expect(dialog).toHaveTextContent("will become an approved commitment");
+  const confirm = within(dialog).getByRole("button", { name: "Confirm approve & register" }); expect(confirm).toBeDisabled();
+  fireEvent.change(within(dialog).getByLabelText("Decision note (required)"), { target: { value: "Replacement within my delegated GM authority" } });
+  fireEvent.click(confirm);
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("hotel-a", { purchaseRequestId: "request-a", expectedRevision: 2, action: "selfapprove", reason: "Replacement within my delegated GM authority", expectedApprovalRouteFingerprint: routeFingerprint }));
+});
+it("retains independent controls after self-approval and automatically selects the sole independent person", async () => {
+  mocks.permissions.push("purchaserequests.selfapprove"); selfApprovalRoute = checkedRoute([{ id: "finance", name: "Independent Finance" }], [{ uid: "finance", name: "Robin Finance", kind: "standard" }]);
+  render(tree()); fireEvent.click(await screen.findByRole("button", { name: "Approve & register" }));
+  const dialog = await screen.findByRole("dialog", { name: "Approve & register" });
+  expect(within(dialog).getByLabelText("First approver · Independent Finance")).toHaveValue("finance");
+  expect(dialog).toHaveTextContent("will be reserved");
+  fireEvent.change(within(dialog).getByLabelText("Decision note (required)"), { target: { value: "GM review; independent Finance required" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm approve & register" }));
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("hotel-a", expect.objectContaining({ action: "selfapprove", approverUid: "finance", expectedApprovalRouteFingerprint: routeFingerprint })));
+});
+it("ordinary approve permission does not expose direct self-approval", async () => {
+  selfApprovalRoute = checkedRoute(); render(tree()); await screen.findByRole("heading", { name: "Replacement plates" });
+  expect(screen.queryByRole("button", { name: "Approve & register" })).not.toBeInTheDocument();
+});
+it("shows a failed self-approval limit or budget check and blocks the direct command", async () => {
+  mocks.permissions.push("purchaserequests.selfapprove"); selfApprovalRoute = { ...checkedRoute(), error: { message: "The full request exceeds your self-approval limit." }, fingerprint: null };
+  render(tree()); expect(await screen.findByRole("button", { name: "Approve & register" })).toBeDisabled();
+  expect(screen.getByText("The full request exceeds your self-approval limit.")).toBeInTheDocument(); expect(mocks.mutate).not.toHaveBeenCalled();
+});
+it("uses authoritative remaining candidates for substitutes and includes the decision fingerprint", async () => {
+  mocks.auth.currentUser = { uid: "manager" }; request.status = "pending"; request.currentApproverUid = "manager";
+  request.approvalSteps = [{ id: "manager", name: "Department" }, { id: "finance", name: "Finance" }];
+  decisionApprovalRoute = checkedRoute([{ id: "finance", name: "Finance" }], [{ uid: "substitute", name: "Dana Substitute", kind: "higher-level" }]);
+  render(tree()); fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+  const dialog = await screen.findByRole("dialog", { name: "Approve" });
+  expect(within(dialog).getByLabelText("Next approver · Finance")).toHaveValue("substitute");
+  expect(within(dialog).queryByRole("option", { name: "Robin Finance" })).not.toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Confirm approve" }));
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("hotel-a", expect.objectContaining({ action: "approve", nextApproverUid: "substitute", expectedApprovalRouteFingerprint: routeFingerprint })));
+});
+it("blocks approval when a later route is unavailable without disabling return for changes", async () => {
+  mocks.auth.currentUser = { uid: "manager" }; request.status = "pending"; request.currentApproverUid = "manager";
+  request.approvalSteps = [{ id: "manager", name: "Department" }];
+  decisionApprovalRoute = { ...checkedRoute(), error: { message: "No independent budget authority remains." }, fingerprint: null };
+  render(tree()); expect(await screen.findByRole("button", { name: "Approve" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Return for changes" })).toBeEnabled();
+  expect(screen.getByText("No independent budget authority remains.")).toBeInTheDocument();
+});
 beforeEach(() => {
   vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.auth.currentUser = { uid: "requester" }; mocks.permissions = ["purchaserequests.read", "purchaserequests.create", "purchaserequests.update", "purchaserequests.submit", "purchaserequests.approve", "purchaserequests.cancel", "purchasebudgets.read"];
   context = { settings: { currency: "EUR", costCentres: [{ id: "restaurant", name: "Restaurant" }], budgetCategories: [{ id: "chinaware", name: "Chinaware" }], approvalSteps: [{ id: "manager", name: "Department manager", thresholdMinor: 0 }, { id: "finance", name: "Finance", thresholdMinor: 20000 }], overBudgetMode: "block" }, suppliers: [{ id: "supplier", name: "Hotel Supplies" }], approvers: [{ uid: "requester", name: "Requester", stepIds: ["manager"], limitMinor: 100000, eligible: true }, { uid: "manager", name: "Alex Manager", stepIds: ["manager"], limitMinor: 100000, eligible: true }, { uid: "finance", name: "Robin Finance", stepIds: ["finance"], limitMinor: 100000, eligible: true }, { uid: "revoked", name: "Removed approver", stepIds: ["manager"], limitMinor: 100000, eligible: false }], supplierProducts: [] };
   budget = { exists: true, id: "2026-10__chinaware", month: "2026-10", categoryId: "chinaware", budgetMinor: 50000, openingUsedMinor: 0, pendingMinor: 0, committedMinor: 30000, remainingMinor: 20000 };
   request = { id: "request-a", hotelUid: "hotel-a", revision: 2, status: "draft", requesterUid: "requester", requesterName: "Sam Requester", currency: "EUR", supplierId: "supplier", supplier: { id: "supplier", name: "Hotel Supplies" }, title: "Replacement plates", description: "Replace damaged dinner plates", motivation: "Maintain enough plates for dinner service", costCentreId: "restaurant", costCentreName: "Restaurant", budgetCategoryId: "chinaware", budgetCategoryName: "Chinaware", budgetMonth: "2026-10", totalMinor: 15000, lines: [{ id: "line-a", kind: "free", description: "Dinner plates", quantity: 10, unitPrice: 15, unit: "each", lineTotalMinor: 15000 }], attachmentIds: [], attachments: [], approvals: [], approvalSteps: [], currentStepIndex: 0, reservation: { state: "none", amountMinor: 0 } };
   history = [{ revision: 2, event: "save", actorName: "Sam Requester", createdAtMillis: 1792051200000, snapshot: structuredClone(request) }];
-  submissionApprovalRoute = undefined;
+  submissionApprovalRoute = undefined; selfApprovalRoute = undefined; decisionApprovalRoute = undefined;
   mocks.pending.mockReturnValue(null);
   mocks.context.mockImplementation(async (_, options = {}) => structuredClone({ ...context, ...(options.budgetMonth && options.budgetCategoryId ? { budget } : {}) }));
-  mocks.detail.mockImplementation(async () => structuredClone({ request, history, budget, ...(submissionApprovalRoute === undefined ? {} : { submissionApprovalRoute }) }));
+  mocks.detail.mockImplementation(async () => structuredClone({ request, history, budget, ...(submissionApprovalRoute === undefined ? {} : { submissionApprovalRoute }), ...(selfApprovalRoute === undefined ? {} : { selfApprovalRoute }), ...(decisionApprovalRoute === undefined ? {} : { decisionApprovalRoute }) }));
   mocks.list.mockImplementation(async () => ({ requests: [structuredClone(request)], nextCursor: null }));
   mocks.mutate.mockImplementation(async (_, input) => {
     if (input.draft) request = { ...request, ...input.draft };
@@ -109,7 +171,7 @@ it("requires a separate submission confirmation and an eligible non-self first a
   expect(mocks.mutate).not.toHaveBeenCalled();
   expect(within(dialog).queryByRole("option", { name: "Requester" })).not.toBeInTheDocument();
   expect(within(dialog).queryByRole("option", { name: "Removed approver" })).not.toBeInTheDocument();
-  expect(within(dialog).getByRole("button", { name: "Confirm submit" })).toBeDisabled();
+  expect(within(dialog).getByRole("button", { name: "Confirm submit" })).toBeEnabled();
   fireEvent.change(within(dialog).getByRole("combobox"), { target: { value: "manager" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Confirm submit" }));
   await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("hotel-a", { purchaseRequestId: "request-a", expectedRevision: 2, action: "submit", approverUid: "manager" }));
@@ -119,7 +181,7 @@ it("requires the next authorized person and does not offer previous approvers fo
   context.approvers.push({ uid: "manager", name: "Same manager", stepIds: ["finance"], limitMinor: 100000, eligible: true });
   render(tree()); fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
   const dialog = await screen.findByRole("dialog", { name: "Approve" });
-  expect(within(dialog).getByRole("button", { name: "Confirm approve" })).toBeDisabled();
+  expect(within(dialog).getByRole("button", { name: "Confirm approve" })).toBeEnabled();
   expect(within(dialog).queryByRole("option", { name: "Same manager" })).not.toBeInTheDocument();
   fireEvent.change(within(dialog).getByRole("combobox"), { target: { value: "finance" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Confirm approve" }));
@@ -190,7 +252,7 @@ it("offers the additional budget authority when current budget conditions requir
   render(tree()); fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
   const dialog = await screen.findByRole("dialog", { name: "Approve" });
   expect(within(dialog).getByLabelText("Next approver · Additional budget approval")).toBeInTheDocument();
-  expect(within(dialog).getByRole("button", { name: "Confirm approve" })).toBeDisabled();
+  expect(within(dialog).getByRole("button", { name: "Confirm approve" })).toBeEnabled();
   fireEvent.change(within(dialog).getByRole("combobox"), { target: { value: "director" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Confirm approve" }));
   await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("hotel-a", expect.objectContaining({ action: "approve", nextApproverUid: "director" })));
@@ -225,7 +287,7 @@ it("uses the verified escalated route and candidates even when the context conta
   render(tree());
   const progress = await screen.findByRole("region", { name: "Approval progress" });
   expect(progress).toHaveTextContent("Department manager will be escalated to Finance");
-  expect(progress).toHaveTextContent("The requester cannot approve their own request");
+  expect(progress).toHaveTextContent("The standard route requires an independent approver");
   expect(within(progress).getAllByRole("listitem")).toHaveLength(1);
   expect(progress).toHaveTextContent("1. Finance");
   fireEvent.click(screen.getByRole("button", { name: "Submit request" }));
@@ -258,7 +320,7 @@ it("does not replace an empty authoritative candidate list with candidates from 
   expect(screen.getByRole("alert")).toHaveTextContent("No eligible first approver is configured");
   expect(mocks.mutate).not.toHaveBeenCalled();
 });
-it("refreshes a changed approval route and requires a new selection and fingerprint before another submit", async () => {
+it("refreshes a changed approval route and automatically selects its sole candidate with the new fingerprint", async () => {
   submissionApprovalRoute = escalatedSubmissionRoute();
   mocks.mutate.mockRejectedValueOnce(new Error("The approval route changed. Refresh the request before submitting."));
   render(tree()); fireEvent.click(await screen.findByRole("button", { name: "Submit request" }));
@@ -272,8 +334,8 @@ it("refreshes a changed approval route and requires a new selection and fingerpr
   await waitFor(() => expect(screen.getByRole("button", { name: "Submit request" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Submit request" }));
   dialog = await screen.findByRole("dialog", { name: "Submit request" });
-  expect(within(dialog).getByLabelText("First approver · Department manager")).toHaveValue("");
-  expect(within(dialog).getByRole("button", { name: "Confirm submit" })).toBeDisabled();
+  expect(within(dialog).getByLabelText("First approver · Department manager")).toHaveValue("manager");
+  expect(within(dialog).getByRole("button", { name: "Confirm submit" })).toBeEnabled();
   fireEvent.change(within(dialog).getByLabelText("First approver · Department manager"), { target: { value: "manager" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Confirm submit" }));
   await waitFor(() => expect(mocks.mutate).toHaveBeenLastCalledWith("hotel-a", expect.objectContaining({ approverUid: "manager", expectedApprovalRouteFingerprint: "b".repeat(64) })));
