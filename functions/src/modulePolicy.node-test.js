@@ -68,12 +68,32 @@ test("purchase request roles separate requesting, approval and budget authority 
     assert.equal(legacy.permissions.includes("purchaserequests.approve"), false);
     assert.equal(legacy.permissions.includes("purchasebudgets.settings"), false);
   }
-  for (const action of ["submit", "approve", "cancel"]) {
+  for (const action of ["submit", "approve", "cancel", "selfapprove", "recover"]) {
     assert.equal(permissionAllows(["purchaserequests.*"], "purchaserequests", action), false);
     assert.equal(permissionAllows([`purchaserequests.${action}`], "purchaserequests", action), true);
   }
   assert.equal(permissionAllows(["purchasebudgets.*"], "purchasebudgets", "settings"), false);
   assert.equal(permissionAllows(["purchasebudgets.settings"], "purchasebudgets", "settings"), true);
+});
+test("recovery managers need explicit licensed authority without inheriting financial decisions", () => {
+  const { permissionAllows } = require("./authorization");
+  const recovery = compileMemberAccess({ moduleRoles: { procurement: ["purchase-recovery-manager"] } }, subscription);
+  assert.ok(recovery.permissions.includes("purchaserequests.recover"));
+  assert.ok(recovery.permissions.includes("purchaserequests.read"));
+  const orderRecovery = compileMemberAccess({ moduleRoles: { procurement: ["order-delivery-recovery-manager"] } }, subscription);
+  assert.deepEqual(orderRecovery.permissions, ["dashboard.read", "orders.read", "orders.recover"]);
+  for (const action of ["approve", "selfapprove", "submit", "cancel"]) assert.equal(permissionAllows(recovery.permissions, "purchaserequests", action), false);
+  for (const action of ["update", "settings"]) assert.equal(permissionAllows(recovery.permissions, "purchasebudgets", action), false);
+  for (const feature of ["purchaserequests", "orders"]) {
+    assert.equal(permissionAllows([`${feature}.*`, `${feature}.approve`], feature, "recover"), false);
+    assert.equal(permissionAllows([`${feature}.recover`], feature, "recover"), true);
+    assert.throws(() => compileMemberAccess({ additionalPermissions: [`${feature}.recover`] }, { ...subscription, modules: [] }), { code: "permission-denied" });
+  }
+  for (const role of ["module-manager", "purchase-approver", "budget-manager", "approver"]) {
+    const access = compileMemberAccess({ moduleRoles: { procurement: [role] } }, subscription);
+    assert.equal(access.permissions.some((key) => key.endsWith(".recover")), false);
+  }
+  assert.equal(compileMemberAccess({ hotelAdmin: true }, subscription).permissions.some((key) => key.endsWith(".recover")), false);
 });
 test("advanced grants and role selections cannot bypass subscriptions or grant user/platform administration", () => {
   for (const selection of [{ additionalPermissions: ["contracts.*"] }, { additionalPermissions: ["super.admin"] },

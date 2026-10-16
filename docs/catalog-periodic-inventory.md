@@ -127,6 +127,47 @@ duplicate evidence. A source-date or posting window exceeding 1,000 records fail
 explicitly instead of silently truncating; larger installations need a reviewed
 paged reconciliation extension.
 
+### Reviewing inventory exceptions
+
+Catalog count areas show a live, read-only **Physical counting cutoff** review.
+It identifies receipts, manual movements and overlapping completed counts by
+event ID, posting sequence, business date and frozen product quantities. A
+finished count also identifies subsequent movements with a business date on or
+before its count date. **Refresh count events** checks current evidence without
+changing entered quantities, the loaded draft revision or pending commands.
+Finalization checks the serialized location sequence again, so a posting after a
+screen refresh still leaves an explicit uncertain cutoff. The count summary
+keeps that warning visible after finishing.
+
+Inventory periods explain missing products, unknown costs, cutoff exceptions
+and late entries and link to the source count, order or exact manual movement.
+**Recheck current evidence** revalidates the existing interval's posting sequence
+and paired manual evidence, including when the calculated report was saved
+earlier. Saved quantities, costs and calculation timestamps remain immutable.
+The complete badge describes quantity evidence only; unknown monetary evidence
+is still shown separately as unavailable. There is no acknowledge/resolve
+command that marks uncertainty reliable.
+
+Stock readers can inspect the projection through `getHotelStockCountExceptions`;
+the callable rechecks current Auth, hotel membership, `stockcounts.read`, the
+procurement subscription and the release gate. Event reviews and follow-up links
+open a separate tab to preserve local draft edits. Source-order links require
+`orders.read`; receipt recording and reversal keep `orders.receive` and
+`orders.finalize`. Exact manual-event history requires `inventorymovements.read`;
+compensating reversals still require the explicit `inventorymovements.reverse`
+grant. The original and reversal link to each other, retaining their actor,
+reference, reason and frozen physical legs. A valid late event is retained;
+corrections are only for erroneous physical evidence.
+
+Users with `stockcounts.create` can start a separate Ad Hoc follow-up count with
+the original location selected and the prior count ID in its editable reason.
+Coordinate deliveries and movements for that new physical cutoff. A follow-up
+establishes a future baseline; it cannot repair a historical period or clear the
+old warning. Missing ledger evidence requires an inventory supervisor's source
+reconciliation, rather than an invented balancing movement. Review windows above
+1,000 events fail explicitly. These additions need the coordinated Functions and
+frontend release but no historical backfill, new inventory index or permission.
+
 Products, imports, carts, templates and count creation preserve exact pending
 requests across uncertain responses. Recovery controls replay the original actor,
 hotel, resource, input, revision and ID after remount. Completed import batches

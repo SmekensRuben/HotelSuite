@@ -45,6 +45,66 @@ it("recovers an uncertain self-approval with the exact reason and route instead 
   expect(mocks.call.mock.calls[1][0]).toEqual(original);
   expect(getPendingPurchaseRequestCommand("hotel-a", "request-a")).toBeNull();
 });
+it("retries reassignment after reload with its original approver, reason, reviewed route and command reference", async () => {
+  const reassignment = { purchaseRequestId: "request-a", expectedRevision: 2, action: "reassign", approverUid: "replacement-manager", reason: "The assigned approver is unavailable", expectedApprovalRouteFingerprint: "a".repeat(64) };
+  mocks.call.mockRejectedValueOnce(new Error("Response lost")).mockImplementation(success);
+  await expect(mutatePurchaseRequest("hotel-a", { ...reassignment, requestId: "reassign-command" })).rejects.toThrow("Response lost");
+  const original = mocks.call.mock.calls[0][0];
+  expect(original).toEqual({ ...reassignment, requestId: "reassign-command", hotelUid: "hotel-a" });
+  mocks.auth.currentUser = { uid: "requester" };
+  expect(getPendingPurchaseRequestCommand("hotel-a", "request-a")).toMatchObject({ requestId: "reassign-command", input: reassignment });
+  for (const change of [{ approverUid: "another-manager" }, { reason: "A different reason" }, { expectedRevision: 3 }, { expectedApprovalRouteFingerprint: "b".repeat(64) }]) {
+    await expect(mutatePurchaseRequest("hotel-a", { ...reassignment, ...change })).rejects.toThrow("previous result is uncertain");
+  }
+  await expect(mutatePurchaseRequest("hotel-a", { purchaseRequestId: "request-a", expectedRevision: 2, action: "recovercancel", reason: "No eligible replacement" })).rejects.toThrow("previous result is uncertain");
+  expect(mocks.call).toHaveBeenCalledTimes(1);
+  await retryPurchaseRequestCommand("hotel-a", "request-a");
+  expect(mocks.call.mock.calls[1][0]).toEqual(original);
+  expect(getPendingPurchaseRequestCommand("hotel-a", "request-a")).toBeNull();
+  await mutatePurchaseRequest("hotel-a", { purchaseRequestId: "request-a", expectedRevision: 3, action: "recovercancel", reason: "The replacement is also unavailable" });
+  expect(mocks.call).toHaveBeenCalledTimes(3);
+});
+it("retries recovery cancellation with its original reason, revision and command reference after a lost response", async () => {
+  const cancellation = { purchaseRequestId: "request-a", expectedRevision: 2, action: "recovercancel", reason: "No eligible approver remains" };
+  mocks.call.mockRejectedValueOnce(new Error("Response lost")).mockImplementation(success);
+  await expect(mutatePurchaseRequest("hotel-a", { ...cancellation, requestId: "cancel-command" })).rejects.toThrow("Response lost");
+  const original = mocks.call.mock.calls[0][0];
+  expect(original).toEqual({ ...cancellation, requestId: "cancel-command", hotelUid: "hotel-a" });
+  mocks.auth.currentUser = { uid: "requester" };
+  expect(getPendingPurchaseRequestCommand("hotel-a", "request-a")).toMatchObject({ requestId: "cancel-command", input: cancellation });
+  for (const change of [{ reason: "A different reason" }, { expectedRevision: 3 }, { action: "reassign", approverUid: "replacement-manager", expectedApprovalRouteFingerprint: "b".repeat(64) }]) {
+    await expect(mutatePurchaseRequest("hotel-a", { ...cancellation, ...change })).rejects.toThrow("previous result is uncertain");
+  }
+  expect(mocks.call).toHaveBeenCalledTimes(1);
+  await retryPurchaseRequestCommand("hotel-a", "request-a");
+  expect(mocks.call.mock.calls[1][0]).toEqual(original);
+  expect(getPendingPurchaseRequestCommand("hotel-a", "request-a")).toBeNull();
+});
+it.each(["reassign", "recovercancel"])("does not let %s replace an uncertain original submission", async (action) => {
+  mocks.call.mockRejectedValueOnce(new Error("Response lost")).mockImplementation(success);
+  await expect(mutatePurchaseRequest("hotel-a", input())).rejects.toThrow("Response lost");
+  const original = mocks.call.mock.calls[0][0];
+  await expect(mutatePurchaseRequest("hotel-a", { purchaseRequestId: "request-a", expectedRevision: 2, action, reason: "The assigned approver is unavailable", ...(action === "reassign" ? { approverUid: "replacement-manager", expectedApprovalRouteFingerprint: "a".repeat(64) } : {}) })).rejects.toThrow("previous result is uncertain");
+  expect(mocks.call).toHaveBeenCalledTimes(1);
+  expect(getPendingPurchaseRequestCommand("hotel-a", "request-a").input).toEqual(input());
+  await retryPurchaseRequestCommand("hotel-a", "request-a");
+  expect(mocks.call.mock.calls[1][0]).toEqual(original);
+});
+it.each(["reassign", "recovercancel"])("keeps an uncertain %s command isolated by actor, hotel and request", async (action) => {
+  const recovery = { purchaseRequestId: "request-a", expectedRevision: 2, action, reason: "The assigned approver is unavailable", ...(action === "reassign" ? { approverUid: "replacement-manager", expectedApprovalRouteFingerprint: "a".repeat(64) } : {}) };
+  mocks.call.mockRejectedValueOnce(new Error("Response lost")).mockImplementation(success);
+  await expect(mutatePurchaseRequest("hotel-a", recovery)).rejects.toThrow("Response lost");
+  const original = mocks.call.mock.calls[0][0];
+  await expect(retryPurchaseRequestCommand("hotel-b", "request-a")).rejects.toThrow("No uncertain purchase request command");
+  await expect(retryPurchaseRequestCommand("hotel-a", "request-b")).rejects.toThrow("No uncertain purchase request command");
+  mocks.auth.currentUser = { uid: "other-manager" };
+  await expect(retryPurchaseRequestCommand("hotel-a", "request-a")).rejects.toThrow("No uncertain purchase request command");
+  expect(mocks.call).toHaveBeenCalledTimes(1);
+  mocks.auth.currentUser = { uid: "requester" };
+  await retryPurchaseRequestCommand("hotel-a", "request-a");
+  expect(mocks.call.mock.calls[1][0]).toEqual(original);
+  expect(getPendingPurchaseRequestCommand("hotel-a", "request-a")).toBeNull();
+});
 it("recovers the original per-line suppliers and quotations after an uncertain draft save", async () => {
   const saved = { purchaseRequestId: "request-a", expectedRevision: 2, action: "save", draft: { lines: [
     { id: "repair", kind: "free", supplierId: "supplier-a", description: "Repair", quantity: "1", unitPrice: "100", unit: "service" },

@@ -17,7 +17,7 @@ const { createOrdersFromCartHandler, updateOrderHandler, confirmOrderHandler } =
 const { mutateHotelStockTemplateHandler } = require("../../functions/src/stockTemplates");
 const { createHotelStockCountHandler, mutateHotelStockCountHandler, listHotelStockCountSourcesHandler } = require("../../functions/src/stockCounts");
 const { recordHotelOrderReceiptHandler, reverseHotelOrderReceiptHandler } = require("../../functions/src/orderReceiving");
-const { getHotelInventoryPeriodHandler } = require("../../functions/src/inventoryReports");
+const { getHotelInventoryPeriodHandler, getHotelStockCountExceptionsHandler } = require("../../functions/src/inventoryReports");
 const { getHotelInventoryCostProposalHandler } = require("../../functions/src/inventoryCostProposals");
 const { requireHotelImportTarget } = require("../../functions/src/fileImportTypes");
 const db = admin.firestore(), auth = admin.auth();
@@ -87,6 +87,26 @@ beforeEach(async () => {
 after(async () => environment.cleanup());
 
 describe("catalog products and periodic inventory acceptance with real ordinary-hotel identity", () => {
+  it("projects receipts during and after a count without permitting acknowledgement, reopening or cross-hotel access", async () => {
+    await frozenOrder();
+    const created = await createHotelStockCountHandler(request({ hotelUid: "hotel-a", type: "Ad Hoc", requestId: next(), businessDate: "2026-10-12", locations: [{ locationId: "store", stockTemplateId: "weekly" }] }), services);
+    const input = { hotelUid: "hotel-a", stockCountId: created.stockCountId, locationId: "store" };
+    await receipt({ receivedOn: "2026-10-12" });
+    const during = await getHotelStockCountExceptionsHandler(request(input), services);
+    assert.equal(during.finished, false); assert.equal(during.issues[0].code, "postings-during-count");
+    assert.equal(during.issues[0].evidence[0].orderId, "receipt-order");
+    await mutateHotelStockCountHandler(request({ ...input, expectedRevision: 0, action: "finish-location", countedItems: [{ catalogProductId: "water", quantity: 30, isCounted: true, unitCost: null }] }), services);
+    await mutateHotelStockCountHandler(request({ hotelUid: "hotel-a", stockCountId: created.stockCountId, expectedRevision: 1, action: "finish-count" }), services);
+    const before = (await db.doc(`hotels/hotel-a/stockCounts/${created.stockCountId}/locations/store`).get()).data();
+    await receipt({ expectedRevision: 2, receivedOn: "2026-10-12" });
+    const after = await getHotelStockCountExceptionsHandler(request(input), services);
+    assert.equal(after.finished, true); assert.ok(after.issues.some((issue) => issue.code === "late-posting-after-closing"));
+    assert.deepEqual((await db.doc(`hotels/hotel-a/stockCounts/${created.stockCountId}/locations/store`).get()).data(), before);
+    await rejected(getHotelStockCountExceptionsHandler(request({ ...input, acknowledge: true }), services), "invalid-argument");
+    await rejected(getHotelStockCountExceptionsHandler(request(input, outsider), services), "permission-denied");
+    await rejected(getHotelStockCountExceptionsHandler(request({ ...input, hotelUid: "hotel-b" }), services), "permission-denied");
+    await assertFails(updateDoc(doc(client(), `hotels/hotel-a/stockCounts/${created.stockCountId}/locations/store`), { status: "In Progress", coverageIssues: [] }));
+  });
   it("supplier brands use protected hotel commands, preserve omitted values and cannot be written by another hotel or browser", async () => {
     const created = await offerCommand({ product: offer({ brand: "Local Water" }) });
     const ref = db.doc(`hotels/hotel-a/supplierproducts/${created.productId}`);

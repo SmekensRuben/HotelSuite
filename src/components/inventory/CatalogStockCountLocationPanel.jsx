@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import StockCountPackageEntry from "./StockCountPackageEntry";
 import StockCountBarcodeScanner from "./StockCountBarcodeScanner";
 import InventoryCostProposal from "./InventoryCostProposal";
+import StockCountExceptionReview from "./StockCountExceptionReview";
 import { Card } from "../layout/Card";
 import { auth } from "../../firebaseConfig";
 import { usePermission } from "../../hooks/usePermission";
@@ -159,6 +160,7 @@ export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, l
       <p className="mt-1 text-sm text-slate-600">Enter quantities in the displayed unit. Leave forgotten articles blank; enter 0 only when you checked and found none.</p></div>
       <p className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-medium" aria-live="polite">{counted} / {rows.length} counted · {uncounted} not counted</p></div>
     <p className="text-xs text-slate-500">{stockCount.businessDate || "Business date unavailable"} · {location.stockTemplate?.id || location.stockTemplateId ? `Template: ${location.stockTemplate?.name || location.stockTemplateName || "Selected template"}` : "No template required"}</p>
+    <StockCountExceptionReview hotelUid={hotelUid} stockCountId={stockCount.id} locationId={location.locationId} revision={stockCount.revision} />
     <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
       <div className="flex flex-wrap items-end gap-2"><label className="min-w-0 flex-1 text-sm font-medium">Find products<input ref={searchInput} type="search" aria-label="Find products" placeholder="Search product names" autoComplete="off" maxLength="200" value={search} disabled={saving} className="ht-field mt-1 min-h-[44px] w-full" onChange={(event) => { setSearch(event.target.value); setBarcode(""); setScanMessage(""); }} /></label>
         {canUpdate && !finished && <><button type="button" className="ht-button-secondary min-h-[44px]" disabled={saving} onClick={() => { setAdding((value) => !value); setBarcode(""); }}>Add product</button><button type="button" className="ht-button-secondary min-h-[44px]" disabled={saving} onClick={() => setScannerOpen((value) => !value)}>Scan barcode</button></>}</div>

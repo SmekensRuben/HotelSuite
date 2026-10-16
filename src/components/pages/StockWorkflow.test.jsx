@@ -37,6 +37,7 @@ const chooseCombo = async (label, option) => {
 };
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 beforeEach(() => {
+  window.history.replaceState({}, "", "/");
   vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.permissions = ["stockcounts.read", "stockcounts.update", "stockcounts.create"];
   mocks.getCount.mockResolvedValue(count()); mocks.sources.mockResolvedValue([{ locationId: "store", locationName: "Store", templates: [{ id: "template", name: "Weekly" }] }]);
   mocks.catalog.mockRejectedValue(new Error("Catalog denied"));
@@ -47,6 +48,19 @@ beforeEach(() => {
   mocks.save.mockResolvedValue({ revision: 8 }); mocks.finish.mockResolvedValue({ revision: 8 }); mocks.finishParent.mockResolvedValue({ revision: 8 }); mocks.create.mockResolvedValue({ id: "new-stock" });
 });
 describe("normal stock role workflow", () => {
+  it("starts a separate follow-up at the original location and retains its reference in the reason", async () => {
+    window.history.replaceState({}, "", "/catalog/stock-counts/new?hotelUid=hotel-a&locationId=fridge&recountOf=previous-count");
+    mocks.sources.mockResolvedValue([{ outletId: "bar", outletName: "Bar", locationId: "outlet:bar", locationName: "Bar", isOutletDefault: true, templates: [] },
+      { outletId: "bar", outletName: "Bar", locationId: "fridge", locationName: "Fridge", templates: [] },
+      { outletId: "bar", outletName: "Bar", locationId: "shelf", locationName: "Shelf", templates: [] }]);
+    render(<StockCountCreatePage />); await screen.findByText("Fridge");
+    expect(screen.getByLabelText("Count separate locations")).toBeChecked();
+    expect(screen.getByLabelText("Fridge")).toBeChecked(); expect(screen.getByLabelText("Shelf")).not.toBeChecked();
+    expect(screen.getByLabelText("Reason (optional)")).toHaveValue("Follow-up to count previous-count: review the physical cutoff and record new quantities.");
+    fireEvent.click(screen.getByRole("button", { name: "Start counting" }));
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith("hotel-a", { type: "Ad Hoc", reason: expect.stringContaining("previous-count"), locations: [{ outletId: "bar", locationId: "fridge" }] }));
+    expect(mocks.save).not.toHaveBeenCalled(); expect(mocks.finish).not.toHaveBeenCalled();
+  });
   it("loads and saves snapshot rows without catalog/outlet access and preserves loaded revision", async () => {
     render(<StockCountLocationPage />);
     await screen.findByText("Coffee");

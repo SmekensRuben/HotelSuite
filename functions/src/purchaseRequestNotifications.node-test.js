@@ -146,6 +146,54 @@ test("requester outcomes send only to current requester with request read access
   }
 });
 
+test("reassignment informs the new approver and involved active members without notifying departed members", async () => {
+  const f = fixture(), current = f.db.records.get(requestPath);
+  current.lastRecovery = { action: "reassign", actorUid: "recovery", actorName: "Recovery Manager", fromApproverUid: "former", fromApproverName: "Former Approver", toApproverUid: "approver" };
+  current.lastDecisionReason = "The former approver left the hotel.";
+  f.db.records.set(`hotels/${hotelUid}/members/recovery`, { permissions: ["purchaserequests.read", "purchaserequests.recover"] });
+  f.users.recovery = { uid: "recovery", email: "recovery@example.test", emailVerified: true };
+  let ids;
+  await f.db.runTransaction(async (tx) => { ids = queuePurchaseRequestNotification(tx, { db: f.db, hotelUid, requestId: "reassign-command", request: current, event: "reassign", revision: 2 }); });
+  assert.equal(ids.length, 4);
+  const payloads = new Map();
+  for (const id of ids) {
+    const mail = f.db.records.get(`hotels/${hotelUid}/mailQueue/${id}`);
+    payloads.set(mail.recipientUid, await resolve(f, mail));
+  }
+  assert.equal(payloads.get("former"), null);
+  assert.match(payloads.get("approver").subject, /awaiting your approval/);
+  assert.match(payloads.get("requester").subject, /responsibility reassigned/);
+  assert.match(payloads.get("recovery").text, /Current responsible approver: approver/);
+  assert.match(payloads.get("recovery").text, /Previous approver: Former Approver/);
+  assert.match(payloads.get("requester").text, /former approver left/);
+  assert.equal(await resolve(f, envelope({ event: "reassign", recipientUid: "unrelated" })), null);
+  f.db.records.get(`hotels/${hotelUid}/members/approver`).permissions = ["purchaserequests.read"];
+  assert.equal(await resolve(f, envelope({ event: "reassign" })), null, "a reassigned approval email still needs current approval permission");
+  current.revision += 1;
+  assert.equal(await resolve(f, envelope({ event: "reassign", recipientUid: "recovery" })), null, "a later decision supersedes the queued responsibility update");
+});
+test("orphan cancellation reaches the recovery manager while departed requester and approver remain suppressed", async () => {
+  const f = fixture(), current = f.db.records.get(requestPath);
+  Object.assign(current, { status: "canceled", currentApproverUid: null, lastRecovery: { action: "recovercancel", actorUid: "recovery", actorName: "Recovery Manager", fromApproverUid: "approver" } });
+  f.db.records.delete(`hotels/${hotelUid}/members/requester`); f.db.records.delete(`hotels/${hotelUid}/members/approver`);
+  f.db.records.set(`hotels/${hotelUid}/members/recovery`, { permissions: ["purchaserequests.read", "purchaserequests.recover"] });
+  f.users.recovery = { uid: "recovery", email: "recovery@example.test", emailVerified: true };
+  const payload = await resolve(f, envelope({ event: "recovercancel", recipientUid: "recovery" }));
+  assert.deepEqual(payload.to, ["recovery@example.test"]); assert.match(payload.text, /pending budget reservation has been released/);
+  assert.equal(await resolve(f, envelope({ event: "recovercancel", recipientUid: "requester" })), null);
+  assert.equal(await resolve(f, envelope({ event: "recovercancel", recipientUid: "approver" })), null);
+});
+test("an explicitly authorized recovery manager can retry only a current provably unattempted notification", async () => {
+  const f = fixture({ [`hotels/${hotelUid}/mailQueue/failed`]: envelope({ status: "failed", externalAttempt: false }) });
+  f.db.records.set(`hotels/${hotelUid}/members/recovery`, { permissions: ["purchaserequests.read", "purchaserequests.recover"] });
+  f.users.recovery = { uid: "recovery", email: "recovery@example.test", emailVerified: true };
+  assert.equal((await readHotelPurchaseRequestNotificationsHandler(actor({ purchaseRequestId: id }, "recovery"), f.services)).notifications[0].canRetry, true);
+  const result = await retryPurchaseRequestNotificationHandler(actor({ mailId: "failed" }, "recovery"), f.services);
+  assert.equal(result.status, "queued");
+  f.db.records.get(`hotels/${hotelUid}/members/recovery`).permissions = ["purchaserequests.*"];
+  await assert.rejects(retryPurchaseRequestNotificationHandler(actor({ mailId: "failed" }, "recovery"), f.services), { code: "permission-denied" });
+});
+
 test("mail worker sends one current notification with provider idempotency and rechecks before transport", async () => {
   const f = fixture(); await process(f); await process(f);
   assert.equal(f.sent.length, 1); assert.deepEqual(f.sent[0].payload.to, ["current@example.test"]);

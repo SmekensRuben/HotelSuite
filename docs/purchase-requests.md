@@ -159,6 +159,61 @@ New request and budget data is hotel-scoped. The canonical records are `hotels/{
 
 Deployment and actual Resend delivery require the normal environment release process; local tests do not configure production credentials or certify external inbox delivery.
 
+## Exception recovery
+
+Assign the **Purchase Recovery Manager** hotel role, or explicitly grant
+`purchaserequests.read` and `purchaserequests.recover`, to the people responsible
+for abandoned or blocked requests. A wildcard, ordinary approver role or budget
+settings permission does not grant recovery authority. This role does not grant
+approval, self-approval, requester editing or budget-setting rights.
+
+Open a request's **Exception recovery** section. **Reassign approver** is available
+for pending steps. Refresh the checked recovery route, select an eligible
+replacement and enter the required reason. The replacement can cover an absence
+even if the original approver still has access; a lost account or membership does
+not need to be restored first. The server checks current hotel membership, active
+verified account, read and approval rights, department assignments or explicit
+substitutes, and the financial limit for the entire request. It also checks that
+different eligible people can still complete all remaining controls. The
+requester and anyone who already approved this version cannot be replacements.
+
+Reassignment changes responsibility for the current step. It retains earlier
+approvals, the frozen required steps, independent controls following explicit
+self-approval and any required additional budget approval. A newly necessary
+additional budget control is included. Reassignment never records an approval or
+changes the reserved amount. If the current budget policy blocks an overrun, the
+replacement still cannot approve until a budget manager resolves it. An
+unavailable mandatory control is explained; configure a valid substitute or
+cancel the abandoned request instead of skipping the control.
+
+**Cancel for recovery** closes a pending or returned request, including one whose
+requester and approver both left the hotel. Enter why the request cannot proceed.
+Cancellation releases its actual pending reservation in the same transaction,
+including the old submitted amount when an edited returned draft has a different
+total. Recovery cannot cancel approved commitments; those retain the existing
+requester cancellation workflow.
+
+The summary identifies the current responsible person. The timeline keeps the
+original assignment, each transfer, actor, time and required reason, alongside
+immutable submitted versions and earlier approvals. Recovery notifications are
+queued for the requester, previous and new approver where applicable, and the
+recovery manager. Delivery rechecks current membership, verified account and read
+access; approval notifications additionally recheck approval authority. Departed
+users receive no request details. A newer revision supersedes an old queued
+responsibility update. Recovery managers can also retry current notification
+failures only when no provider attempt occurred.
+
+Concurrent approvals, cancellations and reassignments compete for the same
+request revision. Only one can commit; the other user must refresh. If a response
+is lost, **Recover original action** reuses its original command and receipt,
+without a second transfer, reservation release or set of notifications.
+
+No data migration is required. Existing pending routes and historic snapshots
+are preserved. Release the updated Functions, generated Firestore Rules and
+frontend together through the normal release process, then explicitly assign
+the recovery role to the intended hotel members. Recovery actions remain hidden
+from members without that grant.
+
 ## Current limits and future integrations
 
 - Up to eight ordered approval steps; each step needs a different authorized person. This is a deliberate simple sequence with optional amount thresholds rather than a general workflow builder.

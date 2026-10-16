@@ -38,6 +38,19 @@ function checkpoint(db, id, locationId, quantity, date, cost = 2.5) {
 }
 const report = (db, locationId = "store", version = 2) => getHotelInventoryPeriodHandler(request({ hotelUid: HOTEL, locationId,
   openingStockCountId: "opening", closingStockCountId: "closing", reportPolicyVersion: version }), services(db));
+test("exception links review one original or compensating movement with current read authority and hotel isolation", async () => {
+  const db = fixture(), original = await record(db), reversal = await reverse(db, original.adjustmentId);
+  const read = (adjustmentId, hotelUid = HOTEL) => listHandler(request({ hotelUid, adjustmentId }), services(db));
+  const originalView = await read(original.adjustmentId);
+  assert.equal(originalView.requestedAdjustmentId, original.adjustmentId); assert.equal(originalView.nextCursor, null);
+  assert.equal(originalView.adjustments.length, 1); assert.equal(originalView.adjustments[0].reversedByAdjustmentId, reversal.reversalAdjustmentId);
+  assert.equal((await read(reversal.reversalAdjustmentId)).adjustments[0].originalAdjustmentId, original.adjustmentId);
+  await assert.rejects(read(original.adjustmentId, "hotel-b"), { code: "permission-denied" });
+  await assert.rejects(read("missing"), { code: "not-found" });
+  await assert.rejects(listHandler(request({ hotelUid: HOTEL, adjustmentId: original.adjustmentId, afterAdjustmentId: original.adjustmentId }), services(db)), { code: "invalid-argument" });
+  db.records.set(`hotels/${HOTEL}/members/operator`, { permissions: ["inventorymovements.create"] });
+  await assert.rejects(read(original.adjustmentId), { code: "permission-denied" });
+});
 async function receipt(db, quantity = 10, netValue = 25) {
   return db.runTransaction(async (tx) => {
     const entry = await movements.prepareReceiptMovement(db, tx, { hotelUid: HOTEL, locationId: "store", movementId: "receipt-1", orderId: "order-1",

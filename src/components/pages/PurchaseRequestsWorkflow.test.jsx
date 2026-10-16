@@ -15,13 +15,121 @@ import PurchaseRequestsPage from "./PurchaseRequestsPage";
 import PurchaseRequestFormPage from "./PurchaseRequestFormPage";
 import PurchaseRequestDetailPage from "./PurchaseRequestDetailPage";
 
-let request, context, budget, history, submissionApprovalRoute, selfApprovalRoute, decisionApprovalRoute;
+let request, context, budget, history, submissionApprovalRoute, selfApprovalRoute, decisionApprovalRoute, recoveryApprovalRoute;
 const routeFingerprint = "a".repeat(64);
 const firstStepEscalation = { reason: "requester-only-first-step", fromStepId: "manager", fromStepName: "Department manager", toStepId: "finance", toStepName: "Finance", settingsRevision: 4 };
 const escalatedSubmissionRoute = () => ({ steps: [{ id: "finance", name: "Finance" }], approvers: [{ uid: "finance", name: "Robin Finance" }], escalation: firstStepEscalation, error: null, fingerprint: routeFingerprint });
 function Location() { const location = useLocation(); return <output data-testid="location">{location.pathname}</output>; }
 function tree(path = "/purchase-requests/request-a") { return <MemoryRouter initialEntries={[path]}><Location /><Routes><Route path="/purchase-requests" element={<PurchaseRequestsPage />} /><Route path="/purchase-requests/new" element={<PurchaseRequestFormPage />} /><Route path="/purchase-requests/:purchaseRequestId" element={<PurchaseRequestDetailPage />} /><Route path="/purchase-requests/:purchaseRequestId/edit" element={<PurchaseRequestFormPage />} /></Routes></MemoryRouter>; }
 const checkedRoute = (steps = [], candidates = []) => ({ steps, approvers: candidates.map(({ uid, name }) => ({ uid, name })), plan: steps.map((step) => ({ ...step, candidates })), error: null, escalation: null, fingerprint: routeFingerprint });
+
+function enableRecovery(status = "pending") {
+  mocks.auth.currentUser = { uid: "administrator" };
+  mocks.permissions = ["purchaserequests.read", "purchaserequests.recover"];
+  Object.assign(request, { status, currentApproverUid: status === "pending" ? "manager" : null, currentApproverName: status === "pending" ? "Alex Manager" : null, approvalSteps: [{ id: "manager", name: "Department manager" }], reservation: { state: "pending", amountMinor: 15000 } });
+  recoveryApprovalRoute = checkedRoute(request.approvalSteps, [{ uid: "substitute", name: "Dana Substitute", kind: "substitute" }]);
+}
+it("reassigns only through the verified recovery route and requires an explanation", async () => {
+  enableRecovery();
+  render(tree()); fireEvent.click(await screen.findByRole("button", { name: "Reassign approver" }));
+  const dialog = await screen.findByRole("dialog", { name: "Reassign approver" });
+  expect(dialog).toHaveTextContent("Currently assigned to Alex Manager");
+  expect(dialog).toHaveTextContent("Designated substitute");
+  expect(within(dialog).getByLabelText("Replacement approver · Department manager")).toHaveValue("substitute");
+  expect(within(dialog).queryByRole("option", { name: "Alex Manager" })).not.toBeInTheDocument();
+  const confirm = within(dialog).getByRole("button", { name: "Confirm reassignment" });
+  expect(confirm).toBeDisabled();
+  fireEvent.change(within(dialog).getByLabelText("Decision note (required)"), { target: { value: "   " } });
+  expect(confirm).toBeDisabled();
+  fireEvent.change(within(dialog).getByLabelText("Decision note (required)"), { target: { value: "  Current approver is on leave  " } });
+  fireEvent.click(confirm);
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("hotel-a", { purchaseRequestId: "request-a", expectedRevision: 2, action: "reassign", approverUid: "substitute", reason: "Current approver is on leave", expectedApprovalRouteFingerprint: routeFingerprint }));
+});
+it("retains a real replacement choice when several authorized people can complete the route", async () => {
+  enableRecovery();
+  recoveryApprovalRoute = checkedRoute(request.approvalSteps, [{ uid: "substitute", name: "Dana Substitute" }, { uid: "finance", name: "Robin Finance" }]);
+  render(tree()); fireEvent.click(await screen.findByRole("button", { name: "Reassign approver" }));
+  const dialog = await screen.findByRole("dialog", { name: "Reassign approver" });
+  expect(within(dialog).getByLabelText("Replacement approver · Department manager")).toHaveValue("");
+  fireEvent.change(within(dialog).getByLabelText("Decision note (required)"), { target: { value: "Cover planned absence" } });
+  const confirm = within(dialog).getByRole("button", { name: "Confirm reassignment" }); expect(confirm).toBeDisabled();
+  fireEvent.change(within(dialog).getByLabelText("Replacement approver · Department manager"), { target: { value: "finance" } });
+  fireEvent.click(confirm);
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("hotel-a", expect.objectContaining({ action: "reassign", approverUid: "finance" })));
+});
+it.each(["pending", "returned"])("requires a recovery cancellation reason for a %s request without owner privileges", async (status) => {
+  enableRecovery(status);
+  render(tree()); fireEvent.click(await screen.findByRole("button", { name: "Cancel for recovery" }));
+  const dialog = await screen.findByRole("dialog", { name: "Cancel for recovery" });
+  expect(dialog).toHaveTextContent("release its held budget reservation");
+  expect(within(dialog).queryByRole("combobox")).not.toBeInTheDocument();
+  const confirm = within(dialog).getByRole("button", { name: "Confirm recovery cancellation" }); expect(confirm).toBeDisabled();
+  fireEvent.change(within(dialog).getByLabelText("Decision note (required)"), { target: { value: "The original requester has left the hotel" } });
+  fireEvent.click(confirm);
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("hotel-a", { purchaseRequestId: "request-a", expectedRevision: 2, action: "recovercancel", reason: "The original requester has left the hotel" }));
+});
+it("keeps recovery cancellation available when the remaining approval route is blocked", async () => {
+  enableRecovery(); recoveryApprovalRoute = { ...checkedRoute(), error: { message: "No independent budget authority remains." }, fingerprint: null };
+  render(tree()); expect(await screen.findByRole("button", { name: "Reassign approver" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Cancel for recovery" })).toBeEnabled();
+  expect(screen.getByRole("region", { name: "Exception recovery" })).toHaveTextContent("No independent budget authority remains.");
+  expect(mocks.mutate).not.toHaveBeenCalled();
+});
+it("requires an authoritative recovery route instead of falling back to general approver settings", async () => {
+  enableRecovery(); recoveryApprovalRoute = undefined;
+  render(tree()); expect(await screen.findByRole("button", { name: "Reassign approver" })).toBeDisabled();
+  expect(screen.getByText("The recovery approval route could not be verified. Refresh the request before reassigning.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Cancel for recovery" })).toBeEnabled();
+});
+it("blocks a no-op reassignment and never selects the requester or a completed approver", async () => {
+  enableRecovery(); request.approvals = [{ approverUid: "finance", stepId: "finance" }];
+  recoveryApprovalRoute = checkedRoute(request.approvalSteps, [{ uid: "manager", name: "Alex Manager" }, { uid: "requester", name: "Sam Requester" }, { uid: "finance", name: "Robin Finance" }]);
+  render(tree()); expect(await screen.findByRole("button", { name: "Reassign approver" })).toBeDisabled();
+  expect(screen.getByText("No different eligible approver can complete the required route. Review the approval settings or cancel this request with a recovery reason.")).toBeInTheDocument();
+});
+it("ordinary decision and cancellation permissions do not expose recovery actions", async () => {
+  request.status = "pending"; request.currentApproverUid = "manager";
+  recoveryApprovalRoute = checkedRoute([{ id: "manager", name: "Department manager" }], [{ uid: "substitute", name: "Dana Substitute" }]);
+  render(tree()); await screen.findByRole("heading", { name: "Replacement plates" });
+  expect(screen.queryByRole("button", { name: "Reassign approver" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Cancel for recovery" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Exception recovery" })).not.toBeInTheDocument();
+});
+it.each(["draft", "approved", "rejected", "canceled", "withdrawn"])("does not expose exception recovery on a %s request", async (status) => {
+  enableRecovery(status); render(tree()); await screen.findByRole("heading", { name: "Replacement plates" });
+  expect(screen.queryByRole("button", { name: "Reassign approver" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Cancel for recovery" })).not.toBeInTheDocument();
+});
+it("shows returned request ownership and only permits recovery cancellation", async () => {
+  enableRecovery("returned"); render(tree()); await screen.findByRole("heading", { name: "Replacement plates" });
+  expect(screen.getByRole("region", { name: "Approval progress" })).toHaveTextContent("Responsible for changes: Sam Requester");
+  expect(screen.queryByRole("button", { name: "Reassign approver" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Cancel for recovery" })).toBeEnabled();
+});
+it("preserves original-command recovery before permitting administrative recovery actions", async () => {
+  enableRecovery(); mocks.pending.mockReturnValue({ requestId: "original", input: { action: "reassign", approverUid: "substitute" } });
+  mocks.recover.mockImplementation(async () => { mocks.pending.mockReturnValue(null); return { request, budget }; });
+  render(tree()); expect(await screen.findByRole("button", { name: "Reassign approver" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Cancel for recovery" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Recover original action" }));
+  await waitFor(() => expect(mocks.recover).toHaveBeenCalledWith("hotel-a", "request-a"));
+  expect(mocks.mutate).not.toHaveBeenCalled();
+});
+it("shows original assignment, responsible replacement and recovery reason in immutable history", async () => {
+  enableRecovery();
+  const original = structuredClone(request);
+  request.currentApproverUid = "substitute"; request.currentApproverName = "Dana Substitute"; request.revision = 3;
+  request.lastRecovery = { action: "reassign", actorUid: "administrator", actorName: "Lee Administrator", reason: "Current approver is on leave", recoveredAtMillis: 1792051200000, stepId: "manager", stepName: "Department manager", fromApproverUid: "manager", fromApproverName: "Alex Manager", toApproverUid: "substitute", toApproverName: "Dana Substitute", settingsRevision: 4 };
+  history = [{ revision: 2, event: "submit", actorName: "Sam Requester", snapshot: original }, { revision: 3, event: "reassign", actorName: "Lee Administrator", snapshot: structuredClone(request) }];
+  render(tree()); await screen.findByRole("heading", { name: "Replacement plates" });
+  expect(screen.getByRole("region", { name: "Approval progress" })).toHaveTextContent("Current responsibility: Department manager · Dana Substitute");
+  const timeline = screen.getByRole("region", { name: "Request timeline" });
+  expect(timeline).toHaveTextContent("Originally assigned to Alex Manager");
+  expect(timeline).toHaveTextContent("Approver reassigned · Version 3");
+  expect(timeline).toHaveTextContent("Department manager: Alex Manager → Dana Substitute");
+  expect(timeline).toHaveTextContent("Current approver is on leave");
+  expect(timeline).toHaveTextContent("Lee Administrator");
+});
 
 it("uses server-filtered full-route candidates and keeps a real choice when several people remain", async () => {
   submissionApprovalRoute = checkedRoute([{ id: "manager", name: "Department manager" }], [{ uid: "manager", name: "Alex Manager", kind: "standard" }, { uid: "finance", name: "Robin Finance", kind: "substitute" }]);
@@ -89,10 +197,10 @@ beforeEach(() => {
   budget = { exists: true, id: "2026-10__chinaware", month: "2026-10", categoryId: "chinaware", budgetMinor: 50000, openingUsedMinor: 0, pendingMinor: 0, committedMinor: 30000, remainingMinor: 20000 };
   request = { id: "request-a", hotelUid: "hotel-a", revision: 2, status: "draft", requesterUid: "requester", requesterName: "Sam Requester", currency: "EUR", supplierId: "supplier", supplier: { id: "supplier", name: "Hotel Supplies" }, title: "Replacement plates", description: "Replace damaged dinner plates", motivation: "Maintain enough plates for dinner service", costCentreId: "restaurant", costCentreName: "Restaurant", budgetCategoryId: "chinaware", budgetCategoryName: "Chinaware", budgetMonth: "2026-10", totalMinor: 15000, lines: [{ id: "line-a", kind: "free", description: "Dinner plates", quantity: 10, unitPrice: 15, unit: "each", lineTotalMinor: 15000 }], attachmentIds: [], attachments: [], approvals: [], approvalSteps: [], currentStepIndex: 0, reservation: { state: "none", amountMinor: 0 } };
   history = [{ revision: 2, event: "save", actorName: "Sam Requester", createdAtMillis: 1792051200000, snapshot: structuredClone(request) }];
-  submissionApprovalRoute = undefined; selfApprovalRoute = undefined; decisionApprovalRoute = undefined;
+  submissionApprovalRoute = undefined; selfApprovalRoute = undefined; decisionApprovalRoute = undefined; recoveryApprovalRoute = undefined;
   mocks.pending.mockReturnValue(null);
   mocks.context.mockImplementation(async (_, options = {}) => structuredClone({ ...context, ...(options.budgetMonth && options.budgetCategoryId ? { budget } : {}) }));
-  mocks.detail.mockImplementation(async () => structuredClone({ request, history, budget, ...(submissionApprovalRoute === undefined ? {} : { submissionApprovalRoute }), ...(selfApprovalRoute === undefined ? {} : { selfApprovalRoute }), ...(decisionApprovalRoute === undefined ? {} : { decisionApprovalRoute }) }));
+  mocks.detail.mockImplementation(async () => structuredClone({ request, history, budget, ...(submissionApprovalRoute === undefined ? {} : { submissionApprovalRoute }), ...(selfApprovalRoute === undefined ? {} : { selfApprovalRoute }), ...(decisionApprovalRoute === undefined ? {} : { decisionApprovalRoute }), ...(recoveryApprovalRoute === undefined ? {} : { recoveryApprovalRoute }) }));
   mocks.list.mockImplementation(async () => ({ requests: [structuredClone(request)], nextCursor: null }));
   mocks.mutate.mockImplementation(async (_, input) => {
     if (input.draft) request = { ...request, ...input.draft };

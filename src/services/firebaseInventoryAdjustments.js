@@ -101,11 +101,12 @@ export async function getInventoryAdjustmentChoices(hotelUid, kind, afterId = nu
     return data;
   });
 }
-export async function getInventoryAdjustments(hotelUid, afterAdjustmentId = null) {
+export async function getInventoryAdjustments(hotelUid, afterAdjustmentId = null, adjustmentId = null) {
   requireHotel(hotelUid);
   if (afterAdjustmentId !== null && !identifier(afterAdjustmentId)) throw new Error("Invalid movement history cursor.");
-  return poolProcurementRead(hotelUid, `movement-history:${afterAdjustmentId || "first"}`, async () => {
-    const { data } = await httpsCallable(functions, "listHotelInventoryAdjustments")({ hotelUid, afterAdjustmentId });
+  if (adjustmentId !== null && (!identifier(adjustmentId) || afterAdjustmentId !== null)) throw new Error("Invalid movement review reference.");
+  return poolProcurementRead(hotelUid, `movement-history:${afterAdjustmentId || "first"}:${adjustmentId || "all"}`, async () => {
+    const { data } = await httpsCallable(functions, "listHotelInventoryAdjustments")({ hotelUid, afterAdjustmentId, ...(adjustmentId ? { adjustmentId } : {}) });
     if (data?.hotelUid !== hotelUid || data.inventoryAdjustmentPolicyVersion !== 1 || !Array.isArray(data.adjustments) || data.adjustments.length > 50
       || data.adjustments.some((event) => !identifier(event.adjustmentId) || ![...kinds, "reversal"].includes(event.kind)
         || !businessDate(event.businessDate) || !identifier(event.catalogProductId) || !units.includes(event.baseUnit)
@@ -114,7 +115,8 @@ export async function getInventoryAdjustments(hotelUid, afterAdjustmentId = null
         || event.netValue !== null && (typeof event.netValue !== "number" || !Number.isFinite(event.netValue) || event.netValue < 0)
         || !nullableCurrency(event.currency) || event.netUnitCost !== null && !decimal(event.netUnitCost)
         || event.postedAtMillis !== null && !Number.isFinite(event.postedAtMillis))
-      || !(data.nextCursor === null || identifier(data.nextCursor)) || afterAdjustmentId !== null && data.nextCursor === afterAdjustmentId) {
+      || !(data.nextCursor === null || identifier(data.nextCursor)) || afterAdjustmentId !== null && data.nextCursor === afterAdjustmentId
+      || adjustmentId && (data.requestedAdjustmentId !== adjustmentId || data.adjustments.length !== 1 || data.adjustments[0].adjustmentId !== adjustmentId || data.nextCursor !== null)) {
       throw new Error("Movement history response scope, policy or pagination is invalid.");
     }
     return data;

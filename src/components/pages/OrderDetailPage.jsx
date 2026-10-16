@@ -9,7 +9,7 @@ import { frozenStockContent } from "../orders/orderInventoryDisplay";
 import { useTranslation } from "react-i18next";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { deleteOrder, getOrderById, confirmOrder, reviewOrderDelivery } from "../../services/firebaseOrders";
+import { deleteOrder, getOrderById, confirmOrder } from "../../services/firebaseOrders";
 import { getOutletApprovers } from "../../services/firebaseSettings";
 import AsyncError from "../shared/AsyncError";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
@@ -17,6 +17,7 @@ import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 import { getSupplier } from "../../services/firebaseSuppliers";
 import { StickyNote } from "lucide-react";
 import { usePermission } from "../../hooks/usePermission";
+import OrderDeliveryPanel from "../orders/OrderDeliveryPanel";
 import OrderReceivingPanel from "../orders/OrderReceivingPanel";
 import SupplierConfirmationPanel from "../orders/SupplierConfirmationPanel";
 import { formatOrderMoney, formatOrderSubtotal, formatOrderPriceBasis } from "../../utils/orderPricing";
@@ -72,8 +73,6 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
   const [confirmStartedAt, setConfirmStartedAt] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
   const [openNoteRowId, setOpenNoteRowId] = useState("");
-  const [recoveryEvidence, setRecoveryEvidence] = useState("");
-  const [recoveryBusy, setRecoveryBusy] = useState(false);
 
   const today = useMemo(
     () =>
@@ -116,14 +115,14 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
         setProgressMessage(
           details
             ? `Dispatch failed. Error: ${details}`
-            : "Dispatch failed. Check supplier settings and try again."
+            : "Preparation failed. A delivery recovery manager must review the configuration before a safe retry."
         );
         clearInterval(interval);
         return;
       }
 
       if (["blocked", "needs-review"].includes(dispatchStatus)) {
-        setProgressMessage("Delivery needs operator review. Check the provider before any recovery.");
+        setProgressMessage("Delivery needs review. Open Delivery review on this order and check transport evidence before recovery.");
         clearInterval(interval);
         return;
       }
@@ -366,6 +365,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
             </div>
           </div>
         )}
+        {order.dispatchRequestId && <OrderDeliveryPanel hotelUid={hotelUid} orderId={orderId} orderRevision={order.revision} onChanged={refreshOrder} isPlatformAdmin={isPlatformAdmin} disabled={loading || Boolean(query.error)} />}
         {["Ordered", "Received", "Finalized"].includes(order.status) && <SupplierConfirmationPanel hotelUid={hotelUid} orderId={orderId} orderRevision={order.revision} onChanged={refreshOrder} disabled={loading || Boolean(query.error)} />}
         {["Ordered", "Received", "Finalized"].includes(order.status) && <OrderReceivingPanel hotelUid={hotelUid} orderId={orderId} orderRevision={order.revision} onChanged={refreshOrder} disabled={loading || Boolean(query.error)} />}
       </ProcurementPage>
@@ -462,22 +462,6 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
         </div>
       </Modal>
 
-      {isPlatformAdmin && ["failed", "blocked", "needs-review", "processing"].includes(dispatchStatus) && <ProcurementPage as="section" id="order-recovery">
-        <Card>
-          <h2 className="text-lg font-semibold">Delivery review</h2>
-          <p className="mt-2 text-sm leading-6 text-gray-600">Check the email provider or supplier's SFTP receipt before recording delivery. An unconfirmed delivery cannot be resent. Preparation can be retried only when the backend confirms that no external send was attempted.</p>
-          <label className="mt-4 block text-sm font-medium">Provider receipt or configuration review<textarea value={recoveryEvidence} onChange={(event) => setRecoveryEvidence(event.target.value)} maxLength={1000} className="mt-2 w-full rounded-lg border border-gray-300 p-3" /></label>
-          <div className="mt-4 flex flex-wrap gap-3">{[["record-receipt", "Record verified delivery"], ["retry-preparation", "Retry preparation only"]].map(([action, label]) => <button key={action} disabled={recoveryBusy || !recoveryEvidence.trim()} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold disabled:opacity-50" onClick={async () => {
-            setRecoveryBusy(true); setActionError("");
-            try {
-              await reviewOrderDelivery({ hotelUid, orderId, expectedRevision: order.revision || 0, requestId: crypto.randomUUID(), action, evidence: recoveryEvidence });
-              if (mounted.current) { await refreshOrder(); if (mounted.current) setRecoveryEvidence(""); }
-            } catch (error) { if (mounted.current) setActionError(error.message || "This delivery needs operator review."); }
-            finally { if (mounted.current) setRecoveryBusy(false); }
-          }}>{label}</button>)}</div>
-          {actionError && <p role="alert" className="mt-3 text-sm text-red-700">{actionError}</p>}
-        </Card>
-      </ProcurementPage>}
 
       <Modal open={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete order">
         <p className="text-sm text-gray-700">Are you sure you want to delete this order?</p>

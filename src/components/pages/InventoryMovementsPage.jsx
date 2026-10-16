@@ -69,6 +69,9 @@ function MovementHistoryItem({ hotelUid, event, canReverse, disabled, onReverse 
       <div><dt>Estimated net cost per {event.baseUnit}</dt><dd className="mt-1 text-sm text-slate-700">{formatInventoryUnitCost(event.netUnitCost, event.currency)}</dd></div>
       <div><dt>Estimated net event value</dt><dd className="mt-1 text-sm text-slate-700">{formatInventoryValue(event.netValue, event.currency)}</dd></div></dl>
     <p className="mt-3 whitespace-pre-wrap text-sm">{event.note}</p>
+    <p className="mt-2 text-xs text-slate-500">Event: {event.adjustmentId}</p>
+    {event.originalAdjustmentId && <a target="_blank" rel="noopener noreferrer" className="mt-2 block text-sm underline" href={`?hotelUid=${encodeURIComponent(hotelUid)}&eventId=${encodeURIComponent(event.originalAdjustmentId)}`}>Review original movement (new tab)</a>}
+    {event.reversedByAdjustmentId && <a target="_blank" rel="noopener noreferrer" className="mt-2 block text-sm underline" href={`?hotelUid=${encodeURIComponent(hotelUid)}&eventId=${encodeURIComponent(event.reversedByAdjustmentId)}`}>Review compensating reversal (new tab)</a>}
     {event.kind === "reversal" && <p className="mt-2 text-xs text-slate-500">Original quantities, locations and value were offset using their frozen snapshots.</p>}
     {canReverse && event.kind !== "reversal" && !event.reversedByAdjustmentId && <button type="button" className="ht-button-secondary mt-3" disabled={disabled} onClick={() => onReverse(event)}>Reverse this event</button>}
   </li>;
@@ -97,7 +100,8 @@ function ScopedMovements({ hotelUid, canRead, canCreate, canReverse, canReadCoun
     return () => { mounted.current = false; historyGeneration.current++; };
   }, [hotelUid]);
   const today = useMemo(() => new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }), []);
-  const loadHistory = useCallback(() => getInventoryAdjustments(hotelUid), [hotelUid]);
+  const selectedEvent = initialRequest.get("hotelUid") === hotelUid ? initialRequest.get("eventId") : null;
+  const loadHistory = useCallback(() => selectedEvent ? getInventoryAdjustments(hotelUid, null, selectedEvent) : getInventoryAdjustments(hotelUid), [hotelUid, selectedEvent]);
   const history = useScopedAsync({ scopeKey: `${hotelUid}:${actorUid}`, enabled: Boolean(hotelUid && actorUid && canRead), load: loadHistory });
   useEffect(() => { historyGeneration.current++; historyCursors.current.clear(); setOlder([]); setCursor(history.data?.nextCursor || null); setMoreBusy(false); setMoreError(null); }, [history.data]);
   const choicesEnabled = Boolean(hotelUid && actorUid && canCreate);
@@ -235,6 +239,7 @@ function ScopedMovements({ hotelUid, canRead, canCreate, canReverse, canReadCoun
         <div className="flex flex-wrap gap-3"><button type="submit" className="ht-button-primary" disabled={blocked}>Confirm compensating reversal</button><button type="button" className="ht-button-secondary" disabled={busy} onClick={() => setReverse(null)}>Cancel reversal</button></div>
       </form></Card>}
       {canRead && <Card className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Recorded movement history</h2><button type="button" className="ht-button-secondary" disabled={busy || history.loading} onClick={history.retry}>Refresh movement history</button></div>
+        {selectedEvent && <p className="text-sm">Reviewing event {selectedEvent}. <a target="_blank" rel="noopener noreferrer" className="underline" href="/catalog/inventory-movements">Show all movement history (new tab)</a></p>}
         {history.loading && <p role="status" className="text-sm text-slate-600">Loading movement evidence…</p>}
         {history.error && <p role="alert" className="text-sm text-amber-900">{history.error.message}</p>}
         {!history.loading && !history.error && !history.data?.adjustments.length && <p className="text-sm text-slate-500">No manual physical events have been recorded. Goods receipts remain on their orders.</p>}

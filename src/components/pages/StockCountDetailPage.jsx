@@ -111,6 +111,7 @@ export default function StockCountDetailPage() {
           locationName: location.outletName && !location.isOutletDefault
             ? `${location.outletName} · ${location.locationName}` : location.locationName || "-",
           central: location.inventoryRole === "central_storage",
+          coverageIssues: location.coverageIssues || [],
           uncountedCount: Math.max(0, totalCountableItems - countedCount),
           zeroCount: countedItems.filter((item) => item.isCounted !== false && item.quantity === 0).length,
           countedCount,
@@ -257,6 +258,7 @@ export default function StockCountDetailPage() {
                   className="space-y-3 rounded-xl border border-gray-200 p-4 text-left hover:border-brand-800 focus-visible:ring-2 focus-visible:ring-brand-800">
                   <div className="flex flex-wrap justify-between gap-2"><span className="font-semibold">{row.locationName}</span><span className="text-xs text-gray-500">{row.status}</span></div>
                   {row.central && <span className="block text-xs text-indigo-700">Central store</span>}
+                  {row.coverageIssues?.length > 0 && <span className="block rounded bg-amber-100 p-2 text-sm text-amber-900">Counting cutoff needs review. Open this count area to inspect events and safe follow-up steps.</span>}
                   <div className="flex flex-wrap gap-2 text-xs"><span className="rounded bg-slate-100 px-2 py-1">{row.countedCount} counted</span>
                     <span className={`rounded px-2 py-1 ${row.uncountedCount ? "bg-amber-100 text-amber-900" : "bg-slate-100"}`}>{row.uncountedCount} uncounted</span>
                     <span className="rounded bg-emerald-50 px-2 py-1 text-emerald-800">{row.zeroCount} counted as zero</span></div>
