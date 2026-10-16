@@ -45,13 +45,14 @@ async function sendOrderBySftp(order, credentials, context = {}, services = {}) 
       password: config.password, readyTimeout: 15000, retries: 0,
       hostVerifier: (key) => `SHA256:${createHash("sha256").update(key).digest("base64").replace(/=$/, "")}` === config.hostKey });
     if (await client.exists(finalPath)) {
+      await context.markExternalAttempt?.();
       const stat = await client.stat(finalPath);
       if (stat.size !== csv.length || stat.size > 1_000_000) throw new Error("An existing remote order file needs operator review.");
       const existing = await client.get(finalPath);
       if (!Buffer.isBuffer(existing) || !existing.equals(csv)) throw new Error("An existing remote order file needs operator review.");
       return { remotePath: finalPath, existing: true };
     }
-    context.markExternalAttempt?.();
+    await context.markExternalAttempt?.();
     await client.put(csv, tempPath);
     // The supplier sees a complete file, with a stable identity for this order.
     await client.rename(tempPath, finalPath);

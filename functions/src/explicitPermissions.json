@@ -3,10 +3,12 @@
   "orders.finalize",
   "orders.recordconfirmation",
   "orders.reviewconfirmation",
+  "orders.recover",
   "inventorymovements.reverse",
   "purchaserequests.submit",
   "purchaserequests.approve",
   "purchaserequests.selfapprove",
   "purchaserequests.cancel",
+  "purchaserequests.recover",
   "purchasebudgets.settings"
 ]

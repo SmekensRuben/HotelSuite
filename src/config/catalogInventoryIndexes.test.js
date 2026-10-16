@@ -8,6 +8,7 @@ const releaseSha = "a".repeat(40);
 const configuration = JSON.parse(readFileSync(new URL("../../firebase/firestore.indexes.json", import.meta.url), "utf8"));
 const inventoryConfiguration = { indexes: configuration.indexes.filter((value) => ["inventoryCheckpoints", "inventoryMovements"].includes(value.collectionGroup)), fieldOverrides: [] };
 const mcpIndexes = configuration.indexes.filter((value) => value.collectionGroup.startsWith("hotelMcp"));
+const orderIndexes = configuration.indexes.filter((value) => value.collectionGroup === "orderAudit");
 const resource = `projects/${INDEX_PROJECT}/databases/${INDEX_DATABASE}`;
 const indexResource = (group, id) => `${resource}/collectionGroups/${group}/indexes/${id}`;
 const database = () => ({ name: resource, type: "FIRESTORE_NATIVE", databaseEdition: "STANDARD" });
@@ -71,12 +72,24 @@ describe("reviewed periodic inventory index manifest", () => {
     expect(new Set(reviewed().map(indexSignature)).size).toBe(4);
   });
   it("validates the complete shared manifest while returning only the four inventory definitions", () => {
-    expect(configuration.indexes).toHaveLength(6);
+    expect(configuration.indexes).toHaveLength(7);
     expect(mcpIndexes).toHaveLength(2);
+    expect(orderIndexes).toHaveLength(1);
     expect(reviewed()).toEqual(inventoryConfiguration.indexes);
     expect(reviewed().every((value) => value.collectionGroup.startsWith("inventory"))).toBe(true);
     const result = reviewed(); result[0].fields[0].fieldPath = "modified";
     expect(configuration.indexes[0].fields[0].fieldPath).toBe("locationId");
+  });
+  it("allows the exact order recovery index without letting the inventory helper deploy it", async () => {
+    const manifest = { ...inventoryConfiguration, indexes: [...inventoryConfiguration.indexes, ...orderIndexes] };
+    expect(validateReviewedInventoryIndexes(manifest)).toEqual(inventoryConfiguration.indexes);
+    const api = fakeApi({ initial: [] });
+    await prepare(api, { mode: "apply", configuration: manifest });
+    expect(api.writeCalls()).toHaveLength(4);
+    expect(api.writeCalls().some((call) => call.path.includes("orderAudit"))).toBe(false);
+    const changed = structuredClone(manifest); changed.indexes.at(-1).fields.at(-1).order = "ASCENDING";
+    expect(() => validateReviewedInventoryIndexes(changed)).toThrow("reviewed release policy");
+    expect(() => validateReviewedInventoryIndexes({ ...manifest, indexes: [...manifest.indexes, mcpIndexes[0]] })).toThrow("both reviewed MCP indexes");
   });
   it("compares serving fields while excluding Firestore's appended document-name field", () => {
     const definition = reviewed()[0];

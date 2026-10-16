@@ -469,7 +469,7 @@ async function processMailQueueHandler(event, services = {}) {
   const ref = db.doc(`hotels/${hotelUid}/mailQueue/${mailId}`);
   const { subscriptionIsActive } = require("./subscriptions");
   const { moduleAllows } = require("./modulePolicy");
-  const { completeDispatch, dispatchActorIsCurrent } = require("./deliveryState");
+  const { completeDispatch, dispatchActorIsCurrent, markDispatchExternalAttempt } = require("./deliveryState");
   const { digest } = require("./validation");
   const mail = await db.runTransaction(async (tx) => {
     const [current, subscription] = await Promise.all([tx.get(ref), tx.get(db.doc(`hotelSubscriptions/${hotelUid}`))]);
@@ -533,7 +533,7 @@ async function processMailQueueHandler(event, services = {}) {
     }
     if (!permitted || !subscription.exists || !subscriptionIsActive(subscription.data())
       || !moduleAllows(subscription.data(), data.type === "hotel-invitation" ? "core" : "procurement")) {
-      tx.update(ref, { status: "blocked", error: "Hotel subscription or delivery authorization is no longer valid." });
+      tx.update(ref, { status: "blocked", externalAttempt: false, error: "Hotel subscription or delivery authorization is no longer valid." });
       return { ...data, blocked: true };
     }
     tx.update(ref, { status: "processing", processingAt: admin.firestore.FieldValue.serverTimestamp() });
@@ -548,7 +548,7 @@ async function processMailQueueHandler(event, services = {}) {
   const finishOrder = (status, detail) => mail.type === "order-confirmation" && mail.orderId && mail.dispatchRequestId
     ? completeDispatch(db, hotelUid, mail.orderId, mail.dispatchRequestId, status, detail) : Promise.resolve();
   if (mail.blocked) {
-    await finishOrder("blocked", { error: "Hotel subscription is inactive." });
+    await finishOrder("blocked", { externalAttempt: false, error: "Hotel subscription or delivery authorization is no longer valid." });
     return;
   }
   let externalAttempt = false;
@@ -575,20 +575,27 @@ async function processMailQueueHandler(event, services = {}) {
     const to = sanitizeEmails(payload.to);
     if (!to.length || to.length > 20) throw new Error("Invalid email recipients.");
     const send = services.send || ((data, options) => new Resend(apiKey).emails.send(data, options));
+    if (mail.type === "order-confirmation" && !await markDispatchExternalAttempt(db, hotelUid, mail.orderId, mail.dispatchRequestId, mailId)) return;
     externalAttempt = true;
     const { acknowledgedSend } = require("./scheduledMailDelivery");
     const response = await acknowledgedSend(send, { ...payload, from, to }, { idempotencyKey: `hotelsuite/${digest(hotelUid, mailId)}` });
     await db.runTransaction(async (tx) => {
       const current = await tx.get(ref);
       if (current.data()?.status !== "processing") return;
-      tx.update(ref, { status: "sent", sentAt: admin.firestore.FieldValue.serverTimestamp(), provider: "resend", providerId: response.data.id });
+      tx.update(ref, { status: "sent", sentAt: admin.firestore.FieldValue.serverTimestamp(), provider: "resend", providerId: response.data.id, externalAttempt: true });
     });
-    await finishOrder("sent", { via: "email", providerId: response.data.id });
+    await finishOrder("sent", { via: "email", providerId: response.data.id, externalAttempt: true });
     logger.info("Email delivery accepted", { hotelUid, mailId });
   } catch {
     const status = externalAttempt ? "needs-review" : "failed";
     const error = externalAttempt ? "Email delivery is unconfirmed. Check the provider before any recovery." : "Review email configuration before recovery.";
-    await ref.update({ status, error, externalAttempt, failedAt: admin.firestore.FieldValue.serverTimestamp() });
+    await db.runTransaction(async (tx) => {
+      const current = await tx.get(ref);
+      if (current.data()?.status !== "processing") return;
+      const attempted = externalAttempt || current.data().externalAttempt === true;
+      tx.update(ref, { status: attempted ? "needs-review" : status, error: attempted ? "Email delivery is unconfirmed. Check the provider before any recovery." : error,
+        externalAttempt: attempted, failedAt: admin.firestore.FieldValue.serverTimestamp() });
+    });
     await finishOrder(status, { error, externalAttempt });
     logger.error("Email delivery requires review", { hotelUid, mailId, externalAttempt });
   }

@@ -8,6 +8,8 @@
       "roles": {
         "purchase-requester": {"label": "Purchase Requester", "permissions": ["purchaserequests.read", "purchaserequests.create", "purchaserequests.update", "purchaserequests.submit", "purchaserequests.cancel", "purchasebudgets.read", "suppliers.read", "supplierproducts.read", "outlets.read"]},
         "purchase-approver": {"label": "Purchase Approver", "permissions": ["purchaserequests.read", "purchaserequests.approve", "purchasebudgets.read"]},
+        "purchase-recovery-manager": {"label": "Purchase Recovery Manager", "permissions": ["purchaserequests.read", "purchaserequests.recover", "purchasebudgets.read"]},
+        "order-delivery-recovery-manager": {"label": "Order Delivery Recovery Manager", "permissions": ["orders.read", "orders.recover"]},
         "budget-manager": {"label": "Budget Manager", "permissions": ["purchaserequests.read", "purchasebudgets.read", "purchasebudgets.update", "purchasebudgets.settings"]},
         "viewer": {"label": "Viewer", "permissions": ["catalogproducts.read", "supplierproducts.read", "suppliers.read", "orders.read", "stockcounts.read", "outlets.read", "locations.read", "catalogsettings.read", "inventorymovements.read"]},
         "buyer": {"label": "Buyer", "permissions": ["catalogproducts.read", "supplierproducts.read", "suppliers.read", "orders.read", "orders.create", "orders.update", "outlets.read", "catalogsettings.read"]},

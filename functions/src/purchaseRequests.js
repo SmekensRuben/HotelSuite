@@ -20,7 +20,7 @@ const noReservation = () => ({ state: "none", bucketId: null, amountMinor: 0 });
 const routeEvidence = (route, settings) => ({ approvalRoutePlan: route.plan.map(({ id, name, candidates }) => ({ id, name, eligibleCount: candidates.length })),
   approvalRouteFingerprint: route.fingerprint, approvalSettingsRevision: settings.revision });
 const settingsValues = (settings) => Object.fromEntries(policy.SETTINGS_FIELDS.map((key) => [key, settings[key]]));
-const REQUEST_ACTIONS = { create: "create", save: "update", revise: "update", submit: "submit", selfapprove: "selfapprove", approve: "approve", reject: "approve", return: "approve", withdraw: "cancel", cancel: "cancel" };
+const REQUEST_ACTIONS = { create: "create", save: "update", revise: "update", submit: "submit", selfapprove: "selfapprove", approve: "approve", reject: "approve", return: "approve", withdraw: "cancel", cancel: "cancel", reassign: "recover", recovercancel: "recover" };
 function canonicalDigest(value) {
   const canonical = (item) => Array.isArray(item) ? item.map(canonical) : item && typeof item === "object"
     ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, canonical(item[key])])) : item;
@@ -134,7 +134,7 @@ async function submissionApprovalRoute(tx, db, hotelUid, settings, value, overBu
     if (eligible.length === 1 && eligible[0].uid === value.requesterUid) ({ steps, escalation } = policy.escalateFirstStep(settings, steps));
   }
   const excluded = new Set([value.requesterUid, ...(options.previous || []).map((approval) => approval.approverUid)]);
-  const lists = await Promise.all(steps.map(async (step) => (await eligibleFor(step.id)).filter((person) => !excluded.has(person.uid))));
+  const lists = await Promise.all(steps.map(async (step, index) => (await eligibleFor(step.id)).filter((person) => !excluded.has(person.uid) && (index !== 0 || person.uid !== options.excludeFirstUid))));
   if (!routing.canComplete(lists)) {
     const empty = steps.filter((_, index) => !lists[index].length).map((step) => step.name);
     throw new HttpsError(escalation ? "failed-precondition" : "permission-denied", empty.length
@@ -496,7 +496,15 @@ async function getHotelPurchaseRequestHandler(request, services = {}) {
         decisionApprovalRoute = await submissionApprovalRoute(tx, db, hotelUid, settings, value, false, services, { steps, previous: [...value.approvals, { approverUid: request.auth.uid }] });
       } catch (error) { decisionApprovalRoute = { steps: [], approvers: [], plan: [], fingerprint: null, error: { code: error.code || "unavailable", message: error instanceof HttpsError ? error.message : "The remaining approval route could not be verified." } }; }
     }
-    return { hotelUid, request: value, history, historyTruncated: found.docs.length > 100, nextHistoryCursor: found.docs.length > 100 ? history.at(-1).revision : null, budget, submissionApprovalRoute: route, selfApprovalRoute, decisionApprovalRoute };
+    let recoveryApprovalRoute = null;
+    const member = await tx.get(db.doc(`hotels/${hotelUid}/members/${request.auth.uid}`));
+    if (value.status === "pending" && permissionAllows(normalizedPermissions(member.data()?.permissions), "purchaserequests", "recover")) {
+      try {
+        const settings = storedSettings(await tx.get(db.doc(settingsPath(hotelUid))));
+        recoveryApprovalRoute = await recoveryRoute(tx, db, hotelUid, settings, value, budget, services);
+      } catch (error) { recoveryApprovalRoute = { steps: [], approvers: [], plan: [], fingerprint: null, error: { code: error.code || "unavailable", message: error instanceof HttpsError ? error.message : "The replacement approval route could not be verified. Refresh and try again." } }; }
+    }
+    return { hotelUid, request: value, history, historyTruncated: found.docs.length > 100, nextHistoryCursor: found.docs.length > 100 ? history.at(-1).revision : null, budget, submissionApprovalRoute: route, selfApprovalRoute, decisionApprovalRoute, recoveryApprovalRoute };
   });
 }
 
@@ -509,6 +517,15 @@ function remainingDecisionSteps(settings, value, budget) {
   return steps;
 }
 
+async function recoveryRoute(tx, db, hotelUid, settings, value, budget, services) {
+  if (!budget?.exists) throw new HttpsError("failed-precondition", "The reserved budget is missing. A budget manager must reconcile it before reassignment.");
+  // Reassignment transfers responsibility, never approvals. Preserve every
+  // frozen control, including independent self-approval and over-budget steps.
+  const steps = value.approvalSteps.slice(value.currentStepIndex);
+  if (budget.remainingMinor < 0 && settings.overBudgetMode === "approval" && !value.approvalSteps.some((step) => step.id === "over-budget")) steps.push({ id: "over-budget", name: "Additional budget approval" });
+  return submissionApprovalRoute(tx, db, hotelUid, settings, value, false, services, { steps, previous: value.approvals, excludeFirstUid: value.currentApproverUid });
+}
+
 async function mutateHotelPurchaseRequestHandler(request, services = {}) {
   const input = request.data || {}; policy.exact(input, ["hotelUid", "requestId", "purchaseRequestId", "expectedRevision", "action", "draft", "approverUid", "nextApproverUid", "reason", "expectedApprovalRouteFingerprint"], "request mutation");
   const actions = REQUEST_ACTIONS;
@@ -516,10 +533,11 @@ async function mutateHotelPurchaseRequestHandler(request, services = {}) {
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid"), expected = revision(input.expectedRevision), action = input.action, db = services.firestore || admin.firestore();
   const id = action === "create" ? `p-${digest(request.auth?.uid, requireDocumentId(input.requestId, "requestId")).slice(0, 40)}` : requireDocumentId(input.purchaseRequestId, "purchaseRequestId");
   if (action === "create" && input.purchaseRequestId != null) throw new HttpsError("invalid-argument", "The server assigns the identity of a new request.");
-  const draft = input.draft === undefined ? null : policy.normalizeDraft(input.draft), reason = text(input.reason ?? "", "Decision reason", 2000, ["reject", "return", "revise", "selfapprove"].includes(action));
+  const draft = input.draft === undefined ? null : policy.normalizeDraft(input.draft), reason = text(input.reason ?? "", "Decision reason", 2000, ["reject", "return", "revise", "selfapprove", "reassign", "recovercancel"].includes(action));
   if (["create", "save"].includes(action) && !draft || !["create", "save", "revise"].includes(action) && draft) throw new HttpsError("invalid-argument", "Only draft creation, saving or an explicit revision may change request content.");
-  if (input.approverUid != null && !["submit", "selfapprove"].includes(action) || input.nextApproverUid != null && action !== "approve") throw new HttpsError("invalid-argument", "Approver selection must belong to its submission or decision.");
-  if (input.expectedApprovalRouteFingerprint !== undefined && (!["submit", "selfapprove", "approve"].includes(action) || typeof input.expectedApprovalRouteFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(input.expectedApprovalRouteFingerprint))) throw new HttpsError("invalid-argument", "A submission approval route fingerprint must come from the current request preview.");
+  if (input.approverUid != null && !["submit", "selfapprove", "reassign"].includes(action) || input.nextApproverUid != null && action !== "approve") throw new HttpsError("invalid-argument", "Approver selection must belong to its submission, decision or reassignment.");
+  if (input.expectedApprovalRouteFingerprint !== undefined && (!["submit", "selfapprove", "approve", "reassign"].includes(action) || typeof input.expectedApprovalRouteFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(input.expectedApprovalRouteFingerprint))) throw new HttpsError("invalid-argument", "An approval route fingerprint must come from the current request preview.");
+  if (action === "reassign" && (!input.approverUid || !input.expectedApprovalRouteFingerprint)) throw new HttpsError("invalid-argument", "Review the current recovery route and choose a replacement approver before reassigning.");
   const op = operation(db, hotelUid, request.auth?.uid, input.requestId, "request", { id, action, expected, draft, approverUid: input.approverUid ?? null, nextApproverUid: input.nextApproverUid ?? null, reason,
     ...(input.expectedApprovalRouteFingerprint === undefined ? {} : { expectedApprovalRouteFingerprint: input.expectedApprovalRouteFingerprint }) });
   return db.runTransaction(async (tx) => {
@@ -574,6 +592,11 @@ async function mutateHotelPurchaseRequestHandler(request, services = {}) {
       if (!allowed.includes(before.status)) throw new HttpsError("failed-precondition", "This request cannot be withdrawn or canceled in its current status.");
       next.status = action === "withdraw" ? "withdrawn" : "canceled"; next.reservation = noReservation(); next.currentApproverUid = null; next.currentApproverName = null;
     }
+    if (action === "reassign" && before.status !== "pending") throw new HttpsError("failed-precondition", "Only a pending approval step can be reassigned.");
+    if (action === "recovercancel") {
+      if (!["pending", "returned"].includes(before.status)) throw new HttpsError("failed-precondition", "Recovery cancellation only closes pending or returned requests. Approved commitments need the normal cancellation workflow.");
+      next.status = "canceled"; next.reservation = noReservation(); next.currentApproverUid = null; next.currentApproverName = null; next.currentAssignment = null;
+    }
     const budgets = new Map();
     for (const reservation of [before?.reservation, next.reservation]) {
       if (reservation?.state === "none" || !reservation?.bucketId || budgets.has(reservation.bucketId)) continue;
@@ -581,6 +604,19 @@ async function mutateHotelPurchaseRequestHandler(request, services = {}) {
       budgets.set(reservation.bucketId, await budgetFor(tx, db, hotelUid, budgetMonth, categoryId));
     }
     let changedBudgets = policy.transferBudget(budgets, before?.reservation, next.reservation), currentBudget = next.reservation.state === "none" ? null : changedBudgets.get(next.reservation.bucketId);
+    if (action === "reassign") {
+      const route = await recoveryRoute(tx, db, hotelUid, settings, before, currentBudget, services);
+      if (input.expectedApprovalRouteFingerprint !== route.fingerprint) throw new HttpsError("aborted", "The recovery approval route changed. Refresh and review the currently eligible replacements.");
+      const assignee = routing.selectAssignee(route, input.approverUid);
+      next.approvalSteps = [...before.approvalSteps.slice(0, before.currentStepIndex), ...route.steps];
+      Object.assign(next, routeEvidence(route, settings));
+      next.currentApproverUid = assignee.uid; next.currentApproverName = assignee.name; next.currentAssignment = assignee;
+    }
+    if (["reassign", "recovercancel"].includes(action)) next.lastRecovery = { action, actorUid: actor.uid, actorName: actor.name, reason, recoveredAtMillis: now,
+      stepId: before.status === "pending" ? before.approvalSteps[before.currentStepIndex].id : null,
+      stepName: before.status === "pending" ? before.approvalSteps[before.currentStepIndex].name : null,
+      fromApproverUid: before.currentApproverUid || null, fromApproverName: before.currentApproverName || null,
+      toApproverUid: next.currentApproverUid, toApproverName: next.currentApproverName, settingsRevision: settings.revision };
     if (["submit", "selfapprove"].includes(action)) {
       if (!currentBudget?.exists) throw new HttpsError("failed-precondition", "No budget has been configured for this category and month. Ask a budget manager to create it.");
       const route = await submissionApprovalRoute(tx, db, hotelUid, settings, next, currentBudget.remainingMinor < 0, services, { selfApproval: action === "selfapprove" });

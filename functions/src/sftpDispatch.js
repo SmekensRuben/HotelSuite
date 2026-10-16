@@ -1,7 +1,7 @@
 const { onDocumentWritten, logger, admin, RESEND_API_KEY, RESEND_FROM } = require("./config");
 const { enqueueOrderEmail } = require("./mailQueue");
 const { sendOrderBySftp } = require("./sftpTransport");
-const { claimDispatch, completeDispatch } = require("./deliveryState");
+const { claimDispatch, completeDispatch, markDispatchExternalAttempt } = require("./deliveryState");
 
 async function dispatchOrderHandler(event, services = {}) {
   if (!event.data?.after?.exists) return;
@@ -19,14 +19,18 @@ async function dispatchOrderHandler(event, services = {}) {
   let externalAttempt = false;
   try {
     if (await require("./demoDataPolicy").demoSupplierMode(db, hotelUid, dispatch.supplier.id)) {
-      await completeDispatch(db, hotelUid, orderId, dispatchId, "blocked", { error: "Demo supplier delivery must be simulated by the protected confirmation workflow." });
+      await completeDispatch(db, hotelUid, orderId, dispatchId, "blocked", { externalAttempt: false, error: "Demo supplier delivery must be simulated by the protected confirmation workflow." });
       return;
     }
     if (dispatch.supplier.orderSystem === "SFTP csv") {
       const secret = await db.doc(`hotels/${hotelUid}/supplierSecrets/${dispatch.supplier.id}`).get();
       if (!secret.exists) throw new Error("Missing private supplier connection.");
-      const result = await (services.sendSftp || sendOrderBySftp)(dispatch.order, secret.data(), { hotelUid, orderId, markExternalAttempt: () => { externalAttempt = true; } });
-      await completeDispatch(db, hotelUid, orderId, dispatchId, "sent", { via: "sftp", remotePath: result.remotePath });
+      const result = await (services.sendSftp || sendOrderBySftp)(dispatch.order, secret.data(), { hotelUid, orderId, markExternalAttempt: async () => {
+        const allowed = await markDispatchExternalAttempt(db, hotelUid, orderId, dispatchId);
+        if (!allowed) throw new Error("Delivery was retired before transfer.");
+        externalAttempt = true;
+      } });
+      await completeDispatch(db, hotelUid, orderId, dispatchId, "sent", { via: "sftp", remotePath: result.remotePath, externalAttempt: true });
     } else {
       await (services.enqueueEmail || enqueueOrderEmail)({ hotelUid, orderId, dispatchRequestId: dispatchId,
         order: dispatch.order, supplier: dispatch.supplier, supplierId: dispatch.supplier.id,

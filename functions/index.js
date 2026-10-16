@@ -73,6 +73,7 @@ for (const name of ["listSuppliers", "getSupplierConnection", "saveSupplier", "d
 for (const name of ["previewOrdersFromCart", "createOrdersFromCart", "updateHotelOrder", "deleteHotelOrder", "confirmHotelOrder", "setHotelOutletApprovers", "saveSupplierOutletAccount"]) exports[name] = orders[name];
 exports.mutateHotelShoppingCart = require("./src/shoppingCarts").mutateHotelShoppingCart;
 exports.reviewHotelOrderDelivery = require("./src/deliveryRecovery").reviewHotelOrderDelivery;
+exports.getHotelOrderDelivery = require("./src/deliveryRecovery").getHotelOrderDelivery;
 const receiving = require("./src/orderReceiving");
 for (const name of ["recordHotelOrderReceipt", "reverseHotelOrderReceipt", "finalizeHotelOrderReceiving", "getHotelOrderReceiving"]) exports[name] = receiving[name];
 const supplierConfirmations = require("./src/supplierConfirmations");
@@ -95,7 +96,7 @@ for (const name of ["recordHotelInventoryAdjustment", "reverseHotelInventoryAdju
 exports.mutateHotelProcurementResource = require("./src/procurementResources").mutateHotelProcurementResource;
 exports.getHotelLocationOutletChoices = require("./src/procurementResources").getHotelLocationOutletChoices;
 const inventoryReports = require("./src/inventoryReports");
-for (const name of ["listHotelInventoryLocations", "listHotelInventoryCheckpoints", "getHotelInventoryPeriod"]) exports[name] = inventoryReports[name];
+for (const name of ["listHotelInventoryLocations", "listHotelInventoryCheckpoints", "getHotelInventoryPeriod", "getHotelStockCountExceptions"]) exports[name] = inventoryReports[name];
 exports.getHotelUserDisplayName = require("./src/staffDisplay").getHotelUserDisplayName;
 exports.getHotelUserDisplayNames = require("./src/staffDisplay").getHotelUserDisplayNames;
 

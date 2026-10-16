@@ -112,8 +112,27 @@ export async function createOrderFromShoppingCart(hotelUid, shoppingCartId, deli
   return result?.orderIds?.[0] || null;
 }
 
+export async function getHotelOrderDelivery(input) {
+  const { data } = await httpsCallable(functions, "getHotelOrderDelivery")(input);
+  if (!data || data.hotelUid !== input.hotelUid || data.orderId !== input.orderId || data.policyVersion !== 1
+    || !Number.isSafeInteger(data.orderRevision) || data.orderRevision < 0
+    || !["simulated", "legacy-review", "transport-accepted", "receipt-verified", "preparation-failed", "unknown", "in-progress"].includes(data.outcome)
+    || ["canRecordReceipt", "canRetryPreparation", "canRecordReview"].some((key) => typeof data[key] !== "boolean")
+    || !Array.isArray(data.events) || data.events.some((event) => !event || typeof event.id !== "string" || typeof event.actorUid !== "string"
+      || !["record-receipt", "record-review", "retry-preparation"].includes(event.action) || typeof event.evidence !== "string" || typeof event.reason !== "string")
+    || !(data.nextCursor === null || typeof data.nextCursor === "string")) {
+    throw new Error("The delivery review is incomplete or belongs to another hotel/order. Refresh before recovery.");
+  }
+  return data;
+}
 export async function reviewOrderDelivery(input) {
-  return (await httpsCallable(functions, "reviewHotelOrderDelivery")(input)).data;
+  const { data } = await httpsCallable(functions, "reviewHotelOrderDelivery")(input);
+  if (!data || data.hotelUid !== input.hotelUid || data.orderId !== input.orderId || typeof data.dispatchId !== "string"
+    || !Number.isSafeInteger(data.revision) || data.revision !== input.expectedRevision + 1
+    || !["sent", "pending", "needs-review", "failed", "blocked"].includes(data.status)) {
+    throw new Error("The recovery result could not be verified. Retry the same saved request.");
+  }
+  return data;
 }
 
 export async function getHotelOrderReceiving({ hotelUid, orderId, afterEventId = null }) {

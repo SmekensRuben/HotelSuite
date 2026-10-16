@@ -281,7 +281,9 @@ function projection(snapshot, reversed) {
     ...Object.fromEntries(fields.map((field) => [field, row[field] ?? null])), reversedByAdjustmentId: reversed?.reversalAdjustmentId ?? null };
 }
 async function listHotelInventoryAdjustmentsHandler(request, services = {}) {
-  const input = policy.object(request.data, ["hotelUid", "afterAdjustmentId"]), hotelUid = requireDocumentId(input.hotelUid, "hotelUid");
+  const input = policy.object(request.data, ["hotelUid", "afterAdjustmentId", "adjustmentId"]), hotelUid = requireDocumentId(input.hotelUid, "hotelUid");
+  const requestedId = input.adjustmentId == null ? null : requireDocumentId(input.adjustmentId, "adjustmentId");
+  if (requestedId && input.afterAdjustmentId != null) throw new HttpsError("invalid-argument", "Review one movement or page the history, not both.");
   const db = services.firestore || admin.firestore();
   return db.runTransaction(async (tx) => {
     await authorize(db, tx, request, hotelUid, "read", services);
@@ -291,11 +293,13 @@ async function listHotelInventoryAdjustmentsHandler(request, services = {}) {
       if (!after.exists || after.data().hotelUid !== hotelUid) throw new HttpsError("invalid-argument", "The inventory adjustment cursor does not belong to this hotel.");
       query = query.startAfter(after);
     }
-    const rows = await tx.get(query.limit(26)), page = rows.docs.slice(0, 25);
+    const selected = requestedId ? await tx.get(adjustmentRef(db, hotelUid, requestedId)) : null;
+    if (requestedId && !selected.exists) throw new HttpsError("not-found", "The selected movement is unavailable in this hotel. Review its reference and selected hotel.");
+    const rows = selected ? { docs: [selected] } : await tx.get(query.limit(26)), page = rows.docs.slice(0, 25);
     const reversals = await Promise.all(page.map((doc) => tx.get(reversalRef(db, hotelUid, doc.id))));
     if (page.some((doc) => doc.data().hotelUid !== hotelUid)) throw new HttpsError("failed-precondition", "Inventory adjustment scope needs reconciliation.");
     const settings = await hotelSettings(db, tx, hotelUid);
-    return { hotelUid, inventoryAdjustmentPolicyVersion: 1, hotelCurrency: settings.hotelCurrency,
+    return { hotelUid, ...(requestedId ? { requestedAdjustmentId: requestedId } : {}), inventoryAdjustmentPolicyVersion: 1, hotelCurrency: settings.hotelCurrency,
       today: validTimeZone(settings.timeZone) ? localDate(services.now?.() ?? Date.now(), settings.timeZone) : null,
       adjustments: page.map((doc, index) => projection(doc, reversals[index].data())), nextCursor: rows.docs.length > 25 ? page.at(-1).id : null };
   }, { readOnly: true });

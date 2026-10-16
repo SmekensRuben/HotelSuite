@@ -58,7 +58,8 @@ function summary(location) {
     stockTemplateId: location.stockTemplateId, stockTemplateName: location.stockTemplateName,
     status: location.status, ...(location.inventoryPolicyVersion === 1 ? { inventoryPolicyVersion: 1,
       currency: location.currency, ...inventory.valuation(location.countedItems || []),
-      checkpointId: location.checkpointId || null, checkpointSequence: location.checkpointSequence || null }
+      checkpointId: location.checkpointId || null, checkpointSequence: location.checkpointSequence || null,
+      coverageIssues: location.coverageIssues || [] }
       : { countedValue: canonicalValue(location.countedItems || []) }) };
 }
 function canonicalValue(items) {
@@ -348,7 +349,7 @@ async function mutateHotelStockCountHandler(request, services = {}) {
         businessDate: data.businessDate, countingStartedSequence: current.countingStartedSequence,
         items: current.countedItems, actorUid: request.auth.uid,
       }) : null;
-      if (checkpoint) { current.checkpointId = checkpoint.checkpointId; current.checkpointSequence = checkpoint.sequence; }
+      if (checkpoint) { current.checkpointId = checkpoint.checkpointId; current.checkpointSequence = checkpoint.sequence; current.coverageIssues = checkpoint.coverageIssues; }
       if (additions.length) {
         const templateRef = db.doc(`hotels/${hotelUid}/locations/${locationId}/stockTemplates/${requireDocumentId(current.stockTemplateId, "Stored template ID")}`);
         const template = await tx.get(templateRef);

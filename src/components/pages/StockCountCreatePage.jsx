@@ -60,16 +60,25 @@ export default function StockCountCreatePage() {
     scopeKey, enabled: Boolean(hotelUid && canCreate), load: loadSources,
   });
   useEffect(() => {
-    const requestedOutlet = new URLSearchParams(window.location.search).get("outletId");
+    const query = new URLSearchParams(window.location.search), requestedOutlet = query.get("outletId");
+    const requestedLocation = query.get("hotelUid") === hotelUid ? query.get("locationId") : null;
     const next = groupSources(sources);
-    if (requestedOutlet && next.some((group) => group.outletId === requestedOutlet)) {
+    if (requestedLocation && next.some((group) => group.sources.some((source) => source.locationId === requestedLocation))) {
+      next.forEach((group) => {
+        const selected = group.sources.find((source) => source.locationId === requestedLocation);
+        group.selected = Boolean(selected);
+        group.detail = Boolean(selected && !selected.isOutletDefault && selected.locationId !== `outlet:${selected.outletId}`);
+        group.sources.forEach((source) => { source.selected = source.locationId === requestedLocation; });
+      });
+    } else if (requestedOutlet && next.some((group) => group.outletId === requestedOutlet)) {
       next.forEach((group) => { group.selected = group.outletId === requestedOutlet; });
     }
     setGroups(next);
   }, [sources, scopeKey]);
   useEffect(() => {
     activeScope.current = { key: scopeKey };
-    setSaving(false); setError(""); setBusinessDate(""); setReason(""); setType("Ad Hoc");
+    const query = new URLSearchParams(window.location.search), recountOf = query.get("hotelUid") === hotelUid ? query.get("recountOf") : null;
+    setSaving(false); setError(""); setBusinessDate(""); setReason(recountOf && /^[^/]{1,128}$/.test(recountOf) ? `Follow-up to count ${recountOf}: review the physical cutoff and record new quantities.` : ""); setType("Ad Hoc");
     setPeriodMonth(lastCompletedMonth().month); setPeriodYear(lastCompletedMonth().year);
     return () => { activeScope.current = { key: null }; };
   }, [scopeKey]);

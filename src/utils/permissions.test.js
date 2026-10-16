@@ -31,4 +31,13 @@ describe("hasPermission", () => {
     expect(hasPermission({ permissions: ["purchasebudgets.*"] }, "purchasebudgets", "settings")).toBe(false);
     expect(hasPermission({ permissions: ["purchasebudgets.settings"] }, "purchasebudgets", "settings")).toBe(true);
   });
+  it("requires explicit recovery grants independently of approval and wildcard access", () => {
+    for (const feature of ["orders", "purchaserequests"]) {
+      expect(hasPermission({ permissions: [`${feature}.*`, `${feature}.approve`] }, feature, "recover")).toBe(false);
+      expect(hasPermission({ permissions: [`${feature}.recover`] }, feature, "recover")).toBe(true);
+      expect(hasPermission({ permissions: [`${feature}.recover`] }, feature, "approve")).toBe(false);
+    }
+    expect(hasPermission({ permissions: ["purchaserequests.recover"] }, "purchaserequests", "selfapprove")).toBe(false);
+    expect(hasPermission({ permissions: ["purchaserequests.recover"] }, "purchasebudgets", "settings")).toBe(false);
+  });
 });

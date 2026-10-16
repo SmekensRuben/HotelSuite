@@ -40,6 +40,126 @@ const current = (db, value) => db.records.get(`${base}/purchaseRequests/${value.
 const get = (db, value, uid = "buyer") => api.getHotelPurchaseRequestHandler(request({ purchaseRequestId: value.purchaseRequestId }, uid), services(db));
 const requesterOnlySettings = (patch = {}) => settings({ approvers: [authority("buyer", ["manager"]), authority("finance", ["finance"]), authority("director", [], true)], ...patch });
 
+function recoveryFixture(patch = {}) {
+  const db = fixture({ approvers: [authority("manager", ["manager"]), authority("finance", ["finance"]), authority("director", ["manager", "finance"], true)], ...patch });
+  db.records.set(`${base}/members/recovery`, { permissions: ["purchaserequests.read", "purchaserequests.recover"] });
+  return db;
+}
+const recoveryInput = async (db, value, approverUid = "director") => ({ approverUid, reason: "The assigned approver is unavailable; assign the authorized substitute.", expectedApprovalRouteFingerprint: (await get(db, value, "recovery")).recoveryApprovalRoute.fingerprint });
+
+test("recovery replaces an approver who lost access without changing the frozen request or reservation", async () => {
+  const db = recoveryFixture(), pending = await submit(db, await create(db));
+  db.records.get(`${base}/members/manager`).permissions = ["purchaserequests.read"];
+  const budgetBefore = structuredClone(budget(db)), input = await recoveryInput(db, pending);
+  const recovered = await command(db, pending, "reassign", input, "recovery");
+  assert.equal(recovered.request.status, "pending"); assert.equal(recovered.request.currentApproverUid, "director");
+  assert.deepEqual(recovered.request.approvalSteps, pending.request.approvalSteps); assert.deepEqual(recovered.request.lines, pending.request.lines);
+  assert.deepEqual(recovered.request.reservation, pending.request.reservation); assert.deepEqual(structuredClone(budget(db)), budgetBefore);
+  assert.deepEqual(await command(db, pending, "reassign", input, "recovery"), recovered, "the original command returns its committed receipt");
+  const history = (await get(db, recovered)).history;
+  assert.equal(history[0].event, "reassign"); assert.equal(history[0].reason, input.reason);
+  assert.equal(history[0].snapshot.lastRecovery.fromApproverUid, "manager"); assert.equal(history[0].snapshot.lastRecovery.toApproverUid, "director");
+  assert.equal(history.find((row) => row.event === "submit").snapshot.currentApproverUid, "manager");
+  await assert.rejects(command(db, recovered, "approve", {}, "manager"), { code: "permission-denied" });
+  const next = await command(db, recovered, "approve", {}, "director"); assert.equal(next.request.currentApproverUid, "finance");
+  assert.equal((await command(db, next, "approve", {}, "finance")).request.status, "approved");
+});
+test("recovery cancellation closes a request after both requester and approver leave and releases budget exactly once", async () => {
+  const db = recoveryFixture(), pending = await submit(db, await create(db));
+  db.records.delete(`${base}/members/buyer`); db.records.delete(`${base}/members/manager`);
+  const canceled = await command(db, pending, "recovercancel", { reason: "Both responsible staff members left; purchase is no longer needed." }, "recovery");
+  assert.equal(canceled.request.status, "canceled"); assert.equal(canceled.request.currentApproverUid, null);
+  assert.equal(budget(db).pendingMinor, 0); assert.equal(budget(db).committedMinor, 0); assert.equal(budget(db).revision, 3);
+  assert.deepEqual(await command(db, pending, "recovercancel", { reason: "Both responsible staff members left; purchase is no longer needed." }, "recovery"), canceled);
+  assert.equal(budget(db).revision, 3); assert.equal((await get(db, canceled, "recovery")).history[0].snapshot.lastRecovery.fromApproverUid, "manager");
+  const recipients = [...db.records.values()].filter((row) => row.event === "recovercancel" && row.type === "purchase-request").map((row) => row.recipientUid).sort();
+  assert.deepEqual(recipients, ["buyer", "manager", "recovery"]);
+});
+test("recovery cancellation releases the retained reservation of an edited returned request", async () => {
+  const db = recoveryFixture(), pending = await submit(db, await create(db)), returned = await command(db, pending, "return", { reason: "Review quote" }, "manager");
+  const edited = await command(db, returned, "save", { draft: draft(90) });
+  assert.equal(edited.request.totalMinor, 9000); assert.equal(edited.request.reservation.amountMinor, 15000);
+  await command(db, edited, "recovercancel", { reason: "Requester left before resubmission" }, "recovery");
+  assert.equal(budget(db).pendingMinor, 0);
+});
+test("recovery preserves completed approvals and refuses reusing their approver", async () => {
+  const db = recoveryFixture(), pending = await submit(db, await create(db)), finance = await command(db, pending, "approve", { nextApproverUid: "finance" }, "manager");
+  const input = await recoveryInput(db, finance), recovered = await command(db, finance, "reassign", input, "recovery");
+  assert.deepEqual(recovered.request.approvals, finance.request.approvals); assert.equal(recovered.request.currentStepIndex, 1);
+  assert.deepEqual(recovered.request.approvalSteps, finance.request.approvalSteps);
+  const route = (await get(db, finance, "recovery")).recoveryApprovalRoute;
+  assert.ok(!route.plan?.[0]?.candidates.some((person) => person.uid === "manager"));
+});
+test("recovery requires explicit authority and a reason without granting approval, self-approval or committed cancellation", async () => {
+  for (const granted of [["purchaserequests.read"], ["purchaserequests.*"], permissions]) {
+    const db = recoveryFixture(), pending = await submit(db, await create(db)), input = await recoveryInput(db, pending);
+    db.records.get(`${base}/members/recovery`).permissions = granted;
+    assert.equal((await get(db, pending, "recovery")).recoveryApprovalRoute, null);
+    await assert.rejects(command(db, pending, "reassign", input, "recovery"), { code: "permission-denied" });
+    await assert.rejects(command(db, pending, "recovercancel", { reason: "Abandoned request" }, "recovery"), { code: "permission-denied" });
+  }
+  const db = recoveryFixture(), pending = await submit(db, await create(db)), input = await recoveryInput(db, pending);
+  for (const action of ["reassign", "recovercancel"]) await assert.rejects(command(db, pending, action, { ...(action === "reassign" ? input : {}), reason: " " }, "recovery"), { code: "invalid-argument" });
+  await assert.rejects(command(db, pending, "reassign", { ...input, expectedApprovalRouteFingerprint: undefined }, "recovery"), { code: "invalid-argument" });
+  await assert.rejects(command(db, pending, "approve", {}, "recovery"), { code: "permission-denied" });
+  const next = await command(db, pending, "approve", { nextApproverUid: "finance" }, "manager"), approved = await command(db, next, "approve", {}, "finance");
+  await assert.rejects(command(db, approved, "recovercancel", { reason: "Cannot erase a commitment" }, "recovery"), { code: "failed-precondition" });
+  assert.equal(budget(db).committedMinor, 15000);
+});
+test("replacement authorization enforces department, full amount, membership, account and requester separation", async () => {
+  for (const variant of ["department", "limit", "membership", "permission", "requester", "same-approver", "disabled", "unverified"]) {
+    const db = recoveryFixture(), pending = await submit(db, await create(db)), input = await recoveryInput(db, pending), live = db.records.get(`${base}/settings/purchaseRequests`);
+    let overriddenAuth = auth;
+    if (variant === "department") live.costCentres[0].approverUids = ["manager"];
+    if (variant === "limit") live.approvers.find((row) => row.uid === "director").limitMinor = 14999;
+    if (variant === "membership") db.records.delete(`${base}/members/director`);
+    if (variant === "permission") db.records.get(`${base}/members/director`).permissions = ["purchaserequests.read"];
+    if (variant === "requester") { live.approvers.push(authority("buyer", ["manager"])); input.approverUid = "buyer"; }
+    if (variant === "same-approver") input.approverUid = "manager";
+    if (["disabled", "unverified"].includes(variant)) overriddenAuth = { getUser: async (uid) => ({ ...await auth.getUser(uid), ...(uid === "director" ? { disabled: variant === "disabled", emailVerified: variant !== "unverified" } : {}) }) };
+    const original = structuredClone([...db.records]);
+    await assert.rejects(api.mutateHotelPurchaseRequestHandler(request({ action: "reassign", requestId: `invalid-${variant}`, purchaseRequestId: pending.purchaseRequestId, expectedRevision: pending.revision, ...input }, "recovery"), services(db, { auth: overriddenAuth })));
+    assert.deepEqual(structuredClone([...db.records]), original, variant);
+  }
+});
+test("recovery refuses a replacement who would consume the only person for a later mandatory step", async () => {
+  const db = recoveryFixture({ approvers: [authority("manager", ["manager"]), authority("director", ["manager", "finance"])] }), pending = await submit(db, await create(db));
+  const preview = (await get(db, pending, "recovery")).recoveryApprovalRoute;
+  assert.ok(preview.error); assert.match(preview.error.message, /different authorized people/);
+  await assert.rejects(command(db, pending, "reassign", { approverUid: "director", reason: "Replacement", expectedApprovalRouteFingerprint: "a".repeat(64) }, "recovery"), { code: "permission-denied" });
+});
+test("recovery retains self-approval evidence and all independent and over-budget controls", async () => {
+  const db = allowSelf(recoveryFixture({ overBudgetMode: "approval", approvalSteps: settings().approvalSteps.map((step) => ({ ...step, independentRequired: step.id === "finance" })),
+    approvers: [authority("finance", ["finance"]), authority("director", ["finance"]), authority("manager", [], true)] }));
+  budget(db).budgetMinor = 0;
+  const pending = await command(db, await create(db), "selfapprove", { reason: "Own authority with separate independent controls", approverUid: "finance" });
+  const recovered = await command(db, pending, "reassign", await recoveryInput(db, pending), "recovery");
+  assert.deepEqual(recovered.request.selfApproval, pending.request.selfApproval);
+  assert.deepEqual(recovered.request.approvalSteps.map((step) => step.id), ["finance", "over-budget"]);
+  const extra = await command(db, recovered, "approve", {}, "director"); assert.equal(extra.request.currentApproverUid, "manager");
+  assert.equal(budget(db).committedMinor, 0); assert.equal((await command(db, extra, "approve", {}, "manager")).request.status, "approved");
+});
+test("concurrent approval and reassignment commit exactly one revision in either ordering", async () => {
+  for (const recoveryFirst of [false, true]) {
+    const db = recoveryFixture(), pending = await submit(db, await create(db)), input = await recoveryInput(db, pending);
+    const attempts = [() => command(db, pending, "approve", { nextApproverUid: "finance" }, "manager"), () => command(db, pending, "reassign", input, "recovery")];
+    if (recoveryFirst) attempts.reverse();
+    const results = await Promise.allSettled(attempts.map((attempt) => attempt()));
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(results.find((result) => result.status === "rejected").reason.code, "aborted");
+    assert.equal(current(db, pending).revision, pending.revision + 1); assert.equal(budget(db).pendingMinor, 15000); assert.equal(budget(db).committedMinor, 0);
+    assert.equal(current(db, pending).approvals.length, recoveryFirst ? 0 : 1);
+    assert.equal(current(db, pending).currentApproverUid, recoveryFirst ? "director" : "finance");
+  }
+});
+test("concurrent repeated recovery commands return one receipt and enqueue one notification per participant", async () => {
+  const db = recoveryFixture(), pending = await submit(db, await create(db)), input = await recoveryInput(db, pending);
+  const results = await Promise.all([command(db, pending, "reassign", input, "recovery"), command(db, pending, "reassign", input, "recovery")]);
+  assert.deepEqual(results[0], results[1]);
+  assert.equal([...db.records.values()].filter((row) => row.type === "purchase-request" && row.event === "reassign").length, 4);
+  assert.equal(current(db, pending).revision, 3);
+});
+
 test("cost centre routing isolates department heads and automatically assigns the only complete route", async () => {
   const db = fixture({ costCentres: [{ id: "kitchen", name: "Kitchen", approverUids: ["manager"] }, { id: "bar", name: "Bar", approverUids: ["director"] }],
     approvers: [authority("manager", ["manager"]), authority("director", ["manager"]), authority("finance", ["finance"])] });

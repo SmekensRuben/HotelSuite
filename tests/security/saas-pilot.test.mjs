@@ -373,9 +373,9 @@ describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
     assert.equal(final.status, "Created"); assert.equal(final.dispatchStatus, "needs-review");
     assert.doesNotMatch(JSON.stringify(final), /fictional-sensitive-provider-error/);
     await rejected(confirmOrderHandler(request(approverA, { hotelUid: "hotel-a", orderId: id, expectedRevision: 2, requestId: nextId() }), services), "failed-precondition");
-    await rejected(reviewOrderDeliveryHandler(request(operator, { hotelUid: "hotel-a", orderId: id, expectedRevision: 2, requestId: nextId(), action: "retry-preparation", evidence: "Unconfirmed provider response" }), services), "failed-precondition");
-    await rejected(reviewOrderDeliveryHandler(request(managerA, { hotelUid: "hotel-a", orderId: id, expectedRevision: 2, requestId: nextId(), action: "record-receipt", evidence: "Fixture receipt" }), services), "permission-denied");
-    await reviewOrderDeliveryHandler(request(operator, { hotelUid: "hotel-a", orderId: id, expectedRevision: 2, requestId: nextId(), action: "record-receipt", evidence: "Provider fixture receipt verified" }), services);
+    await rejected(reviewOrderDeliveryHandler(request(operator, { hotelUid: "hotel-a", orderId: id, expectedRevision: 2, requestId: nextId(), action: "retry-preparation", source: "configuration-review", reason: "Investigate an uncertain send", evidence: "Unconfirmed provider response" }), services), "failed-precondition");
+    await rejected(reviewOrderDeliveryHandler(request(managerA, { hotelUid: "hotel-a", orderId: id, expectedRevision: 2, requestId: nextId(), action: "record-receipt", source: "email-provider", reason: "Reconcile provider result", evidence: "Fixture receipt" }), services), "permission-denied");
+    await reviewOrderDeliveryHandler(request(operator, { hotelUid: "hotel-a", orderId: id, expectedRevision: 2, requestId: nextId(), action: "record-receipt", source: "email-provider", reason: "Reconcile provider result", evidence: "Provider fixture receipt verified" }), services);
     assert.equal((await snapshot.ref.get()).data().status, "Ordered");
     assert.equal(calls, 1);
   });
@@ -390,7 +390,7 @@ describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
     const send = async () => { calls++; return { data: { id: "fixture-delivery" } }; };
     await processMailQueueHandler({ params: { hotelUid: "hotel-a", mailId: mail.id }, data: mail }, { ...services, send, from: "pilot@example.test" });
     assert.equal(calls, 0); assert.equal((await snapshot.ref.get()).data().dispatchStatus, "failed");
-    const recovery = { hotelUid: "hotel-a", orderId: id, expectedRevision: 2, requestId: nextId(), action: "retry-preparation", evidence: "Email configuration reviewed before any external send" };
+    const recovery = { hotelUid: "hotel-a", orderId: id, expectedRevision: 2, requestId: nextId(), action: "retry-preparation", source: "configuration-review", reason: "Retry preparation after correcting configuration", evidence: "Email configuration reviewed before any external send" };
     await reviewOrderDeliveryHandler(request(operator, recovery), services);
     await reviewOrderDeliveryHandler(request(operator, recovery), services);
     snapshot = await snapshot.ref.get();
@@ -411,7 +411,7 @@ describe("two-hotel SaaS pilot with real Auth and Firestore emulators", () => {
     let calls = 0;
     const sendSftp = async (frozen, secret, context) => {
       calls++; assert.equal(frozen.products[0].pricePerPurchaseUnit, 12.5);
-      assert.equal(secret.sftpPassword, "fictional-sftp-secret"); context.markExternalAttempt();
+      assert.equal(secret.sftpPassword, "fictional-sftp-secret"); await context.markExternalAttempt();
       return { remotePath: "/incoming/fixture.csv" };
     };
     await Promise.all([dispatchOrderHandler(eventFor(snapshot), { ...services, sendSftp }), dispatchOrderHandler(eventFor(snapshot), { ...services, sendSftp })]);

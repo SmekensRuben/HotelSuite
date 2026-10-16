@@ -9,6 +9,16 @@ const history = () => ({ hotelUid: "hotel-a", inventoryAdjustmentPolicyVersion: 
 beforeEach(() => { vi.clearAllMocks(); sessionStorage.clear(); invalidateProcurementReads(); mocks.auth.currentUser = { uid: "operator" }; mocks.call.mockImplementation(async (_endpoint, request) => result(request)); });
 
 describe("immutable inventory adjustment adapter", () => {
+  it("reviews an exact exception event and rejects a substituted event or hotel", async () => {
+    const data = { ...history(), requestedAdjustmentId: "adjustment-1" };
+    mocks.call.mockResolvedValue(data);
+    await expect(getInventoryAdjustments("hotel-a", null, "adjustment-1")).resolves.toEqual(data);
+    expect(mocks.call).toHaveBeenLastCalledWith("listHotelInventoryAdjustments", { hotelUid: "hotel-a", afterAdjustmentId: null, adjustmentId: "adjustment-1" });
+    for (const patch of [{ hotelUid: "hotel-b" }, { requestedAdjustmentId: "other" }, { adjustments: [{ ...data.adjustments[0], adjustmentId: "other" }] }]) {
+      mocks.call.mockResolvedValue({ ...data, ...patch });
+      await expect(getInventoryAdjustments("hotel-a", null, "adjustment-1")).rejects.toThrow("scope");
+    }
+  });
   it("sends canonical quantities and preserves explicitly unknown cost", async () => {
     await recordInventoryAdjustment(input());
     expect(mocks.call).toHaveBeenCalledWith("recordHotelInventoryAdjustment", { ...input(), requestId: expect.any(String), expectedActorUid: "operator" });

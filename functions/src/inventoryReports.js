@@ -7,6 +7,7 @@ const { digest } = require("./validation");
 const { checkpointId } = require("./inventoryMovements");
 const policy = require("./inventoryPolicy");
 const reportPolicy = require("./inventoryPeriodPolicy");
+const { movementEvidence, countExceptions } = require("./inventoryExceptions");
 const MAX_MOVEMENTS = 1000;
 function inputObject(value, fields) {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !fields.includes(key))) throw new HttpsError("invalid-argument", "Unsupported inventory report input.");
@@ -53,6 +54,15 @@ async function listHotelInventoryCheckpointsHandler(request, services = {}) {
       nextCursor: snapshot.docs.length > 25 ? page.at(-1).id : null };
   }, { readOnly: true });
 }
+async function getHotelStockCountExceptionsHandler(request, services = {}) {
+  const input = inputObject(request.data, ["hotelUid", "stockCountId", "locationId"]);
+  const hotelUid = requireDocumentId(input.hotelUid, "hotelUid"), stockCountId = requireDocumentId(input.stockCountId, "stockCountId"), locationId = requireDocumentId(input.locationId, "locationId");
+  const db = services.firestore || admin.firestore();
+  return db.runTransaction(async (tx) => {
+    await authorize(db, tx, request, hotelUid, services);
+    return { ...await countExceptions(db, tx, hotelUid, stockCountId, locationId), checkedAtMillis: services.now?.() ?? Date.now() };
+  }, { readOnly: true });
+}
 async function getHotelInventoryPeriodHandler(request, services = {}) {
   const input = inputObject(request.data, ["hotelUid", "locationId", "openingStockCountId", "closingStockCountId", "reportPolicyVersion"]);
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid"), locationId = requireDocumentId(input.locationId, "locationId");
@@ -78,7 +88,23 @@ async function getHotelInventoryPeriodHandler(request, services = {}) {
     const late = await tx.get(db.collection(`hotels/${hotelUid}/inventoryMovements`).where("locationId", "==", locationId)
       .where("receivedOn", ">=", opening.businessDate).where("receivedOn", "<=", closing.businessDate).orderBy("receivedOn").limit(MAX_MOVEMENTS + 1));
     if (late.docs.length > MAX_MOVEMENTS) throw new HttpsError("resource-exhausted", "This source-date window exceeds 1,000 inventory postings. The report is unavailable rather than truncated.");
-    const postClosureIssues = late.docs.filter((doc) => doc.data().sequence > closing.sequence).map((doc) => ({ code: "late-posting-after-closing", detail: doc.id }));
+    const postClosureIssues = late.docs.filter((doc) => doc.data().sequence > closing.sequence).map((doc) => {
+      const evidence = movementEvidence(doc);
+      return { code: "late-posting-after-closing", movementId: doc.id, stockCountId: closingId, evidence: [evidence],
+        detail: `${evidence.label} ${doc.id} was posted at sequence ${evidence.sequence} after closing checkpoint ${closing.sequence}, with business date ${evidence.businessDate}. Review its actual physical timing and source record. The saved calculation is unchanged.` };
+    });
+    // Recheck sequence integrity on every read, including immutable saved
+    // reports. A saved calculation is not proof that current evidence is intact.
+    const movementSnapshot = await tx.get(db.collection(`hotels/${hotelUid}/inventoryMovements`).where("locationId", "==", locationId)
+      .where("sequence", ">", opening.sequence).where("sequence", "<", closing.sequence).orderBy("sequence").limit(MAX_MOVEMENTS + 1));
+    if (movementSnapshot.docs.length > MAX_MOVEMENTS) throw new HttpsError("resource-exhausted", "This period exceeds 1,000 inventory postings. The report is unavailable rather than truncated.");
+    const intermediateCheckpoints = await tx.get(db.collection(`hotels/${hotelUid}/inventoryCheckpoints`).where("locationId", "==", locationId)
+      .where("sequence", ">", opening.sequence).where("sequence", "<", closing.sequence).orderBy("sequence").limit(MAX_MOVEMENTS + 1));
+    if (intermediateCheckpoints.docs.length > MAX_MOVEMENTS || closing.sequence - opening.sequence > MAX_MOVEMENTS + 1) throw new HttpsError("resource-exhausted", "This period exceeds the supported posting reconciliation window.");
+    const sequences = [...movementSnapshot.docs, ...intermediateCheckpoints.docs].map((doc) => doc.data().sequence).sort((a, b) => a - b);
+    if (sequences.length !== closing.sequence - opening.sequence - 1 || sequences.some((value, index) => value !== opening.sequence + index + 1)) throw new HttpsError("failed-precondition", `Inventory posting sequences ${opening.sequence + 1}–${closing.sequence - 1} at location ${locationId} have missing or duplicate evidence. Ask an inventory supervisor to reconcile the original receipts and movements. Keep completed counts unchanged; a new count can establish a future baseline but does not repair this period.`);
+    const sources = movementSnapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+    if (version === 2) await require("./inventoryAdjustments").validateManualPeriodEvidence(db, tx, hotelUid, sources);
     let result;
     if (prior.exists) {
       result = prior.data();
@@ -87,19 +113,9 @@ async function getHotelInventoryPeriodHandler(request, services = {}) {
         || !Array.isArray(result.items) || !result.coverage) throw new HttpsError("failed-precondition", "The saved inventory report needs reconciliation.");
     }
     else {
-      const movementSnapshot = await tx.get(db.collection(`hotels/${hotelUid}/inventoryMovements`).where("locationId", "==", locationId)
-        .where("sequence", ">", opening.sequence).where("sequence", "<", closing.sequence).orderBy("sequence").limit(MAX_MOVEMENTS + 1));
-      if (movementSnapshot.docs.length > MAX_MOVEMENTS) throw new HttpsError("resource-exhausted", "This period exceeds 1,000 inventory postings. The report is unavailable rather than truncated.");
-      const intermediateCheckpoints = await tx.get(db.collection(`hotels/${hotelUid}/inventoryCheckpoints`).where("locationId", "==", locationId)
-        .where("sequence", ">", opening.sequence).where("sequence", "<", closing.sequence).orderBy("sequence").limit(MAX_MOVEMENTS + 1));
-      if (intermediateCheckpoints.docs.length > MAX_MOVEMENTS || closing.sequence - opening.sequence > MAX_MOVEMENTS + 1) throw new HttpsError("resource-exhausted", "This period exceeds the supported posting reconciliation window.");
-      const sequences = [...movementSnapshot.docs, ...intermediateCheckpoints.docs].map((doc) => doc.data().sequence).sort((a, b) => a - b);
-      if (sequences.length !== closing.sequence - opening.sequence - 1 || sequences.some((value, index) => value !== opening.sequence + index + 1)) throw new HttpsError("failed-precondition", "Inventory posting sequence has missing or duplicate evidence. Reconcile before using this report.");
-      const sources = movementSnapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
       if (version === 1 && sources.some((item) => !["receipt", "reversal"].includes(item.kind))) {
         throw new HttpsError("failed-precondition", "This interval contains manual adjustments. Choose report policy v2; existing saved v1 reports remain unchanged.");
       }
-      if (version === 2) await require("./inventoryAdjustments").validateManualPeriodEvidence(db, tx, hotelUid, sources);
       const calculated = version === 2 ? reportPolicy.period(opening, closing, sources) : policy.period(opening, closing, sources);
       result = { id: reportRef.id, inventoryPolicyVersion: 1, ...(version === 2 ? { reportPolicyVersion: 2 } : {}), hotelUid, locationId, currency: opening.currency,
         opening: checkpointView(openingDoc), closing: checkpointView(closingDoc), ...calculated,
@@ -113,11 +129,19 @@ async function getHotelInventoryPeriodHandler(request, services = {}) {
       if (Buffer.byteLength(JSON.stringify(result), "utf8") > 750000) throw new HttpsError("resource-exhausted", "The period report exceeds the supported snapshot size.");
       tx.create(reportRef, result);
     }
-    return { ...result, postClosureIssues, currentlyComplete: result.coverage.quantityComplete && postClosureIssues.length === 0 };
+    const exceptionDetails = (result.coverage.issues || []).map((issue) => ({ ...issue,
+      evidence: movementSnapshot.docs.filter((doc) => String(issue.detail || "").includes(doc.id)
+        || (doc.data().lines || []).some((line) => line.catalogProductId === issue.detail)).map(movementEvidence),
+      counts: [opening, closing].filter((count) => (count.coverageIssues || []).some((item) => item.code === issue.code))
+        .map((count) => ({ stockCountId: count.stockCountId, stockCountName: count.stockCountName, businessDate: count.businessDate, sequence: count.sequence })),
+      product: result.items.find((item) => item.catalogProductId === issue.detail)?.catalogProductName || null,
+    }));
+    return { ...result, postClosureIssues, exceptionDetails, currentlyComplete: result.coverage.quantityComplete && postClosureIssues.length === 0 };
   });
 }
 const options = { region: "us-central1", cors: true, maxInstances: 5, concurrency: 8, timeoutSeconds: 120 };
-module.exports = { listHotelInventoryLocationsHandler, listHotelInventoryCheckpointsHandler, getHotelInventoryPeriodHandler,
+module.exports = { listHotelInventoryLocationsHandler, listHotelInventoryCheckpointsHandler, getHotelInventoryPeriodHandler, getHotelStockCountExceptionsHandler,
   listHotelInventoryLocations: onCall(options, gated(listHotelInventoryLocationsHandler)),
   listHotelInventoryCheckpoints: onCall(options, gated(listHotelInventoryCheckpointsHandler)),
-  getHotelInventoryPeriod: onCall(options, gated(getHotelInventoryPeriodHandler)) };
+  getHotelInventoryPeriod: onCall(options, gated(getHotelInventoryPeriodHandler)),
+  getHotelStockCountExceptions: onCall(options, gated(getHotelStockCountExceptionsHandler)) };
