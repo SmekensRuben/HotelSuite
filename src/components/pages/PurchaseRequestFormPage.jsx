@@ -128,7 +128,7 @@ function PurchaseRequestForm({ hotelUid, purchaseRequestId, canRead, canWrite })
             <p className="text-xs text-stone-600">{currency} · Excl. VAT</p>
           </div>
           <div aria-hidden="true" className="ht-purchase-line-grid mt-4 hidden items-center border-b pb-2 text-xs font-medium text-stone-500 min-[1100px]:grid">
-            <span>Product / description</span><span>Supplier</span><span>Purchase unit</span><span>Quantity</span><span>Net unit price</span><span className="text-right">Line total</span><span />
+            <span>Product / description</span><span>Supplier</span><span>Quantity</span><span>Purchase unit</span><span>Net unit price</span><span className="text-right">Line total</span><span />
           </div>
           <div className="mt-3 divide-y divide-stone-200 min-[1100px]:mt-0">
             {draft.lines.map((line, index) => <PurchaseRequestLineEditor key={line.id} line={line} index={index} suppliers={data.context.suppliers || []} hotelUid={hotelUid} scopeKey={scopeKey} currency={currency} locked={locked} onChange={(patch) => changeLine(line.id, patch)} onSupplierChange={(supplierId) => changeSupplier(line.id, supplierId)} onChooseProduct={(product, option) => chooseSupplierProduct(line.id, line.supplierId, product, option)} onRemove={() => setDraft((before) => ({ ...before, lines: before.lines.filter((entry) => entry.id !== line.id) }))} />)}

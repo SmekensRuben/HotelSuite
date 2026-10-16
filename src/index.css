@@ -263,7 +263,7 @@
 
 @media (min-width: 1100px) {
   .ht-procurement-page .ht-purchase-line-grid {
-    grid-template-columns: minmax(10rem, 2.2fr) minmax(8rem, 1.5fr) minmax(5rem, 0.8fr) 4.5rem 6.5rem 6rem 2.5rem;
+    grid-template-columns: minmax(10rem, 2.2fr) minmax(8rem, 1.5fr) 4.5rem minmax(5rem, 0.8fr) 6.5rem 6rem 2.5rem;
     column-gap: 0.5rem;
   }
   .ht-procurement-page .ht-purchase-line-label {
