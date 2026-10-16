@@ -81,6 +81,24 @@ test("immutable Storage location must match the existing shared trigger region",
   assert.match(result.stderr, /Storage must use us-west1/);
 });
 
+test("bootstrap prepares build identities and artifact policies in every exported Functions region", () => {
+  const discovery = spawnSync(process.execPath, ["-e",
+    'const functions = require(process.argv[1]); process.stdout.write(JSON.stringify([...new Set(Object.values(functions).filter(fn => fn.__endpoint).flatMap(fn => fn.__endpoint.region || ["us-central1"]))]));',
+    new URL("../../functions/index.js", import.meta.url).pathname], {
+    env: { PATH: process.env.PATH, NODE_ENV: "production", GCLOUD_PROJECT: "hotel-toolkit-staging", DEPLOYMENT_ENV: "staging",
+      APP_BASE_URL: "https://hotel-toolkit-staging--hotel-toolkit-staging.europe-west4.hosted.app",
+      FIREBASE_CONFIG: JSON.stringify({ projectId: "hotel-toolkit-staging", storageBucket: "hotel-toolkit-staging.firebasestorage.app" }) },
+    encoding: "utf8",
+  });
+  assert.equal(discovery.status, 0, discovery.stderr);
+  const regions = JSON.parse(discovery.stdout);
+  assert.ok(regions.length > 0, "Discover real Functions endpoint regions without cloud credentials.");
+  const loop = readFileSync(script, "utf8").match(/^for function_region in ([^;\n]+); do$/m);
+  assert.ok(loop, "Locate the bootstrap's regional build/artifact preparation.");
+  const prepared = new Set(loop[1].split(/\s+/));
+  for (const region of regions) assert.ok(prepared.has(region), `Missing build/artifact setup for Functions region ${region}.`);
+});
+
 function runServiceEnablement(failService) {
   const directory = mkdtempSync(join(tmpdir(), "staging-service-enablement-"));
   const evidence = join(directory, "calls.jsonl");

@@ -122,6 +122,12 @@ Service acceptance is requested, accept them in the staging Firebase Console
 and rerun bootstrap. Existing incompatible backend settings stop the script
 for operator review.
 
+Bootstrap prepares dry-run Artifact Registry cleanup policies in `us-central1`,
+`us-west1`, `europe-west1` and `europe-west4`, preserving existing policies. The
+last region is also used by mail/indexing Functions. A missing cleanup policy
+can make a non-interactive Firebase deployment fail after Functions themselves
+were successfully deployed, leaving frontend publication and activation pending.
+
 ### GitHub Environment and deploy permissions
 
 Create repository **Settings → Environments → staging**, add a required reviewer,

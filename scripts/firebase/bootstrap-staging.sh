@@ -256,7 +256,7 @@ if grep -Fxq "$project_id@appspot.gserviceaccount.com" "$scratch/accounts.txt"; 
   gcloud iam service-accounts add-iam-policy-binding "$project_id@appspot.gserviceaccount.com" --project="$project_id" \
     --member="serviceAccount:$deploy_account" --role=roles/iam.serviceAccountUser --condition=None --quiet >/dev/null
 fi
-for function_region in us-central1 us-west1 europe-west1; do
+for function_region in us-central1 us-west1 europe-west1 europe-west4; do
   build_account=$(gcloud builds get-default-service-account --project="$project_id" --region="$function_region")
   build_account=${build_account##*/}
   [[ "$build_account" == *"$project_number"* || "$build_account" == *"@$project_id.iam.gserviceaccount.com" ]] || fail 'Build identity is not from staging.'
