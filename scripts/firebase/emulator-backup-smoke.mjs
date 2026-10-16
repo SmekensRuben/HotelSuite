@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, unlink } from "node:fs/promises";
@@ -653,7 +654,22 @@ function expectedStoredInventoryReport(fixture) {
     costBasis: "Period estimate from explicit opening costs and frozen net order prices; not invoice cost or live on-hand stock." };
 }
 
+let workflowPolicyMock;
 try {
+  const environmentPolicy = require("../../functions/src/environmentPolicy");
+  assert.equal(environmentPolicy.runtimePolicy().environment, "emulator");
+  assert.equal(environmentPolicy.externalActionsAllowed(), false);
+  const requireExternalActions = environmentPolicy.requireExternalActions;
+  // Restore proofs inject fictional provider responses. Permit only their
+  // workflow gates; every actual provider transport remains blocked.
+  workflowPolicyMock = mock.method(environmentPolicy, "requireExternalActions", (action) => {
+    if (!["AI catalog suggestions", "AI supplier imports"].includes(action)) return requireExternalActions(action);
+  });
+  for (const action of ["Supplier AI requests", "Guest intelligence research", "Email deliveries", "SFTP deliveries"]) {
+    assert.throws(() => environmentPolicy.requireExternalActions(action), { code: "failed-precondition" });
+  }
+  assert.throws(() => require("../../functions/src/supplierAiProvider").createSupplierAiProvider({ apiKey: "fictional-restore-key",
+    fetchImpl: () => assert.fail("Restore proofs must never contact an external provider.") }), { code: "failed-precondition" });
   if (process.argv[2] === "seed") {
     await Promise.all([
       auth.createUser({ uid: "restore-platform", email: "restore-platform@example.test", emailVerified: true }),
@@ -800,6 +816,7 @@ try {
     console.log("Verified two-hotel data, unchanged v1 period replay (50 inferred usage; weighted cost 290/130), supplier response/review/approved-price receipt restore and exact replay, supplier price-history restore, exact paired manual movement/reversal replay and immutable v2 reports with explicit unknown costs, frozen timestamps/updateTimes, entitlements, roles, platform history, Auth, private Storage bytes/metadata and exact managed product-image hashes/generations with authorized reads and browser/cross-hotel denials. Restored unknown AI billing reservations, immutable attempts and pinned source generations remain unchanged; stale sessions are denied and fresh status/upload/worker replay makes zero provider calls.");
   } else throw new Error("Expected seed or verify mode.");
 } finally {
+  workflowPolicyMock?.mock.restore();
   if (imageRulesEnvironment) await imageRulesEnvironment.cleanup();
   await deleteApp(app);
   if (process.argv[2] === "verify") await unlink(procurementProofPath).catch((error) => { if (error.code !== "ENOENT") throw error; });

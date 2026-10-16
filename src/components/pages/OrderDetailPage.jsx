@@ -105,7 +105,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
       const dispatchStatus = String(latestOrder?.dispatchStatus || "").toLowerCase();
 
       if (dispatchStatus === "sent") {
-        setProgressMessage(latestOrder.dispatchMode === "simulation" ? "Demo confirmation completed; no supplier was contacted." : "Dispatch completed. Supplier acceptance is tracked separately.");
+        setProgressMessage(latestOrder.dispatchMode === "simulation" ? "Simulated confirmation completed; no supplier was contacted." : "Dispatch completed. Supplier acceptance is tracked separately.");
         clearInterval(interval);
         return;
       }
@@ -339,7 +339,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
           </div>
         </Card>
 
-        {order.dispatchMode === "simulation" && <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm">DEMO order: supplier delivery is simulated. No email or SFTP file is sent. Receiving and stock-count actions still use the normal hotel permissions.</p>}
+        {order.dispatchMode === "simulation" && <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm">Simulated order: supplier delivery is simulated. No email or SFTP file is sent. Receiving and stock-count actions still use the normal hotel permissions.</p>}
         {actionError && <p className="text-sm text-red-600">{actionError}</p>}
         <p className="text-xs text-gray-600">Quoted amounts are shown as recorded. No VAT conversion is applied; missing historical price bases remain unknown.</p>
         <DataListTable columns={columns} rows={rows} emptyMessage="No order lines found." />
@@ -399,7 +399,7 @@ function ScopedOrderDetail({ hotelUid, hotelName, isPlatformAdmin, orderId }) {
             )}
             {!ordering && dispatchStatus === "sent" && (
               <p className="mt-1 text-green-700">
-                {isSimulation ? "Demo confirmation successful. No supplier was contacted. Status is now Ordered." : <>Dispatch successful via {dispatchedVia === "sftp" ? "SFTP" : "email"}. Status is now Ordered; supplier acceptance is tracked separately.</>}
+                {isSimulation ? "Simulated confirmation successful. No supplier was contacted. Status is now Ordered." : <>Dispatch successful via {dispatchedVia === "sftp" ? "SFTP" : "email"}. Status is now Ordered; supplier acceptance is tracked separately.</>}
               </p>
             )}
             {!ordering && dispatchStatus === "failed" && (

@@ -18,6 +18,16 @@ const { digest } = require("../../functions/src/validation");
 const { mutateHotelCatalogProductHandler } = require("../../functions/src/products");
 const { DEFAULT_AI_CONFIGURATION } = require("../../functions/src/supplierAiPolicy");
 const { prepareSupplierPriceVersion, writeSupplierPriceVersion } = require("../../functions/src/supplierPriceVersions");
+const environmentPolicy = require("../../functions/src/environmentPolicy");
+function allowInjectedCatalogProvider(context) {
+  const requireExternalActions = environmentPolicy.requireExternalActions;
+  // Exercise real authorization and accounting with the injected fake provider.
+  // Every actual transport keeps the emulator's fail-closed environment guard.
+  context.mock.method(environmentPolicy, "requireExternalActions", (action) => {
+    if (action !== "AI catalog suggestions") return requireExternalActions(action);
+  });
+  assert.throws(() => environmentPolicy.requireExternalActions("Supplier AI requests"), { code: "failed-precondition" });
+}
 const syncApi = () => require("../../functions/src/catalogSync");
 const skuApi = () => require("../../functions/src/catalogSkuSettings");
 const aiApi = () => require("../../functions/src/catalogSyncAi");
@@ -279,7 +289,8 @@ describe("catalog synchronization and automatic SKUs with real hotel-local Fireb
     await denied(skuApi().assignHotelCatalogSkusHandler(request(input), services));
     assert.deepEqual(await readEvidence(Object.keys(proof)), proof);
   });
-  it("keeps optional AI suggestions private, hotel-scoped and advisory with one immutable charged attempt on replay", async () => {
+  it("keeps optional AI suggestions private, hotel-scoped and advisory with one immutable charged attempt on replay", async (context) => {
+    allowInjectedCatalogProvider(context);
     await db.doc("platformConfiguration/aiSupplierProductImport").set({ ...DEFAULT_AI_CONFIGURATION, enabled: true });
     const workspace = await preview(), row = bySource(workspace, "milkSix");
     let counted = 0, paid = 0;
@@ -309,7 +320,8 @@ describe("catalog synchronization and automatic SKUs with real hotel-local Fireb
     await db.doc("hotels/hotel-a/members/manager").set({ permissions: grants.filter((permission) => permission !== "supplierproducts.update") });
     await denied(refine()); assert.equal(paid, 1);
   });
-  it("retains unknown AI billing evidence and refuses another paid request while allowing ordinary manual catalog review", async () => {
+  it("retains unknown AI billing evidence and refuses another paid request while allowing ordinary manual catalog review", async (context) => {
+    allowInjectedCatalogProvider(context);
     await db.doc("platformConfiguration/aiSupplierProductImport").set({ ...DEFAULT_AI_CONFIGURATION, enabled: true });
     const workspace = await preview(), row = bySource(workspace, "milkSix"); let paid = 0;
     const extra = { ...services, provider: { countInput: async () => 500, respond: async () => { paid++; throw new Error("Fictional lost response with PRIVATE provider details"); } } };
@@ -325,7 +337,8 @@ describe("catalog synchronization and automatic SKUs with real hotel-local Fireb
     assert.ok((await db.doc("hotels/hotel-a/supplierproducts/milkSix").get()).data().catalogProductId);
     assert.equal((await operation.get()).data().reservedCostMicros, before.data().reservedCostMicros);
   });
-  it("rechecks live account authority after AI I/O without publishing suggestions or losing known billing evidence", async () => {
+  it("rechecks live account authority after AI I/O without publishing suggestions or losing known billing evidence", async (context) => {
+    allowInjectedCatalogProvider(context);
     await db.doc("platformConfiguration/aiSupplierProductImport").set({ ...DEFAULT_AI_CONFIGURATION, enabled: true });
     const workspace = await preview(), row = bySource(workspace, "milkSix"); let paid = 0;
     const input = { hotelUid: "hotel-a", jobId: workspace.jobId, requestId: next(), expectedRevision: workspace.revision, rowIds: [row.rowId] };

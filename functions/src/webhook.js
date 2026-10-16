@@ -3,8 +3,10 @@ const { onRequest, logger, admin, RESEND_API_KEY, RESEND_WEBHOOK_SECRET } = requ
 const { extractEmailAddress, toEmailList, getFirstAvailableImportAttachment, fetchResendAttachmentBuffer } = require("./common");
 const { hotelHasActiveSubscription } = require("./subscriptions");
 const { stableId, resolveImportRoute, claimReceipt, finishReceipt, releaseReceipt } = require("./importRouting");
+const { externalActionsAllowed, requireExternalActions } = require("./environmentPolicy");
 
 function verifyResendWebhook(req) {
+  requireExternalActions("Inbound email verification");
   const secret = String(RESEND_WEBHOOK_SECRET.value() || "").trim();
   if (!secret) throw new Error("Missing RESEND_WEBHOOK_SECRET");
   if (!req.rawBody) throw new Error("Missing raw webhook body");
@@ -18,6 +20,7 @@ function verifyResendWebhook(req) {
 function createResendEmailReceivedHandler({ db, bucket, verify = verifyResendWebhook,
   fetchAttachment = fetchResendAttachmentBuffer, activeSubscription = hotelHasActiveSubscription, log = logger }) {
   return async (req, res) => {
+    if (!externalActionsAllowed()) return res.status(403).json({ error: "Inbound integrations are disabled in this environment." });
     if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
     let payload;
     try { payload = verify(req); }
@@ -85,7 +88,9 @@ function createResendEmailReceivedHandler({ db, bucket, verify = verifyResendWeb
     }
   };
 }
-const handleResendEmailReceivedWebhook = onRequest({ secrets: [RESEND_API_KEY, RESEND_WEBHOOK_SECRET] }, (req, res) =>
-  createResendEmailReceivedHandler({ db: admin.firestore(), bucket: admin.storage().bucket() })(req, res));
+const handleResendEmailReceivedWebhook = onRequest({ secrets: [RESEND_API_KEY, RESEND_WEBHOOK_SECRET] }, (req, res) => {
+  if (!externalActionsAllowed()) return res.status(403).json({ error: "Inbound integrations are disabled in this environment." });
+  return createResendEmailReceivedHandler({ db: admin.firestore(), bucket: admin.storage().bucket() })(req, res);
+});
 
 module.exports = { handleResendEmailReceivedWebhook, verifyResendWebhook, createResendEmailReceivedHandler };

@@ -27,7 +27,7 @@ function dependencies() {
 let runtimeApp;
 const hotelMcp = onRequest({
   region: "us-central1", cors: false, invoker: "public", timeoutSeconds: 120, memory: "512MiB", concurrency: 2, maxInstances: 10,
-  secrets: [MEILI_HOST, MEILI_API_KEY, MEILI_INDEX],
+  secrets: require("./environmentPolicy").secretBindings([MEILI_HOST, MEILI_API_KEY, MEILI_INDEX]),
 }, (request, response) => {
   try {
     runtimeApp ||= createHotelMcpApp(dependencies()).app;

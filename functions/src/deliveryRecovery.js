@@ -46,6 +46,7 @@ async function getHotelOrderDeliveryHandler(request, services = {}) {
     const events = await tx.get(history.limit(51));
     return { hotelUid, orderId, policyVersion: 1, orderRevision: value.revision || 0,
       dispatchId: data ? dispatch.id : null, status: data?.status || value.dispatchStatus || "none",
+      ...(value.dispatchEnvironment === "staging" ? { environment: "staging", simulated: true } : {}),
       ...deliveryReviewState(value, data, services.now?.() ?? Date.now()),
       method: data?.supplier?.orderSystem === "SFTP csv" ? "sftp" : "email",
       externalAttempt: typeof data?.externalAttempt === "boolean" ? data.externalAttempt : null,

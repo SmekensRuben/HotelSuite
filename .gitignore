@@ -6,5 +6,6 @@ dist
 !.env.test
 gha-creds-*.json
 build
+work/
 src/importexport/serviceAccountKey.json
 src/importexport/dataMigration.js

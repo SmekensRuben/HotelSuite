@@ -1,6 +1,5 @@
 const { onRequest, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
-const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onDocumentCreated, onSchedule } = require("./config");
 const { createHash, randomUUID } = require("node:crypto");
 const { admin, logger, OPENAI_API_KEY } = require("./config");
 const { requireHotelPermission } = require("./authorization");
@@ -393,6 +392,7 @@ async function uploadSupplierAiImport(request, data, bytes, services = {}) {
     const profile = await tx.get(mappingProfileRef(db, hotelUid, mappingProfile));
     const purchaseUnitMappingSnapshot = mappingSnapshot(profile.exists ? profile.data() : null, mappingProfile);
     const processingMode = structuredSource && require("./supplierImportFormat").interpretationForSources(structuredSource, purchaseUnitMappingSnapshot, { importSettings }).sourceInterpretation.status === "confirmed" ? "deterministic" : "ai";
+    if (processingMode !== "deterministic") require("./environmentPolicy").requireExternalActions("AI supplier imports");
     const configuration = await loadSupplierAiConfiguration(db, tx);
     if (!configuration.enabled && processingMode !== "deterministic") throw new HttpsError("failed-precondition", "AI supplier import is disabled by the platform operator.");
     if (!supplier.exists || supplier.data().archived === true) throw new HttpsError("failed-precondition", "Choose an active supplier in this hotel.");
@@ -682,6 +682,7 @@ async function runSupplierAiImportJob(hotelUid, jobId, services = {}) {
       return { ...data, status: "processing", leaseId };
     });
     if (!job) return { ignored: true };
+    if (job.processingMode !== "deterministic") require("./environmentPolicy").requireExternalActions("AI supplier imports");
     const extract = services.extractSource || require("./supplierAiExtraction").extractSupplierAiSource;
     const split = services.splitSource || require("./supplierAiExtraction").splitSupplierAiSource;
     await authorize(db, actorRequest(job), hotelUid, "create", undefined, services);

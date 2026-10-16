@@ -366,6 +366,7 @@ async function refineCatalogSync(request, services = {}) {
 }
 
 async function refineHotelCatalogSyncSuggestionsHandler(request, services = {}) {
+  require("./environmentPolicy").requireExternalActions("AI catalog suggestions");
   try { return await refineCatalogSync(request, services); }
   catch (error) {
     const uncommitted = await proveUncommitted(request, services);
@@ -410,4 +411,4 @@ async function proveUncommitted(request, services) {
 module.exports = { CATALOG_SYNC_AI_POLICY_VERSION, validateInput, publicMatchingFacts, createCatalogSyncAiRequest, validateSuggestions,
   refineHotelCatalogSyncSuggestionsHandler,
   refineHotelCatalogSyncSuggestions: onCall({ region: "us-central1", cors: true, memory: "512MiB", timeoutSeconds: 300,
-    concurrency: 2, maxInstances: 3, secrets: [OPENAI_API_KEY] }, gated(refineHotelCatalogSyncSuggestionsHandler)) };
+    concurrency: 2, maxInstances: 3, secrets: require("./environmentPolicy").secretBindings([OPENAI_API_KEY]) }, gated(refineHotelCatalogSyncSuggestionsHandler)) };

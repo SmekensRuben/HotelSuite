@@ -1,6 +1,7 @@
 const { hotelHasActiveSubscription } = require("./subscriptions");
 const { getFirestore } = require("firebase-admin/firestore");
-const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onSchedule } = require("./config");
+const { requireExternalActions } = require("./environmentPolicy");
 const { randomUUID } = require("node:crypto");
 const { stableDigest, hotelBusinessDate: hotelDate } = require("./scheduledMailDelivery");
 const logger = require("firebase-functions/logger");
@@ -115,6 +116,7 @@ function analysisSchema() {
 }
 
 async function researchGuests(apiKey, model, guests, fetchImpl = fetch) {
+  requireExternalActions("Guest intelligence research");
   try {
     const isReasoningModel = /^gpt-5(?:\.|$)/.test(model);
     const response = await fetchImpl(OPENAI_API_URL, {
@@ -247,6 +249,7 @@ async function cleanupGuestIntelligenceForHotel(hotelUid, { db = getFirestore(),
 }
 
 async function processGuestIntelligenceForHotel(hotelUid, { db = getFirestore(), fetchImpl = fetch, now = Date.now, token = randomUUID() } = {}) {
+  requireExternalActions("Guest intelligence research");
   await cleanupGuestIntelligenceForHotel(hotelUid, { db, now });
   const report = db.doc(`hotels/${hotelUid}/reports/arrivalsmadeyesterday`);
   const latest = await getLatestDateCollection(report);
@@ -335,6 +338,7 @@ async function cleanupExpiredGuestIntelligence() {
 }
 
 async function processNightlyGuestIntelligence({ db = getFirestore(), processHotel = processGuestIntelligenceForHotel, log = logger } = {}) {
+  requireExternalActions("Guest intelligence research");
   const configuration = await db.doc("scheduledReports/guestIntelligence").get();
   const hotelUids = configuredHotelUids(configuration.data()?.hotelUid);
   if (!hotelUids.length) {

@@ -40,6 +40,7 @@ function safeDeliveryError(receiptId) {
 }
 
 async function acknowledgedSend(send, payload, options) {
+  require("./environmentPolicy").requireExternalActions("Email deliveries");
   try {
     const response = await send(payload, options);
     requireAcknowledgment(response);
@@ -93,6 +94,7 @@ function configuredRecipientUids(configuration, hotelUid) {
 }
 
 async function deliverScheduledMail({ db, hotelUid, deliveryKey, payload, fingerprintData = payload, validateClaim, send, now = Date.now }) {
+  require("./environmentPolicy").requireExternalActions("Scheduled email deliveries");
   requireDocumentId(hotelUid, "hotelUid");
   if (typeof deliveryKey !== "string" || !deliveryKey || deliveryKey.length > 500) throw new Error("A bounded delivery key is required.");
   const id = stableDigest([hotelUid, deliveryKey]);

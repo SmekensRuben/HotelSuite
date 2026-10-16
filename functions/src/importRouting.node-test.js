@@ -1,4 +1,4 @@
-process.env.FIREBASE_CONFIG ||= JSON.stringify({ projectId: "hotel-suite-test", storageBucket: "hotel-suite-test.appspot.com" });
+require("../testSupport/productionEnvironment").activateProductionTestEnvironment();
 process.env.RESEND_WEBHOOK_SECRET = `whsec_${Buffer.from("import-routing-test-secret").toString("base64")}`;
 const test = require("node:test");
 const assert = require("node:assert/strict");

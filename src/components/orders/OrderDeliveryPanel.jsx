@@ -14,7 +14,7 @@ const descriptions = {
   "transport-accepted": ["Transport accepted the order", "The email provider accepted the message or the SFTP transfer completed. This does not confirm that the supplier accepted the order. Record supplier responses in Supplier confirmation below."],
   "in-progress": ["Delivery in progress", "Wait for the delivery worker and refresh this review. Do not resend or create a replacement order. If processing stalls, a delivery recovery manager can review the evidence after the worker review window."],
   "legacy-review": ["Legacy delivery needs review", "The original dispatch evidence is unavailable. Ask a platform operator to inspect the historical delivery before taking further action."],
-  "simulated": ["Simulated delivery", "This demo order did not contact a supplier."],
+  "simulated": ["Simulated delivery", "This simulated order did not contact a supplier."],
 };
 function savedCommand(key, hotelUid, orderId) {
   try {

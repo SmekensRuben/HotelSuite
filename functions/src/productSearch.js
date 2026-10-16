@@ -35,6 +35,9 @@ async function searchHotelProductsHandler(request, services = {}) {
   const query = buildSearchRequest(request.data || {});
   const db = services.firestore || admin.firestore();
   await requireHotelPermission(db, request, query.hotelUid, query.collection, "read", undefined, services.auth);
+  const policy = require("./environmentPolicy");
+  if (policy.isStagingEnvironment()) return searchStagingProducts(db, query, request.data.criteria || {});
+  policy.requireExternalActions("External product search");
   let payload;
   try {
     payload = await (services.search || ((body) => {
@@ -57,6 +60,23 @@ async function searchHotelProductsHandler(request, services = {}) {
   return { products, cursor: hasMore ? { offset: nextOffset } : null, hasMore };
 }
 
+// Staging uses its own canonical, small fictional catalog. No external index is
+// queried or provisioned, and the bounded scan remains inside the authorized hotel.
+async function searchStagingProducts(db, query, criteria) {
+  const snapshot = await db.collection(`hotels/${query.hotelUid}/${query.collection}`).orderBy(admin.firestore.FieldPath.documentId()).limit(1001).get();
+  if (snapshot.docs.length > 1000) throw new HttpsError("resource-exhausted", "Staging search supports up to 1,000 products per collection.");
+  const term = query.body.q.toLowerCase();
+  const fields = query.collection === "catalogproducts" ? ["name", "internalSku", "gtin", "brand", "category", "subcategory"] : ["supplierName", "supplierSku", "supplierProductName", "brand"];
+  const filters = query.collection === "catalogproducts" ? ["category", "subcategory"] : ["supplierId"];
+  const matching = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id })).filter((product) =>
+    filters.every((field) => !criteria[field]?.trim() || product[field] === criteria[field].trim())
+    && (query.collection !== "supplierproducts" || typeof criteria.active !== "boolean" || (product.active !== false) === criteria.active)
+    && (!term || fields.some((field) => String(product[field] || "").toLowerCase().includes(term))));
+  const nextOffset = query.body.offset + query.body.limit;
+  const hasMore = nextOffset < matching.length;
+  return { products: matching.slice(query.body.offset, nextOffset), cursor: hasMore ? { offset: nextOffset } : null, hasMore, searchMode: "staging-local" };
+}
+
 const searchHotelProducts = onCall({ region: "us-central1", cors: true,
-  secrets: [MEILI_API_KEY, MEILI_HOST, MEILI_INDEX], timeoutSeconds: 30 }, searchHotelProductsHandler);
-module.exports = { buildSearchRequest, searchHotelProductsHandler, searchHotelProducts };
+  secrets: require("./environmentPolicy").secretBindings([MEILI_API_KEY, MEILI_HOST, MEILI_INDEX]), timeoutSeconds: 30 }, searchHotelProductsHandler);
+module.exports = { buildSearchRequest, searchHotelProductsHandler, searchHotelProducts, searchStagingProducts };

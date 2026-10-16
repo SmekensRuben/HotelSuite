@@ -1,0 +1,208 @@
+name: Deploy HotelSuite staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_kind:
+        description: Source type (commit is a previously merged rollback release)
+        type: choice
+        required: true
+        default: branch
+        options: [branch, pull-request, commit]
+      source_target:
+        description: Exact branch name, same-repository PR number, or full rollback SHA
+        type: string
+        required: true
+      deploy:
+        description: Deploy after verification and protected staging Environment approval
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# A complete release owns the staging slot, including propagation and activation.
+# Never cancel a running deployment halfway through a shared staging environment.
+concurrency:
+  group: staging-hotel-toolkit-staging
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    if: github.repository == 'SmekensRuben/HotelSuite' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: package.json
+      - name: Resolve and publish the immutable staging commit
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGING_SOURCE_KIND: ${{ inputs.source_kind }}
+          STAGING_SOURCE_TARGET: ${{ inputs.source_target }}
+        run: node scripts/firebase/staging-release.mjs resolve
+
+  verify:
+    needs: resolve
+    name: Verify staging source ${{ needs.resolve.outputs.sha }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Selected source is exercised here with no cloud identity, environment or secrets.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: control/package.json
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install locked dependencies using the trusted npm version
+        run: |
+          build_npm_version=$(node -p 'require("./control/package.json").engines.npm')
+          npm install --global "npm@${build_npm_version}"
+          npm --prefix candidate ci
+          npm --prefix candidate/functions ci
+      - name: Verify exact staging checkout
+        env:
+          STAGING_RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: test "$(git -C candidate rev-parse HEAD)" = "$STAGING_RELEASE_SHA"
+      - name: Frontend and Functions tests
+        working-directory: candidate
+        run: |
+          npm test -- --run
+          npm --prefix functions test
+          npm run test:staging
+          node --test scripts/migrate-domain-settings.test.mjs
+      - name: Lint, types and generated rule consistency
+        working-directory: candidate
+        run: |
+          npm run lint
+          npm run typecheck
+          node scripts/render-module-rules.mjs --check
+      - name: Firestore and Storage security tests
+        working-directory: candidate
+        run: npm run test:security
+      - name: Backup and restore smoke test
+        working-directory: candidate
+        run: npm run test:restore
+      - name: Dependency policy
+        working-directory: candidate
+        run: npm run audit:policy
+      - name: Non-production build
+        working-directory: candidate
+        run: npm run build:test
+      - name: Build exact staging source with a synthetic staging web-app configuration
+        working-directory: candidate
+        env:
+          RELEASE_TARGET: staging
+          VITE_DEPLOYMENT_ENV: staging
+          VITE_AUTH_REQUIRE_MFA: 'false'
+          EXPECTED_FIREBASE_PROJECT_ID: hotel-toolkit-staging
+          PRODUCTION_FIREBASE_PROJECT_ID: hotel-toolkit
+          VITE_RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+          FIREBASE_WEBAPP_CONFIG: >-
+            {"apiKey":"fictional-staging-ci-key","authDomain":"hotel-toolkit-staging.firebaseapp.com","projectId":"hotel-toolkit-staging","storageBucket":"hotel-toolkit-staging.firebasestorage.app","messagingSenderId":"000000000000","appId":"fictional-staging-ci-app"}
+        run: npm run apphosting:build
+      - name: Trusted staging release safeguards and executable dry-run
+        env:
+          STAGING_RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          node --test control/scripts/firebase/staging-release.test.mjs
+          node control/scripts/firebase/staging-release.mjs --dry-run --project hotel-toolkit-staging --sha "$STAGING_RELEASE_SHA"
+
+  deploy:
+    if: inputs.deploy
+    needs: [resolve, verify]
+    name: Deploy verified SHA ${{ needs.resolve.outputs.sha }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Bootstrap requires independent reviewer approval and main-only deployment policy.
+    # This identity can access only staging. Production WIF variables are not used.
+    environment:
+      name: staging
+      url: https://hotel-toolkit-staging--hotel-toolkit-staging.europe-west4.hosted.app
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    env:
+      FIREBASE_PROJECT_ID: hotel-toolkit-staging
+      GCLOUD_PROJECT: hotel-toolkit-staging
+      DEPLOYMENT_ENV: staging
+      RELEASE_TARGET: staging
+      STAGING_DEPLOY_ENABLED: ${{ vars.STAGING_DEPLOY_ENABLED }}
+      STAGING_PROJECT_NUMBER: ${{ vars.STAGING_PROJECT_NUMBER }}
+      STAGING_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+      STAGING_DEPLOY_SERVICE_ACCOUNT: ${{ vars.STAGING_DEPLOY_SERVICE_ACCOUNT }}
+      STAGING_APPHOSTING_BACKEND_ID: hotel-toolkit-staging
+      STAGING_APPHOSTING_REGION: europe-west4
+      STAGING_APP_BASE_URL: https://hotel-toolkit-staging--hotel-toolkit-staging.europe-west4.hosted.app
+      STAGING_RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+      STAGING_SOURCE_KIND: ${{ inputs.source_kind }}
+      STAGING_SOURCE_TARGET: ${{ inputs.source_target }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: control/package.json
+      - name: Install trusted controller and selected Functions dependencies without lifecycle scripts
+        run: |
+          build_npm_version=$(node -p 'require("./control/package.json").engines.npm')
+          npm install --global "npm@${build_npm_version}"
+          npm --prefix control ci --ignore-scripts --no-audit
+          npm --prefix candidate/functions ci --ignore-scripts --no-audit
+      - name: Refuse missing or production credentials before authentication
+        run: |
+          node --input-type=module -e 'import { requireStagingConfiguration, requireStagingWorkflow } from "./control/scripts/firebase/staging-release-policy.mjs"; requireStagingWorkflow(process.env); requireStagingConfiguration(process.env); if (process.env.STAGING_DEPLOY_ENABLED !== "true") throw new Error("Staging bootstrap is incomplete.");'
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+      - name: Authenticate only the staging deployment identity
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: hotel-toolkit-staging
+          workload_identity_provider: ${{ vars.STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.STAGING_DEPLOY_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+      - name: Deploy and activate one coordinated staging release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node control/scripts/firebase/staging-release.mjs --apply --project hotel-toolkit-staging --source candidate --sha "$STAGING_RELEASE_SHA" --report "$RUNNER_TEMP/staging-release-evidence.json"
+      - name: Preserve release evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: staging-release-${{ needs.resolve.outputs.sha }}
+          path: ${{ runner.temp }}/staging-release-evidence.json
+          if-no-files-found: ignore
+          retention-days: 30

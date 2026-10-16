@@ -20,7 +20,8 @@
     "build:test": "NODE_ENV=test npm run validate:env && vite build --mode test",
     "preview": "vite preview",
     "lint": "eslint src functions/src functions/index.js scripts",
-    "typecheck": "tsc --project tsconfig.boundaries.json"
+    "typecheck": "tsc --project tsconfig.boundaries.json",
+    "test:staging": "node --test scripts/firebase/staging-*.test.mjs scripts/firebase/bootstrap-staging.test.mjs"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.3",

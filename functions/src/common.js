@@ -1,17 +1,20 @@
 const { RESEND_API_KEY, MEILI_HOST, MEILI_INDEX, MEILI_API_KEY } = require("./config");
 const { createHash } = require("node:crypto");
+const { requireExternalActions } = require("./environmentPolicy");
 
 function productSearchId(hotelUid, productId) {
   return createHash("sha256").update(JSON.stringify([hotelUid, productId])).digest("hex");
 }
 
 function requireMeiliHost() {
+  requireExternalActions("Search service requests");
   const host = (MEILI_HOST.value() || "").trim().replace(/\/$/, "");
   if (!host) throw new Error("Missing MEILI_HOST secret.");
   return host;
 }
 
 function getIndexUid() {
+  requireExternalActions("Search service requests");
   return (MEILI_INDEX.value() || "catalogproducts").trim() || "catalogproducts";
 }
 
@@ -106,6 +109,7 @@ function getFirstAvailableImportAttachment(payload = {}) {
 }
 
 async function fetchResendAttachmentBuffer(emailData = {}, attachmentId = "") {
+  requireExternalActions("Inbound email attachment downloads");
   const emailId = String(emailData.email_id || "").trim();
   const normalizedAttachmentId = String(attachmentId || "").trim();
 
@@ -201,6 +205,7 @@ function buildSupplierProductDocument(productId, hotelUid, productData = {}) {
 }
 
 async function meiliRequest(path, { method = "GET", body } = {}) {
+  requireExternalActions("Search service requests");
   const host = requireMeiliHost();
   const apiKey = MEILI_API_KEY.value();
 

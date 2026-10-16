@@ -22,6 +22,13 @@ async function dispatchOrderHandler(event, services = {}) {
       await completeDispatch(db, hotelUid, orderId, dispatchId, "blocked", { externalAttempt: false, error: "Demo supplier delivery must be simulated by the protected confirmation workflow." });
       return;
     }
+    const policy = require("./environmentPolicy");
+    if (policy.isStagingEnvironment()) {
+      await completeDispatch(db, hotelUid, orderId, dispatchId, "simulated", { via: "simulation", deliveryMode: "simulation", environment: "staging",
+        externalAttempt: false, simulationReason: "Staging simulation: no supplier contacted" });
+      return;
+    }
+    policy.requireExternalActions("Supplier deliveries");
     if (dispatch.supplier.orderSystem === "SFTP csv") {
       const secret = await db.doc(`hotels/${hotelUid}/supplierSecrets/${dispatch.supplier.id}`).get();
       if (!secret.exists) throw new Error("Missing private supplier connection.");

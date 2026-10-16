@@ -1,5 +1,5 @@
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
-const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onSchedule } = require("./config");
 const { createHash, randomUUID } = require("node:crypto");
 const { admin, logger } = require("./config");
 const { digest, revision, text } = require("./validation");

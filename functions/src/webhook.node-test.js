@@ -1,3 +1,4 @@
+require("../testSupport/productionEnvironment").activateProductionTestEnvironment();
 process.env.RESEND_WEBHOOK_SECRET = `whsec_${Buffer.from("permission-audit-webhook-secret").toString("base64")}`;
 
 const test = require("node:test");
