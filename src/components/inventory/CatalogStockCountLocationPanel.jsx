@@ -6,6 +6,7 @@ import InventoryCostProposal from "./InventoryCostProposal";
 import PendingStockCountMutation from "./PendingStockCountMutation";
 import { useStockCountDraft } from "../../hooks/useStockCountDraft";
 import { catalogLocationDraft, validCatalogDraft, reviewCatalogDraft, resolveCatalogDraft } from "../../utils/stockCountDraftReview";
+import StockCountExceptionReview from "./StockCountExceptionReview";
 import { Card } from "../layout/Card";
 import { auth } from "../../firebaseConfig";
 import { usePermission } from "../../hooks/usePermission";
@@ -251,6 +252,7 @@ export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, l
       {conflict.finished ? <p role="alert">A colleague finished this count area. Your draft is retained for review, but finished counts cannot be changed.</p> : <button type="button" className="ht-button-primary" disabled={conflict.rows.some((row) => row.differs && !choicesById[row.item.catalogProductId])} onClick={applyReview}>Use reviewed values</button>}
       <button type="button" className="ht-button-secondary ml-2" onClick={() => setConflict(null)}>Keep draft and review later</button>
     </div>}
+    <StockCountExceptionReview hotelUid={hotelUid} stockCountId={stockCount.id} locationId={location.locationId} revision={stockCount.revision} />
     <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
       <div className="flex flex-wrap items-end gap-2"><label className="min-w-0 flex-1 text-sm font-medium">Find products<input ref={searchInput} type="search" aria-label="Find products" placeholder="Search product names" autoComplete="off" maxLength="200" value={search} disabled={saving} className="ht-field mt-1 min-h-[44px] w-full" onChange={(event) => { setSearch(event.target.value); setBarcode(""); setScanMessage(""); }} /></label>
         {canUpdate && !finished && <><button type="button" className="ht-button-secondary min-h-[44px]" disabled={saving} onClick={() => { setAdding((value) => !value); setBarcode(""); }}>Add product</button><button type="button" className="ht-button-secondary min-h-[44px]" disabled={saving} onClick={() => setScannerOpen((value) => !value)}>Scan barcode</button></>}</div>

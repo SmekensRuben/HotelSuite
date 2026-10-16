@@ -4,6 +4,20 @@ import { poolProcurementRead } from "./procurementReadPool";
 function requireScope(hotelUid, locationId) {
   if (!hotelUid || !locationId) throw new Error("Hotel and physical location are required.");
 }
+export async function getStockCountExceptions(hotelUid, stockCountId, locationId) {
+  requireScope(hotelUid, locationId);
+  if (!stockCountId) throw new Error("A stock count is required.");
+  return poolProcurementRead(hotelUid, `count-exceptions:${stockCountId}:${locationId}`, async () => {
+    const { data } = await httpsCallable(functions, "getHotelStockCountExceptions")({ hotelUid, stockCountId, locationId });
+    if (data?.hotelUid !== hotelUid || data.stockCountId !== stockCountId || data.locationId !== locationId
+      || data.inventoryPolicyVersion !== 1 || !Array.isArray(data.issues) || typeof data.finished !== "boolean"
+      || !Number.isSafeInteger(data.checkedThroughSequence) || !Number.isFinite(data.checkedAtMillis)
+      || data.issues.some((issue) => typeof issue.code !== "string" || typeof issue.detail !== "string" || !Array.isArray(issue.evidence))) {
+      throw new Error("Stock count exception response scope or evidence is invalid.");
+    }
+    return data;
+  });
+}
 export async function getInventoryLocations(hotelUid) {
   if (!hotelUid) throw new Error("Hotel is required.");
   const locations = [], seen = new Set();

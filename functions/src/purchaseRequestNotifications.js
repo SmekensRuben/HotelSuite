@@ -11,8 +11,13 @@ function recipientId(value) {
   return uid;
 }
 
-const eventStatuses = Object.freeze({ submit: "pending", selfapprove: "pending", selfapproved: "approved", approve: "pending", approved: "approved", reject: "rejected", return: "returned" });
+const eventStatuses = Object.freeze({ submit: "pending", selfapprove: "pending", selfapproved: "approved", approve: "pending", approved: "approved", reject: "rejected", return: "returned", reassign: "pending", recovercancel: "canceled" });
 const approvalEvents = new Set(["submit", "selfapprove", "approve"]);
+const recoveryEvents = new Set(["reassign", "recovercancel"]);
+function recoveryRecipients(request, event) {
+  if (request.lastRecovery?.action !== event) return [];
+  return [...new Set([request.currentApproverUid, request.requesterUid, request.lastRecovery.fromApproverUid, request.lastRecovery.actorUid].filter(Boolean))];
+}
 const summaryText = (value, max = 200) => String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max);
 function lineSupplier(line, request) {
   const explicit = Object.hasOwn(line || {}, "supplierId"), id = explicit ? summaryText(line.supplierId) : null;
@@ -42,13 +47,16 @@ function supplierSummaryLines(request) {
 function queuePurchaseRequestNotification(tx, { db, hotelUid, requestId, request, event, revision }) {
   if (!Object.hasOwn(eventStatuses, event)) return null;
   const purchaseRequestId = strictId(request.id || request.purchaseRequestId, "purchaseRequestId");
-  const recipientUid = recipientId(approvalEvents.has(event) ? request.currentApproverUid : request.requesterUid);
-  const mailId = "purchase-request-" + digest(requestId, purchaseRequestId, event, revision, recipientUid);
-  tx.create(db.doc(`hotels/${hotelUid}/mailQueue/${mailId}`), {
-    type: "purchase-request", hotelUid, purchaseRequestId, revision, event, recipientUid,
-    status: "queued", queuedAt: admin.firestore.FieldValue.serverTimestamp(),
+  const recipients = recoveryEvents.has(event) ? recoveryRecipients(request, event) : [approvalEvents.has(event) ? request.currentApproverUid : request.requesterUid];
+  const ids = recipients.map((uid) => {
+    const recipientUid = recipientId(uid), mailId = "purchase-request-" + digest(requestId, purchaseRequestId, event, revision, recipientUid);
+    tx.create(db.doc(`hotels/${hotelUid}/mailQueue/${mailId}`), {
+      type: "purchase-request", hotelUid, purchaseRequestId, revision, event, recipientUid,
+      status: "queued", queuedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return mailId;
   });
-  return mailId;
+  return recoveryEvents.has(event) ? ids : ids[0];
 }
 
 function assignedApproverIsCurrent(request, settings, uid) {
@@ -70,9 +78,10 @@ async function resolvePurchaseRequestNotification(tx, db, hotelUid, mail, servic
     const request = requestSnapshot.data(), permissions = normalizedPermissions(member.data()?.permissions);
     if (!requestSnapshot.exists || request.revision !== mail.revision || request.status !== eventStatuses[mail.event]
       || !member.exists || !permissionAllows(permissions, "purchaserequests", "read")) return null;
-    if (approvalEvents.has(mail.event)) {
+    if (recoveryEvents.has(mail.event) && !recoveryRecipients(request, mail.event).includes(uid)) return null;
+    if (approvalEvents.has(mail.event) || mail.event === "reassign" && uid === request.currentApproverUid) {
       if (!permissionAllows(permissions, "purchaserequests", "approve") || !assignedApproverIsCurrent(request, settingsSnapshot.data(), uid)) return null;
-    } else if (uid !== request.requesterUid) return null;
+    } else if (!recoveryEvents.has(mail.event) && uid !== request.requesterUid) return null;
     const user = await (services.auth || admin.auth()).getUser(uid);
     if (user.disabled || user.emailVerified !== true || !user.email || user.uid !== undefined && user.uid !== uid) return null;
     const baseUrl = String(services.appBaseUrl || getAppBaseUrl()).replace(/\/$/, "");
@@ -80,11 +89,15 @@ async function resolvePurchaseRequestNotification(tx, db, hotelUid, mail, servic
     const link = `${baseUrl}/purchase-requests/${encodeURIComponent(id)}?hotel=${encodeURIComponent(hotelUid)}`;
     const title = String(request.title || "Purchase request").slice(0, 200);
     const amount = Number.isSafeInteger(request.totalMinor) ? (request.totalMinor / 100).toFixed(2) : "Unavailable";
-    const states = { submit: "Awaiting your approval", selfapprove: "Independent approval required", selfapproved: "Self-approved and registered", approve: "Awaiting your approval", approved: "Approved", reject: "Rejected", return: "Returned for changes" };
+    const states = { submit: "Awaiting your approval", selfapprove: "Independent approval required", selfapproved: "Self-approved and registered", approve: "Awaiting your approval", approved: "Approved", reject: "Rejected", return: "Returned for changes", reassign: uid === request.currentApproverUid ? "Reassigned: awaiting your approval" : "Approval responsibility reassigned", recovercancel: "Canceled by recovery manager" };
     const summary = [`${states[mail.event]}: ${title}`, "", `Hotel: ${String(hotel.data()?.hotelName || hotelUid).slice(0, 200)}`,
       `Requester: ${String(request.requesterName || request.requesterUid).slice(0, 200)}`, `Amount: ${amount} ${request.currency || "EUR"} excluding VAT`,
       `Budget month: ${request.budgetMonth || "-"}`, `Budget category: ${request.budgetCategoryName || "-"}`, `Cost centre: ${request.costCentreName || "-"}`,
       ...supplierSummaryLines(request),
+      ...(request.currentApproverUid ? [`Current responsible approver: ${summaryText(request.currentApproverName || request.currentApproverUid)}`] : []),
+      ...(recoveryEvents.has(mail.event) ? [`Recovered by: ${summaryText(request.lastRecovery.actorName || request.lastRecovery.actorUid)}`,
+        `Previous approver: ${summaryText(request.lastRecovery.fromApproverName || request.lastRecovery.fromApproverUid) || "None"}`,
+        mail.event === "reassign" ? "Previous approvals and all required controls remain in force. This notification does not grant approval authority." : "The pending budget reservation has been released; previous decisions remain in the request history."] : []),
       ...(request.selfApproval ? [`Self-approved by: ${summaryText(request.selfApproval.approverName)}; reason: ${summaryText(request.selfApproval.reason, 2000)}`, "Any required independent controls remain separate."] : []),
       ...(request.lastDecisionReason ? [`Decision note: ${String(request.lastDecisionReason).slice(0, 2000)}`] : []),
       "", "Sign in with your own hotel account to view the request and its current approval requirements.", link];
@@ -103,8 +116,10 @@ async function retryPurchaseRequestNotificationHandler(request, services = {}) {
     if (!source.exists || mail.type !== "purchase-request" || mail.hotelUid !== hotelUid) throw new HttpsError("not-found", "Purchase request notification not found.");
     const recoveryId = "purchase-request-retry-" + digest(mailId), recoveryRef = db.doc(`hotels/${hotelUid}/mailQueue/${recoveryId}`);
     const [current, recovery] = await Promise.all([tx.get(db.doc(`hotels/${hotelUid}/purchaseRequests/${strictId(mail.purchaseRequestId, "purchaseRequestId")}`)), tx.get(recoveryRef)]);
-    if (![current.data()?.requesterUid, current.data()?.currentApproverUid].includes(request.auth.uid)) throw new HttpsError("permission-denied", "Only the current requester or approver can recover this notification.");
-    await requireHotelPermission(db, request, hotelUid, "purchaserequests", current.data()?.requesterUid === request.auth.uid ? "update" : "approve", tx, services.auth);
+    const member = await tx.get(db.doc(`hotels/${hotelUid}/members/${request.auth.uid}`));
+    const canRecover = permissionAllows(normalizedPermissions(member.data()?.permissions), "purchaserequests", "recover");
+    if (!canRecover && ![current.data()?.requesterUid, current.data()?.currentApproverUid].includes(request.auth.uid)) throw new HttpsError("permission-denied", "Only the current requester, approver or an explicitly authorized recovery manager can recover this notification.");
+    await requireHotelPermission(db, request, hotelUid, "purchaserequests", canRecover ? "recover" : current.data()?.requesterUid === request.auth.uid ? "update" : "approve", tx, services.auth);
     const payload = await resolvePurchaseRequestNotification(tx, db, hotelUid, mail, services);
     if (!payload) throw new HttpsError("failed-precondition", "This notification no longer matches the current request or recipient authority.");
     if (recovery.exists) return { mailId: recoveryId, status: recovery.data().status };
@@ -125,8 +140,8 @@ async function readHotelPurchaseRequestNotificationsHandler(request, services = 
   if (!current.exists) throw new HttpsError("not-found", "Purchase request not found.");
   const [membership, settings] = await Promise.all([db.doc(`hotels/${hotelUid}/members/${request.auth.uid}`).get(), db.doc(`hotels/${hotelUid}/settings/purchaseRequests`).get()]);
   const permissions = normalizedPermissions(membership.data()?.permissions), value = current.data();
-  const actorCanRetry = value.requesterUid === request.auth.uid ? permissionAllows(permissions, "purchaserequests", "update")
-    : permissionAllows(permissions, "purchaserequests", "approve") && assignedApproverIsCurrent(value, settings.data(), request.auth.uid);
+  const actorCanRetry = permissionAllows(permissions, "purchaserequests", "recover") || (value.requesterUid === request.auth.uid ? permissionAllows(permissions, "purchaserequests", "update")
+    : permissionAllows(permissions, "purchaserequests", "approve") && assignedApproverIsCurrent(value, settings.data(), request.auth.uid));
   const result = await db.collection(`hotels/${hotelUid}/mailQueue`).where("purchaseRequestId", "==", id).where("revision", "==", current.data().revision).limit(101).get();
   const notifications = result.docs.filter((snapshot) => snapshot.data().type === "purchase-request" && snapshot.data().hotelUid === hotelUid)
     .map((snapshot) => {

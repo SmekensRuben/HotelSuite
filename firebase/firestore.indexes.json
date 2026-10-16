@@ -17,6 +17,9 @@
     ] },
     { "collectionGroup": "hotelMcpProposalBatches", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "ownerUid", "order": "ASCENDING" }, { "fieldPath": "createdAtMillis", "order": "DESCENDING" }, { "fieldPath": "__name__", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "orderAudit", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "orderId", "order": "ASCENDING" }, { "fieldPath": "revision", "order": "DESCENDING" }
     ] }
   ],
   "fieldOverrides": []

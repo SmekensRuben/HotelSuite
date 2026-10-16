@@ -1,9 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock("../firebaseConfig", () => ({ auth: { currentUser: { uid: "counter" } }, functions: {}, httpsCallable: (_functions, name) => async (input) => ({ data: await mocks.call(name, input) }) }));
-import { getInventoryCheckpoints, getInventoryLocations, getInventoryPeriod } from "./firebaseInventory";
+import { getInventoryCheckpoints, getInventoryLocations, getInventoryPeriod, getStockCountExceptions } from "./firebaseInventory";
 beforeEach(() => { mocks.call.mockReset(); });
 describe("hotel-scoped inventory evidence adapter", () => {
+  it("checks the hotel, count and location of live exception evidence", async () => {
+    const data = { hotelUid: "hotel-a", stockCountId: "count", locationId: "store", inventoryPolicyVersion: 1, finished: false, checkedThroughSequence: 3, checkedAtMillis: 12345, issues: [{ code: "postings-during-count", detail: "Receipt posted during counting.", evidence: [] }] };
+    mocks.call.mockResolvedValue(data);
+    await expect(getStockCountExceptions("hotel-a", "count", "store")).resolves.toEqual(data);
+    expect(mocks.call).toHaveBeenLastCalledWith("getHotelStockCountExceptions", { hotelUid: "hotel-a", stockCountId: "count", locationId: "store" });
+    for (const patch of [{ hotelUid: "hotel-b" }, { stockCountId: "other" }, { locationId: "other" }, { issues: [{ code: "x" }] }]) {
+      mocks.call.mockResolvedValue({ ...data, ...patch });
+      await expect(getStockCountExceptions("hotel-a", "count", "store")).rejects.toThrow("scope or evidence");
+    }
+  });
   it("loads every location and checkpoint page with strict tenant scope", async () => {
     mocks.call.mockImplementation(async (name, input) => name === "listHotelInventoryLocations"
       ? { hotelUid: input.hotelUid, locations: [{ locationId: input.afterLocationId ? "kitchen" : "store" }], nextCursor: input.afterLocationId ? null : "store" }

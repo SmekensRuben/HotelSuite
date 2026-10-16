@@ -35,7 +35,10 @@ test("SFTP pins DNS and the host key, stages before rename and does not upload a
   const first = await sendOrderBySftp(order, credentials, context, services);
   const second = await sendOrderBySftp(order, credentials, context, services);
   assert.equal(first.remotePath, second.remotePath); assert.equal(second.existing, true);
-  assert.equal(puts, 1); assert.equal(renames, 1); assert.equal(attempts, 1);
+  assert.equal(puts, 1); assert.equal(renames, 1); assert.equal(attempts, 2);
+  // Existing remote evidence also crosses the durable fence before validation.
+  await assert.rejects(sendOrderBySftp(order, credentials, { ...context, markExternalAttempt: async () => { throw new Error("Worker retired"); } }, services), /Worker retired/);
+  assert.equal(puts, 1);
   await assert.rejects(sendOrderBySftp(order, credentials, context, { ...services, lookup: async () => [{ address: "169.254.169.254" }] }), /public IPv4/);
 });
 

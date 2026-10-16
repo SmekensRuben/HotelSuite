@@ -46,6 +46,14 @@ it("loads article and location choices automatically and shows immutable history
   expect(screen.queryByRole("button", { name: "Reverse this event" })).not.toBeInTheDocument();
   expect(screen.getByText(/do not create a live on-hand balance/)).toBeInTheDocument();
 });
+it("opens the precise exception event in existing history and keeps reversal audit links", async () => {
+  window.history.replaceState({}, "", "/catalog/inventory-movements?hotelUid=hotel-a&eventId=movement-1");
+  mocks.history.mockResolvedValue({ hotelUid: "hotel-a", adjustments: [{ ...event(), reversedByAdjustmentId: "reversal-1" }], nextCursor: null });
+  render(<InventoryMovementsPage />); await screen.findByText("Breakage · Orange juice");
+  expect(mocks.history).toHaveBeenCalledWith("hotel-a", null, "movement-1");
+  expect(screen.getByRole("link", { name: "Review compensating reversal (new tab)" })).toHaveAttribute("href", "?hotelUid=hotel-a&eventId=reversal-1");
+  expect(screen.queryByRole("button", { name: "Reverse this event" })).not.toBeInTheDocument();
+});
 it("shows article and location loading immediately without a technical load button", async () => {
   const waiting = deferred(); mocks.choices.mockReturnValue(waiting.promise);
   render(<InventoryMovementsPage />);

@@ -21,10 +21,13 @@ const EXPECTED_INDEXES = [
   { collectionGroup: "inventoryMovements", queryScope: "COLLECTION", fields: [{ fieldPath: "locationId", order: "ASCENDING" }, { fieldPath: "receivedOn", order: "ASCENDING" }] },
 ];
 // These exact definitions may coexist in the shared manifest. This helper only
-// prepares inventory indexes; a private MCP pilot needs separate index setup.
+// prepares inventory indexes; MCP and order recovery need separate index setup.
 const REVIEWED_MCP_INDEXES = [
   { collectionGroup: "hotelMcpOAuthConnections", queryScope: "COLLECTION", fields: [{ fieldPath: "uid", order: "ASCENDING" }, { fieldPath: "revokedAt", order: "ASCENDING" }, { fieldPath: "expiresAtMs", order: "ASCENDING" }] },
   { collectionGroup: "hotelMcpProposalBatches", queryScope: "COLLECTION", fields: [{ fieldPath: "ownerUid", order: "ASCENDING" }, { fieldPath: "createdAtMillis", order: "DESCENDING" }, { fieldPath: "__name__", order: "DESCENDING" }] },
+];
+const REVIEWED_ORDER_INDEXES = [
+  { collectionGroup: "orderAudit", queryScope: "COLLECTION", fields: [{ fieldPath: "orderId", order: "ASCENDING" }, { fieldPath: "revision", order: "DESCENDING" }] },
 ];
 function manifestSignature(index) {
   // Unlike live API comparisons, an explicit document-name field and its
@@ -47,12 +50,14 @@ export function indexSignature(index) {
 }
 export function validateReviewedInventoryIndexes(configuration) {
   if (!configuration || !Array.isArray(configuration.indexes)
-    || ![EXPECTED_INDEXES.length, EXPECTED_INDEXES.length + REVIEWED_MCP_INDEXES.length].includes(configuration.indexes.length)
+    || configuration.indexes.length < EXPECTED_INDEXES.length
+    || configuration.indexes.length > EXPECTED_INDEXES.length + REVIEWED_MCP_INDEXES.length + REVIEWED_ORDER_INDEXES.length
     || !Array.isArray(configuration.fieldOverrides) || configuration.fieldOverrides.length !== 0
     || Object.keys(configuration).some((key) => !["indexes", "fieldOverrides"].includes(key))) {
-    throw new Error("The reviewed manifest must contain the four inventory indexes, optionally both reviewed MCP indexes, and no field overrides.");
+    throw new Error("The reviewed manifest must contain the four inventory indexes, optionally both reviewed MCP indexes and the reviewed order recovery index, and no field overrides.");
   }
-  const expected = new Set(EXPECTED_INDEXES.map(manifestSignature)), auxiliary = new Set(REVIEWED_MCP_INDEXES.map(manifestSignature));
+  const expected = new Set(EXPECTED_INDEXES.map(manifestSignature));
+  const auxiliary = new Set([...REVIEWED_MCP_INDEXES, ...REVIEWED_ORDER_INDEXES].map(manifestSignature));
   const seen = new Set(), inventory = [];
   for (const index of configuration.indexes) {
     if (!index || Object.keys(index).some((key) => !["collectionGroup", "queryScope", "fields"].includes(key))
@@ -66,6 +71,8 @@ export function validateReviewedInventoryIndexes(configuration) {
     if (expected.has(key)) inventory.push(index);
   }
   if (inventory.length !== EXPECTED_INDEXES.length) throw new Error("The manifest must retain all four reviewed inventory indexes.");
+  const mcpCount = REVIEWED_MCP_INDEXES.filter((index) => seen.has(manifestSignature(index))).length;
+  if (mcpCount !== 0 && mcpCount !== REVIEWED_MCP_INDEXES.length) throw new Error("The manifest must retain both reviewed MCP indexes when either is included.");
   return inventory.map((index) => structuredClone(index));
 }
 export function validateReviewedInventoryRulesPolicy(policy) {

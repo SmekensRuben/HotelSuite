@@ -28,6 +28,8 @@ it("explicitly requests V2 classification and displays unknown source cost witho
   expect(screen.queryByRole("columnheader", { name: "Estimated cost / unit" })).not.toBeInTheDocument();
   expect(screen.getByText(/not guaranteed sales consumption/)).toBeInTheDocument();
   expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
+  expect(screen.getByText("Quantity evidence complete")).toBeInTheDocument();
+  expect(screen.queryByText("Complete evidence")).not.toBeInTheDocument();
 });
 it("retrieves historical V1 separately without rewriting it when V2 is selected", async () => {
   render(<InventoryPeriodsPage />); await selectCounts();

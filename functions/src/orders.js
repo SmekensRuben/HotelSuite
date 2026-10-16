@@ -341,7 +341,7 @@ async function confirmOrderHandler(request, services = {}) {
       accountNumber, currency: order.currency, priceBasis: order.priceBasis ?? "unknown",
       hotelName: hotel.data().hotelName || hotel.data().name || hotelUid,
       dispatchRequestedByEmail: request.auth.token?.email || "", supplierOrderReference: orderId };
-    tx.create(db.doc(`hotels/${hotelUid}/dispatches/${dispatchId}`), { orderId, status: simulation ? "simulated" : "pending", deliveryMode: simulation ? "simulation" : "external", actorUid: request.auth.uid,
+    tx.create(db.doc(`hotels/${hotelUid}/dispatches/${dispatchId}`), { orderId, status: simulation ? "simulated" : "pending", externalAttempt: false, deliveryMode: simulation ? "simulation" : "external", actorUid: request.auth.uid,
       order: snapshot, supplier: publicSupplier, createdAt: stamp() });
     tx.update(ref, { dispatchRequestId: dispatchId, dispatchStatus: simulation ? "sent" : "pending", dispatchMode: simulation ? "simulation" : "external",
       ...(simulation ? { status: "Ordered" } : {}), orderDate, products: confirmedProducts, dispatchProgress: simulation ? 100 : 5, dispatchStep: simulation ? "Demo simulation: no supplier contacted" : "Awaiting delivery worker",

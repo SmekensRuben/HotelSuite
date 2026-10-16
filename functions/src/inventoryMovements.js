@@ -25,12 +25,14 @@ async function prepareCheckpoint(db, tx, input) {
   const checkpoint = { id: ref.id || checkpointId(stockCountId, locationId), inventoryPolicyVersion: 1,
     hotelUid, locationId, stockCountId, stockCountName: input.stockCountName,
     businessDate: policy.businessDate(input.businessDate), currency: policy.currency(input.currency), sequence: next,
+    countingStartedSequence: input.countingStartedSequence ?? null,
     items: input.items.map((item) => ({ catalogProductId: item.catalogProductId,
       catalogProductName: item.catalogProductName, baseUnit: policy.unit(item.baseUnit),
       quantity: policy.amount(item.quantity, "Checkpoint quantity"), unitCost: policy.cost(item.unitCost) })),
-    coverageIssues: previous !== input.countingStartedSequence ? [{ code: "postings-during-count", detail: "Inventory postings occurred after this count was started; verify the physical counting cutoff." }] : [],
+    coverageIssues: previous !== input.countingStartedSequence ? [{ code: "postings-during-count",
+      detail: `Inventory postings occurred after count ${stockCountId} started (sequence ${input.countingStartedSequence ?? "unknown"}) and before checkpoint ${next}. Review the recorded events and use a new count if its physical cutoff cannot be established.` }] : [],
     actorUid: input.actorUid, finishedAt: stamp() };
-  return { checkpointId: checkpoint.id, sequence: next, write: () => {
+  return { checkpointId: checkpoint.id, sequence: next, coverageIssues: checkpoint.coverageIssues, write: () => {
     tx.create(ref, checkpoint); tx.set(stateRef(db, hotelUid, locationId), { inventoryPolicyVersion: 1, sequence: next,
       latestCheckpointId: checkpoint.id, latestCheckpointBusinessDate: checkpoint.businessDate, updatedAt: stamp() }, { merge: true });
   } };
