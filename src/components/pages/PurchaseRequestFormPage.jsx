@@ -23,7 +23,7 @@ const inputLine = (line) => ({ id: line.id, kind: line.kind, supplierId: line.su
 export default function PurchaseRequestFormPage() {
   const { purchaseRequestId } = useParams(), { hotelUid } = useHotelContext();
   const canRead = usePermission("purchaserequests", "read"), canWrite = usePermission("purchaserequests", purchaseRequestId ? "update" : "create");
-  return <PageShell variant="procurement" width="workspace" className="max-w-7xl space-y-5"><PurchaseRequestForm key={`${hotelUid}:${auth.currentUser?.uid}:${purchaseRequestId || "new"}:${canRead}:${canWrite}`} hotelUid={hotelUid} purchaseRequestId={purchaseRequestId} canRead={canRead} canWrite={canWrite} /></PageShell>;
+  return <PageShell variant="procurement" width="workspace" className="max-w-6xl space-y-5"><PurchaseRequestForm key={`${hotelUid}:${auth.currentUser?.uid}:${purchaseRequestId || "new"}:${canRead}:${canWrite}`} hotelUid={hotelUid} purchaseRequestId={purchaseRequestId} canRead={canRead} canWrite={canWrite} /></PageShell>;
 }
 function PurchaseRequestForm({ hotelUid, purchaseRequestId, canRead, canWrite }) {
   const navigate = useNavigate(), { permissions } = useHotelContext();
@@ -106,14 +106,18 @@ function PurchaseRequestForm({ hotelUid, purchaseRequestId, canRead, canWrite })
       <fieldset disabled={locked} className="min-w-0 space-y-4">
         <section aria-labelledby="request-details-heading" className="space-y-4 rounded-xl border bg-white p-4 sm:p-5">
           <h2 id="request-details-heading" className="font-semibold">Request details</h2>
-          <label className="block text-sm font-medium">Title<input className={field} value={draft.title} onChange={(event) => change("title", event.target.value)} maxLength={200} placeholder="For example: Replace restaurant chinaware" /></label>
-          <div className="grid gap-4 sm:grid-cols-2 min-[900px]:grid-cols-3">
-            <label className="text-sm font-medium">Cost centre / department<select className={field} value={draft.costCentreId} onChange={(event) => change("costCentreId", event.target.value)}><option value="">Choose a cost centre</option>{(settings.costCentres || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            <label className="text-sm font-medium">Budget category<select className={field} value={draft.budgetCategoryId} onChange={(event) => change("budgetCategoryId", event.target.value)}><option value="">Choose a category</option>{(settings.budgetCategories || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            <label className="text-sm font-medium">Budget month<input type="month" className={field} value={draft.budgetMonth} onChange={(event) => change("budgetMonth", event.target.value)} /></label>
+          <div className="grid gap-5 min-[1100px]:grid-cols-2 min-[1100px]:gap-8">
+            <div className="min-w-0 space-y-4">
+              <label className="block max-w-3xl text-sm font-medium">Title<input className={field} value={draft.title} onChange={(event) => change("title", event.target.value)} maxLength={200} placeholder="For example: Replace restaurant chinaware" /></label>
+              <label className="block max-w-3xl text-sm font-medium">Business reason<textarea className={field} rows={2} value={draft.motivation} onChange={(event) => change("motivation", event.target.value)} maxLength={3000} placeholder="Why is this purchase needed?" /></label>
+            </div>
+            <div className="grid content-start gap-4 sm:grid-cols-2">
+              <label className="text-sm font-medium">Cost centre / department<select className={field} value={draft.costCentreId} onChange={(event) => change("costCentreId", event.target.value)}><option value="">Choose a cost centre</option>{(settings.costCentres || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+              <label className="text-sm font-medium">Budget category<select className={field} value={draft.budgetCategoryId} onChange={(event) => change("budgetCategoryId", event.target.value)}><option value="">Choose a category</option>{(settings.budgetCategories || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+              <label className="text-sm font-medium sm:col-span-2 sm:max-w-[12rem]">Budget month<input type="month" className={field} value={draft.budgetMonth} onChange={(event) => change("budgetMonth", event.target.value)} /></label>
+            </div>
           </div>
-          <label className="block text-sm font-medium">Business reason<textarea className={field} rows={2} value={draft.motivation} onChange={(event) => change("motivation", event.target.value)} maxLength={3000} placeholder="Why is this purchase needed?" /></label>
-          <details open={Boolean(original?.description)}>
+          <details className="max-w-3xl" open={Boolean(original?.description)}>
             <summary className="min-h-[44px] content-center text-sm font-medium text-brand-800">Additional description <span className="font-normal text-stone-500">· Optional</span></summary>
             <label className="mt-2 block text-sm font-medium">Description<textarea className={field} rows={2} value={draft.description} onChange={(event) => change("description", event.target.value)} maxLength={3000} placeholder="Add request-wide specifications or context" /></label>
           </details>
@@ -123,10 +127,10 @@ function PurchaseRequestForm({ hotelUid, purchaseRequestId, canRead, canWrite })
             <h2 id="request-lines-heading" className="font-semibold">Purchase lines</h2>
             <p className="text-xs text-stone-600">{currency} · Excl. VAT</p>
           </div>
-          <div aria-hidden="true" className="mt-4 hidden grid-cols-[minmax(0,1fr)_5.5rem_8rem_7rem_2.75rem] items-center gap-3 border-b pb-2 text-xs font-medium text-stone-500 min-[900px]:grid">
-            <span>Product / description</span><span>Quantity</span><span>Net unit price</span><span className="text-right">Total</span><span />
+          <div aria-hidden="true" className="ht-purchase-line-grid mt-4 hidden items-center border-b pb-2 text-xs font-medium text-stone-500 min-[1100px]:grid">
+            <span>Product / description</span><span>Supplier</span><span>Purchase unit</span><span>Quantity</span><span>Net unit price</span><span className="text-right">Line total</span><span />
           </div>
-          <div className="mt-3 divide-y divide-stone-200 min-[900px]:mt-0">
+          <div className="mt-3 divide-y divide-stone-200 min-[1100px]:mt-0">
             {draft.lines.map((line, index) => <PurchaseRequestLineEditor key={line.id} line={line} index={index} suppliers={data.context.suppliers || []} hotelUid={hotelUid} scopeKey={scopeKey} currency={currency} locked={locked} onChange={(patch) => changeLine(line.id, patch)} onSupplierChange={(supplierId) => changeSupplier(line.id, supplierId)} onChooseProduct={(product, option) => chooseSupplierProduct(line.id, line.supplierId, product, option)} onRemove={() => setDraft((before) => ({ ...before, lines: before.lines.filter((entry) => entry.id !== line.id) }))} />)}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-4 border-t pt-4">
