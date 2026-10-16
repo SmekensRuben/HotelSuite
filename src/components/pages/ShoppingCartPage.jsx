@@ -12,11 +12,12 @@ import SupplierProductImage from "../catalog/SupplierProductImage";
 import CartQuantityInput from "../catalog/CartQuantityInput";
 import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
-import { createOrdersFromShoppingCart, previewOrdersFromShoppingCart } from "../../services/firebaseOrders";
+import { createOrdersFromShoppingCart, previewOrdersFromShoppingCart, getPendingCartSubmission, retryPendingCartSubmission } from "../../services/firebaseOrders";
 import { getOutlets } from "../../services/firebaseSettings";
 import {
   getShoppingCart,
   removeShoppingCartItem,
+  splitShoppingCartItem,
   updateShoppingCartItemNote,
   updateShoppingCartItemOutlet,
   updateShoppingCartItemQty,
@@ -31,6 +32,15 @@ function formatContent(item) {
   const unit = String(item?.baseUnit || "").trim();
   if (!(amount > 0) || !unit) return "-";
   return `${amount} ${unit}`;
+}
+
+function lineIdentity(row) {
+  return { lineId: row.lineId, expectedLineRevision: row.lineRevision };
+}
+
+function readSavedSubmission(hotelUid, cartId) {
+  try { return getPendingCartSubmission(hotelUid, cartId); }
+  catch (error) { return { recoveryError: error?.message || "Saved order recovery is unavailable. Restore browser storage access and reload before changing this cart." }; }
 }
 
 function ScopedShoppingCartPage() {
@@ -53,6 +63,7 @@ function ScopedShoppingCartPage() {
   const [deliveryDate, setDeliveryDate] = useState("");
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [creationUncertain, setCreationUncertain] = useState(false);
+  const [savedSubmission, setSavedSubmission] = useState(() => readSavedSubmission(hotelUid, cartId));
   const [pricePreview, setPricePreview] = useState(null);
   const [pricePreviewLoading, setPricePreviewLoading] = useState(false);
   const [pricePreviewError, setPricePreviewError] = useState("");
@@ -64,6 +75,10 @@ function ScopedShoppingCartPage() {
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [activeNoteRow, setActiveNoteRow] = useState(null);
   const [noteDraft, setNoteDraft] = useState("");
+  const [splitRow, setSplitRow] = useState(null);
+  const [splitQuantity, setSplitQuantity] = useState("");
+  const [splitOutlet, setSplitOutlet] = useState(null);
+  const [splitError, setSplitError] = useState("");
 
   const getTomorrowIsoDate = () => {
     const tomorrow = new Date();
@@ -92,10 +107,17 @@ function ScopedShoppingCartPage() {
 
   const isCurrent = () => mounted.current && auth.currentUser === actor;
   const createBlocked = mutating || creatingOrder || pendingCommand || cartNeedsRefresh;
-  const cartBlocked = createBlocked || creationUncertain;
+  const recoveringCreation = creationUncertain || Boolean(savedSubmission);
+  const cartBlocked = createBlocked || creationUncertain || Boolean(savedSubmission);
+  useEffect(() => {
+    const update = () => { if (isCurrent()) setSavedSubmission(readSavedSubmission(hotelUid, cartId)); };
+    window.addEventListener("cart-submission-changed", update);
+    window.addEventListener("storage", update);
+    return () => { window.removeEventListener("cart-submission-changed", update); window.removeEventListener("storage", update); };
+  }, [hotelUid, cartId]);
   useEffect(() => {
     let canceled = false;
-    if (creationUncertain) return undefined;
+    if (creationUncertain || savedSubmission) return undefined;
     setPricePreview(null); setPricePreviewError("");
     if (!showCreateOrderModal || !deliveryDate || !shoppingCart || !isCurrent()) { setPricePreviewLoading(false); return undefined; }
     setPricePreviewLoading(true);
@@ -104,7 +126,7 @@ function ScopedShoppingCartPage() {
       .catch((error) => { if (!canceled && isCurrent()) setPricePreviewError(error?.message || "Could not verify applicable prices."); })
       .finally(() => { if (!canceled && isCurrent()) setPricePreviewLoading(false); });
     return () => { canceled = true; };
-  }, [showCreateOrderModal, deliveryDate, shoppingCart, hotelUid, cartId, priceReviewAttempt, creationUncertain]);
+  }, [showCreateOrderModal, deliveryDate, shoppingCart, hotelUid, cartId, priceReviewAttempt, creationUncertain, savedSubmission]);
   const refreshCart = async ({ background = false, expectedOutlet = null } = {}) => {
     if (!hotelUid || !cartId || !isCurrent()) return false;
     if (!background) setLoading(true);
@@ -113,7 +135,7 @@ function ScopedShoppingCartPage() {
       const cart = await getShoppingCart(hotelUid, cartId, { minimumRevision: minimumCartRevision.current });
       if (!cart || !Number.isSafeInteger(cart.revision ?? 0) || (cart.revision ?? 0) < minimumCartRevision.current) throw new Error("The cart has not caught up with the saved request. Refresh before continuing.");
       if (!isCurrent() || sequence !== loadSequence.current) return false;
-      const selectedRow = expectedOutlet && cart.items?.find((item) => item.supplierProductId === expectedOutlet.productId && (item.purchaseOptionId || "default") === expectedOutlet.purchaseOptionId);
+      const selectedRow = expectedOutlet && cart.items?.find((item, index) => (item.lineId || `legacy-${index}`) === expectedOutlet.rowId);
       setCartNotice(expectedOutlet && selectedRow?.outletId !== expectedOutlet.outlet.id ? "The cart changed again before it refreshed. The current saved outlet is shown; review it before creating orders." : "");
       setShoppingCart(cart); setCartNeedsRefresh(false); setPendingOutlet(null); setErrorMessage("");
       return true;
@@ -154,6 +176,7 @@ function ScopedShoppingCartPage() {
     catch (error) {
       if (isCurrent()) {
         setErrorMessage(error?.message || "Could not update this cart. Refresh stale data or retry the saved request.");
+        setCartNeedsRefresh(true);
         if (error?.details?.cartRequestUncommitted === true) setPendingOutlet(null);
         else { setCartNeedsRefresh(true); if (outletDraft) setPendingOutlet({ ...outletDraft, phase: "unverified" }); }
       }
@@ -174,12 +197,17 @@ function ScopedShoppingCartPage() {
   }, {});
   const hasUnknownPricing = items.some((item) => knownPrice(item.pricePerPurchaseUnit) === null || knownPrice(item.qtyPurchaseUnits) === null || typeof item.currency !== "string" || !/^[A-Z]{3}$/.test(item.currency));
   const hasMissingOutlets = items.some((item) => !String(item.outletId || "").trim());
+  const submissionBlocked = recoveringCreation
+    ? mutating || creatingOrder || pendingCommand || Boolean(savedSubmission?.recoveryError)
+    : !deliveryDate || createBlocked || hasMissingOutlets || hasUnknownPricing || pricePreviewLoading || !pricePreview;
 
   const rows = items.map((item, index) => {
     const unitPrice = knownPrice(item.pricePerPurchaseUnit);
     const qty = Number(item.qtyPurchaseUnits || 0);
     return {
-      id: `${item.supplierProductId || "row"}:${item.purchaseOptionId || "default"}:${index}`,
+      id: item.lineId || `legacy-${index}`,
+      lineId: item.lineId || `legacy-${index}`,
+      lineRevision: item.lineRevision ?? 0,
       purchaseOptionId: item.purchaseOptionId || "default",
       supplierId: item.supplierId || "-",
       supplierName: item.supplierName || item.supplierId || "-",
@@ -195,8 +223,12 @@ function ScopedShoppingCartPage() {
       qtyPurchaseUnits: qty,
       outletId: item.outletId || "",
       note: String(item.note || ""),
+      addedByName: item.addedByName || (item.addedBy ? "Team member" : "Not recorded"),
+      updatedByName: item.updatedByName || (item.updatedBy ? "Team member" : "Not recorded"),
     };
   });
+  const latestNoteRow = activeNoteRow && rows.find((row) => row.lineId === activeNoteRow.lineId);
+  const noteChanged = activeNoteRow && (!latestNoteRow || latestNoteRow.lineRevision !== activeNoteRow.lineRevision);
 
   const columns = [
     {
@@ -215,7 +247,7 @@ function ScopedShoppingCartPage() {
       sortable: false,
       render: (row) => <SupplierProductImage hotelUid={hotelUid} product={{ ...row, id: row.supplierProductId }} className="h-14 w-14" />,
     },
-    { key: "supplierProductName", label: "Product" },
+    { key: "supplierProductName", label: "Product", render: (row) => <div><p>{row.supplierProductName}</p><p className="mt-1 text-xs text-slate-500">Added by {row.addedByName}<br />Last change by {row.updatedByName}</p></div> },
     { key: "supplierSku", label: "SKU" },
     { key: "purchaseUnit", label: "Purchase Unit" },
     { key: "content", label: "Content" },
@@ -227,7 +259,7 @@ function ScopedShoppingCartPage() {
         <div className="min-w-[12rem]">
           <Combobox aria-label={`Outlet for ${row.supplierProductName}`} options={outlets} value={pendingOutlet?.rowId === row.id ? pendingOutlet.outlet : outlets.find((outlet) => outlet.id === row.outletId) || null} onChange={async (outlet) => {
             if (!outlet) return;
-            await performMutation(() => updateShoppingCartItemOutlet(hotelUid, cartId, row.supplierProductId, outlet.id, row.purchaseOptionId, shoppingCart.revision ?? 0), { rowId: row.id, productId: row.supplierProductId, purchaseOptionId: row.purchaseOptionId, outlet });
+            await performMutation(() => updateShoppingCartItemOutlet(hotelUid, cartId, row.supplierProductId, outlet.id, row.purchaseOptionId, shoppingCart.revision ?? 0, lineIdentity(row)), { rowId: row.id, outlet });
           }} displayValue={(outlet) => outlet.name || "Unnamed outlet"} getOptionValue={(outlet) => outlet.id} placeholder="Search outlets" disabled={cartBlocked} className="ht-field" />
           {pendingOutlet?.rowId === row.id && <p role="status" className="mt-1 text-xs text-slate-600">{pendingOutlet.phase === "saving" ? "Saving selected outlet…" : pendingOutlet.phase === "refreshing" ? "Awaiting updated cart…" : "Selection not confirmed. Refresh or reconcile the saved request."}</p>}
         </div>
@@ -238,8 +270,8 @@ function ScopedShoppingCartPage() {
       label: "Quantity",
       sortable: false,
       render: (row) => (
-        <CartQuantityInput key={`${hotelUid}:${cartId}:${row.id}`} quantity={row.qtyPurchaseUnits} purchaseUnit={row.purchaseUnit} revision={shoppingCart.revision ?? 0} disabled={cartBlocked}
-          onCommit={(value, expectedRevision) => performMutation(() => updateShoppingCartItemQty(hotelUid, cartId, row.supplierProductId, value, row.purchaseOptionId, expectedRevision))} />
+        <CartQuantityInput key={`${hotelUid}:${cartId}:${row.id}`} quantity={row.qtyPurchaseUnits} purchaseUnit={row.purchaseUnit} revision={row.lineRevision} disabled={cartBlocked}
+          onCommit={(value, expectedLineRevision) => performMutation(() => updateShoppingCartItemQty(hotelUid, cartId, row.supplierProductId, value, row.purchaseOptionId, shoppingCart.revision ?? 0, { lineId: row.lineId, expectedLineRevision }))} />
       ),
     },
     { key: "unitPrice", label: "Package price" },
@@ -271,10 +303,12 @@ function ScopedShoppingCartPage() {
       label: "Actions",
       sortable: false,
       render: (row) => (
+        <div className="flex items-center gap-3">
+        <button type="button" disabled={cartBlocked || row.qtyPurchaseUnits <= 0.001} className="text-sm font-semibold text-brand-800 underline" onClick={() => { setSplitRow(row); setSplitQuantity(""); setSplitOutlet(null); setSplitError(""); }}>Split by outlet</button>
         <button
           type="button"
           onClick={async () => {
-            await performMutation(() => removeShoppingCartItem(hotelUid, cartId, row.supplierProductId, row.purchaseOptionId, shoppingCart.revision ?? 0));
+            await performMutation(() => removeShoppingCartItem(hotelUid, cartId, row.supplierProductId, row.purchaseOptionId, shoppingCart.revision ?? 0, lineIdentity(row)));
           }}
           className="inline-flex items-center justify-center text-red-600 hover:text-red-800"
           disabled={cartBlocked}
@@ -283,6 +317,7 @@ function ScopedShoppingCartPage() {
         >
           <Trash2 className="h-4 w-4" />
         </button>
+        </div>
       ),
     },
   ];
@@ -292,11 +327,18 @@ function ScopedShoppingCartPage() {
       <HeaderBar today={today} onLogout={handleLogout} />
       <ProcurementPage className="space-y-6">
         <PendingCartCommand hotelUid={hotelUid} cartId={cartId} inFlight={mutating || creatingOrder} onPendingChange={setPendingCommand} onComplete={async (result) => { if (!isCurrent()) return; minimumCartRevision.current = Math.max(minimumCartRevision.current, result.revision); setCartNeedsRefresh(true); if (!(await refreshCart({ background: true }))) throw new Error("The reconciled request needs a verified cart refresh before you can continue."); }} />
-        {errorMessage && <p role="alert" className="text-red-700">{errorMessage}</p>}
+        {savedSubmission && !showCreateOrderModal && <div role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm"><p>{savedSubmission.recoveryError || "An order creation request is waiting for confirmation. Reconcile it before changing this shared cart."}</p><button type="button" disabled={creatingOrder || mutating || Boolean(savedSubmission.recoveryError)} className="mt-2 font-semibold underline" onClick={async () => {
+          if (!isCurrent() || mutationLock.current) return;
+          mutationLock.current = true; setCreatingOrder(true); setErrorMessage("");
+          try { await retryPendingCartSubmission(hotelUid, cartId); if (isCurrent()) navigate("/orders"); }
+          catch (error) { if (isCurrent()) setErrorMessage(error?.message || "Could not confirm the saved order creation request."); }
+          finally { mutationLock.current = false; if (isCurrent()) { setCreatingOrder(false); setSavedSubmission(readSavedSubmission(hotelUid, cartId)); } }
+        }}>{creatingOrder ? "Confirming saved request…" : "Retry saved order creation"}</button></div>}
+        {errorMessage && !showNoteModal && !showCreateOrderModal && !splitRow && <p role="alert" className="text-red-700">{errorMessage}</p>}
         {cartNotice && <p role="status" className="text-sm text-amber-800">{cartNotice}</p>}
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><p className="text-xs uppercase tracking-wider text-slate-500">Purchasing & inventory</p><h1 className="text-2xl font-semibold">Shopping cart</h1><p className="mt-1 text-sm text-slate-600">Assign each package to an outlet and review quantities before creating draft orders.</p></div>
+            <div><p className="text-xs uppercase tracking-wider text-slate-500">Purchasing & inventory</p><h1 className="text-2xl font-semibold">Shopping cart</h1><p className="mt-1 text-sm text-slate-600">This cart is shared by your hotel team. Each line belongs to one outlet. Use Split by outlet to divide a quantity.</p><p className="mt-1 text-xs text-slate-600">Changes save when confirmed. Refresh to see colleagues’ changes. The colleague creating orders reviews and submits every outlet in this cart.</p></div>
             <div className="flex flex-wrap items-center gap-2 ml-auto">
               <button type="button" disabled={loading || mutating || creatingOrder} onClick={() => refreshCart({ background: true })} className="rounded border border-gray-300 px-3 py-2 text-sm font-semibold disabled:opacity-50">Refresh cart</button>
               <button
@@ -350,22 +392,23 @@ function ScopedShoppingCartPage() {
         )}
       </ProcurementPage>
 
-      <Modal open={showCreateOrderModal} onClose={() => { if (!creationUncertain && !creatingOrder) setShowCreateOrderModal(false); }} title="Create Order">
+      <Modal open={showCreateOrderModal} onClose={() => { if (!recoveringCreation && !creatingOrder) setShowCreateOrderModal(false); }} title="Create Order">
+        {errorMessage && <p role="alert" className="mb-3 text-sm text-red-700">{errorMessage}</p>}
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           Delivery Date
           <input
             type="date"
-            disabled={creatingOrder || creationUncertain}
+            disabled={creatingOrder || recoveringCreation}
             value={deliveryDate}
             onChange={(event) => { setPricePreview(null); setDeliveryDate(event.target.value); }}
             className="rounded border border-gray-300 px-3 py-2 text-sm"
           />
         </label>
-        {creationUncertain && <p role="alert" className="mt-3 text-sm text-amber-800">Creation could not be confirmed. Retry the saved request to reconcile its result before changing this cart or delivery date.</p>}
+        {recoveringCreation && <p role="alert" className="mt-3 text-sm text-amber-800">{savedSubmission?.recoveryError || "Creation could not be confirmed. Retry the saved request to reconcile its result before changing this cart or delivery date."}{savedSubmission?.deliveryDate && ` Saved delivery date: ${savedSubmission.deliveryDate}.`}</p>}
         <p className="mt-2 text-xs text-slate-600">Supplier delivery weekdays are applied before choosing prices. Future price lists are used only when applicable to the agreed date.</p>
-        {pricePreviewLoading && <p role="status" className="mt-3 text-sm text-slate-600">Reviewing applicable prices…</p>}
-        {pricePreviewError && <div className="mt-3 space-y-2"><p role="alert" className="text-sm text-red-700">{pricePreviewError}</p><button type="button" onClick={() => setPriceReviewAttempt((value) => value + 1)} className="rounded border px-3 py-2 text-sm">Review prices again</button></div>}
-        {pricePreview && <div className="mt-4 space-y-3" aria-label="Applicable order prices">{pricePreview.orders.map((order) => <section key={`${order.supplierId}:${order.outletId}`} className="rounded-lg border border-slate-200 p-3 text-sm">
+        {!recoveringCreation && pricePreviewLoading && <p role="status" className="mt-3 text-sm text-slate-600">Reviewing applicable prices…</p>}
+        {!recoveringCreation && pricePreviewError && <div className="mt-3 space-y-2"><p role="alert" className="text-sm text-red-700">{pricePreviewError}</p><button type="button" onClick={() => setPriceReviewAttempt((value) => value + 1)} className="rounded border px-3 py-2 text-sm">Review prices again</button></div>}
+        {!recoveringCreation && pricePreview && <div className="mt-4 space-y-3" aria-label="Applicable order prices">{pricePreview.orders.map((order) => <section key={`${order.supplierId}:${order.outletId}`} className="rounded-lg border border-slate-200 p-3 text-sm">
           <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{order.supplierName} · {order.outletName}</h3><span>{formatOrderMoney(order.totalAmount, order.currency)}</span></div>
           <p className="mt-1 text-xs text-slate-600">Delivery: {order.deliveryDate} · {formatOrderPriceBasis(order.priceBasis)}</p>
           <ul className="mt-2 divide-y divide-slate-100">{order.products.map((line) => <li key={`${line.supplierProductId}:${line.purchaseOptionId}`} className="py-2">
@@ -379,22 +422,24 @@ function ScopedShoppingCartPage() {
           <button
             type="button"
             onClick={() => setShowCreateOrderModal(false)}
-            disabled={creatingOrder || creationUncertain}
+            disabled={creatingOrder || recoveringCreation}
             className="px-4 py-2 rounded border border-gray-300 text-gray-700"
           >
             Cancel
           </button>
           <button
             type="button"
-            disabled={!deliveryDate || createBlocked || hasMissingOutlets || hasUnknownPricing || pricePreviewLoading || !pricePreview}
+            disabled={submissionBlocked}
             onClick={async () => {
-              if (!deliveryDate || createBlocked || mutationLock.current || hasMissingOutlets || hasUnknownPricing || pricePreviewLoading || !pricePreview || !isCurrent()) return;
+              if (submissionBlocked || mutationLock.current || !isCurrent()) return;
               mutationLock.current = true;
               setCreatingOrder(true);
               setErrorMessage("");
               try {
                 const actor = auth.currentUser?.uid || auth.currentUser?.email || "unknown";
-                const result = await createOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, actor, shoppingCart?.revision || 0, pricePreview.priceFingerprint);
+                const result = recoveringCreation
+                  ? await retryPendingCartSubmission(hotelUid, cartId)
+                  : await createOrdersFromShoppingCart(hotelUid, cartId, deliveryDate, actor, shoppingCart?.revision || 0, pricePreview.priceFingerprint);
                 if (!isCurrent()) return;
                 setCreationUncertain(false);
                 const adjustments = Array.isArray(result?.deliveryDateAdjustments)
@@ -412,8 +457,7 @@ function ScopedShoppingCartPage() {
               } catch (error) {
                 if (isCurrent()) {
                   setErrorMessage(error?.message || "Could not create orders");
-                  const code = String(error?.code || "").replace(/^functions\//, "");
-                  if (["aborted", "failed-precondition", "invalid-argument", "permission-denied", "unauthenticated", "not-found", "already-exists"].includes(code)) {
+                  if (error?.details?.orderRequestUncommitted === true) {
                     setCreationUncertain(false); setPricePreview(null); setPriceReviewAttempt((value) => value + 1);
                   } else setCreationUncertain(true);
                 }
@@ -423,7 +467,7 @@ function ScopedShoppingCartPage() {
             }}
             className="px-4 py-2 rounded bg-brand-800 text-white hover:bg-brand-950 disabled:opacity-50"
           >
-            {creatingOrder ? "Creating..." : creationUncertain ? "Retry saved creation" : "Create"}
+            {creatingOrder ? "Creating..." : recoveringCreation ? "Retry saved creation" : "Create"}
           </button>
         </div>
       </Modal>
@@ -431,15 +475,20 @@ function ScopedShoppingCartPage() {
       <Modal
         open={showNoteModal}
         onClose={() => {
+          if (mutating) return;
           setShowNoteModal(false);
           setActiveNoteRow(null);
           setNoteDraft("");
         }}
         title={activeNoteRow?.note ? "Edit note" : "Add note"}
       >
+        {errorMessage && <p role="alert" className="mb-3 text-sm text-red-700">{errorMessage} Your note is still here.</p>}
+        {cartNeedsRefresh && <button type="button" disabled={mutating || pendingCommand} onClick={() => refreshCart({ background: true })} className="mb-3 text-sm font-semibold underline">Refresh saved line</button>}
+        {noteChanged && <div className="mb-3 rounded border border-amber-300 p-3 text-sm"><p>{latestNoteRow ? "This line changed while you were editing. Review the saved note before replacing it." : "This line was removed. Your note remains available to copy."}</p>{latestNoteRow && <><p className="mt-2 whitespace-pre-wrap">Saved note: {latestNoteRow.note || "No note"}</p><p className="mt-1">Outlet: {outlets.find((outlet) => outlet.id === latestNoteRow.outletId)?.name || "Unassigned"} · Quantity: {latestNoteRow.qtyPurchaseUnits}</p><button type="button" disabled={cartBlocked} onClick={() => setActiveNoteRow(latestNoteRow)} className="mt-2 font-semibold underline">I reviewed this line; keep my note</button></>}</div>}
         <label className="flex flex-col gap-1 text-sm font-semibold text-gray-700">
           Note
           <textarea
+            disabled={mutating}
             value={noteDraft}
             onChange={(event) => setNoteDraft(event.target.value)}
             rows={4}
@@ -455,13 +504,14 @@ function ScopedShoppingCartPage() {
               setActiveNoteRow(null);
               setNoteDraft("");
             }}
+            disabled={mutating}
             className="px-4 py-2 rounded border border-gray-300 text-gray-700"
           >
             Cancel
           </button>
           <button
             type="button"
-            disabled={cartBlocked}
+            disabled={cartBlocked || noteChanged}
             onClick={async () => {
               if (!activeNoteRow) return;
               const success = await performMutation(() => updateShoppingCartItemNote(
@@ -470,7 +520,8 @@ function ScopedShoppingCartPage() {
                 activeNoteRow.supplierProductId,
                 noteDraft.trim(),
                 activeNoteRow.purchaseOptionId,
-                shoppingCart.revision ?? 0
+                shoppingCart.revision ?? 0,
+                lineIdentity(activeNoteRow)
               ));
               if (!success) return;
               setShowNoteModal(false);
@@ -482,6 +533,23 @@ function ScopedShoppingCartPage() {
             Save
           </button>
         </div>
+      </Modal>
+
+      <Modal open={Boolean(splitRow)} onClose={() => { if (!mutating) setSplitRow(null); }} title="Split by outlet">
+        <p className="text-sm text-slate-600">Move part of {splitRow?.supplierProductName} to another outlet. The original line keeps the remainder. Both lines keep the note; you can edit each note afterwards.</p>
+        <label className="mt-4 flex flex-col gap-1 text-sm font-semibold">Quantity to move<input type="number" min="0.001" step="0.001" disabled={mutating} value={splitQuantity} onChange={(event) => setSplitQuantity(event.target.value)} className="ht-field" /></label>
+        <p className="mt-1 text-xs text-slate-600">Current quantity: {splitRow?.qtyPurchaseUnits} {splitRow?.purchaseUnit}</p>
+        <label className="mt-3 block text-sm font-semibold">Destination outlet</label>
+        <Combobox aria-label="Destination outlet" options={outlets.filter((outlet) => outlet.id !== splitRow?.outletId)} value={splitOutlet} onChange={setSplitOutlet} disabled={mutating} displayValue={(outlet) => outlet.name || "Unnamed outlet"} getOptionValue={(outlet) => outlet.id} placeholder="Select an outlet" className="ht-field" />
+        {(splitError || errorMessage) && <p role="alert" className="mt-3 text-sm text-red-700">{splitError || errorMessage}</p>}
+        {cartNeedsRefresh && <p className="mt-2 text-sm text-amber-800">Close this dialog and refresh the cart before reviewing the split again.</p>}
+        <div className="mt-4 flex justify-end gap-2"><button type="button" disabled={mutating} className="ht-button-secondary" onClick={() => setSplitRow(null)}>Cancel</button><button type="button" disabled={cartBlocked || !splitOutlet || !splitQuantity} className="ht-button-primary" onClick={async () => {
+          const quantity = Number(splitQuantity);
+          if (!splitRow || !Number.isFinite(quantity) || quantity <= 0 || quantity >= splitRow.qtyPurchaseUnits || Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 1e-8) { setSplitError("Enter a positive quantity smaller than the current line, with up to three decimals."); return; }
+          if (rows.some((row) => row.lineId !== splitRow.lineId && row.supplierProductId === splitRow.supplierProductId && row.purchaseOptionId === splitRow.purchaseOptionId && row.outletId === splitOutlet.id)) { setSplitError("This package already has a line for that outlet. Adjust the two existing quantities instead."); return; }
+          setSplitError("");
+          if (await performMutation(() => splitShoppingCartItem(hotelUid, cartId, splitRow, quantity, splitOutlet.id, shoppingCart.revision ?? 0))) setSplitRow(null);
+        }}>Split quantity</button></div>
       </Modal>
 
       <Modal

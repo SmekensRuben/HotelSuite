@@ -3,6 +3,9 @@ import { useNavigate } from "react-router-dom";
 import StockCountPackageEntry from "./StockCountPackageEntry";
 import StockCountBarcodeScanner from "./StockCountBarcodeScanner";
 import InventoryCostProposal from "./InventoryCostProposal";
+import PendingStockCountMutation from "./PendingStockCountMutation";
+import { useStockCountDraft } from "../../hooks/useStockCountDraft";
+import { catalogLocationDraft, validCatalogDraft, reviewCatalogDraft, resolveCatalogDraft } from "../../utils/stockCountDraftReview";
 import StockCountExceptionReview from "./StockCountExceptionReview";
 import { Card } from "../layout/Card";
 import { auth } from "../../firebaseConfig";
@@ -10,7 +13,7 @@ import { usePermission } from "../../hooks/usePermission";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { productUnitLabel } from "../../utils/productUnitDisplay";
 import { matchesSearchTokensAcross } from "../../utils/search";
-import { finishStockCountLocation, getStockCountProductChoices, updateStockCountLocationCounts } from "../../services/firebaseStockCounts";
+import { finishStockCountLocation, getStockCountById, getStockCountProductChoices, updateStockCountLocationCounts } from "../../services/firebaseStockCounts";
 import { formatInventoryValue, parseInventoryDecimal } from "./inventoryFormatting";
 import { procurementReadScope } from "../../services/procurementReadPool";
 
@@ -26,10 +29,20 @@ function validateProductPage(page, seen = new Set()) {
   return page;
 }
 
-export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, location }) {
+export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, location: incomingLocation }) {
   const navigate = useNavigate();
   const canUpdate = usePermission("stockcounts", "update"), canReadCounts = usePermission("stockcounts", "read");
-  const [additional, setAdditional] = useState([]), [quantities, setQuantities] = useState({}), [costs, setCosts] = useState({});
+  const [location, setLocation] = useState(incomingLocation);
+  const [baseRevision, setBaseRevision] = useState(incomingLocation.revision ?? 0);
+  const [additional, setAdditionalState] = useState([]), [quantities, setQuantitiesState] = useState({}), [costs, setCostsState] = useState({});
+  const edited = useRef(false);
+  const setAdditional = (next) => { edited.current = true; setAdditionalState(next); };
+  const setQuantities = (next) => { edited.current = true; setQuantitiesState(next); };
+  const setCosts = (next) => { edited.current = true; setCostsState(next); };
+  const [pending, setPending] = useState(false), [conflict, setConflict] = useState(null), [choicesById, setChoicesById] = useState({});
+  const [needsReview, setNeedsReview] = useState(false), [reviewing, setReviewing] = useState(false);
+  const draft = useStockCountDraft({ hotelUid, stockCountId: stockCount.id, locationId: incomingLocation.locationId,
+    actorUid: auth.currentUser?.uid, enabled: canReadCounts });
   const [appliedEstimates, setAppliedEstimates] = useState({});
   const [saving, setSaving] = useState(false), [error, setError] = useState("");
   const [adding, setAdding] = useState(false), [search, setSearch] = useState(""), [searchTerm, setSearchTerm] = useState("");
@@ -38,11 +51,11 @@ export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, l
   const [olderProducts, setOlderProducts] = useState([]), [cursor, setCursor] = useState(null), [moreLoading, setMoreLoading] = useState(false), [moreError, setMoreError] = useState("");
   const productGeneration = useRef(0), seenProductCursors = useRef(new Set()), quantityInputs = useRef(new Map()), searchInput = useRef(null);
   const draftActor = useRef(auth.currentUser);
-  const scopeKey = JSON.stringify([hotelUid, stockCount.id, location.locationId, auth.currentUser?.uid, canUpdate, canReadCounts, procurementReadScope(hotelUid)?.key]);
+  const scopeKey = JSON.stringify([hotelUid, stockCount.id, incomingLocation.locationId, auth.currentUser?.uid, canUpdate, canReadCounts, procurementReadScope(hotelUid)?.key]);
   const active = useRef({ key: scopeKey });
   if (active.current.key !== scopeKey) active.current = { key: scopeKey };
-  const finished = location.status === "Finished" || stockCount.status === "Finished";
-  const editable = canUpdate && !finished && !saving;
+  const finished = location.status === "Finished" || incomingLocation.status === "Finished" || stockCount.status === "Finished";
+  const editable = canUpdate && !finished && !saving && !pending && !conflict && !reviewing;
   const productKey = JSON.stringify([scopeKey, searchTerm, barcode, search.trim()]);
   const loadProducts = useCallback(async () => {
     const actor = auth.currentUser, permissionScope = procurementReadScope(hotelUid), scope = active.current, seen = new Set();
@@ -81,19 +94,32 @@ export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, l
     } catch (failure) { if (generation === productGeneration.current && active.current === scope) setMoreError(failure.message || "Could not load more product choices."); }
     finally { if (generation === productGeneration.current && active.current === scope) setMoreLoading(false); }
   };
-  // Hydrate saved counts before interaction can overwrite or be overwritten by them.
+  const hydrate = (value) => {
+    setAdditionalState(value.additional); setQuantitiesState(value.quantities); setCostsState(value.costs);
+    setAppliedEstimates(Object.fromEntries((value.appliedEstimateIds || []).map((id) => [id, { context: "recovered", scope: null }])));
+  };
+  // An updated server prop must never replace an active editor's input.
   useLayoutEffect(() => {
     active.current = { key: scopeKey, actor: auth.currentUser };
-    const saved = location.countedItems || [], included = new Set((location.stockTemplate?.items || []).map((item) => item.catalogProductId));
-    setAdditional(saved.filter((item) => !included.has(item.catalogProductId)));
-    setQuantities(Object.fromEntries(saved.map((item) => [item.catalogProductId, item.isCounted === false ? "" : String(item.quantity ?? "")])));
-    setCosts(Object.fromEntries(saved.map((item) => [item.catalogProductId, item.unitCost == null ? "" : String(item.unitCost)])));
-    setAppliedEstimates({}); setSaving(false); setError(draftActor.current !== auth.currentUser ? "The signed-in user changed. Reload this count before saving." : "");
+    edited.current = false; hydrate(catalogLocationDraft(incomingLocation));
+    setLocation(incomingLocation); setBaseRevision(incomingLocation.revision ?? 0);
+    setConflict(null); setChoicesById({}); setNeedsReview(false); setReviewing(false); setPending(false);
+    setSaving(false); setError(draftActor.current !== auth.currentUser ? "The signed-in user changed. Reload this count before saving." : "");
     draftActor.current = auth.currentUser;
     setAdding(false); setSearch(""); setSearchTerm("");
     setBarcode(""); setScannerOpen(false); setScanMessage(""); setFilter("all"); setEditingId(null); setFocusId(null);
     return () => { active.current = { key: null }; };
-  }, [scopeKey, location]);
+  }, [scopeKey]);
+  useLayoutEffect(() => {
+    if (edited.current) {
+      if ((incomingLocation.revision ?? 0) !== baseRevision) setNeedsReview(true);
+      return;
+    }
+    setLocation(incomingLocation); setBaseRevision(incomingLocation.revision ?? 0); hydrate(catalogLocationDraft(incomingLocation));
+  }, [incomingLocation]);
+  useLayoutEffect(() => {
+    if (edited.current && active.current.actor === auth.currentUser) draft.update({ additional, quantities, costs, appliedEstimateIds: Object.keys(appliedEstimates) }, baseRevision);
+  }, [additional, quantities, costs, appliedEstimates, baseRevision, draft.update]);
   const rows = useMemo(() => [...new Map([...(location.stockTemplate?.items || []), ...additional].map((item) => [item.catalogProductId, item])).values()], [location.stockTemplate, additional]);
   const choices = useMemo(() => [...new Map([...(products.data?.products || []), ...olderProducts].map((product) => [product.id, product])).values()], [products.data, olderProducts]);
   const counted = rows.filter((item) => ["zero", "counted"].includes(quantityStatus(quantities[item.catalogProductId] ?? ""))).length;
@@ -119,7 +145,7 @@ export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, l
   useEffect(() => {
     if (barcode && products.data && !products.loading && !products.error && products.data.products.length === 1 && !products.data.nextCursor) chooseProduct(products.data.products[0], true);
   }, [barcode, products.data, products.loading, products.error, chooseProduct]);
-  const estimateContext = (item) => JSON.stringify([hotelUid, stockCount.id, stockCount.revision, location.locationId, item.catalogProductId, item.baseUnit, stockCount.currency, stockCount.businessDate]);
+  const estimateContext = (item) => JSON.stringify([hotelUid, stockCount.id, baseRevision, location.locationId, item.catalogProductId, item.baseUnit, stockCount.currency, stockCount.businessDate]);
   const staleEstimate = (item) => Boolean(appliedEstimates[item.catalogProductId] && (appliedEstimates[item.catalogProductId].context !== estimateContext(item) || !appliedEstimates[item.catalogProductId].scope?.current()));
   const staleApplied = rows.some(staleEstimate);
   const setManualCost = (id, value) => {
@@ -135,18 +161,63 @@ export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, l
     quantity: (quantities[item.catalogProductId] ?? "") === "" ? null : parseInventoryDecimal(quantities[item.catalogProductId]),
     unitCost: parseInventoryDecimal(costs[item.catalogProductId] ?? "", { optional: true }), isCounted: (quantities[item.catalogProductId] ?? "") !== "" }));
   const submit = async (finish) => {
-    if (!editable || invalid || finish && !complete) return;
+    if (!editable || needsReview || invalid || finish && !complete) return;
     if (active.current.actor !== auth.currentUser) { setError("The signed-in user changed. Reload this count before saving."); return; }
     if (rows.some(staleEstimate)) { setError("An applied cost estimate no longer matches this draft or its recorded evidence. Refresh it, clear it or enter a reviewed manual estimate before saving."); return; }
     const scope = active.current;
     setSaving(true); setError("");
     try {
       const values = commands();
-      if (finish) await finishStockCountLocation(hotelUid, stockCount.id, location.locationId, values, [], auth.currentUser?.uid, stockCount.revision);
-      else await updateStockCountLocationCounts(hotelUid, stockCount.id, location.locationId, values, auth.currentUser?.uid, stockCount.revision);
-      if (active.current === scope && active.current.actor === auth.currentUser) navigate(`/catalog/stock-counts/${stockCount.id}`);
-    } catch (failure) { if (active.current === scope) setError(failure.message || "Unable to save catalog count."); }
+      if (finish) await finishStockCountLocation(hotelUid, stockCount.id, location.locationId, values, [], auth.currentUser?.uid, baseRevision);
+      else await updateStockCountLocationCounts(hotelUid, stockCount.id, location.locationId, values, auth.currentUser?.uid, baseRevision);
+      if (active.current === scope && active.current.actor === auth.currentUser) { edited.current = false; draft.clear(); navigate(`/catalog/stock-counts/${stockCount.id}`); }
+    } catch (failure) {
+      if (active.current === scope) {
+        setError(failure.message || "Unable to save catalog count. Your draft remains on this device.");
+        if (String(failure.code).replace("functions/", "") === "aborted" || failure.details?.conflictScope || /finished/i.test(failure.message || "")) setNeedsReview(true);
+      }
+    }
     finally { if (active.current === scope) setSaving(false); }
+  };
+  const reconcileSavedChange = (_result, payload) => {
+    const valuesKey = (values) => JSON.stringify(values.map((item) => [item.catalogProductId, item.quantity, item.unitCost ?? null, item.isCounted]).sort(([a], [b]) => a.localeCompare(b)));
+    const matches = !invalid && payload?.expectedLocationRevision === baseRevision && Array.isArray(payload.countedItems)
+      && valuesKey(payload.countedItems) === valuesKey(commands());
+    if (edited.current && !matches) {
+      setError("The saved change is confirmed. Your current draft has different values and is still kept on this device. Compare the saved counts before continuing.");
+      setNeedsReview(true); return;
+    }
+    edited.current = false; draft.clear(); navigate(`/catalog/stock-counts/${stockCount.id}`);
+  };
+  const reviewSavedCounts = async () => {
+    const scope = active.current; setReviewing(true); setError("");
+    try {
+      const latest = await getStockCountById(hotelUid, stockCount.id);
+      if (active.current !== scope || scope.actor !== auth.currentUser) return;
+      const nextLocation = latest?.locations?.find((item) => item.locationId === location.locationId);
+      if (!nextLocation) throw new Error("This count area is no longer available. Your draft remains on this device.");
+      const review = reviewCatalogDraft(nextLocation, rows, { quantities, costs });
+      setConflict({ location: nextLocation, rows: review, finished: latest.status === "Finished" || nextLocation.status === "Finished" });
+      setChoicesById({}); setNeedsReview(true);
+    } catch (failure) { if (active.current === scope) setError(failure.message || "Unable to load the saved counts. Try again when connected."); }
+    finally { if (active.current === scope) setReviewing(false); }
+  };
+  const applyReview = () => {
+    if (!conflict || conflict.finished || active.current.actor !== auth.currentUser) return;
+    try {
+      const value = resolveCatalogDraft(conflict.location, conflict.rows, choicesById);
+      // A recovered or changed automatic estimate needs a fresh explicit review.
+      value.appliedEstimateIds = Object.keys(appliedEstimates).filter((id) => choicesById[id] !== "saved");
+      edited.current = true; hydrate(value); setLocation(conflict.location); setBaseRevision(conflict.location.revision ?? 0);
+      draft.update(value, conflict.location.revision ?? 0); setConflict(null); setNeedsReview(false); setError("");
+    } catch (failure) { setError(failure.message); }
+  };
+  const restoreDraft = (saved) => {
+    if (!validCatalogDraft(saved.value)) { setError("This saved draft cannot be read. Keep it for review; no counts were changed."); return; }
+    const restored = draft.recover(saved);
+    if (!restored) return;
+    edited.current = true; hydrate(restored.value); setBaseRevision(restored.baseRevision);
+    setNeedsReview(restored.baseRevision !== (location.revision ?? 0)); setConflict(null); setError("");
   };
   const nextQuantity = (id) => {
     const remaining = visibleRows.filter((item) => item.catalogProductId !== id && ["uncounted", "invalid"].includes(quantityStatus(quantities[item.catalogProductId] ?? "")));
@@ -160,6 +231,27 @@ export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, l
       <p className="mt-1 text-sm text-slate-600">Enter quantities in the displayed unit. Leave forgotten articles blank; enter 0 only when you checked and found none.</p></div>
       <p className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-medium" aria-live="polite">{counted} / {rows.length} counted · {uncounted} not counted</p></div>
     <p className="text-xs text-slate-500">{stockCount.businessDate || "Business date unavailable"} · {location.stockTemplate?.id || location.stockTemplateId ? `Template: ${location.stockTemplate?.name || location.stockTemplateName || "Selected template"}` : "No template required"}</p>
+    <PendingStockCountMutation hotelUid={hotelUid} stockCountId={stockCount.id} locationId={location.locationId} disabled={saving || !canUpdate}
+      onPendingChange={setPending} onComplete={reconcileSavedChange} />
+    <div aria-live="polite" className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+      {saving ? "Saving counts to the hotel…" : pending ? "Save outcome unconfirmed. Retry the saved request before continuing." : draft.dirty ? draft.savedLocally ? "Draft saved on this device. Use Save Counts to share it with your colleagues." : "Unsaved changes. Keep this page open until your counts are saved." : "Showing saved counts. Changes are automatically kept as a draft on this device."}
+      {draft.storageError && <div role="alert"><p>{draft.storageError}</p><button type="button" className="ht-button-secondary mt-2" onClick={draft.retryStorage}>Retry draft storage</button></div>}
+    </div>
+    {draft.recoveries.length > 0 && <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+      <p className="font-semibold">A draft is available on this device</p><p className="text-sm">Drafts belong to your account and this count area. Another open tab may still be using one.</p>
+      {draft.recoveries.map((saved) => <div key={saved.key} className="flex flex-wrap items-center gap-2 text-sm"><span>{saved.memoryOnly ? "Temporary draft" : "Saved"} {new Date(saved.updatedAt).toLocaleString()}{saved.memoryOnly ? " · recover before reloading or closing this tab" : ""}</span><button type="button" className="ht-button-secondary" disabled={saving || pending || draft.dirty || !canReadCounts} onClick={() => restoreDraft(saved)}>{finished ? "Review draft" : "Restore draft"}</button><button type="button" className="ht-button-secondary" disabled={saving || pending} onClick={() => draft.discard(saved)}>Dismiss draft</button></div>)}
+      {finished && <p className="text-sm">This count area is finished. Its saved counts cannot change; your draft remains available for review.</p>}
+    </div>}
+    {needsReview && !conflict && <div role="alert" className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3"><p>Someone else saved this count area. Your draft is kept. Compare the saved counts and choose which values to keep.</p><button type="button" className="ht-button-secondary" disabled={saving || pending || reviewing} onClick={reviewSavedCounts}>{reviewing ? "Loading saved counts…" : "Compare saved counts"}</button></div>}
+    {conflict && <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
+      <h3 className="font-semibold">Review changes to this count area</h3><p className="text-sm">Choose a quantity and cost for each changed article. Articles added by either person stay included. Nothing is saved until you use Save Counts.</p>
+      {conflict.location.updatedBy && <p className="text-xs">Last saved by {conflict.location.updatedBy === auth.currentUser?.uid ? "you" : "another team member"}.</p>}
+      {conflict.rows.filter((row) => row.differs).map((row) => <fieldset key={row.item.catalogProductId} className="space-y-2 rounded border bg-white p-3"><legend className="px-1 font-medium">{productName(row.item)}</legend>
+        {[["mine", row.mine, "My draft"], ["saved", row.theirs, "Saved count"]].map(([choice, value, label]) => <label key={choice} className="flex min-h-[44px] items-center gap-2 text-sm"><input type="radio" name={`review-${row.item.catalogProductId}`} value={choice} checked={choicesById[row.item.catalogProductId] === choice} onChange={() => setChoicesById((current) => ({ ...current, [row.item.catalogProductId]: choice }))} />{label}: {value.quantity === "" ? "Not counted" : `${value.quantity} ${row.item.baseUnit}`} · cost {value.cost === "" ? "Unknown" : value.cost}</label>)}
+      </fieldset>)}
+      {conflict.finished ? <p role="alert">A colleague finished this count area. Your draft is retained for review, but finished counts cannot be changed.</p> : <button type="button" className="ht-button-primary" disabled={conflict.rows.some((row) => row.differs && !choicesById[row.item.catalogProductId])} onClick={applyReview}>Use reviewed values</button>}
+      <button type="button" className="ht-button-secondary ml-2" onClick={() => setConflict(null)}>Keep draft and review later</button>
+    </div>}
     <StockCountExceptionReview hotelUid={hotelUid} stockCountId={stockCount.id} locationId={location.locationId} revision={stockCount.revision} />
     <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
       <div className="flex flex-wrap items-end gap-2"><label className="min-w-0 flex-1 text-sm font-medium">Find products<input ref={searchInput} type="search" aria-label="Find products" placeholder="Search product names" autoComplete="off" maxLength="200" value={search} disabled={saving} className="ht-field mt-1 min-h-[44px] w-full" onChange={(event) => { setSearch(event.target.value); setBarcode(""); setScanMessage(""); }} /></label>
@@ -193,10 +285,10 @@ export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, l
       return <article key={id} aria-label={productName(item)} className={`space-y-3 rounded-xl border bg-white p-3 sm:p-4 ${status === "uncounted" ? "border-amber-300" : status === "invalid" ? "border-red-300" : "border-slate-200"}`}>
         <div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold">{productName(item)}</h3><p className="text-xs text-slate-500">Count unit: {item.baseUnit ? productUnitLabel(item.baseUnit) : "Unknown"}</p></div><span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${status === "uncounted" ? "bg-amber-100 text-amber-900" : status === "invalid" ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-900"}`}>{status === "uncounted" ? "Not counted" : status === "zero" ? "Counted · zero" : status === "invalid" ? "Check quantity" : "Counted"}</span></div>
         <div className="flex flex-wrap items-end gap-2"><label className="min-w-0 flex-1 text-sm font-medium">Quantity ({item.baseUnit})<input ref={(input) => { if (input) quantityInputs.current.set(id, input); else quantityInputs.current.delete(id); }} aria-label={`Count ${productName(item)}`} type="number" inputMode="decimal" min="0" max="1000000" step="0.000001" placeholder="Not counted" value={quantity} disabled={!editable} onFocus={() => setEditingId(id)} onBlur={() => setEditingId(null)} onChange={(event) => setQuantities((current) => ({ ...current, [id]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); nextQuantity(id); } }} className="mt-1 min-h-[52px] w-full rounded-lg border border-slate-300 px-3 py-2 text-xl" /></label>
-          {canUpdate && !finished && <><button type="button" aria-label={`Count zero for ${productName(item)}`} className="ht-button-secondary min-h-[48px]" disabled={saving} onClick={() => setQuantities((current) => ({ ...current, [id]: "0" }))}>Count zero</button>{quantity !== "" && <button type="button" aria-label={`Mark ${productName(item)} uncounted`} className="ht-button-secondary min-h-[48px]" disabled={saving} onClick={() => setQuantities((current) => ({ ...current, [id]: "" }))}>Clear</button>}</>}
+          {canUpdate && !finished && <><button type="button" aria-label={`Count zero for ${productName(item)}`} className="ht-button-secondary min-h-[48px]" disabled={!editable} onClick={() => setQuantities((current) => ({ ...current, [id]: "0" }))}>Count zero</button>{quantity !== "" && <button type="button" aria-label={`Mark ${productName(item)} uncounted`} className="ht-button-secondary min-h-[48px]" disabled={!editable} onClick={() => setQuantities((current) => ({ ...current, [id]: "" }))}>Clear</button>}</>}
         </div>
-        {!finished && canUpdate && saved && <StockCountPackageEntry hotelUid={hotelUid} stockCountId={stockCount.id} locationId={location.locationId} item={item} disabled={saving} onApply={(text) => setQuantities((current) => ({ ...current, [id]: text }))} />}
-        {!finished && canUpdate && !saved && <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-500">Save this new article before loading validated package choices. Direct counting is ready.</p><button type="button" className="ht-button-secondary min-h-[44px]" disabled={saving} aria-label={`Remove new article ${productName(item)}`} onClick={() => {
+        {!finished && canUpdate && saved && <StockCountPackageEntry hotelUid={hotelUid} stockCountId={stockCount.id} locationId={location.locationId} item={item} disabled={!editable} onApply={(text) => setQuantities((current) => ({ ...current, [id]: text }))} />}
+        {!finished && canUpdate && !saved && <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-500">Save this new article before loading validated package choices. Direct counting is ready.</p><button type="button" className="ht-button-secondary min-h-[44px]" disabled={!editable} aria-label={`Remove new article ${productName(item)}`} onClick={() => {
           setAdditional((current) => current.filter((row) => row.catalogProductId !== id));
           setQuantities((current) => { const next = { ...current }; delete next[id]; return next; });
           setManualCost(id, "");
@@ -204,16 +296,16 @@ export default function CatalogStockCountLocationPanel({ hotelUid, stockCount, l
         <details className="rounded-lg bg-slate-50 p-3"><summary className="min-h-[32px] cursor-pointer text-sm font-medium">Valuation (optional)</summary>
           <p className="my-2 text-xs text-slate-600">Net cost per count unit in {stockCount.currency || "unknown currency"}. Unknown costs stay unavailable; any applied suggestion is a reviewed estimate.</p>
           <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Estimated net cost / {item.baseUnit}<input aria-label={`Unit cost ${productName(item)}`} type="number" inputMode="decimal" min="0" max="1000000" step="0.000001" placeholder="Unknown" value={cost} disabled={!editable} onChange={(event) => setManualCost(id, event.target.value)} className="mt-1 min-h-[44px] w-full rounded border px-3 py-2" /></label><div><p className="text-sm text-slate-500">Estimated counted value</p><p>{formatInventoryValue(value, stockCount.currency)}</p></div></div>
-          {!finished && canUpdate && canReadCounts && saved && <div className="mt-3"><InventoryCostProposal request={{ hotelUid, purpose: "stockcount", stockCountId: stockCount.id, locationId: location.locationId, catalogProductId: id }} baseUnit={item.baseUnit} currency={stockCount.currency} businessDate={stockCount.businessDate} contextVersion={stockCount.revision} articleName={productName(item)} disabled={saving} onApply={(number) => { setCosts((current) => ({ ...current, [id]: String(number) })); setAppliedEstimates((current) => ({ ...current, [id]: { context: estimateContext(item), scope: procurementReadScope(hotelUid) } })); }} /></div>}
+          {!finished && canUpdate && canReadCounts && saved && <div className="mt-3"><InventoryCostProposal request={{ hotelUid, purpose: "stockcount", stockCountId: stockCount.id, locationId: location.locationId, catalogProductId: id }} baseUnit={item.baseUnit} currency={stockCount.currency} businessDate={stockCount.businessDate} contextVersion={baseRevision} articleName={productName(item)} disabled={!editable} onApply={(number) => { setCosts((current) => ({ ...current, [id]: String(number) })); setAppliedEstimates((current) => ({ ...current, [id]: { context: estimateContext(item), scope: procurementReadScope(hotelUid) } })); }} /></div>}
         </details>
-        {appliedEstimates[id] && <div role={staleEstimate(item) ? "alert" : "status"} className="flex flex-wrap items-center gap-2 text-xs text-slate-600"><p>{staleEstimate(item) ? "This applied estimate is stale. Refresh and apply a new estimate, clear it or explicitly review a manual value before saving." : "Weighted estimate applied to this draft. Saving freezes it as an operator-reviewed estimate."}</p><button type="button" className="ht-button-secondary min-h-[44px]" disabled={saving} onClick={() => setManualCost(id, "")}>Clear applied estimate</button></div>}
+        {appliedEstimates[id] && <div role={staleEstimate(item) ? "alert" : "status"} className="flex flex-wrap items-center gap-2 text-xs text-slate-600"><p>{staleEstimate(item) ? "This applied estimate is stale. Refresh and apply a new estimate, clear it or explicitly review a manual value before saving." : "Weighted estimate applied to this draft. Saving freezes it as an operator-reviewed estimate."}</p><button type="button" className="ht-button-secondary min-h-[44px]" disabled={!editable} onClick={() => setManualCost(id, "")}>Clear applied estimate</button></div>}
       </article>;
     })}</div>
     {invalid && <p role="alert" className="text-sm text-red-700">Quantities and costs must be non-negative numbers with at most six decimal places and no greater than 1,000,000.</p>}
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     <div className="sticky bottom-0 -mx-3 border-t border-slate-200 bg-white/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur sm:mx-0">
       {!complete && !finished && <p className="mb-2 text-sm text-slate-600">{rows.length ? `${rows.length - counted} article${rows.length - counted === 1 ? " still needs" : "s still need"} an explicit quantity. Save to continue later.` : "Add at least one product to finish this count area."}</p>}
-      <div className="flex flex-wrap justify-end gap-2"><button type="button" className="ht-button-secondary min-h-[48px]" disabled={!editable || invalid || staleApplied} onClick={() => submit(false)}>{saving ? "Saving…" : "Save Counts"}</button><button type="button" className="ht-button-primary min-h-[48px]" disabled={!editable || invalid || staleApplied || !complete} onClick={() => submit(true)}>{outletCount ? "Finish Outlet" : "Finish Location"}</button></div>
+      <div className="flex flex-wrap justify-end gap-2"><button type="button" className="ht-button-secondary min-h-[48px]" disabled={!editable || needsReview || invalid || staleApplied} onClick={() => submit(false)}>{saving ? "Saving…" : "Save Counts"}</button><button type="button" className="ht-button-primary min-h-[48px]" disabled={!editable || needsReview || invalid || staleApplied || !complete} onClick={() => submit(true)}>{outletCount ? "Finish Outlet" : "Finish Location"}</button></div>
     </div>
     <details className="text-xs text-slate-500"><summary className="cursor-pointer">About this snapshot</summary><p className="mt-2">This count is a dated physical snapshot. Apply one delivery cutoff: receipts posted while counting may require a recount and are flagged in period reports. Package and loose-content totals convert to the displayed count unit; scanning never assumes a package quantity.</p></details>
   </Card>;

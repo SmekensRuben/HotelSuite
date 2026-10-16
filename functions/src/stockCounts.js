@@ -52,6 +52,7 @@ function countsInput(value) {
 }
 function summary(location) {
   return { locationId: location.locationId, locationName: location.locationName,
+    revision: location.revision ?? 0,
     ...(location.outletId ? { outletId: location.outletId, outletName: location.outletName,
       isOutletDefault: location.isOutletDefault === true, stockPointType: location.stockPointType,
       inventoryRole: location.inventoryRole } : {}),
@@ -257,14 +258,18 @@ async function createHotelStockCountHandler(request, services = {}) {
 }
 async function mutateHotelStockCountHandler(request, services = {}) {
   const action = request.data?.action;
-  const input = strictObject(request.data, ["hotelUid", "stockCountId", "action", "expectedRevision",
+  const input = strictObject(request.data, ["hotelUid", "stockCountId", "action", "expectedRevision", "requestId",
+    ...(action === "finish-count" ? [] : ["expectedLocationRevision"]),
     ...(action === "finish-count" ? [] : ["locationId"]),
     ...(["save-location", "finish-location"].includes(action) ? ["countedItems"] : []),
     ...(action === "finish-location" ? ["templateItemsToAdd"] : []),
     ...(action === "set-location-status" ? ["status"] : [])], "Stock mutation");
   const hotelUid = requireDocumentId(input.hotelUid, "hotelUid");
   const stockCountId = requireDocumentId(input.stockCountId, "stockCountId");
-  const expectedRevision = revision(input.expectedRevision);
+  const locationScoped = input.expectedLocationRevision !== undefined;
+  if (locationScoped && input.expectedRevision !== undefined) throw new HttpsError("invalid-argument", "Choose one stock count revision scope.");
+  const expectedRevision = revision(locationScoped ? input.expectedLocationRevision : input.expectedRevision);
+  const requestId = input.requestId === undefined ? null : requireDocumentId(input.requestId, "requestId");
   if (!["save-location", "finish-location", "finish-count", "set-location-status"].includes(input.action)) throw new HttpsError("invalid-argument", "Unsupported stock mutation.");
   const locationId = input.action === "finish-count" ? null : requireDocumentId(input.locationId, "locationId");
   let countedItems = null;
@@ -275,9 +280,20 @@ async function mutateHotelStockCountHandler(request, services = {}) {
   if (input.action === "set-location-status" && !["Not Started", "In Progress"].includes(input.status)) throw new HttpsError("invalid-argument", "Finishing a location requires the dedicated finish command.");
   const db = services.firestore || admin.firestore();
   const countRef = db.doc(`hotels/${hotelUid}/stockCounts/${stockCountId}`);
+  const commandRef = requestId ? db.doc(`${countRef.path}/commands/${digest(request.auth?.uid || "", requestId)}`) : null;
+  const { requestId: _requestId, ...command } = input;
+  const fingerprint = digest(command);
   return db.runTransaction(async (tx) => {
     await authorize(db, tx, request, hotelUid, "update", services);
     if (additions.length) await requireHotelPermission(db, request, hotelUid, "locations", "update", tx, services.auth);
+    if (commandRef) {
+      const previous = await tx.get(commandRef);
+      if (previous.exists) {
+        if (previous.data().fingerprint !== fingerprint) throw new HttpsError("already-exists", "This request ID was already used for a different stock count change.");
+        return previous.data().result;
+      }
+    }
+    try {
     const parent = await tx.get(countRef);
     if (!parent.exists) throw new HttpsError("not-found", "Stock count not found.");
     const data = parent.data();
@@ -286,10 +302,12 @@ async function mutateHotelStockCountHandler(request, services = {}) {
     if (additions.some((item) => Boolean(item.catalogProductId) !== canonical)) throw new HttpsError("invalid-argument", "Template additions must use the count's product identity policy.");
     if (data.status === "Finished") throw new HttpsError("failed-precondition", "Finished stock counts are immutable.");
     if (!["Started", "In Progress"].includes(data.status)
-      || (data.revision != null && (!Number.isSafeInteger(data.revision) || data.revision < 0))) {
+      || (data.revision != null && (!Number.isSafeInteger(data.revision) || data.revision < 0 || data.revision >= Number.MAX_SAFE_INTEGER))) {
       throw new HttpsError("failed-precondition", "Stock count state needs operator review.");
     }
-    if ((data.revision || 0) !== expectedRevision) throw new HttpsError("aborted", "Stock count changed. Reload before saving.");
+    // Legacy callers retain their original parent guard. New location commands
+    // compare the edited child, so unrelated location saves can retry safely.
+    if (!locationScoped && (data.revision || 0) !== expectedRevision) throw new HttpsError("aborted", "The stock count changed. Reload it before continuing.", { conflictScope: "count", currentRevision: data.revision || 0 });
     const ids = boundedArray(data.locations, "Stored locations", 1, MAX_LOCATIONS).map((location) => requireDocumentId(location.locationId, "Stored location ID"));
     if (new Set(ids).size !== ids.length) throw new HttpsError("failed-precondition", "Stock count locations need operator review.");
     const snapshots = await Promise.all(ids.map((id) => tx.get(db.doc(`${countRef.path}/locations/${id}`))));
@@ -306,6 +324,13 @@ async function mutateHotelStockCountHandler(request, services = {}) {
       const index = ids.indexOf(locationId);
       if (index < 0) throw new HttpsError("not-found", "Stock count location not found.");
       const current = locations[index];
+      if (current.revision != null && (!Number.isSafeInteger(current.revision) || current.revision < 0 || current.revision >= Number.MAX_SAFE_INTEGER)) {
+        throw new HttpsError("failed-precondition", "Stock location revision needs operator review.");
+      }
+      if (locationScoped && (current.revision || 0) !== expectedRevision) {
+        throw new HttpsError("aborted", "Someone else saved this location. Your draft is safe; review the saved counts before continuing.",
+          { conflictScope: "location", locationId, currentLocationRevision: current.revision || 0 });
+      }
       if (current.status === "Finished") throw new HttpsError("failed-precondition", "Finished stock count locations are immutable.");
       const templateItems = boundedArray(current.stockTemplate?.items, "Stored snapshot items");
       const byKey = new Map([...templateItems, ...(current.countedItems || [])].map((item) => [key(item), item]));
@@ -385,11 +410,21 @@ async function mutateHotelStockCountHandler(request, services = {}) {
       : Math.round(summaries.reduce((sum, location) => sum + location.countedValue, 0) * 10000) / 10000;
     if (countedValue != null && (!Number.isFinite(countedValue) || countedValue > 1e12)) throw new HttpsError("resource-exhausted", "Stock valuation exceeds the supported bound.");
     const status = input.action === "finish-count" ? "Finished" : locations.some((location) => location.status !== "Not Started") ? "In Progress" : "Started";
-    const nextRevision = expectedRevision + 1;
+    const nextRevision = (data.revision || 0) + 1;
     tx.update(countRef, boundDocument({ locations: summaries, countedValue, status, revision: nextRevision,
       updatedBy: request.auth.uid, updatedAt: stamp(),
       ...(status === "Finished" ? { finishedBy: request.auth.uid, finishedAt: stamp() } : {}) }));
-    return { hotelUid, inventoryPolicyVersion: canonical ? 1 : null, stockCountId, status, countedValue, revision: nextRevision };
+    const result = { hotelUid, inventoryPolicyVersion: canonical ? 1 : null, stockCountId, status, countedValue, revision: nextRevision,
+      ...(locationId ? { locationId, locationRevision: locations.find((location) => location.locationId === locationId).revision } : {}) };
+    if (commandRef) tx.create(commandRef, { requestId, fingerprint, result, action: input.action,
+      actorUid: request.auth.uid, createdAt: stamp() });
+    return result;
+    } catch (error) {
+      // Only a callback rejection proves that this transaction made no writes.
+      // Transport/commit failures outside the callback remain ambiguous.
+      if (error instanceof HttpsError) throw new HttpsError(error.code, error.message, { ...error.details, countMutationUncommitted: true });
+      throw error;
+    }
   });
 }
 const options = { region: "us-central1", cors: true, maxInstances: 5, concurrency: 8, timeoutSeconds: 120 };

@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, expect, it, vi } from "vitest";
 import ShoppingCartPage from "./ShoppingCartPage";
 
-const mocks = vi.hoisted(() => ({ hotel: "hotel-a", permissions: ["orders.create"], actor: { currentUser: { uid: "buyer" } }, cart: vi.fn(), outlets: vi.fn(), outlet: vi.fn(), create: vi.fn(), preview: vi.fn(), navigate: vi.fn() }));
+const mocks = vi.hoisted(() => ({ hotel: "hotel-a", permissions: ["orders.create"], actor: { currentUser: { uid: "buyer" } }, cart: vi.fn(), outlets: vi.fn(), outlet: vi.fn(), quantity: vi.fn(), note: vi.fn(), remove: vi.fn(), split: vi.fn(), pendingSubmission: vi.fn(), retrySubmission: vi.fn(), create: vi.fn(), preview: vi.fn(), navigate: vi.fn() }));
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, permissions: mocks.permissions, subscriptionActive: true }) }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key) => key }) }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => mocks.navigate, useParams: () => ({ cartId: "cart" }) }));
@@ -12,8 +12,8 @@ vi.mock("../layout/HeaderBar", () => ({ default: () => null }));
 vi.mock("../catalog/PendingCartCommand", () => ({ default: () => null }));
 vi.mock("../shared/Modal", () => ({ default: ({ open, children }) => open ? <section>{children}</section> : null }));
 vi.mock("../../services/firebaseSettings", () => ({ getOutlets: mocks.outlets }));
-vi.mock("../../services/firebaseOrders", () => ({ createOrdersFromShoppingCart: mocks.create, previewOrdersFromShoppingCart: mocks.preview }));
-vi.mock("../../services/firebaseShoppingCarts", () => ({ getShoppingCart: mocks.cart, removeShoppingCartItem: vi.fn(), updateShoppingCartItemNote: vi.fn(), updateShoppingCartItemOutlet: mocks.outlet, updateShoppingCartItemQty: vi.fn() }));
+vi.mock("../../services/firebaseOrders", () => ({ createOrdersFromShoppingCart: mocks.create, previewOrdersFromShoppingCart: mocks.preview, getPendingCartSubmission: mocks.pendingSubmission, retryPendingCartSubmission: mocks.retrySubmission }));
+vi.mock("../../services/firebaseShoppingCarts", () => ({ getShoppingCart: mocks.cart, removeShoppingCartItem: mocks.remove, updateShoppingCartItemNote: mocks.note, updateShoppingCartItemOutlet: mocks.outlet, updateShoppingCartItemQty: mocks.quantity, splitShoppingCartItem: mocks.split }));
 const cart = (outletId = "") => ({ id: "cart", revision: 8, items: [{ supplierProductId: "juice", purchaseOptionId: "case", supplierProductName: "Orange juice", supplierName: "Drinks supplier", pricePerPurchaseUnit: 12, currency: "EUR", priceBasis: "net", baseUnitsPerPurchaseUnit: 6000, baseUnit: "ml", purchaseUnit: "case", qtyPurchaseUnits: 2, outletId }] });
 const deferred = () => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; };
 it("supports fractional kg quantities with the server's three-decimal quantity precision", async () => {
@@ -25,7 +25,7 @@ it("supports fractional kg quantities with the server's three-decimal quantity p
 beforeEach(() => {
   vi.clearAllMocks(); mocks.hotel = "hotel-a"; mocks.permissions = ["orders.create"]; mocks.actor.currentUser = { uid: "buyer" };
   mocks.cart.mockResolvedValue(cart()); mocks.outlets.mockResolvedValue([{ id: "bar", name: "Lobby bar" }, { id: "kitchen", name: "Main kitchen" }]);
-  mocks.outlet.mockResolvedValue({ revision: 9 }); mocks.create.mockResolvedValue({ deliveryDateAdjustments: [] });
+  mocks.outlet.mockResolvedValue({ revision: 9 }); mocks.note.mockResolvedValue({ revision: 9 }); mocks.quantity.mockResolvedValue({ revision: 9 }); mocks.split.mockResolvedValue({ revision: 9 }); mocks.pendingSubmission.mockReturnValue(null); mocks.retrySubmission.mockResolvedValue({ deliveryDateAdjustments: [] }); mocks.create.mockResolvedValue({ deliveryDateAdjustments: [] });
   mocks.preview.mockResolvedValue({ priceFingerprint: "reviewed-price", orders: [{ supplierId: "drinks", supplierName: "Drinks supplier", outletId: "bar", outletName: "Lobby bar", deliveryDate: "2026-10-16", totalAmount: 28, currency: "EUR", priceBasis: "net", products: [{ ...cart("bar").items[0], pricePerPurchaseUnit: 14, priceValidity: "current", pricingDateBasis: "delivery-date", pricingDate: "2026-10-16", priceSourceReference: "October list.xlsx" }] }] });
 });
 
@@ -35,7 +35,7 @@ it("searches outlets and sends their stable identity with the reviewed cart revi
   const combo = await screen.findByRole("combobox", { name: "Outlet for Orange juice" });
   fireEvent.change(combo, { target: { value: "kitchen" } });
   fireEvent.click(await screen.findByRole("option", { name: "Main kitchen" }));
-  await waitFor(() => expect(mocks.outlet).toHaveBeenCalledWith("hotel-a", "cart", "juice", "kitchen", "case", 8));
+  await waitFor(() => expect(mocks.outlet).toHaveBeenCalledWith("hotel-a", "cart", "juice", "kitchen", "case", 8, { lineId: "legacy-0", expectedLineRevision: 0 }));
   await waitFor(() => expect(mocks.cart).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Outlet for Orange juice" })).toHaveValue("Main kitchen"));
   expect(screen.getByText("6000 ml")).toBeInTheDocument();
@@ -170,7 +170,91 @@ it("keeps the reviewed request available for idempotent recovery after an uncert
   expect(screen.getByRole("combobox", { name: "Outlet for Orange juice" })).toBeDisabled();
   expect(mocks.preview).toHaveBeenCalledTimes(1);
   fireEvent.click(retry);
-  await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(2));
-  expect(mocks.create.mock.calls[0]).toEqual(mocks.create.mock.calls[1]);
+  await waitFor(() => expect(mocks.retrySubmission).toHaveBeenCalledWith("hotel-a", "cart"));
+  expect(mocks.create).toHaveBeenCalledTimes(1);
   await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith("/orders"));
+});
+
+it("addresses identical packages by line and leaves the other outlet quantity unchanged", async () => {
+  const source = cart("bar"); source.items[0] = { ...source.items[0], lineId: "bar-line", lineRevision: 2, addedByName: "Alex" };
+  source.items.push({ ...source.items[0], lineId: "kitchen-line", lineRevision: 4, qtyPurchaseUnits: 3, outletId: "kitchen", addedByName: "Jamie" });
+  mocks.cart.mockResolvedValueOnce(source).mockResolvedValue({ ...source, revision: 9, items: [source.items[0], { ...source.items[1], qtyPurchaseUnits: 4, lineRevision: 5 }] });
+  render(<ShoppingCartPage />);
+  const inputs = await screen.findAllByRole("spinbutton");
+  fireEvent.change(inputs[1], { target: { value: "4" } }); fireEvent.blur(inputs[1]);
+  await waitFor(() => expect(mocks.quantity).toHaveBeenCalledWith("hotel-a", "cart", "juice", 4, "case", 8, { lineId: "kitchen-line", expectedLineRevision: 4 }));
+  await waitFor(() => expect(screen.getAllByRole("spinbutton")[1]).toHaveValue(4));
+  expect(screen.getAllByRole("spinbutton")[0]).toHaveValue(2);
+  expect(screen.getAllByRole("combobox")[0]).toHaveValue("Lobby bar"); expect(screen.getAllByRole("combobox")[1]).toHaveValue("Main kitchen");
+  expect(screen.getByText(/Added by Alex/)).toBeInTheDocument(); expect(screen.getByText(/Added by Jamie/)).toBeInTheDocument();
+});
+
+it("splits five cases into two for the bar and three for the kitchen without changing the note", async () => {
+  const source = { ...cart("bar"), items: [{ ...cart("bar").items[0], lineId: "bar-line", lineRevision: 2, qtyPurchaseUnits: 5, note: "Keep chilled" }] };
+  const remaining = { ...source.items[0], qtyPurchaseUnits: 2, lineRevision: 3 };
+  mocks.cart.mockResolvedValueOnce(source).mockResolvedValue({ ...source, revision: 9, items: [remaining, { ...remaining, lineId: "kitchen-line", lineRevision: 0, outletId: "kitchen", qtyPurchaseUnits: 3 }] });
+  render(<ShoppingCartPage />); fireEvent.click(await screen.findByRole("button", { name: "Split by outlet" }));
+  fireEvent.change(screen.getByLabelText("Quantity to move"), { target: { value: "3" } });
+  fireEvent.focus(screen.getByRole("combobox", { name: "Destination outlet" })); fireEvent.click(await screen.findByRole("option", { name: "Main kitchen" }));
+  fireEvent.click(screen.getByRole("button", { name: "Split quantity" }));
+  await waitFor(() => expect(mocks.split).toHaveBeenCalledWith("hotel-a", "cart", expect.objectContaining({ lineId: "bar-line", lineRevision: 2, note: "Keep chilled" }), 3, "kitchen", 8));
+  await waitFor(() => expect(screen.getAllByRole("spinbutton")).toHaveLength(2));
+  expect(screen.getAllByRole("spinbutton")[0]).toHaveValue(2); expect(screen.getAllByRole("spinbutton")[1]).toHaveValue(3);
+  expect(screen.getAllByRole("button", { name: "Edit note" })).toHaveLength(2);
+});
+
+it("retains a conflicting note and requires explicit review of the changed line before retrying", async () => {
+  const source = { ...cart("bar"), items: [{ ...cart("bar").items[0], lineId: "bar-line", lineRevision: 2, note: "Original note" }] };
+  const changed = { ...source, revision: 9, items: [{ ...source.items[0], lineRevision: 3, note: "Colleague's note" }] };
+  mocks.cart.mockResolvedValueOnce(source).mockResolvedValue(changed);
+  mocks.note.mockRejectedValueOnce(Object.assign(new Error("This line changed. Refresh and review it."), { details: { cartRequestUncommitted: true } }));
+  render(<ShoppingCartPage />); fireEvent.click(await screen.findByRole("button", { name: "Edit note" }));
+  fireEvent.change(screen.getByLabelText("Note"), { target: { value: "My draft note" } }); fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(mocks.note).toHaveBeenCalledWith("hotel-a", "cart", "juice", "My draft note", "case", 8, { lineId: "bar-line", expectedLineRevision: 2 }));
+  fireEvent.click(await screen.findByRole("button", { name: "Refresh saved line" }));
+  await screen.findByText("Saved note: Colleague's note");
+  expect(screen.getByLabelText("Note")).toHaveValue("My draft note"); expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "I reviewed this line; keep my note" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(mocks.note).toHaveBeenLastCalledWith("hotel-a", "cart", "juice", "My draft note", "case", 9, { lineId: "bar-line", expectedLineRevision: 3 }));
+});
+
+it("restores a saved submission after reload and blocks edits until the original request is reconciled", async () => {
+  mocks.pendingSubmission.mockReturnValue({ deliveryDate: "2026-10-17", expectedCartRevision: 8, requestId: "saved" });
+  mocks.cart.mockResolvedValue(cart("bar"));
+  render(<ShoppingCartPage />);
+  const retry = await screen.findByRole("button", { name: "Retry saved order creation" });
+  await screen.findByRole("combobox", { name: "Outlet for Orange juice" });
+  expect(screen.getByRole("spinbutton")).toBeDisabled(); expect(screen.getByRole("button", { name: "Create Order" })).toBeDisabled();
+  fireEvent.click(retry);
+  await waitFor(() => expect(mocks.retrySubmission).toHaveBeenCalledWith("hotel-a", "cart"));
+  await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith("/orders"));
+  expect(mocks.create).not.toHaveBeenCalled(); expect(mocks.preview).not.toHaveBeenCalled();
+});
+
+it("replays a saved creation even when a refreshed cart now has unassigned lines and unknown prices", async () => {
+  mocks.cart.mockResolvedValueOnce(cart("bar")).mockResolvedValue({ ...cart(), revision: 9, items: [{ ...cart().items[0], pricePerPurchaseUnit: null }] });
+  mocks.create.mockRejectedValueOnce(new Error("Connection interrupted"));
+  render(<ShoppingCartPage />); fireEvent.click(await screen.findByRole("button", { name: "Create Order" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole("button", { name: "Create" })); await screen.findByRole("button", { name: "Retry saved creation" });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh cart" }));
+  await screen.findByText("Some prices or currencies are unavailable. Review these offers before creating orders.");
+  expect(screen.getByRole("button", { name: "Retry saved creation" })).not.toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Retry saved creation" }));
+  await waitFor(() => expect(mocks.retrySubmission).toHaveBeenCalledWith("hotel-a", "cart"));
+  expect(mocks.create).toHaveBeenCalledTimes(1);
+});
+
+it("switches an open creation dialog to exact recovery when another tab saves a submission", async () => {
+  mocks.cart.mockResolvedValue(cart("bar")); render(<ShoppingCartPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Create Order" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled());
+  mocks.pendingSubmission.mockReturnValue({ deliveryDate: "2026-10-20", expectedCartRevision: 8, requestId: "other-tab" });
+  act(() => window.dispatchEvent(new Event("storage")));
+  expect(screen.getByLabelText("Delivery Date")).toBeDisabled();
+  expect(screen.getByText(/Saved delivery date: 2026-10-20/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Retry saved creation" }));
+  await waitFor(() => expect(mocks.retrySubmission).toHaveBeenCalledWith("hotel-a", "cart"));
+  expect(mocks.create).not.toHaveBeenCalled();
 });

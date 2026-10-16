@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({ hotel: "hotel-a", suppliers: vi.fn(), catalog:
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel }) }));
 vi.mock("../../services/firebaseSuppliers", () => ({ getSuppliers: mocks.suppliers }));
 vi.mock("../../services/firebaseProducts", () => ({ getCatalogProducts: mocks.catalog, getSupplierProducts: mocks.products, uploadCatalogProductImage: vi.fn() }));
-vi.mock("../../services/firebaseSettings", () => ({ getCatalogTaxonomy: async () => ({ categories: [], subcategories: [] }) }));
+vi.mock("../../services/firebaseSettings", () => ({ getOutlets: async () => [], getCatalogTaxonomy: async () => ({ categories: [], subcategories: [] }) }));
 vi.mock("../../services/firebaseShoppingCarts", () => ({ addSupplierProductToShoppingCart: mocks.add, getOrCreateShoppingCart: mocks.cart, getPendingCartCommand: () => null, retryPendingCartCommand: vi.fn(), getShoppingCart: mocks.readCart }));
 vi.mock("../../firebaseConfig", () => ({ auth: { currentUser: { uid: "user" } }, signOut: vi.fn() }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => mocks.navigate }));

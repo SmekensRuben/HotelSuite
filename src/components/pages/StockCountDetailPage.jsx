@@ -12,6 +12,7 @@ import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { formatInventoryValue } from "../inventory/inventoryFormatting";
 import { useStaffDisplayNames } from "../../hooks/useStaffDisplayNames";
 import { usePermission } from "../../hooks/usePermission";
+import PendingStockCountMutation from "../inventory/PendingStockCountMutation";
 
 function formatCurrency(value) {
   return `${new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0))} · legacy currency unknown`;
@@ -56,9 +57,10 @@ export default function StockCountDetailPage() {
   const { stockCountId } = useParams();
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
-  const scopeKey = `${hotelUid}:${stockCountId}`;
-  const activeScope = useRef({ key: scopeKey });
-  if (activeScope.current.key !== scopeKey) activeScope.current = { key: scopeKey };
+  const actor = auth.currentUser;
+  const scopeKey = JSON.stringify([actor?.uid, hotelUid, stockCountId]);
+  const activeScope = useRef({ key: scopeKey, actor });
+  if (activeScope.current.key !== scopeKey || activeScope.current.actor !== actor) activeScope.current = { key: scopeKey, actor };
   const loadStockCount = useCallback(() => getStockCountById(hotelUid, stockCountId), [hotelUid, stockCountId]);
   const { data: stockCount, loading, error: loadError, retry, setData: setStockCount } = useScopedAsync({
     scopeKey, enabled: Boolean(hotelUid && stockCountId), load: loadStockCount,
@@ -66,6 +68,7 @@ export default function StockCountDetailPage() {
   const { createdByName, updatedByName } = useStaffDisplayNames({ hotelUid, scopeKey, record: stockCount });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [pendingMutation, setPendingMutation] = useState(false);
 
   const today = useMemo(
     () =>
@@ -84,10 +87,10 @@ export default function StockCountDetailPage() {
   };
 
   useEffect(() => {
-    activeScope.current = { key: scopeKey };
-    setSaving(false); setError("");
+    activeScope.current = { key: scopeKey, actor };
+    setSaving(false); setError(""); setPendingMutation(false);
     return () => { activeScope.current = { key: null }; };
-  }, [scopeKey]);
+  }, [scopeKey, actor]);
 
   const rows = useMemo(
     () =>
@@ -168,7 +171,7 @@ export default function StockCountDetailPage() {
   const canFinishStockCount = Boolean(stockCount) && allLocationsFinished && !isStockCountFinished;
 
   const handleFinishStockCount = async () => {
-    if (!canUpdateStockCounts) return;
+    if (!canUpdateStockCounts || saving || pendingMutation || auth.currentUser !== activeScope.current.actor) return;
     if (!hotelUid || !stockCountId || !canFinishStockCount) return;
     const requestedScope = activeScope.current;
     setSaving(true);
@@ -176,14 +179,19 @@ export default function StockCountDetailPage() {
 
     try {
       await finishStockCount(hotelUid, stockCountId, auth.currentUser?.uid || "unknown", stockCount.revision);
-      if (activeScope.current !== requestedScope) return;
+      if (activeScope.current !== requestedScope || auth.currentUser !== requestedScope.actor) return;
       const nextStockCount = await getStockCountById(hotelUid, stockCountId);
-      if (activeScope.current === requestedScope) setStockCount(nextStockCount);
+      if (activeScope.current === requestedScope && auth.currentUser === requestedScope.actor) setStockCount(nextStockCount);
     } catch (finishError) {
-      if (activeScope.current === requestedScope) setError(finishError?.message || "Unable to finish stock count.");
+      if (activeScope.current === requestedScope && auth.currentUser === requestedScope.actor) setError(finishError?.message || "Unable to finish stock count.");
     } finally {
-      if (activeScope.current === requestedScope) setSaving(false);
+      if (activeScope.current === requestedScope && auth.currentUser === requestedScope.actor) setSaving(false);
     }
+  };
+  const handleRecoveredFinish = async () => {
+    const requestedScope = activeScope.current;
+    const nextStockCount = await getStockCountById(hotelUid, stockCountId);
+    if (activeScope.current === requestedScope && auth.currentUser === requestedScope.actor) { setError(""); setStockCount(nextStockCount); }
   };
 
   return (
@@ -278,11 +286,14 @@ export default function StockCountDetailPage() {
 
               {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 
+              <PendingStockCountMutation hotelUid={hotelUid} stockCountId={stockCountId}
+                disabled={!canUpdateStockCounts || saving} onPendingChange={setPendingMutation} onComplete={handleRecoveredFinish} />
+
               <div className="flex flex-col items-end gap-2">
                 <button
                   type="button"
                   onClick={handleFinishStockCount}
-                  disabled={!canUpdateStockCounts || saving || !canFinishStockCount}
+                  disabled={!canUpdateStockCounts || saving || pendingMutation || !canFinishStockCount}
                   className="rounded-lg bg-brand-800 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-950 disabled:cursor-not-allowed disabled:opacity-60"
                   title={
                     isStockCountFinished

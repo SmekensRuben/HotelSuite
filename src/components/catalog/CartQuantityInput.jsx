@@ -28,6 +28,7 @@ export default function CartQuantityInput({ quantity, purchaseUnit, revision, di
     disabled={disabled || busy} value={draft} className="w-20 rounded border border-gray-300 px-2 py-1"
     onChange={(event) => { editing.current ||= { revision }; setDraft(event.target.value); setError(""); }} onBlur={commit}
     onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } else if (event.key === "Escape") reset(); }} />
+    <p aria-live="polite" className="mt-1 text-xs text-slate-500">{busy ? "Saving quantity…" : editing.current ? "Quantity not saved" : "Quantity saved"}</p>
     {error && <div role="alert" className="mt-1 text-xs text-red-700"><p>{error}</p><button type="button" disabled={disabled || busy} className="mt-1 underline" onClick={reset}>Use latest quantity</button></div>}
   </div>;
 }

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ call: vi.fn(), getDoc: vi.fn(), auth: { currentUser: { uid: "user" } } }));
 vi.mock("../firebaseConfig", () => ({ functions: {}, db: {}, auth: mocks.auth, httpsCallable: () => mocks.call, doc: (...path) => path, getDoc: mocks.getDoc }));
-import { addSupplierProductToShoppingCart, getShoppingCart, updateShoppingCartItemNote, updateShoppingCartItemOutlet, updateShoppingCartItemQty, removeShoppingCartItem, retryPendingCartCommand } from "./firebaseShoppingCarts";
+import { addSupplierProductToShoppingCart, getShoppingCart, updateShoppingCartItemNote, updateShoppingCartItemOutlet, updateShoppingCartItemQty, removeShoppingCartItem, retryPendingCartCommand, splitShoppingCartItem } from "./firebaseShoppingCarts";
 describe("cart purchase option identity", () => {
   beforeEach(() => { vi.clearAllMocks(); sessionStorage.clear(); mocks.auth.currentUser = { uid: "user" }; mocks.call.mockResolvedValue({ data: { cartId: "cart", revision: 8 } }); });
   it("sends independent package identities for every command", async () => {
@@ -27,6 +27,25 @@ describe("cart purchase option identity", () => {
   it("preserves the default identity for historical cart callers", async () => {
     await updateShoppingCartItemQty("hotel", "cart", "milk", 3);
     expect(mocks.call).toHaveBeenCalledWith(expect.objectContaining({ purchaseOptionId: "default" }));
+  });
+  it("keeps identical packages in different outlets independently addressable", async () => {
+    await addSupplierProductToShoppingCart("hotel", "cart", { id: "juice" }, 2, "case", 8, "bar");
+    await addSupplierProductToShoppingCart("hotel", "cart", { id: "juice" }, 3, "case", 9, "kitchen");
+    await updateShoppingCartItemNote("hotel", "cart", "juice", "For breakfast", "case", 10, { lineId: "kitchen-line", expectedLineRevision: 2 });
+    await updateShoppingCartItemQty("hotel", "cart", "juice", 2, "case", 10, { lineId: "bar-line", expectedLineRevision: 1 });
+    expect(mocks.call.mock.calls[0][0]).toEqual(expect.objectContaining({ outletId: "bar", value: 2 }));
+    expect(mocks.call.mock.calls[1][0]).toEqual(expect.objectContaining({ outletId: "kitchen", value: 3 }));
+    expect(mocks.call.mock.calls[2][0]).toEqual(expect.objectContaining({ lineId: "kitchen-line", expectedLineRevision: 2, value: "For breakfast" }));
+    expect(mocks.call.mock.calls[3][0]).toEqual(expect.objectContaining({ lineId: "bar-line", expectedLineRevision: 1, value: 2 }));
+  });
+  it("sends the captured source line identity and destination when splitting", async () => {
+    await splitShoppingCartItem("hotel", "cart", { lineId: "source", lineRevision: 3, supplierProductId: "juice", purchaseOptionId: "case" }, 3, "kitchen", 8);
+    expect(mocks.call).toHaveBeenCalledWith(expect.objectContaining({ action: "split", lineId: "source", expectedLineRevision: 3, value: { quantity: 3, outletId: "kitchen" } }));
+  });
+  it("projects stable legacy row identities while retaining persisted line identities", async () => {
+    mocks.getDoc.mockResolvedValue({ id: "cart", exists: () => true, data: () => ({ items: [{ supplierProductId: "juice" }, { supplierProductId: "juice", lineId: "saved", lineRevision: 3 }] }) });
+    const result = await getShoppingCart("hotel", "cart");
+    expect(result.items.map(({ lineId, lineRevision }) => ({ lineId, lineRevision }))).toEqual([{ lineId: "legacy-0", lineRevision: 0 }, { lineId: "saved", lineRevision: 3 }]);
   });
   it("locks a cart after an uncertain add and replays its original revision and request ID", async () => {
     mocks.call.mockRejectedValueOnce(new Error("Lost response")).mockResolvedValue({ data: { cartId: "cart", revision: 8 } });

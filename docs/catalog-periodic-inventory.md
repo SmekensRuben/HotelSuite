@@ -90,7 +90,8 @@ retroactively recalculated. Missing historical currency is shown as unknown.
    Explicit zero and uncounted are different. Every included item must be counted before a location can finish,
    including unfinished historical counts. Completed counts stay immutable.
 4. Place orders using a selected supplier package. Cart and order line identities
-   include purchase-option identity. Creation groups by supplier/outlet and rejects
+   include purchase-option identity and outlet. The shared cart supports independent
+   outlet lines and atomic quantity splits; see [Shared purchasing carts](shared-purchasing-carts.md). Creation groups by supplier/outlet and rejects
    mixed currencies or mixed net/gross/unknown price bases within each order;
    confirmation refuses changed prices, packaging or inventory conversion until
    the draft is edited and reviewed. Source terms are frozen for receiving.

@@ -19,7 +19,9 @@ import { getOutlets } from "../../services/firebaseSettings";
 import { matchesSearchTokensAcross } from "../../utils/search";
 import { usePermission } from "../../hooks/usePermission";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
+import { confirmStockCountNavigation, useStockCountDraft } from "../../hooks/useStockCountDraft";
 import CatalogStockCountLocationPanel from "../inventory/CatalogStockCountLocationPanel";
+import PendingStockCountMutation from "../inventory/PendingStockCountMutation";
 import { collectPaginatedProducts } from "../../services/paginatedExport";
 
 function buildItemKey(item) {
@@ -63,9 +65,10 @@ export default function StockCountLocationPage() {
   const { stockCountId, locationId } = useParams();
   const navigate = useNavigate();
   const { hotelUid } = useHotelContext();
-  const scopeKey = `${hotelUid}:${stockCountId}:${locationId}`;
-  const activeScope = useRef({ key: scopeKey });
-  if (activeScope.current.key !== scopeKey) activeScope.current = { key: scopeKey };
+  const actorUid = auth.currentUser?.uid;
+  const scopeKey = `${actorUid}:${hotelUid}:${stockCountId}:${locationId}`;
+  const activeScope = useRef({ key: scopeKey, actor: auth.currentUser });
+  if (activeScope.current.key !== scopeKey) activeScope.current = { key: scopeKey, actor: auth.currentUser };
   const [stockCount, setStockCount] = useState(null);
   const [stockCountLocation, setStockCountLocation] = useState(null);
   const [template, setTemplate] = useState(null);
@@ -80,6 +83,12 @@ export default function StockCountLocationPage() {
   const [selectedOutletId, setSelectedOutletId] = useState("");
   const [showFinishModal, setShowFinishModal] = useState(false);
   const [selectedTemplateAdditions, setSelectedTemplateAdditions] = useState({});
+  const [baseRevision, setBaseRevision] = useState(0);
+  const [conflict, setConflict] = useState(null);
+  const [conflictChoices, setConflictChoices] = useState({});
+  const [pending, setPending] = useState(null);
+  const draft = useStockCountDraft({ hotelUid, stockCountId, locationId, actorUid,
+    enabled: Boolean(stockCount && stockCount.inventoryPolicyVersion !== 1) });
 
   const today = useMemo(
     () =>
@@ -92,6 +101,7 @@ export default function StockCountLocationPage() {
   );
 
   const handleLogout = async () => {
+    if (!confirmStockCountNavigation()) return;
     await signOut(auth);
     sessionStorage.clear();
     window.location.href = "/login";
@@ -133,6 +143,7 @@ export default function StockCountLocationPage() {
     });
     setStockCount(nextStockCount); setStockCountLocation(nextLocation || null); setTemplate(nextTemplate);
     setAdditionalItems(nextAdditionalItems); setQuantitiesByKey(nextQuantities); setError("");
+    setBaseRevision(nextLocation?.revision ?? 0); setConflict(null); setConflictChoices({});
     if (!loaded) {
       setShowAddModal(false); setShowFinishModal(false); setSelectedProduct(null); setSelectedOutletId("");
       setSelectedTemplateAdditions({});
@@ -140,10 +151,11 @@ export default function StockCountLocationPage() {
   }, [loaded, locationId]);
 
   useEffect(() => {
-    activeScope.current = { key: scopeKey };
+    activeScope.current = { key: scopeKey, actor: auth.currentUser };
     setSaving(false); setError("");
-    return () => { activeScope.current = { key: null }; };
+    return () => { activeScope.current = { key: null, actor: null }; };
   }, [scopeKey]);
+
 
   const outletsById = useMemo(
     () => Object.fromEntries(outlets.map((outlet) => [String(outlet.id || "").trim(), outlet])),
@@ -242,14 +254,73 @@ export default function StockCountLocationPage() {
       }));
 
   const isFinished = stockCount?.status === "Finished" || stockCountLocation?.status === "Finished";
+  const editBlocked = isFinished || saving || Boolean(pending || conflict) || !canUpdateStockCounts;
+  const leaveLocation = () => { if (confirmStockCountNavigation()) navigate(`/catalog/stock-counts/${stockCountId}`); };
+
+  const keepDraft = (nextQuantities = quantitiesByKey, nextItems = additionalItems, revision = baseRevision) => {
+    if (activeScope.current.actor !== auth.currentUser) return;
+    draft.update({ quantitiesByKey: nextQuantities, additionalItems: nextItems }, revision);
+  };
+
+  const reviewLatest = async () => {
+    if (activeScope.current.actor !== auth.currentUser) return;
+    const requestedScope = activeScope.current;
+    setSaving(true);
+    try {
+      const latest = await getStockCountById(hotelUid, stockCountId);
+      const latestLocation = latest?.locations?.find((entry) => entry.locationId === locationId);
+      if (activeScope.current !== requestedScope || requestedScope.actor !== auth.currentUser) return;
+      if (!latestLocation) throw new Error("This stock count location is no longer available. Your local draft has been kept.");
+      const saved = new Map((latestLocation.stockTemplate?.items || []).map((item) => [buildItemKey(item), { ...item, quantity: "" }]));
+      for (const item of latestLocation.countedItems || []) saved.set(buildItemKey(item), { ...item, quantity: item.isCounted === false ? "" : String(item.quantity ?? "") });
+      const mine = new Map(rows.map((row) => [row.key, row]));
+      const reviewedRows = [...new Set([...saved.keys(), ...mine.keys()])].map((key) => {
+        const savedValue = saved.get(key)?.quantity ?? "";
+        const myValue = mine.has(key) ? mine.get(key).quantity : savedValue;
+        return { ...(saved.get(key) || mine.get(key)), key, savedValue, myValue,
+          differs: savedValue === "" || myValue === "" ? savedValue !== myValue : Number(savedValue) !== Number(myValue) };
+      });
+      setConflict({ stockCount: latest, location: latestLocation, rows: reviewedRows }); setConflictChoices({});
+      setError("");
+    } catch (reviewError) {
+      if (activeScope.current === requestedScope) setError(reviewError.message || "Unable to load the latest saved counts. Your draft has been kept.");
+    } finally { if (activeScope.current === requestedScope) setSaving(false); }
+  };
+
+  const applyReview = () => {
+    if (activeScope.current.actor !== auth.currentUser) return;
+    if (!conflict || conflict.rows.some((row) => row.differs && !conflictChoices[row.key])) return;
+    if (conflict.stockCount.status === "Finished" || conflict.location.status === "Finished") return;
+    const nextTemplate = conflict.location.stockTemplate;
+    const nextTemplateKeys = new Set((nextTemplate?.items || []).map(buildItemKey));
+    const nextQuantities = Object.fromEntries(conflict.rows.map((row) => [row.key,
+      row.differs && conflictChoices[row.key] === "saved" ? row.savedValue : row.myValue]));
+    const nextItems = conflict.rows.filter((row) => !nextTemplateKeys.has(row.key)).map(({ savedValue: _saved, myValue: _mine, differs: _differs, ...row }) => ({ ...row, isTemplateItem: false }));
+    const nextRevision = conflict.location.revision ?? 0;
+    setStockCount(conflict.stockCount); setStockCountLocation(conflict.location); setTemplate(nextTemplate);
+    setAdditionalItems(nextItems); setQuantitiesByKey(nextQuantities); setBaseRevision(nextRevision);
+    keepDraft(nextQuantities, nextItems, nextRevision); setConflict(null); setError("");
+  };
+
+  const recoverDraft = (recovery) => {
+    if (saving || pending || conflict || draft.dirty || activeScope.current.actor !== auth.currentUser) return;
+    if (!recovery.value || !Array.isArray(recovery.value.additionalItems) || typeof recovery.value.quantitiesByKey !== "object") {
+      setError("This draft uses an unsupported format. Keep it for review and continue with the saved counts."); return;
+    }
+    const restored = draft.recover(recovery);
+    if (!restored) return;
+    setQuantitiesByKey(restored.value.quantitiesByKey); setAdditionalItems(restored.value.additionalItems); setBaseRevision(restored.baseRevision);
+    setError("");
+  };
 
   const handleQuantityChange = (key) => (event) => {
-    if (isFinished) return;
-    setQuantitiesByKey((prev) => ({ ...prev, [key]: event.target.value }));
+    if (editBlocked || activeScope.current.actor !== auth.currentUser) return;
+    const next = { ...quantitiesByKey, [key]: event.target.value };
+    setQuantitiesByKey(next); keepDraft(next);
   };
 
   const handleAddSupplierProduct = () => {
-    if (isFinished || !additionsAvailable) return;
+    if (editBlocked || !additionsAvailable || activeScope.current.actor !== auth.currentUser) return;
     if (!selectedProduct || !selectedOutletId) return;
     const outlet = outletsById[selectedOutletId] || { id: selectedOutletId };
     const nextItem = { ...buildSupplierProductSnapshot(selectedProduct, outlet), isTemplateItem: false };
@@ -260,8 +331,9 @@ export default function StockCountLocationPage() {
       return;
     }
 
-    setAdditionalItems((prev) => [...prev, { ...nextItem, key }]);
-    setQuantitiesByKey((prev) => ({ ...prev, [key]: prev[key] ?? "" }));
+    const nextItems = [...additionalItems, { ...nextItem, key }];
+    const nextQuantities = { ...quantitiesByKey, [key]: quantitiesByKey[key] ?? "" };
+    setAdditionalItems(nextItems); setQuantitiesByKey(nextQuantities); keepDraft(nextQuantities, nextItems);
     setSelectedProduct(null);
     setSelectedOutletId("");
     setAddSearch("");
@@ -270,11 +342,12 @@ export default function StockCountLocationPage() {
   };
 
   const handleSave = async () => {
-    if (!canUpdateStockCounts) return;
+    if (editBlocked || activeScope.current.actor !== auth.currentUser) return;
     if (!hotelUid || !stockCountId || !locationId || !stockCount || !stockCountLocation || isFinished) return;
     const requestedScope = activeScope.current;
     setSaving(true);
     setError("");
+    keepDraft();
 
     try {
       await updateStockCountLocationCounts(
@@ -283,29 +356,33 @@ export default function StockCountLocationPage() {
         locationId,
         buildCountedItems(),
         auth.currentUser?.uid || "unknown",
-        stockCount.revision
+        baseRevision
       );
-      if (activeScope.current === requestedScope) navigate(`/catalog/stock-counts/${stockCountId}`);
+      if (activeScope.current === requestedScope && requestedScope.actor === auth.currentUser) { draft.clear(); navigate(`/catalog/stock-counts/${stockCountId}`); }
     } catch (saveError) {
-      if (activeScope.current === requestedScope) setError(saveError?.message || "Unable to save stock count location.");
+      if (activeScope.current === requestedScope && requestedScope.actor === auth.currentUser) {
+        setError(saveError?.message || "Unable to save stock count location. Your draft has been kept.");
+        if (saveError?.code === "functions/aborted" || saveError?.code === "aborted") await reviewLatest();
+      }
     } finally {
       if (activeScope.current === requestedScope) setSaving(false);
     }
   };
 
   const handleFinishClick = () => {
-    if (!canUpdateStockCounts) return;
+    if (editBlocked || activeScope.current.actor !== auth.currentUser) return;
     if (isFinished) return;
     setSelectedTemplateAdditions(Object.fromEntries(addedRows.map((row) => [row.key, canUpdateTemplates])));
     setShowFinishModal(true);
   };
 
   const handleFinish = async (templateRowsToAdd = []) => {
-    if (!canUpdateStockCounts) return;
+    if (editBlocked || activeScope.current.actor !== auth.currentUser) return;
     if (!hotelUid || !stockCountId || !locationId || !stockCount || !stockCountLocation || isFinished) return;
     const requestedScope = activeScope.current;
     setSaving(true);
     setError("");
+    keepDraft();
 
     try {
       await finishStockCountLocation(
@@ -315,11 +392,14 @@ export default function StockCountLocationPage() {
         buildCountedItems(),
         templateRowsToAdd.map((row) => ({ supplierProductId: row.supplierProductId, outletId: row.outletId })),
         auth.currentUser?.uid || "unknown",
-        stockCount.revision
+        baseRevision
       );
-      if (activeScope.current === requestedScope) navigate(`/catalog/stock-counts/${stockCountId}`);
+      if (activeScope.current === requestedScope && requestedScope.actor === auth.currentUser) { draft.clear(); navigate(`/catalog/stock-counts/${stockCountId}`); }
     } catch (finishError) {
-      if (activeScope.current === requestedScope) setError(finishError?.message || "Unable to finish stock count location.");
+      if (activeScope.current === requestedScope && requestedScope.actor === auth.currentUser) {
+        setError(finishError?.message || "Unable to finish stock count location. Your draft has been kept.");
+        if (finishError?.code === "functions/aborted" || finishError?.code === "aborted") await reviewLatest();
+      }
     } finally {
       if (activeScope.current === requestedScope) { setSaving(false); setShowFinishModal(false); }
     }
@@ -342,7 +422,7 @@ export default function StockCountLocationPage() {
           </div>
           <button
             type="button"
-            onClick={() => navigate(`/catalog/stock-counts/${stockCountId}`)}
+            onClick={leaveLocation}
             className="inline-flex items-center justify-center rounded border border-gray-300 p-2 text-gray-700 hover:bg-gray-100"
             title="Back"
           >
@@ -366,6 +446,37 @@ export default function StockCountLocationPage() {
           </Card>
         ) : (
           <>
+            <PendingStockCountMutation hotelUid={hotelUid} stockCountId={stockCountId} locationId={locationId}
+              disabled={saving || !canUpdateStockCounts} onPendingChange={setPending}
+              onComplete={async () => { if (draft.dirty) await reviewLatest(); else retry(); }} />
+            <div className="space-y-2 rounded-lg border border-gray-200 bg-white p-4 text-sm">
+              <p role="status">{draft.dirty ? (draft.savedLocally
+                ? "Draft saved on this device. Save Counts to share it with your colleagues."
+                : "Changes are not saved. Keep this page open.") : "Showing saved counts."}</p>
+              {draft.storageError && <div role="alert"><p>{draft.storageError}</p><button type="button" onClick={draft.retryStorage}>Retry local storage</button></div>}
+              {draft.recoveries.map((recovery) => <div key={recovery.key} className="flex flex-wrap items-center gap-2">
+                <p>A draft from {new Date(recovery.updatedAt).toLocaleString()} is available on this device.</p>
+                {recovery.memoryOnly && <p className="text-amber-800">This draft is only in memory. Restore it and save before reloading or closing this tab.</p>}
+                <button type="button" className="rounded border px-3 py-1" disabled={saving || pending || conflict || draft.dirty} onClick={() => recoverDraft(recovery)}>{isFinished ? "Review draft" : "Restore draft"}</button>
+                <button type="button" className="rounded border px-3 py-1" onClick={() => draft.discard(recovery)}>Discard draft</button>
+              </div>)}
+              {isFinished && draft.recoveries.length > 0 && <p>This location is finished. Its saved counts cannot be changed.</p>}
+            </div>
+            {conflict && <section aria-label="Review count changes" className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-4">
+              <h2 className="font-semibold">Review changes to this location</h2>
+              <p>Your draft has been kept. Compare it with the latest saved counts and choose each differing value.</p>
+              {conflict.rows.filter((row) => row.differs).map((row) => <div key={row.key} className="rounded border border-amber-200 p-3">
+                <p className="font-medium">{row.supplierProductName || row.name || row.supplierProductId} · {row.outletName || row.outletId}</p>
+                <label className="mr-4"><input type="radio" name={`conflict-${row.key}`} checked={conflictChoices[row.key] === "mine"}
+                  onChange={() => setConflictChoices((previous) => ({ ...previous, [row.key]: "mine" }))} /> My draft: {row.myValue === "" ? "Not counted" : row.myValue}</label>
+                <label><input type="radio" name={`conflict-${row.key}`} checked={conflictChoices[row.key] === "saved"}
+                  onChange={() => setConflictChoices((previous) => ({ ...previous, [row.key]: "saved" }))} /> Saved: {row.savedValue === "" ? "Not counted" : row.savedValue}</label>
+              </div>)}
+              {conflict.stockCount.status === "Finished" || conflict.location.status === "Finished"
+                ? <p>This location or count is already finished. Your draft remains on this device for review; saved counts cannot be changed.</p>
+                : <button type="button" onClick={applyReview} disabled={saving || conflict.rows.some((row) => row.differs && !conflictChoices[row.key])}
+                  className="rounded border border-amber-500 bg-white px-3 py-2 disabled:opacity-50">Apply reviewed choices</button>}
+            </section>}
             <Card className="grid gap-4 md:grid-cols-4">
               <div>
                 <p className="text-sm text-gray-500">Stock Count</p>
@@ -407,7 +518,7 @@ export default function StockCountLocationPage() {
                   <button
                     type="button"
                     onClick={() => setShowAddModal(true)}
-                    disabled={isFinished || !additionsAvailable}
+                    disabled={editBlocked || !additionsAvailable}
                     className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <Plus className="h-4 w-4" /> Add Supplier Product
@@ -465,7 +576,7 @@ export default function StockCountLocationPage() {
                               inputMode="decimal"
                               value={row.quantity}
                               onChange={handleQuantityChange(row.key)}
-                              disabled={isFinished || !canUpdateStockCounts}
+                              disabled={editBlocked}
                               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-3 text-base disabled:bg-gray-100 disabled:text-gray-600"
                             />
                           </label>
@@ -497,7 +608,7 @@ export default function StockCountLocationPage() {
                           value={row.quantity}
                           onClick={(event) => event.stopPropagation()}
                           onChange={handleQuantityChange(row.key)}
-                          disabled={isFinished || !canUpdateStockCounts}
+                          disabled={editBlocked}
                           className="w-28 rounded border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-600"
                         />
                       ),
@@ -510,11 +621,12 @@ export default function StockCountLocationPage() {
               </div>
 
               {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+              {error && !pending && !saving && draft.dirty && <button type="button" className="rounded border px-3 py-2" onClick={reviewLatest}>Review latest saved counts</button>}
 
               <div className="flex flex-wrap justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => navigate(`/catalog/stock-counts/${stockCountId}`)}
+                  onClick={leaveLocation}
                   className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium hover:bg-gray-100"
                 >
                   Cancel
@@ -522,7 +634,7 @@ export default function StockCountLocationPage() {
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={!canUpdateStockCounts || saving || isFinished}
+                  disabled={editBlocked}
                   className="px-4 py-2 rounded-lg border border-brand-800 text-brand-800 text-sm font-semibold hover:bg-brand-50 disabled:opacity-60"
                 >
                   {saving ? "Saving..." : "Save Counts"}
@@ -530,7 +642,7 @@ export default function StockCountLocationPage() {
                 <button
                   type="button"
                   onClick={handleFinishClick}
-                  disabled={!canUpdateStockCounts || saving || isFinished || rows.length === 0 || countedCount !== rows.length}
+                  disabled={editBlocked || rows.length === 0 || countedCount !== rows.length}
                   className="px-4 py-2 rounded-lg bg-brand-800 text-white text-sm font-semibold hover:bg-brand-950 disabled:opacity-60"
                 >
                   {saving ? "Finishing..." : "Set Finished"}

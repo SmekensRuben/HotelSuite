@@ -17,6 +17,18 @@ function normalizeTimestamp(value) {
   return null;
 }
 
+function normalizeCartItems(items) {
+  return Array.isArray(items) ? items.map((item, index) => ({
+    ...item,
+    lineId: item.lineId || `legacy-${index}`,
+    lineRevision: item.lineRevision ?? 0,
+  })) : [];
+}
+
+function lineIdentity(line) {
+  return line ? { lineId: line.lineId, expectedLineRevision: line.expectedLineRevision } : {};
+}
+
 export async function getShoppingCarts(hotelUid) {
   if (!hotelUid) return [];
 
@@ -31,7 +43,7 @@ export async function getShoppingCarts(hotelUid) {
       ...data,
       createdAtDate: normalizeTimestamp(data.createdAt),
       updatedAtDate: normalizeTimestamp(data.updatedAt),
-      items: Array.isArray(data.items) ? data.items : [],
+      items: normalizeCartItems(data.items),
     };
   });
 }
@@ -52,7 +64,7 @@ export async function getShoppingCart(hotelUid, shoppingCartId, { minimumRevisio
     ...data,
     createdAtDate: normalizeTimestamp(data.createdAt),
     updatedAtDate: normalizeTimestamp(data.updatedAt),
-    items: Array.isArray(data.items) ? data.items : [],
+    items: normalizeCartItems(data.items),
   };
 }
 
@@ -104,21 +116,25 @@ export async function getOrCreateShoppingCart(hotelUid) {
   const { cartId, revision } = await mutateCart(hotelUid, { action: "get-or-create" });
   return getShoppingCart(hotelUid, cartId, { minimumRevision: revision });
 }
-export async function addSupplierProductToShoppingCart(hotelUid, cartId, product, qty = 1, purchaseOptionId = "default", expectedRevision = 0) {
-  return mutateCart(hotelUid, { cartId, action: "add", productId: product.id, purchaseOptionId, value: qty, expectedRevision });
+export async function addSupplierProductToShoppingCart(hotelUid, cartId, product, qty = 1, purchaseOptionId = "default", expectedRevision = 0, outletId = "") {
+  return mutateCart(hotelUid, { cartId, action: "add", productId: product.id, purchaseOptionId, value: qty, expectedRevision, outletId });
 }
-export async function updateShoppingCartItemQty(hotelUid, cartId, productId, value, purchaseOptionId = "default", expectedRevision = 0) {
+export async function updateShoppingCartItemQty(hotelUid, cartId, productId, value, purchaseOptionId = "default", expectedRevision = 0, line = null) {
   const numeric = typeof value === "string" && value.trim() ? Number(value) : value;
   if (typeof numeric !== "number" || !Number.isFinite(numeric) || numeric < 0 || numeric > 100000
     || Math.abs(numeric * 1000 - Math.round(numeric * 1000)) > 1e-8) throw new Error("Enter an explicit purchase quantity from 0 to 100000 with up to three decimals.");
-  return mutateCart(hotelUid, { cartId, action: "quantity", productId, purchaseOptionId, value: numeric, expectedRevision });
+  return mutateCart(hotelUid, { cartId, action: "quantity", productId, purchaseOptionId, value: numeric, expectedRevision, ...lineIdentity(line) });
 }
-export async function updateShoppingCartItemNote(hotelUid, cartId, productId, value, purchaseOptionId = "default", expectedRevision = 0) {
-  return mutateCart(hotelUid, { cartId, action: "note", productId, purchaseOptionId, value, expectedRevision });
+export async function updateShoppingCartItemNote(hotelUid, cartId, productId, value, purchaseOptionId = "default", expectedRevision = 0, line = null) {
+  return mutateCart(hotelUid, { cartId, action: "note", productId, purchaseOptionId, value, expectedRevision, ...lineIdentity(line) });
 }
-export async function updateShoppingCartItemOutlet(hotelUid, cartId, productId, value, purchaseOptionId = "default", expectedRevision = 0) {
-  return mutateCart(hotelUid, { cartId, action: "outlet", productId, purchaseOptionId, value, expectedRevision });
+export async function updateShoppingCartItemOutlet(hotelUid, cartId, productId, value, purchaseOptionId = "default", expectedRevision = 0, line = null) {
+  return mutateCart(hotelUid, { cartId, action: "outlet", productId, purchaseOptionId, value, expectedRevision, ...lineIdentity(line) });
 }
-export async function removeShoppingCartItem(hotelUid, cartId, productId, purchaseOptionId = "default", expectedRevision = 0) {
-  return mutateCart(hotelUid, { cartId, action: "remove", productId, purchaseOptionId, expectedRevision });
+export async function removeShoppingCartItem(hotelUid, cartId, productId, purchaseOptionId = "default", expectedRevision = 0, line = null) {
+  return mutateCart(hotelUid, { cartId, action: "remove", productId, purchaseOptionId, expectedRevision, ...lineIdentity(line) });
+}
+export async function splitShoppingCartItem(hotelUid, cartId, row, quantity, outletId, expectedRevision = 0) {
+  return mutateCart(hotelUid, { cartId, action: "split", productId: row.supplierProductId, purchaseOptionId: row.purchaseOptionId || "default",
+    lineId: row.lineId, expectedLineRevision: row.lineRevision, expectedRevision, value: { quantity, outletId } });
 }
