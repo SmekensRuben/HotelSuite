@@ -11,8 +11,8 @@ function recipientId(value) {
   return uid;
 }
 
-const eventStatuses = Object.freeze({ submit: "pending", approve: "pending", approved: "approved", reject: "rejected", return: "returned" });
-const approvalEvents = new Set(["submit", "approve"]);
+const eventStatuses = Object.freeze({ submit: "pending", selfapprove: "pending", selfapproved: "approved", approve: "pending", approved: "approved", reject: "rejected", return: "returned" });
+const approvalEvents = new Set(["submit", "selfapprove", "approve"]);
 const summaryText = (value, max = 200) => String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max);
 function lineSupplier(line, request) {
   const explicit = Object.hasOwn(line || {}, "supplierId"), id = explicit ? summaryText(line.supplierId) : null;
@@ -54,12 +54,7 @@ function queuePurchaseRequestNotification(tx, { db, hotelUid, requestId, request
 function assignedApproverIsCurrent(request, settings, uid) {
   if (request.currentApproverUid !== uid || request.requesterUid === uid || request.approvals?.some((approval) => approval.approverUid === uid)) return false;
   const step = request.approvalSteps?.[request.currentStepIndex];
-  const authority = settings?.approvers?.find((approver) => approver.uid === uid);
-  if (!step?.id || !authority || !Number.isSafeInteger(authority.limitMinor) || !Number.isSafeInteger(request.totalMinor)
-    || authority.limitMinor < request.totalMinor) return false;
-  return step.id === "over-budget" ? authority.canApproveOverBudget === true
-    : Array.isArray(authority.stepIds) && authority.stepIds.includes(step.id)
-      && settings.approvalSteps?.some((currentStep) => currentStep.id === step.id);
+  return !!step && Number.isSafeInteger(request.totalMinor) && !!require("./purchaseApprovalRouting").assignmentAuthority(settings || {}, uid, step.id, request.totalMinor, request.costCentreId);
 }
 
 // Used within the mail claim transaction, and again just before provider access.
@@ -85,11 +80,12 @@ async function resolvePurchaseRequestNotification(tx, db, hotelUid, mail, servic
     const link = `${baseUrl}/purchase-requests/${encodeURIComponent(id)}?hotel=${encodeURIComponent(hotelUid)}`;
     const title = String(request.title || "Purchase request").slice(0, 200);
     const amount = Number.isSafeInteger(request.totalMinor) ? (request.totalMinor / 100).toFixed(2) : "Unavailable";
-    const states = { submit: "Awaiting your approval", approve: "Awaiting your approval", approved: "Approved", reject: "Rejected", return: "Returned for changes" };
+    const states = { submit: "Awaiting your approval", selfapprove: "Independent approval required", selfapproved: "Self-approved and registered", approve: "Awaiting your approval", approved: "Approved", reject: "Rejected", return: "Returned for changes" };
     const summary = [`${states[mail.event]}: ${title}`, "", `Hotel: ${String(hotel.data()?.hotelName || hotelUid).slice(0, 200)}`,
       `Requester: ${String(request.requesterName || request.requesterUid).slice(0, 200)}`, `Amount: ${amount} ${request.currency || "EUR"} excluding VAT`,
       `Budget month: ${request.budgetMonth || "-"}`, `Budget category: ${request.budgetCategoryName || "-"}`, `Cost centre: ${request.costCentreName || "-"}`,
       ...supplierSummaryLines(request),
+      ...(request.selfApproval ? [`Self-approved by: ${summaryText(request.selfApproval.approverName)}; reason: ${summaryText(request.selfApproval.reason, 2000)}`, "Any required independent controls remain separate."] : []),
       ...(request.lastDecisionReason ? [`Decision note: ${String(request.lastDecisionReason).slice(0, 2000)}`] : []),
       "", "Sign in with your own hotel account to view the request and its current approval requirements.", link];
     return { to: [user.email], subject: `${states[mail.event]} — ${title}`, text: summary.join("\n") };

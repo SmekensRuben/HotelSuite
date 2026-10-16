@@ -23,7 +23,7 @@ describe("hasPermission", () => {
     expect(hasPermission({ permissions: ["stockcounts.*"] }, "inventorymovements", "create")).toBe(false);
   });
   it("requires selected purchase request decision and workflow settings grants", () => {
-    for (const action of ["submit", "approve", "cancel"]) {
+    for (const action of ["submit", "approve", "selfapprove", "cancel"]) {
       expect(hasPermission({ permissions: ["purchaserequests.*"] }, "purchaserequests", action)).toBe(false);
       expect(hasPermission({ permissions: [`purchaserequests.${action}`] }, "purchaserequests", action)).toBe(true);
     }

@@ -145,7 +145,7 @@ function ScopedHotelTeamPage({ platform, hotelUid }) {
               if (!licensed && !displayed.some((action) => form.additionalPermissions.includes(`${feature.toLowerCase()}.${action}`))) return null;
               return <fieldset key={feature} disabled={controlsDisabled || !licensed} className="mt-4"><legend className="text-xs font-semibold">{MODULE_CATALOG[FEATURE_MODULE[feature.toLowerCase()]]?.label || "Platform basics"} · {feature}</legend><div className="mt-2 flex flex-wrap gap-3">{displayed.map((action) => {
                 const key = `${feature.toLowerCase()}.${action}`;
-                return <label key={key} className="flex flex-wrap items-center gap-2 text-xs"><input type="checkbox" checked={form.additionalPermissions.includes(key)} onChange={() => change("additionalPermissions", form.additionalPermissions.includes(key) ? form.additionalPermissions.filter((item) => item !== key) : [...form.additionalPermissions, key])} />{action === "*" ? "All actions (legacy)" : action}</label>;
+                return <label key={key} className="flex flex-wrap items-center gap-2 text-xs"><input type="checkbox" checked={form.additionalPermissions.includes(key)} onChange={() => change("additionalPermissions", form.additionalPermissions.includes(key) ? form.additionalPermissions.filter((item) => item !== key) : [...form.additionalPermissions, key])} />{action === "*" ? "All actions (legacy)" : action === "selfapprove" ? "Self-approve" : action}</label>;
               })}</div></fieldset>;
             })}
           </details>

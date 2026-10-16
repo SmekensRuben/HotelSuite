@@ -6,6 +6,7 @@
   "inventorymovements.reverse",
   "purchaserequests.submit",
   "purchaserequests.approve",
+  "purchaserequests.selfapprove",
   "purchaserequests.cancel",
   "purchasebudgets.settings"
 ]

@@ -269,7 +269,7 @@ function ScopedUserDetailPage({ userId, platform }) {
                             onChange={() => togglePermission(permissionKey)}
                             className="h-4 w-4 rounded border-gray-300 text-brand-800 focus:ring-brand-800/30"
                           />
-                          <span>{action === "*" ? "All actions" : action}</span>
+                          <span>{action === "*" ? "All actions" : action === "selfapprove" ? "Self-approve" : action}</span>
                         </label>
                       );
                     })}

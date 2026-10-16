@@ -7,9 +7,10 @@ Purchase Requests add internal purchasing decisions to Purchasing & Inventory. E
 1. Grant the relevant team members the **Purchase Requester**, **Purchase Approver** or **Budget Manager** permissions within the active Purchasing & Inventory module. Approver permission alone does not grant unlimited financial authority.
 2. Open **Module settings → Purchase Requests** (`/settings/procurement?section=purchase-requests`). Choose the hotel's single budget currency and over-budget policy.
 3. Configure **Cost centres**, which identify the responsible department/accounting centre, separately from **Budget categories**, which identify the type of expense. A Front Office purchase can, for example, use the Maintenance budget category. These lists use stable IDs; they are independent of physical inventory outlets and locations. Labels may change without rewriting old requests.
-4. Add the required approval steps in order. A threshold of `0.00` makes the step apply to every submitted request. A threshold of `1,000.00` adds the step for requests totalling at least that amount. Configure at least one applicable step for every intended request amount. Top-to-bottom order also defines the next higher step for the requester-only escalation described below.
+4. Add the required approval steps in order. **Required from** is a minimum amount that activates a control; **Request limit** on a person is the maximum full request amount that person may review. For example, a Finance control required from EUR 1,000 and a person with a EUR 5,000 limit covers requests from EUR 1,000 through EUR 5,000. A threshold of `0.00` makes the step apply to every submitted request. A threshold of `1,000.00` adds the step for requests totalling at least that amount. Configure at least one applicable step for every intended request amount. Top-to-bottom order also defines the next higher step for the requester-only escalation described below.
 5. Add eligible hotel members as approval authorities. Select their authorized steps and set a net amount limit covering the entire request, rather than only its increment. The optional additional budget authority permits the extra over-budget approval; it does not bypass the normal steps or limit.
-6. Open **Purchase budgets** (`/purchase-budgets`) and enter the allocations for each category and month. Add opening consumption for money already spent before adopting the workflow.
+6. Set **Department approval assignments**, optional designated substitutes and any controls that must remain independent after self-approval. Review the configuration warnings.
+7. Open **Purchase budgets** (`/purchase-budgets`) and enter the allocations for each category and month. Add opening consumption for money already spent before adopting the workflow.
 
 Every financial value is **net, excluding VAT**. The initial implementation supports EUR, USD, GBP, CHF, CAD and AUD, all using two decimal currency places. It does not convert currencies. Currency becomes locked when the first budget or request is saved.
 
@@ -28,11 +29,11 @@ Saved category and cost-centre IDs already referenced by requests cannot be remo
 1. Open **Purchase Requests**, create a draft and select the cost centre, budget category and explicit budget month. Enter a title and business reason; use **Additional description** for optional request-wide specifications. Existing descriptions remain available when editing.
 2. Select a **Supplier** and **Purchase unit** directly on each purchase line. Use **Choose supplier product** to find that supplier's products and purchase options, or enter services, repairs and uncatalogued goods as free lines. Different lines can select different suppliers. Review each quoted net unit price and quantity. A supplier price in another currency must not be treated as the hotel's budget currency.
 3. Expand **Attachments** after saving the draft to add quotes or other supporting documents. Save again to attach uploaded documents to the request revision. Up to ten documents of 10 MiB each are supported: PDF, PNG, JPEG, DOCX, XLSX, TXT and CSV. Documents download as private attachments rather than executable previews.
-4. Review the budget impact and choose a first eligible approver. Submission reserves the request total as pending. The chosen budget month stays fixed even when approvals happen later.
-5. The current approver reviews the frozen request and its budget impact. They approve, reject or return it with a decision note. When another step is required, they choose an eligible next approver. The server checks membership, current permission, financial limit, step authority and the remaining sequence again at the action boundary.
+4. Review the budget impact and the entire server-checked approval route. The selected cost centre determines the department approvers. One eligible person is selected automatically; several eligible people require a choice. Submission reserves the request total as pending. The chosen budget month stays fixed even when approvals happen later.
+5. The current approver reviews the frozen request and its budget impact. They approve, reject or return it with a decision note. When another step is required, its sole eligible approver is selected automatically; otherwise they choose from people who keep the remaining route possible. The server checks membership, current permission, financial limit, step authority and the remaining sequence again at the action boundary.
 6. Final approval moves pending budget into approved commitments. Rejection, withdrawal and cancellation release the associated amount. Returned requests keep their reservation while the requester makes corrections; resubmission adjusts that reservation to the newly submitted amount.
 
-An approver cannot approve their own request, skip a required step or approve multiple steps of the same request. Select separate authorized people for successive steps. An over-budget request in **Require additional budget authority** mode adds a final required budget-approval step; **Block submission** mode refuses the excess instead.
+A standard approver cannot approve their own request, skip a required step or approve multiple steps of the same request. Direct self-approval is a separate explicitly granted action described below. Select separate authorized people for successive steps. An over-budget request in **Require additional budget authority** mode adds a final required budget-approval step; **Block submission** mode refuses the excess instead.
 
 An unfinished draft can leave a line's supplier unselected; submission requires
 a supplier for every line. The product picker is scoped to the selected line and
@@ -82,6 +83,30 @@ escalation reason, original and promoted step names/IDs and settings revision in
 its request history. Existing pending and historical routes are not rewritten;
 returning, revising or resubmitting a request requires a fresh routing decision.
 
+## Department assignments and complete routes
+
+Under **Department approval assignments**, choose **Department-specific approvers** for each cost centre. Its heads must hold authority for the first configured step; set that step's **Required from** to `0.00`. Add named department substitutes when needed. New cost centres start with an empty department-specific assignment, which requires configuration. Existing cost centres retain their **All first-step approvers** setting until an administrator changes it; a configuration notice calls this out.
+
+Each step can also have **designated substitutes** and one **higher approval level** selected from later steps. These explicit alternatives perform the original control. They need current hotel membership, verified active accounts, explicit `purchaserequests.approve`, read permission and a Request limit covering the entire net request. Designation as a substitute supplies authority for that control; it does not grant an action permission or increase a financial limit. A higher-level alternative needs authority for the referenced higher step. Neither alternative removes another required control. The same person cannot perform both the replacement control and a separately required later control.
+
+Before any reservation, the server checks whether different eligible people can complete **all** required controls. It excludes the requester from every standard step, including later steps. Matching also filters out an early choice that would consume the only person available for a later step. For example, if Alex can approve Department and Finance while Robin can only approve Department, a request requiring both controls starts with Robin, leaving Alex for Finance.
+
+The detail page shows the checked sequence and the eligible people, including substitute and higher-level labels. A sole viable person is assigned automatically when their step starts. Multiple viable people require a choice at that hand-off. Future candidates are a feasibility check, not an advance approval or guaranteed availability reservation. The server checks current accounts, permissions, limits and the complete remaining sequence again before each approval. Unknown account lookup failures block the transition. A change after submission can require an administrator to restore authority or configure a substitute; the requester can also withdraw or open a revision. A required control is never silently dropped to recover a blocked route.
+
+Settings include warnings about missing department assignments, controls without sufficient authority, missing additional budget authority and insufficient distinct people. These draft diagnostics supplement the authoritative request check; account changes, the actual request amount and the requester can still make a specific route unavailable.
+
+## Direct self-approval: Approve & register
+
+1. A hotel administrator grants **Purchase Requests → Self-approve** (`purchaserequests.selfapprove`) in the member's advanced permissions. It is not inherited from `purchaserequests.*`, ordinary Approve permission, or existing module roles.
+2. A settings manager enables a separate **Self-approval limit** for that person in **Approval authorities**. Saving a limit verifies the explicit permission and active verified account. A settings grant cannot itself grant the permission. The ordinary Request limit remains separate.
+3. The requester saves and reviews their draft, selects **Approve & register**, and enters a required decision reason. The server verifies ownership, permission, the full net amount against that limit, attachments, currency and the current budget in the same transaction.
+
+Direct self-approval covers the applicable ordinary controls. A control marked **Always require an independent person, including after direct self-approval** still needs another person when its amount threshold applies. Additional over-budget approval always remains independent, even if the requester also has additional budget authority. Independent reviewers must be distinct from each other and the requester. Missing budgets and **Block submission** overruns still prevent registration.
+
+With no remaining independent control, the transaction records an approved commitment directly. With independent controls, it records the self-approval and reserves the full amount as pending, notifying the first independent reviewer. Only the last independent approval transfers pending to committed. No temporary double debit is introduced.
+
+The immutable history records a `selfapprove` or `selfapproved` event, actor, time, reason, settings revision, self-approval limit and the ordinary controls covered. Subsequent independent decisions retain their own actors and authority sources. Returns and revisions clear active self-approval evidence and require a fresh decision while keeping earlier snapshots. Exact command retries return the original receipt, including after reload or restore, without another commitment or notification.
+
 ## Budget accounting
 
 For a category/month:
@@ -95,6 +120,8 @@ With a €500 allocation, €300 approved and €150 pending, €50 remains. App
 | Request state/action | Budget effect |
 | --- | --- |
 | Draft | No reservation |
+| Direct self-approval without independent controls | Commit directly, adjusting any held returned reservation once |
+| Self-approval with independent controls | Reserve as pending until the final independent decision |
 | Submit | Reserve the submitted amount as pending |
 | Intermediate approval | Keep the pending reservation |
 | Final approval | Transfer the same amount from pending to approved commitments |
@@ -117,7 +144,7 @@ Hotel or signed-in user changes reset local forms and ignore late responses from
 
 ## Notifications and deployment configuration
 
-Purchase Request decisions reuse the hotel-scoped mail queue and existing Resend transport. Submission and hand-off notify the current approver. Final approval, rejection and return notify the requester. Mail is queued with the database transition, then checked against the current request revision, recipient membership and approval authority before provider delivery. Superseded notifications are blocked.
+Purchase Request decisions reuse the hotel-scoped mail queue and existing Resend transport. Submission and hand-off notify the current approver, including configured substitutes and higher authorities. Self-approval with independent controls notifies the independent reviewer; direct registration notifies the requester and identifies it as self-approved. Final approval, rejection and return notify the requester. Mail is queued with the database transition, then checked against the current request revision, recipient membership and approval authority before provider delivery. Superseded notifications are blocked.
 
 The environment must already provide:
 
@@ -136,7 +163,7 @@ Deployment and actual Resend delivery require the normal environment release pro
 
 - Up to eight ordered approval steps; each step needs a different authorized person. This is a deliberate simple sequence with optional amount thresholds rather than a general workflow builder.
 - One net budget currency per hotel; no FX conversion, recoverable-VAT calculation or invoice posting.
-- Budgets are monthly per expense category; cost centres are classification and filtering dimensions, not an additional budget allocation axis.
+- Budgets are monthly per expense category; cost centres select department approval and support classification/filtering; they are not an additional budget allocation axis.
 - Quotes and request prices are explicit reviewed inputs. Supplier synchronization, purchase orders, invoice matching and actual-cost reconciliation can consume the immutable request/version references later, but do not run automatically.
 - Document bytes are validated and served privately; this is not an antivirus scanning or document-conversion service.
 

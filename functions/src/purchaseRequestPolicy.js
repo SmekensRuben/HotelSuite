@@ -34,34 +34,50 @@ function lineTotal(quantity, unitPrice) {
   return money(Number((product + 5000000000n) / 10000000000n), "Line total");
 }
 function total(lines) { return lines.reduce((sum, line) => money(sum + line.lineTotalMinor, "Request total"), 0); }
-function namedRows(value, label, maximum) {
+function namedRows(value, label, maximum, department = false) {
   if (!Array.isArray(value) || value.length > maximum) throw new HttpsError("invalid-argument", `${label} must contain at most ${maximum} entries.`);
-  const rows = value.map((row) => { exact(row, ["id", "name"], label); return { id: id(row.id, `${label} ID`), name: text(row.name, label, 100, true) }; });
+  const rows = value.map((row) => { exact(row, ["id", "name", ...(department ? ["approverUids", "substituteUids"] : [])], label);
+    return { id: id(row.id, `${label} ID`), name: text(row.name, label, 100, true),
+      ...Object.fromEntries(["approverUids", "substituteUids"].filter((key) => department && Object.hasOwn(row, key)).map((key) => [key, userIds(row[key])])) }; });
   if (new Set(rows.map((row) => row.id)).size !== rows.length) throw new HttpsError("invalid-argument", `${label} IDs must be unique.`);
   return rows;
+}
+function userIds(value) {
+  if (!Array.isArray(value) || value.length > 100 || new Set(value).size !== value.length || value.some((uid) => typeof uid !== "string" || !uid || uid.length > 128 || /[\/\\\u0000-\u001f]/.test(uid))) throw new HttpsError("invalid-argument", "Choose distinct configured hotel approval authorities.");
+  return value;
 }
 function normalizeSettings(input) {
   exact(input, SETTINGS_FIELDS, "purchase request setting");
   if (!CURRENCIES.includes(input.currency)) throw new HttpsError("invalid-argument", "Choose a supported two-decimal currency: EUR, USD, GBP, CHF, CAD or AUD.");
   if (!["block", "approval"].includes(input.overBudgetMode)) throw new HttpsError("invalid-argument", "Choose whether excess budgets are blocked or require additional approval.");
-  const costCentres = namedRows(input.costCentres, "Cost centre", 100), budgetCategories = namedRows(input.budgetCategories, "Budget category", 100);
+  const costCentres = namedRows(input.costCentres, "Cost centre", 100, true), budgetCategories = namedRows(input.budgetCategories, "Budget category", 100);
   if (!Array.isArray(input.approvalSteps) || input.approvalSteps.length > 8) throw new HttpsError("invalid-argument", "Configure at most eight ordered approval steps.");
   const approvalSteps = input.approvalSteps.map((row) => {
-    exact(row, ["id", "name", "thresholdMinor"], "approval step");
+    exact(row, ["id", "name", "thresholdMinor", "substituteUids", "fallbackStepId", "independentRequired"], "approval step");
     const stepId = id(row.id, "Approval step ID");
     if (stepId === "over-budget") throw new HttpsError("invalid-argument", "The over-budget step is reserved for additional budget authority.");
-    return { id: stepId, name: text(row.name, "Approval step name", 100, true), thresholdMinor: money(row.thresholdMinor ?? 0, "Approval threshold") };
+    if (Object.hasOwn(row, "independentRequired") && typeof row.independentRequired !== "boolean") throw new HttpsError("invalid-argument", "Choose whether independent approval is mandatory.");
+    return { id: stepId, name: text(row.name, "Approval step name", 100, true), thresholdMinor: money(row.thresholdMinor ?? 0, "Approval threshold"),
+      ...(Object.hasOwn(row, "substituteUids") ? { substituteUids: userIds(row.substituteUids) } : {}),
+      ...(Object.hasOwn(row, "fallbackStepId") ? { fallbackStepId: row.fallbackStepId ? id(row.fallbackStepId) : "" } : {}),
+      ...(Object.hasOwn(row, "independentRequired") ? { independentRequired: row.independentRequired } : {}) };
   });
   if (new Set(approvalSteps.map((step) => step.id)).size !== approvalSteps.length) throw new HttpsError("invalid-argument", "Approval step IDs must be unique.");
+  if (costCentres.some((centre) => Object.hasOwn(centre, "approverUids")) && approvalSteps.length && approvalSteps[0].thresholdMinor !== 0) throw new HttpsError("invalid-argument", "Department approval requires the first step's Required from amount to be zero.");
   if (!Array.isArray(input.approvers) || input.approvers.length > 100) throw new HttpsError("invalid-argument", "Configure at most 100 approval authorities.");
   const approvers = input.approvers.map((row) => {
-    exact(row, ["uid", "stepIds", "limitMinor", "canApproveOverBudget"], "approval authority");
+    exact(row, ["uid", "stepIds", "limitMinor", "canApproveOverBudget", "selfApprovalLimitMinor"], "approval authority");
     if (typeof row.uid !== "string" || !row.uid || row.uid.length > 128 || /[\/\\\u0000-\u001f]/.test(row.uid)) throw new HttpsError("invalid-argument", "An approval authority needs a valid user ID.");
     if (!Array.isArray(row.stepIds) || new Set(row.stepIds).size !== row.stepIds.length || row.stepIds.some((stepId) => !approvalSteps.some((step) => step.id === stepId))) throw new HttpsError("invalid-argument", "An approver's steps must refer to configured approval steps.");
     if (typeof row.canApproveOverBudget !== "boolean") throw new HttpsError("invalid-argument", "Choose whether each approver has additional budget authority.");
-    return { uid: row.uid, stepIds: row.stepIds, limitMinor: money(row.limitMinor, "Approval limit"), canApproveOverBudget: row.canApproveOverBudget };
+    return { uid: row.uid, stepIds: row.stepIds, limitMinor: money(row.limitMinor, "Approval limit"), canApproveOverBudget: row.canApproveOverBudget,
+      ...(Object.hasOwn(row, "selfApprovalLimitMinor") ? { selfApprovalLimitMinor: row.selfApprovalLimitMinor === null ? null : money(row.selfApprovalLimitMinor, "Self-approval limit") } : {}) };
   });
   if (new Set(approvers.map((row) => row.uid)).size !== approvers.length) throw new HttpsError("invalid-argument", "Configure each approver only once.");
+  for (const row of [...costCentres, ...approvalSteps]) for (const uid of [...(row.approverUids || []), ...(row.substituteUids || [])]) {
+    if (!approvers.some((person) => person.uid === uid)) throw new HttpsError("invalid-argument", "Department approvers and substitutes must be configured approval authorities.");
+  }
+  for (const [index, step] of approvalSteps.entries()) if (step.fallbackStepId && !approvalSteps.slice(index + 1).some((candidate) => candidate.id === step.fallbackStepId)) throw new HttpsError("invalid-argument", "A higher approval level must be a later configured step.");
   return { currency: input.currency, costCentres, budgetCategories, approvalSteps, approvers, overBudgetMode: input.overBudgetMode };
 }
 function normalizeDraft(input) {

@@ -10,13 +10,16 @@ Status date: 2026-10-06. This matrix describes the policy implemented in this br
 - Permission keys are `feature.action`; `feature.*` grants that feature's standard actions. Special actions listed in `functions/src/explicitPermissions.json` require explicit grants. Platform-wide access uses only the `platformAdmin` Firebase custom claim; `super.admin` is not a supported permission. There is no `users.manage` alias.
 - A hidden menu or button is only UX. Routes, Firestore, Storage and callable functions independently enforce access.
 
-## Purchase Requests extension (2026-10-15)
+## Purchase Requests extension (2026-10-16)
 
 The procurement module now also includes `purchaserequests` and `purchasebudgets`.
-Request reads and CRUD use their specific actions; submission, approval and
-cancellation require explicit `purchaserequests.submit`, `.approve` and `.cancel`
-grants. Approval also checks the current assignee, configured step and amount
-authority, with no requester self-approval. Budget overview/update use
+Request reads and CRUD use their specific actions; submission, standard approval,
+direct self-approval and cancellation require explicit `purchaserequests.submit`,
+`.approve`, `.selfapprove` and `.cancel` grants. Standard approval checks the current
+assignee, department/step or designated replacement authority, full-request limit
+and independent people for the entire remaining route. Direct self-approval
+requires ownership, a separate configured self-approval limit and a reason;
+mandatory independent controls and over-budget approval remain separate. Budget overview/update use
 `purchasebudgets.read` and `.update`; approval/cost-centre configuration requires
 explicit `purchasebudgets.settings`. These special actions do not inherit a
 feature wildcard. Request/budget writes, history, command receipts and document

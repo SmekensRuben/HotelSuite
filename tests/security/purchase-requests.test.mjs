@@ -127,8 +127,8 @@ describe("purchase requests with real tenant, budget and approval boundaries", (
     const submitted = await transition("submit", created, { approverUid: "manager" });
     await rejected(transition("approve", submitted), "permission-denied");
     await rejected(transition("approve", submitted, {}, "finance"), "permission-denied");
-    await assert.rejects(transition("approve", submitted, {}, "manager"), (error) => ["invalid-argument", "failed-precondition"].includes(error.code));
-    const intermediate = await transition("approve", submitted, { nextApproverUid: "finance" }, "manager");
+    const intermediate = await transition("approve", submitted, {}, "manager");
+    assert.equal(intermediate.request.currentApproverUid, "finance", "the sole eligible next approver is assigned automatically");
     const reserved = await readBudget(); assert.equal(reserved.pendingMinor, 15000); assert.equal(reserved.committedMinor || 0, 0);
     await rejected(transition("approve", intermediate, {}, "manager"), "permission-denied");
     await transition("approve", intermediate, {}, "finance");

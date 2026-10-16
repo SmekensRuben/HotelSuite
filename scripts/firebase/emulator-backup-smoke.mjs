@@ -761,7 +761,7 @@ try {
     }
     const proof = JSON.parse(await readFile(procurementProofPath, "utf8"));
     await verifyPurchaseRequestRestoreProof({ database, auth, now: procurementServices.now }, proof.purchaseRequests);
-    console.log("Verified two-hotel purchase-request histories and exact create/submit/final-approval replay after restore: opening 50, approved 300 and pending 100 leave 50 of a 500 budget, without another debit.");
+    console.log("Verified two-hotel purchase-request histories and exact create/submit/final-approval/self-approval replay after restore: October opening 50, approved 300 and pending 100 leave 50 of 500; November direct registration commits 100 of 200 without another debit.");
     await verifyReviewedAiImport(proof.reviewedAiImport);
     await verifyUnknownAiImport(proof.unknownAiImport);
     console.log("Verified confirmed recurring formats, audited format application, frozen upload snapshots, persisted approvals and original AI source/format/result hashes after restore; exact format/mapping/decision/upload/worker replay made zero provider calls and preserved all review receipts.");

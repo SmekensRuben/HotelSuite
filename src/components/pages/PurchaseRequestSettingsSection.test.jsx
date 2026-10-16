@@ -76,6 +76,40 @@ it("explains the first-step exception, independent authority and retained later 
   show(); await screen.findByDisplayValue("Department");
   expect(screen.getByText(/requester is the only eligible approver/)).toHaveTextContent("immediately next configured step, even below its threshold");
   expect(screen.getByText(/requester is the only eligible approver/)).toHaveTextContent("limit covering the full request");
-  expect(screen.getByText(/requester is the only eligible approver/)).toHaveTextContent("No further steps are skipped; additional budget approval remains separate");
-  expect(screen.getByText(/Self-approval is never allowed/)).toHaveTextContent("Each required step must be approved by a different person");
+  expect(screen.getByText(/requester is the only eligible approver/)).toHaveTextContent("they do not remove other required controls. Additional budget approval remains separate");
+  expect(screen.getByText(/Standard approvals exclude the requester/)).toHaveTextContent("Direct self-approval requires the separate Self-approve permission and a self-approval limit");
+});
+
+it("saves department heads, named substitutes and an independent higher control together", async () => {
+  mocks.load.mockResolvedValue({ ...config, settings: { ...config.settings, approvers: [...config.settings.approvers, { uid: "reviewer", stepIds: ["finance"], limitMinor: 500000, canApproveOverBudget: true }] } });
+  show(); await screen.findByDisplayValue("Department");
+  fireEvent.change(screen.getByLabelText("Front office department routing"), { target: { value: "department" } });
+  fireEvent.click(screen.getByLabelText("Front office department approvers: Hotel manager"));
+  fireEvent.click(screen.getByLabelText("Front office department substitutes: Finance reviewer"));
+  fireEvent.click(screen.getByLabelText("Step 1 substitutes: Finance reviewer"));
+  fireEvent.change(screen.getByLabelText("Step 1 higher approval level"), { target: { value: "finance" } });
+  fireEvent.click(screen.getAllByLabelText("Always require an independent person, including after direct self-approval")[1]);
+  fireEvent.click(screen.getByRole("button", { name: "Save Purchase Request settings" }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+  const saved = mocks.save.mock.calls[0][1].settings;
+  expect(saved.costCentres[0]).toMatchObject({ approverUids: ["approver"], substituteUids: ["reviewer"] });
+  expect(saved.approvalSteps[0]).toMatchObject({ substituteUids: ["reviewer"], fallbackStepId: "finance" });
+  expect(saved.approvalSteps[1].independentRequired).toBe(true);
+});
+it("keeps a self-approval limit separate from the normal request limit and explains its explicit permission", async () => {
+  mocks.load.mockResolvedValue({ ...config, users: members.map((person) => ({ ...person, selfApprovalEligible: person.uid === "approver" })) });
+  show(); await screen.findByDisplayValue("Department");
+  fireEvent.click(screen.getByLabelText("Hotel manager self-approval limit enabled"));
+  fireEvent.change(screen.getByLabelText("Approver 1 self-approval limit"), { target: { value: "750.25" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save Purchase Request settings" }));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalled());
+  expect(mocks.save.mock.calls[0][1].settings.approvers[0]).toMatchObject({ limitMinor: 200000, selfApprovalLimitMinor: 75025 });
+});
+it("warns about unstaffed departments, limits below thresholds and ungranted self-approval", async () => {
+  show(); await screen.findByDisplayValue("Department");
+  fireEvent.change(screen.getByLabelText("Front office department routing"), { target: { value: "department" } });
+  fireEvent.click(screen.getByLabelText("Hotel manager self-approval limit enabled"));
+  expect(screen.getByText(/Front office has no eligible department approver/)).toBeInTheDocument();
+  expect(screen.getByText(/Finance has no eligible authority/)).toBeInTheDocument();
+  expect(screen.getByText(/needs the separate Purchase Requests Self-approve permission/)).toBeInTheDocument();
 });

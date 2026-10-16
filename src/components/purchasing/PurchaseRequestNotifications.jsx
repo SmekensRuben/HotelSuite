@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { getPurchaseRequestNotifications, retryPurchaseRequestNotification } from "../../services/firebasePurchaseRequestNotifications";
 
-const labels = { submit: "First approver", approve: "Next approver", approved: "Final approval", reject: "Rejection", return: "Returned for changes" };
+const labels = { selfapprove: "Independent review after self-approval", selfapproved: "Self-approved registration", submit: "First approver", approve: "Next approver", approved: "Final approval", reject: "Rejection", return: "Returned for changes" };
 const statuses = { queued: "Queued", processing: "Sending", sent: "Sent", blocked: "No longer applicable", failed: "Email configuration needs attention", "needs-review": "Delivery outcome needs review" };
 
 export default function PurchaseRequestNotifications({ hotelUid, purchaseRequestId, revision }) {
