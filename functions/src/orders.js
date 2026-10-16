@@ -186,14 +186,16 @@ async function createOrdersFromCartHandler(request, services = {}) {
   const requestedDate = dateOnly(input.deliveryDate);
   const cartRevision = revision(input.expectedCartRevision);
   const operation = db.doc(`hotels/${hotelUid}/orderOperations/${digest(request.auth?.uid, requestId)}`);
-  const fingerprint = digest(cartId, requestedDate, cartRevision);
+  const legacyFingerprint = digest(cartId, requestedDate, cartRevision);
+  const fingerprint = digest(cartId, requestedDate, cartRevision, input.expectedPriceFingerprint ?? null);
   return db.runTransaction(async (tx) => {
     await requireHotelPermission(db, { ...request }, hotelUid, "orders", "create", tx, services.auth);
     const [op, cart] = await Promise.all([tx.get(operation), tx.get(db.doc(`hotels/${hotelUid}/shoppingCarts/${cartId}`))]);
     if (op.exists) {
-      if (op.data().fingerprint !== fingerprint) throw new HttpsError("already-exists", "This order request was used with different details.");
+      if (op.data().fingerprint !== (op.data().inputFingerprintVersion === 2 ? fingerprint : legacyFingerprint)) throw new HttpsError("already-exists", "This order request was used with different details.");
       return op.data().result;
     }
+    try {
     if (!cart.exists) throw new HttpsError("not-found", "Shopping cart not found.");
     if ((cart.data().revision || 0) !== cartRevision) throw new HttpsError("aborted", "The cart changed. Refresh and review it before creating orders.");
     const orderDate = await orderBusinessDate(db, tx, hotelUid, services);
@@ -229,9 +231,15 @@ async function createOrdersFromCartHandler(request, services = {}) {
         currency: products[0].currency, priceBasis: orderPriceContract(products).priceBasis, deliveryDate: resolvedDate, orderDate, shoppingCartId: cartId, status: "Created", revision: 1,
         createdBy: request.auth.uid, createdAt: stamp(), updatedAt: stamp(), dispatchStatus: "", dispatchMode: deliveryModes.get(key) });
     }
-    tx.update(cart.ref, { items: [], revision: cartRevision + 1, updatedAt: stamp() });
-    tx.create(operation, { fingerprint, result, actorUid: request.auth.uid, createdAt: stamp() });
+    tx.update(cart.ref, { items: [], revision: cartRevision + 1, updatedAt: stamp(), updatedBy: request.auth.uid });
+    tx.create(operation, { fingerprint, inputFingerprintVersion: 2, result, actorUid: request.auth.uid, createdAt: stamp() });
     return result;
+    } catch (error) {
+      // Only an authorized transaction that found no operation receipt proves
+      // this exact request has not committed. Transport/access errors do not.
+      if (error instanceof HttpsError) throw new HttpsError(error.code, error.message, { orderRequestUncommitted: true });
+      throw error;
+    }
   });
 }
 

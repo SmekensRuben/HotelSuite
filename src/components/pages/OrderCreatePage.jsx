@@ -12,6 +12,7 @@ import { auth, signOut } from "../../firebaseConfig";
 import { useHotelContext } from "../../contexts/HotelContext";
 import { getSupplierProducts } from "../../services/firebaseProducts";
 import { getSuppliers } from "../../services/firebaseSuppliers";
+import { getOutlets } from "../../services/firebaseSettings";
 import {
   addSupplierProductToShoppingCart,
   getOrCreateShoppingCart,
@@ -35,6 +36,9 @@ function ScopedOrderCreatePage() {
   const [shoppingCart, setShoppingCart] = useState(null);
   const [products, setProducts] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  const [outlets, setOutlets] = useState([]);
+  const [selectedOutlet, setSelectedOutlet] = useState(null);
+  const [outletError, setOutletError] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
@@ -138,6 +142,8 @@ function ScopedOrderCreatePage() {
     if (!hotelUid) return;
     getSuppliers(hotelUid).then((loadedSuppliers) => { if (isCurrent()) setSuppliers(Array.isArray(loadedSuppliers) ? loadedSuppliers : []); })
       .catch((failure) => { if (isCurrent()) setSupplierError(failure?.message || "Supplier filters could not be loaded."); });
+    getOutlets(hotelUid).then((loadedOutlets) => { if (isCurrent()) setOutlets(loadedOutlets || []); })
+      .catch((failure) => { if (isCurrent()) setOutletError(failure?.message || "Outlets could not be loaded."); });
   }, [hotelUid]);
 
   useEffect(() => {
@@ -177,7 +183,9 @@ function ScopedOrderCreatePage() {
     const qty = Math.max(1, Number(qtyByProductId[product.id] || 1));
     setSavingId(product.id); setError("");
     try {
-      const result = await addSupplierProductToShoppingCart(hotelUid, shoppingCart.id, product, qty, product.purchaseOptionId, shoppingCart.revision ?? 0);
+      const args = [hotelUid, shoppingCart.id, product, qty, product.purchaseOptionId, shoppingCart.revision ?? 0];
+      if (selectedOutlet?.id) args.push(selectedOutlet.id);
+      const result = await addSupplierProductToShoppingCart(...args);
       if (!isCurrent()) return;
       if (!Number.isSafeInteger(result?.revision) || result.revision < 0) throw new Error("The saved cart revision could not be confirmed. Refresh before continuing.");
       minimumCartRevision.current = Math.max(minimumCartRevision.current, result.revision);
@@ -185,7 +193,7 @@ function ScopedOrderCreatePage() {
       const refreshed = await getShoppingCart(hotelUid, shoppingCart.id, { minimumRevision: result.revision });
       if (!refreshed || !Number.isSafeInteger(refreshed.revision ?? 0) || (refreshed.revision ?? 0) < minimumCartRevision.current) throw new Error("The updated cart could not be verified. Refresh before adding another package.");
       if (isCurrent()) { setShoppingCart(refreshed); setCartNeedsRefresh(false); }
-    } catch (failure) { if (isCurrent()) setError(failure?.message || "Could not add this package to the cart."); }
+    } catch (failure) { if (isCurrent()) { setCartNeedsRefresh(true); setError(failure?.message || "Could not add this package to the cart."); } }
     finally { cartLock.current = false; if (isCurrent()) setSavingId(""); }
   };
 
@@ -282,6 +290,8 @@ function ScopedOrderCreatePage() {
               </button>
             </div>
           </div>
+
+          <div className="mt-4 max-w-md"><label className="text-sm font-semibold">Order for outlet</label><Combobox aria-label="Order for outlet" options={[{ id: "", name: "Assign later in cart" }, ...outlets]} value={selectedOutlet} onChange={setSelectedOutlet} displayValue={(outlet) => outlet.name || "Unnamed outlet"} getOptionValue={(outlet) => outlet.id} placeholder="Assign later in cart" disabled={Boolean(savingId)} className="ht-field" /><p className="mt-1 text-xs text-slate-600">New packages go to this outlet in the shared hotel cart. The same package can have a separate line for each outlet.</p>{outletError && <p className="mt-1 text-xs text-amber-800">{outletError} You can assign outlets in the cart.</p>}</div>
 
           <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
             <input

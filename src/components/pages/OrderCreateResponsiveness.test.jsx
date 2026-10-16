@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({ hotel: "hotel-a", permissions: ["orders.create
 vi.mock("../../contexts/HotelContext", () => ({ useHotelContext: () => ({ hotelUid: mocks.hotel, permissions: mocks.permissions, subscriptionActive: true }) }));
 vi.mock("../../firebaseConfig", () => ({ auth: mocks.actor, signOut: vi.fn() }));
 vi.mock("../../services/firebaseProducts", () => ({ getSupplierProducts: mocks.products }));
+vi.mock("../../services/firebaseSettings", () => ({ getOutlets: async () => [{ id: "bar", name: "Bar" }, { id: "kitchen", name: "Kitchen" }] }));
 vi.mock("../../services/firebaseSuppliers", () => ({ getSuppliers: mocks.suppliers }));
 vi.mock("../../services/firebaseShoppingCarts", () => ({ getOrCreateShoppingCart: mocks.cart, getShoppingCart: mocks.read, addSupplierProductToShoppingCart: mocks.add, getPendingCartCommand: () => null, retryPendingCartCommand: vi.fn() }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => vi.fn() }));
@@ -110,4 +111,17 @@ it("offers a new package from an approved dated preview without replacing the cu
   expect(screen.getByText("1 l · dated version")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Add" }));
   await waitFor(() => expect(mocks.add).toHaveBeenCalledWith("hotel-a", "cart", expect.objectContaining({ purchaseOptionId: "future-bottle" }), 1, "future-bottle", 4));
+});
+
+it("adds the same supplier package separately for the selected bar and kitchen outlets", async () => {
+  render(<OrderCreatePage />);
+  const add = await screen.findByRole("button", { name: "Add" }); await waitFor(() => expect(add).not.toBeDisabled());
+  const outlet = screen.getByRole("combobox", { name: "Order for outlet" });
+  fireEvent.focus(outlet); fireEvent.click(await screen.findByRole("option", { name: "Bar" }));
+  fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "2" } }); fireEvent.click(add);
+  await waitFor(() => expect(mocks.add).toHaveBeenCalledWith("hotel-a", "cart", expect.objectContaining({ id: "juice" }), 2, "default", 4, "bar"));
+  await waitFor(() => expect(add).not.toBeDisabled());
+  fireEvent.focus(outlet); fireEvent.change(outlet, { target: { value: "Kitchen" } }); fireEvent.click(await screen.findByRole("option", { name: "Kitchen" }));
+  fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "3" } }); fireEvent.click(add);
+  await waitFor(() => expect(mocks.add).toHaveBeenLastCalledWith("hotel-a", "cart", expect.objectContaining({ id: "juice" }), 3, "default", 5, "kitchen"));
 });

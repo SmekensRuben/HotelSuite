@@ -48,6 +48,7 @@ function normalizeStockCountLocation(location = {}) {
     ...location,
     currency: location.currency || null,
     inventoryPolicyVersion: location.inventoryPolicyVersion || null,
+    revision: Number.isSafeInteger(location.revision) ? location.revision : 0,
     locationId: String(location?.locationId || location?.id || "").trim(),
     locationName: String(location?.locationName || "").trim(),
     stockTemplateId,
@@ -216,14 +217,69 @@ function commandItems(items) {
     ? { catalogProductId: item.catalogProductId, quantity: item.quantity, isCounted: item.isCounted !== false, unitCost: item.unitCost ?? null }
     : { supplierProductId: item.supplierProductId, outletId: item.outletId, quantity: item.quantity, isCounted: item.isCounted !== false });
 }
+function countMutationStorageKey(hotelUid, stockCountId, locationId = null) {
+  if (!hotelUid || !stockCountId || !auth.currentUser?.uid) throw new Error("Sign in and select a hotel and stock count before saving.");
+  return `hotelsuite.stockCount.mutation:${JSON.stringify([auth.currentUser.uid, hotelUid, stockCountId, locationId])}`;
+}
+function readPendingCountMutation(storageKey, hotelUid, stockCountId, locationId) {
+  const raw = localStorage.getItem(storageKey);
+  if (!raw) return null;
+  try {
+    const payload = JSON.parse(raw);
+    if (payload.hotelUid !== hotelUid || payload.stockCountId !== stockCountId || (payload.locationId ?? null) !== locationId
+      || typeof payload.requestId !== "string" || !payload.requestId
+      || !["save-location", "finish-location", "set-location-status", "finish-count"].includes(payload.action)) throw new Error("Invalid saved command");
+    return payload;
+  } catch { throw new Error("The saved stock count change cannot be read. Its outcome needs review before another change can be sent."); }
+}
+export function getPendingStockCountMutation(hotelUid, stockCountId, locationId = null) {
+  if (!hotelUid || !stockCountId || !auth.currentUser?.uid) return null;
+  return readPendingCountMutation(countMutationStorageKey(hotelUid, stockCountId, locationId), hotelUid, stockCountId, locationId);
+}
+async function sendStockCountMutation(payload, storageKey) {
+  const requestedActor = auth.currentUser;
+  const clearOwnCommand = () => {
+    const pending = readPendingCountMutation(storageKey, payload.hotelUid, payload.stockCountId, payload.locationId ?? null);
+    if (pending?.requestId === payload.requestId) localStorage.removeItem(storageKey);
+    notifyCountCreation();
+  };
+  try {
+    const result = await httpsCallable(functions, "mutateHotelStockCount")(payload);
+    if (auth.currentUser !== requestedActor) throw new Error("The signed-in account changed while saving. Sign in with the original account to confirm its saved change.");
+    if (result.data?.hotelUid !== payload.hotelUid || result.data.stockCountId !== payload.stockCountId
+      || !Number.isSafeInteger(result.data.revision) || result.data.revision < 0
+      || payload.locationId && (result.data.locationId !== payload.locationId || !Number.isSafeInteger(result.data.locationRevision) || result.data.locationRevision < 0)) {
+      throw new Error("Stock count mutation response scope is invalid. Retry the saved change to confirm its outcome.");
+    }
+    clearOwnCommand();
+    return result.data;
+  } catch (error) {
+    if (auth.currentUser === requestedActor && error?.details?.countMutationUncommitted === true) clearOwnCommand();
+    notifyCountCreation();
+    throw error;
+  }
+}
+export async function retryPendingStockCountMutation(hotelUid, stockCountId, locationId = null) {
+  const storageKey = countMutationStorageKey(hotelUid, stockCountId, locationId);
+  const pending = readPendingCountMutation(storageKey, hotelUid, stockCountId, locationId);
+  if (!pending) throw new Error("No saved stock count change is awaiting confirmation.");
+  return sendStockCountMutation(pending, storageKey);
+}
 async function mutateStockCount(hotelUid, stockCountId, payload, expectedRevision) {
-  if (!hotelUid || !stockCountId) throw new Error("hotelUid and stockCountId are required");
-  const current = expectedRevision == null ? await getStockCountById(hotelUid, stockCountId) : null;
-  if (expectedRevision == null && !current) throw new Error("Stock count not found");
-  const result = await httpsCallable(functions, "mutateHotelStockCount")({ hotelUid, stockCountId,
-    ...payload, expectedRevision: expectedRevision ?? current.revision });
-  if (result.data?.hotelUid !== hotelUid || result.data.stockCountId !== stockCountId || !Number.isSafeInteger(result.data.revision)) throw new Error("Stock count mutation response scope is invalid. Reload the count before retrying.");
-  return result.data;
+  const storageKey = countMutationStorageKey(hotelUid, stockCountId, payload.locationId ?? null);
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error("Reload this stock count before saving; its loaded revision is required.");
+  const command = { hotelUid, stockCountId, ...payload,
+    ...(payload.locationId ? { expectedLocationRevision: expectedRevision } : { expectedRevision }) };
+  let pending = readPendingCountMutation(storageKey, hotelUid, stockCountId, payload.locationId ?? null);
+  if (pending) {
+    const { requestId: _requestId, ...original } = pending;
+    if (JSON.stringify(original) !== JSON.stringify(command)) throw new Error("A previous stock count change is awaiting confirmation. Retry that saved change before sending another.");
+  } else {
+    pending = { ...command, requestId: crypto.randomUUID() };
+    localStorage.setItem(storageKey, JSON.stringify(pending));
+    notifyCountCreation();
+  }
+  return sendStockCountMutation(pending, storageKey);
 }
 export async function getStockCountSources(hotelUid) {
   if (!hotelUid) throw new Error("hotelUid is required");
@@ -293,21 +349,21 @@ export async function createStockCount(hotelUid, input) {
     throw error;
   }
 }
-export async function updateStockCountLocationCounts(hotelUid, stockCountId, locationId, countedItems, _updatedBy, expectedRevision) {
+export async function updateStockCountLocationCounts(hotelUid, stockCountId, locationId, countedItems, _updatedBy, expectedLocationRevision) {
   return mutateStockCount(hotelUid, stockCountId, { action: "save-location", locationId,
-    countedItems: commandItems(countedItems) }, expectedRevision);
+    countedItems: commandItems(countedItems) }, expectedLocationRevision);
 }
 export async function finishStockCountLocation(hotelUid, stockCountId, locationId, countedItems,
-  templateItemsToAdd = [], _updatedBy, expectedRevision) {
+  templateItemsToAdd = [], _updatedBy, expectedLocationRevision) {
   return mutateStockCount(hotelUid, stockCountId, { action: "finish-location", locationId,
     countedItems: commandItems(countedItems), templateItemsToAdd: templateItemsToAdd.map((item) =>
-      (item.catalogProductId ? { catalogProductId: item.catalogProductId } : { supplierProductId: item.supplierProductId, outletId: item.outletId })) }, expectedRevision);
+      (item.catalogProductId ? { catalogProductId: item.catalogProductId } : { supplierProductId: item.supplierProductId, outletId: item.outletId })) }, expectedLocationRevision);
 }
 export async function finishStockCount(hotelUid, stockCountId, _updatedBy, expectedRevision) {
   return mutateStockCount(hotelUid, stockCountId, { action: "finish-count" }, expectedRevision);
 }
-export async function updateStockCountLocationStatus(hotelUid, stockCountId, locationId, status, _updatedBy, expectedRevision) {
-  return mutateStockCount(hotelUid, stockCountId, { action: "set-location-status", locationId, status }, expectedRevision);
+export async function updateStockCountLocationStatus(hotelUid, stockCountId, locationId, status, _updatedBy, expectedLocationRevision) {
+  return mutateStockCount(hotelUid, stockCountId, { action: "set-location-status", locationId, status }, expectedLocationRevision);
 }
 
 export async function getStockCountProductChoices(hotelUid, stockCountId, locationId,
