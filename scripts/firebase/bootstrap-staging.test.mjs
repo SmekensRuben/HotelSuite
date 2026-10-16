@@ -80,3 +80,55 @@ test("immutable Storage location must match the existing shared trigger region",
   assert.equal(result.contacts, "");
   assert.match(result.stderr, /Storage must use us-west1/);
 });
+
+function runServiceEnablement(failService) {
+  const directory = mkdtempSync(join(tmpdir(), "staging-service-enablement-"));
+  const evidence = join(directory, "calls.jsonl");
+  const source = readFileSync(script, "utf8");
+  const start = source.indexOf("gcloud services enable ");
+  const end = source.indexOf('\nif ! jq -e --arg id "$project_id"', start);
+  assert.ok(start >= 0 && end > start, "Locate the real bootstrap service-enablement commands");
+  writeFileSync(join(directory, "gcloud"), `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.BOOTSTRAP_TEST_CALLS, JSON.stringify(args) + "\\n");
+const services = args.slice(2).filter((arg) => !arg.startsWith("--"));
+if (services.length > 20 || services.includes(process.env.BOOTSTRAP_TEST_FAIL_SERVICE)) process.exit(1);
+`, { mode: 0o700 });
+  try {
+    const result = spawnSync("/bin/bash", ["-euc", `project_id=hotel-toolkit-staging\n${source.slice(start, end)}`], {
+      env: { ...process.env, PATH: `${directory}:/usr/bin:/bin`, BOOTSTRAP_TEST_CALLS: evidence,
+        BOOTSTRAP_TEST_FAIL_SERVICE: failService || "" }, encoding: "utf8",
+    });
+    const calls = readFileSync(evidence, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    return { ...result, calls };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+test("real bootstrap enables every required API within Google's 20-service request limit", () => {
+  const result = runServiceEnablement();
+  assert.equal(result.status, 0, result.stderr);
+  const services = [];
+  for (const args of result.calls) {
+    assert.deepEqual(args.slice(0, 2), ["services", "enable"]);
+    assert.ok(args.includes("--project=hotel-toolkit-staging"));
+    assert.ok(args.includes("--quiet"));
+    const batch = args.slice(2).filter((arg) => !arg.startsWith("--"));
+    assert.ok(batch.length > 0 && batch.length <= 20);
+    services.push(...batch);
+  }
+  assert.deepEqual(services.sort(), [
+    "firebase", "firebaseapphosting", "firebaseextensions", "firebaserules", "firebasestorage",
+    "iam", "iamcredentials", "sts", "cloudresourcemanager", "serviceusage", "cloudbilling",
+    "identitytoolkit", "firestore", "storage", "cloudfunctions", "cloudbuild", "run", "compute",
+    "artifactregistry", "eventarc", "pubsub", "cloudscheduler", "secretmanager", "developerconnect",
+  ].map((service) => `${service}.googleapis.com`).sort());
+});
+
+test("bootstrap stops enabling APIs when a batch fails", () => {
+  const result = runServiceEnablement("firebase.googleapis.com");
+  assert.notEqual(result.status, 0);
+  assert.equal(result.calls.length, 1, "Do not continue to another batch after a failure");
+});
