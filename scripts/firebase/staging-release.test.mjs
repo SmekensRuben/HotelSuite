@@ -154,3 +154,17 @@ test("workflow keeps source verification without identity and protects the entir
   assert.match(workflow, /npm run audit:policy/);
   assert.match(workflow, /npm run test:staging/);
 });
+
+test("staging workflow imports WIF credentials into gcloud before checking the active deployment identity", () => {
+  const workflow = readFileSync(new URL("../../.github/workflows/deploy-staging.yml", import.meta.url), "utf8");
+  const deployment = workflow.slice(workflow.indexOf("  deploy:"));
+  const configurationGuard = deployment.indexOf("- name: Refuse missing or production credentials before authentication");
+  const authenticate = deployment.indexOf("uses: google-github-actions/auth@");
+  const configureGcloud = deployment.indexOf("uses: google-github-actions/setup-gcloud@");
+  const release = deployment.indexOf("- name: Deploy and activate one coordinated staging release");
+  assert.ok([configurationGuard, authenticate, configureGcloud, release].every(index => index >= 0));
+  assert.ok(configurationGuard < authenticate, "Validate the fixed staging target before obtaining credentials.");
+  assert.ok(authenticate < configureGcloud, "setup-gcloud must import the credentials already exported by auth.");
+  assert.ok(configureGcloud < release, "Configure gcloud's active account before the controller verifies its identity.");
+  assert.match(deployment.slice(configureGcloud, release), /project_id: hotel-toolkit-staging/);
+});

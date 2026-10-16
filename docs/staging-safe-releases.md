@@ -126,6 +126,10 @@ for operator review.
 
 Create repository **Settings → Environments → staging**, add a required reviewer,
 prevent self-review where supported, and restrict deployment branches to `main`.
+With a single operator who both starts releases and is the only reviewer, this
+self-review rule blocks every deployment. The owner explicitly approved allowing
+self-review for this fictional staging environment on 2026-10-16. Required
+review, the `main`-only deployment rule and protected `main` remain enabled.
 The workflow file always runs from protected `main`; its input selects the
 application branch/PR. Reviewers approve the selected SHA and its code for staging
 access: Firebase deployment discovers/executes that source with staging credentials,
