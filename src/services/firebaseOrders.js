@@ -93,18 +93,64 @@ export async function previewOrdersFromShoppingCart(hotelUid, shoppingCartId, de
   return data;
 }
 
-export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor, expectedCartRevision, expectedPriceFingerprint) {
-  if (expectedCartRevision === undefined) throw new Error("Refresh and review the cart before submitting.");
-  const storageKey = `order-request:${hotelUid}:${shoppingCartId}:${deliveryDate}:${expectedCartRevision}`;
-  let requestId = sessionStorage.getItem(storageKey);
-  if (!requestId) {
-    requestId = crypto.randomUUID();
-    sessionStorage.setItem(storageKey, requestId);
+function cartSubmissionKey(hotelUid, shoppingCartId) {
+  const actorUid = auth.currentUser?.uid;
+  if (!actorUid || !hotelUid || !shoppingCartId) throw new Error("A signed-in hotel user and cart are required.");
+  return `cart-submission:${actorUid}:${hotelUid}:${shoppingCartId}`;
+}
+function notifyCartSubmission() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("cart-submission-changed"));
+}
+export function getPendingCartSubmission(hotelUid, shoppingCartId) {
+  if (!hotelUid || !shoppingCartId || !auth.currentUser?.uid) return null;
+  const stored = localStorage.getItem(cartSubmissionKey(hotelUid, shoppingCartId));
+  if (!stored) return null;
+  const input = JSON.parse(stored);
+  if (input.hotelUid !== hotelUid || input.shoppingCartId !== shoppingCartId || typeof input.requestId !== "string"
+    || typeof input.deliveryDate !== "string" || !Number.isSafeInteger(input.expectedCartRevision)) {
+    throw new Error("The saved order request needs recovery before this cart can be submitted.");
   }
-  const result = (await httpsCallable(functions, "createOrdersFromCart")({ hotelUid, shoppingCartId, deliveryDate, requestId, expectedCartRevision,
-    ...(expectedPriceFingerprint ? { expectedPriceFingerprint } : {}) })).data;
-  sessionStorage.removeItem(storageKey);
-  return result;
+  return input;
+}
+async function submitSavedCart(input) {
+  const actor = auth.currentUser;
+  const key = cartSubmissionKey(input.hotelUid, input.shoppingCartId);
+  try {
+    const { data } = await httpsCallable(functions, "createOrdersFromCart")(input);
+    if (auth.currentUser !== actor) throw new Error("Your sign-in changed. The original user must recover the saved order request.");
+    if (!Array.isArray(data?.orderIds) || !data.orderIds.length || data.orderIds.length > 25
+      || data.orderIds.some((id) => typeof id !== "string" || !id || id.includes("/"))
+      || new Set(data.orderIds).size !== data.orderIds.length || !Array.isArray(data.deliveryDateAdjustments)) {
+      throw new Error("The order result could not be verified. Retry the saved order request.");
+    }
+    if (localStorage.getItem(key) === JSON.stringify(input)) localStorage.removeItem(key);
+    notifyCartSubmission();
+    return data;
+  } catch (error) {
+    if (error?.details?.orderRequestUncommitted === true && localStorage.getItem(key) === JSON.stringify(input)) localStorage.removeItem(key);
+    notifyCartSubmission();
+    throw error;
+  }
+}
+export async function retryPendingCartSubmission(hotelUid, shoppingCartId) {
+  const pending = getPendingCartSubmission(hotelUid, shoppingCartId);
+  if (!pending) throw new Error("No saved order request is available.");
+  return submitSavedCart(pending);
+}
+export async function createOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor, expectedCartRevision, expectedPriceFingerprint) {
+  if (!Number.isSafeInteger(expectedCartRevision) || expectedCartRevision < 0) throw new Error("Refresh and review the cart before submitting.");
+  const key = cartSubmissionKey(hotelUid, shoppingCartId);
+  const input = { hotelUid, shoppingCartId, deliveryDate, expectedCartRevision,
+    ...(expectedPriceFingerprint ? { expectedPriceFingerprint } : {}) };
+  let pending = getPendingCartSubmission(hotelUid, shoppingCartId);
+  if (pending) {
+    const { requestId: _requestId, ...savedInput } = pending;
+    if (JSON.stringify(savedInput) !== JSON.stringify(input)) throw new Error("The previous order request has an uncertain result. Retry the saved order request before changing this cart or delivery date.");
+  } else {
+    pending = { ...input, requestId: crypto.randomUUID() };
+    localStorage.setItem(key, JSON.stringify(pending)); notifyCartSubmission();
+  }
+  return submitSavedCart(pending);
 }
 
 export async function createOrderFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, actor, expectedCartRevision) {

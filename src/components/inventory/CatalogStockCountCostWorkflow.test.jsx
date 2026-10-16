@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({ auth: { currentUser: { uid: "counter" } }, pro
 vi.mock("../../firebaseConfig", () => ({ auth: mocks.auth }));
 vi.mock("../../hooks/usePermission", () => ({ usePermission: (feature, action) => feature === "stockcounts" && ["read", "update"].includes(action) }));
 vi.mock("../../services/firebaseProducts", () => ({ getCatalogProducts: vi.fn() }));
-vi.mock("../../services/firebaseStockCounts", () => ({ updateStockCountLocationCounts: mocks.save, finishStockCountLocation: mocks.finish, getStockCountPackageOptions: vi.fn(), getStockCountProductChoices: vi.fn() }));
+vi.mock("../../services/firebaseStockCounts", () => ({ getStockCountById: vi.fn(), getPendingStockCountMutation: () => null, retryPendingStockCountMutation: vi.fn(), updateStockCountLocationCounts: mocks.save, finishStockCountLocation: mocks.finish, getStockCountPackageOptions: vi.fn(), getStockCountProductChoices: vi.fn() }));
 vi.mock("../../services/firebaseInventoryCostProposals", () => ({ getInventoryCostProposal: mocks.proposal }));
 import CatalogStockCountLocationPanel from "./CatalogStockCountLocationPanel";
 const stockCount = { id: "count", status: "In Progress", currency: "EUR", businessDate: "2026-10-12", revision: 5 };
@@ -16,7 +16,7 @@ const proposal = { hotelUid: "hotel-a", purpose: "stockcount", locationId: "stor
     recordedMovementQuantity: 20, recordedMovementNetValue: 60, weightedSourceQuantity: 30, weightedSourceNetValue: 80, postingCutoffSequence: 3, movementCount: 2 }, reasons: [], costBasis: "Recorded source estimate, not live valuation." };
 const show = (count = stockCount) => <MemoryRouter><CatalogStockCountLocationPanel hotelUid="hotel-a" stockCount={count} location={location} /></MemoryRouter>;
 const openValuation = () => fireEvent.click(screen.getByText("Valuation (optional)"));
-beforeEach(() => { vi.clearAllMocks(); mocks.auth.currentUser = { uid: "counter" }; mocks.proposal.mockResolvedValue(proposal); mocks.save.mockResolvedValue({}); mocks.finish.mockResolvedValue({}); });
+beforeEach(() => { localStorage.clear(); vi.clearAllMocks(); mocks.auth.currentUser = { uid: "counter" }; mocks.proposal.mockResolvedValue(proposal); mocks.save.mockResolvedValue({}); mocks.finish.mockResolvedValue({}); });
 it("keeps counts and manually entered costs unchanged until Apply, then saves only the frozen reviewed number", async () => {
   render(show()); openValuation(); fireEvent.change(screen.getByLabelText("Count Orange juice"), { target: { value: "12.5" } }); fireEvent.change(screen.getByLabelText("Unit cost Orange juice"), { target: { value: "7" } });
   expect(mocks.proposal).not.toHaveBeenCalled(); fireEvent.click(screen.getByRole("button", { name: "Suggest unit cost for Orange juice" }));
@@ -24,13 +24,13 @@ it("keeps counts and manually entered costs unchanged until Apply, then saves on
   expect(screen.getByLabelText("Unit cost Orange juice")).toHaveValue(7); expect(screen.getByLabelText("Count Orange juice")).toHaveValue(12.5);
   expect(mocks.proposal).toHaveBeenCalledWith({ hotelUid: "hotel-a", purpose: "stockcount", stockCountId: "count", locationId: "store", catalogProductId: "juice" }, { baseUnit: "l", currency: "EUR", businessDate: stockCount.businessDate });
   fireEvent.click(apply); expect(screen.getByLabelText("Unit cost Orange juice")).toHaveValue(2.666667); fireEvent.click(screen.getByRole("button", { name: "Save Counts" }));
-  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith("hotel-a", "count", "store", [{ catalogProductId: "juice", quantity: 12.5, unitCost: 2.666667, isCounted: true }], "counter", 5));
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith("hotel-a", "count", "store", [{ catalogProductId: "juice", quantity: 12.5, unitCost: 2.666667, isCounted: true }], "counter", 0));
 });
 it("keeps unknown costs explicit and direct finishing available after a cost lookup failure", async () => {
   mocks.proposal.mockRejectedValueOnce(new Error("Recorded receipt evidence needs reconciliation")); render(show()); openValuation();
   fireEvent.change(screen.getByLabelText("Count Orange juice"), { target: { value: "0" } }); fireEvent.click(screen.getByRole("button", { name: "Suggest unit cost for Orange juice" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Recorded receipt evidence needs reconciliation"); expect(screen.getByLabelText("Unit cost Orange juice")).toHaveValue(null);
-  fireEvent.click(screen.getByRole("button", { name: "Finish Location" })); await waitFor(() => expect(mocks.finish).toHaveBeenCalledWith("hotel-a", "count", "store", [{ catalogProductId: "juice", quantity: 0, unitCost: null, isCounted: true }], [], "counter", 5));
+  fireEvent.click(screen.getByRole("button", { name: "Finish Location" })); await waitFor(() => expect(mocks.finish).toHaveBeenCalledWith("hotel-a", "count", "store", [{ catalogProductId: "juice", quantity: 0, unitCost: null, isCounted: true }], [], "counter", 0));
 });
 it("invalidates a reviewed automatic cost after frozen date or revision changes while retaining an explicit manual escape", async () => {
   const view = render(show()); openValuation(); fireEvent.click(screen.getByRole("button", { name: "Suggest unit cost for Orange juice" })); fireEvent.click(await screen.findByRole("button", { name: "Apply cost estimate for Orange juice" }));

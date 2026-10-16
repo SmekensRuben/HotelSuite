@@ -37,6 +37,71 @@ const mutate = (db, id, patch = {}, auth = currentAuth) => {
   return mutateHotelStockCountHandler(request(input), { firestore: db, auth });
 };
 
+function locationCommand(db, stockCountId, locationId, quantity, expectedLocationRevision = 0, options = {}) {
+  const { actorUid = "counter", ...overrides } = options;
+  return mutateHotelStockCountHandler(request({ hotelUid: hotel, stockCountId, locationId,
+    action: "save-location", expectedLocationRevision, countedItems: [counted({ quantity })], ...overrides },
+  { uid: actorUid, token: { email_verified: true } }), { firestore: db, auth: currentAuth });
+}
+async function createTwoLocations(db) {
+  db.records.set(`hotels/${hotel}/members/second-counter`, { permissions: ["stockcounts.update", "stockcounts.read"] });
+  db.records.set(`hotels/${hotel}/locations/kitchen`, { name: "Kitchen" });
+  db.records.set(`hotels/${hotel}/locations/kitchen/stockTemplates/template`, { name: "Kitchen count", items: [{ catalogProductId: "coffee" }] });
+  return create(db, { locations: [{ locationId: "store", stockTemplateId: "template" }, { locationId: "kitchen", stockTemplateId: "template" }] });
+}
+
+test("different counters save independent locations from the same parent revision without losing summaries", async () => {
+  const db = fixture(), { stockCountId } = await createTwoLocations(db);
+  const results = await Promise.all([locationCommand(db, stockCountId, "store", 2),
+    locationCommand(db, stockCountId, "kitchen", 3, 0, { actorUid: "second-counter" })]);
+  assert.deepEqual(results.map((result) => result.locationRevision), [1, 1]);
+  const parent = db.records.get(`hotels/${hotel}/stockCounts/${stockCountId}`);
+  assert.equal(parent.revision, 2);
+  assert.equal(parent.countedValue, 62.5);
+  assert.deepEqual(parent.locations.map((location) => [location.status, location.revision]), [["In Progress", 1], ["In Progress", 1]]);
+  assert.equal(db.records.get(`hotels/${hotel}/stockCounts/${stockCountId}/locations/kitchen`).updatedBy, "second-counter");
+});
+
+test("same-location concurrent saves reject the stale form without replacing the successful count", async () => {
+  const db = fixture(), { stockCountId } = await createTwoLocations(db);
+  const outcomes = await Promise.allSettled([locationCommand(db, stockCountId, "store", 2),
+    locationCommand(db, stockCountId, "store", 3, 0, { actorUid: "second-counter" })]);
+  assert.equal(outcomes.filter((outcome) => outcome.status === "fulfilled").length, 1);
+  const failure = outcomes.find((outcome) => outcome.status === "rejected").reason;
+  assert.equal(failure.code, "aborted");
+  assert.deepEqual(failure.details, { conflictScope: "location", locationId: "store", currentLocationRevision: 1, countMutationUncommitted: true });
+  assert.equal(db.records.get(`hotels/${hotel}/stockCounts/${stockCountId}/locations/store`).countedItems[0].quantity, 2);
+});
+
+test("location finish checkpoints and parent finish remain atomic, immutable and replayable", async () => {
+  const db = fixture(), { stockCountId } = await createTwoLocations(db);
+  const store = { action: "finish-location", requestId: "finish-store" };
+  await locationCommand(db, stockCountId, "store", 2, 0, store);
+  await assert.rejects(mutate(db, stockCountId, { action: "finish-count", expectedRevision: 1 }), { code: "failed-precondition" });
+  await assert.rejects(locationCommand(db, stockCountId, "kitchen", null, 0,
+    { action: "finish-location", countedItems: [counted({ quantity: null, isCounted: false })] }), { code: "failed-precondition" });
+  await locationCommand(db, stockCountId, "kitchen", 3, 0, { action: "finish-location", actorUid: "second-counter" });
+  const finished = await mutate(db, stockCountId, { action: "finish-count", expectedRevision: 2, requestId: "finish-all" });
+  assert.equal(finished.status, "Finished");
+  assert.deepEqual(await mutate(db, stockCountId, { action: "finish-count", expectedRevision: 2, requestId: "finish-all" }), finished);
+  const replay = await locationCommand(db, stockCountId, "store", 2, 0, store);
+  assert.equal(replay.locationRevision, 1);
+  assert.equal(db.records.get(`hotels/${hotel}/stockCounts/${stockCountId}`).revision, 3);
+  assert.equal([...db.records.keys()].filter((path) => path.startsWith(`hotels/${hotel}/inventoryCheckpoints/`)).length, 2);
+  await assert.rejects(locationCommand(db, stockCountId, "store", 9, 1), { code: "failed-precondition" });
+});
+
+test("mutation receipts reject changed input and recheck current actor and tenant access on replay", async () => {
+  const db = fixture(), { stockCountId } = await create(db);
+  const original = await locationCommand(db, stockCountId, "store", 2, 0, { requestId: "save-a" });
+  await locationCommand(db, stockCountId, "store", 3, 1, { requestId: "save-b" });
+  assert.deepEqual(await locationCommand(db, stockCountId, "store", 2, 0, { requestId: "save-a" }), original);
+  await assert.rejects(locationCommand(db, stockCountId, "store", 8, 0, { requestId: "save-a" }), (error) => error.code === "already-exists" && error.details?.countMutationUncommitted !== true);
+  assert.equal(db.records.get(`hotels/${hotel}/stockCounts/${stockCountId}/locations/store`).countedItems[0].quantity, 3);
+  db.records.set(`hotels/${hotel}/members/counter`, { permissions: [] });
+  await assert.rejects(locationCommand(db, stockCountId, "store", 2, 0, { requestId: "save-a" }), (error) => error.code === "permission-denied" && error.details?.countMutationUncommitted !== true);
+});
+
 test("ordinary hotel user creates canonical snapshots and completes a stock count without admin claims", async () => {
   const db = fixture();
   const { stockCountId } = await create(db);

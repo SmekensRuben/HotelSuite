@@ -1,21 +1,77 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ call: vi.fn(), getDoc: vi.fn(), getDocs: vi.fn() }));
-vi.mock("../firebaseConfig", () => ({ db: {}, functions: {}, auth: { currentUser: { uid: "operator-a" } }, collection: (_db, path) => ({ path }),
+const mocks = vi.hoisted(() => ({ call: vi.fn(), getDoc: vi.fn(), getDocs: vi.fn(), auth: { currentUser: { uid: "operator-a" } } }));
+vi.mock("../firebaseConfig", () => ({ db: {}, functions: {}, auth: mocks.auth, collection: (_db, path) => ({ path }),
   doc: (_db, path, id) => ({ path: id ? `${path}/${id}` : path }), getDoc: mocks.getDoc, getDocs: mocks.getDocs,
   httpsCallable: (_functions, name) => async (data) => ({ data: await mocks.call(name, data) }) }));
-import { createStockCount, finishStockCount, finishStockCountLocation, getStockCountSources, getPendingCountCreation, retryPendingCountCreation, updateStockCountLocationCounts } from "./firebaseStockCounts";
+import { createStockCount, finishStockCount, finishStockCountLocation, getStockCountSources, getPendingCountCreation, retryPendingCountCreation, updateStockCountLocationCounts,
+  getPendingStockCountMutation, retryPendingStockCountMutation } from "./firebaseStockCounts";
 import { getHotelUserDisplayName } from "./firebaseUserManagement";
 beforeEach(() => {
   mocks.call.mockReset(); mocks.getDoc.mockReset(); mocks.getDocs.mockReset();
-  sessionStorage.clear();
-  mocks.call.mockResolvedValue({ hotelUid: "hotel-a", inventoryPolicyVersion: 1, stockCountId: "stock-a", revision: 1, displayName: "Ada Lovelace" });
+  sessionStorage.clear(); localStorage.clear(); mocks.auth.currentUser = { uid: "operator-a" };
+  mocks.call.mockResolvedValue({ hotelUid: "hotel-a", inventoryPolicyVersion: 1, stockCountId: "stock-a", revision: 1,
+    locationId: "store", locationRevision: 1, displayName: "Ada Lovelace" });
 });
 describe("server-owned stock mutation adapter", () => {
+  it("retains an ambiguous location save across remounts and replays its exact command", async () => {
+    mocks.call.mockRejectedValueOnce(new Error("Response lost"));
+    const items = [{ catalogProductId: "coffee", quantity: 2, unitCost: null }];
+    await expect(updateStockCountLocationCounts("hotel-a", "stock-a", "store", items, "operator-a", 3)).rejects.toThrow("Response lost");
+    const original = mocks.call.mock.calls[0][1];
+    expect(getPendingStockCountMutation("hotel-a", "stock-a", "store")).toEqual(original);
+    await expect(updateStockCountLocationCounts("hotel-a", "stock-a", "store", [{ ...items[0], quantity: 9 }], "operator-a", 3)).rejects.toThrow("awaiting confirmation");
+    await retryPendingStockCountMutation("hotel-a", "stock-a", "store");
+    expect(mocks.call.mock.calls[1][1]).toEqual(original);
+    expect(getPendingStockCountMutation("hotel-a", "stock-a", "store")).toBeNull();
+  });
+  it("separates saved mutation commands by user, hotel, count and location", async () => {
+    mocks.call.mockRejectedValueOnce(new Error("Offline"));
+    await expect(updateStockCountLocationCounts("hotel-a", "stock-a", "store", [], null, 0)).rejects.toThrow("Offline");
+    expect(getPendingStockCountMutation("hotel-b", "stock-a", "store")).toBeNull();
+    expect(getPendingStockCountMutation("hotel-a", "stock-b", "store")).toBeNull();
+    expect(getPendingStockCountMutation("hotel-a", "stock-a", "kitchen")).toBeNull();
+    expect(getPendingStockCountMutation("hotel-a", "stock-a")).toBeNull();
+    mocks.auth.currentUser = { uid: "operator-b" };
+    expect(getPendingStockCountMutation("hotel-a", "stock-a", "store")).toBeNull();
+    mocks.auth.currentUser = { uid: "operator-a" };
+    expect(getPendingStockCountMutation("hotel-a", "stock-a", "store")).not.toBeNull();
+  });
+  it("retains the original actor's saved command when an account switch precedes acknowledgement", async () => {
+    let acknowledge;
+    const originalActor = mocks.auth.currentUser;
+    mocks.call.mockReturnValueOnce(new Promise((resolve) => { acknowledge = resolve; }));
+    const save = updateStockCountLocationCounts("hotel-a", "stock-a", "store", [], null, 0);
+    mocks.auth.currentUser = { uid: "operator-b" };
+    acknowledge({ hotelUid: "hotel-a", stockCountId: "stock-a", revision: 1, locationId: "store", locationRevision: 1 });
+    await expect(save).rejects.toThrow("signed-in account changed");
+    expect(getPendingStockCountMutation("hotel-a", "stock-a", "store")).toBeNull();
+    mocks.auth.currentUser = originalActor;
+    expect(getPendingStockCountMutation("hotel-a", "stock-a", "store")).not.toBeNull();
+  });
+  it("allows conflict review after a definite rejection but retains unverified responses", async () => {
+    mocks.call.mockRejectedValueOnce(Object.assign(new Error("Someone else saved this location"), { code: "functions/aborted", details: { countMutationUncommitted: true } }));
+    await expect(updateStockCountLocationCounts("hotel-a", "stock-a", "store", [], null, 0)).rejects.toThrow("Someone else");
+    expect(getPendingStockCountMutation("hotel-a", "stock-a", "store")).toBeNull();
+    mocks.call.mockResolvedValueOnce({ hotelUid: "hotel-a", stockCountId: "stock-a", revision: 5, locationId: "wrong", locationRevision: 1 });
+    await expect(updateStockCountLocationCounts("hotel-a", "stock-a", "store", [], null, 1)).rejects.toThrow("response scope");
+    expect(getPendingStockCountMutation("hotel-a", "stock-a", "store")).not.toBeNull();
+  });
+  it("requires the loaded child revision rather than silently reading newer counts", async () => {
+    await expect(updateStockCountLocationCounts("hotel-a", "stock-a", "store", [])).rejects.toThrow("loaded revision");
+    expect(mocks.getDoc).not.toHaveBeenCalled(); expect(mocks.call).not.toHaveBeenCalled();
+  });
+  it("replays parent completion after a lost response independently of location requests", async () => {
+    mocks.call.mockRejectedValueOnce(new Error("Response lost"));
+    await expect(finishStockCount("hotel-a", "stock-a", null, 4)).rejects.toThrow("Response lost");
+    await retryPendingStockCountMutation("hotel-a", "stock-a");
+    expect(mocks.call.mock.calls[1][1]).toEqual(mocks.call.mock.calls[0][1]);
+    expect(getPendingStockCountMutation("hotel-a", "stock-a")).toBeNull();
+  });
   it("sends identities and quantities without client actor, price or calculated total", async () => {
     await updateStockCountLocationCounts("hotel-a", "stock-a", "store", [{ supplierProductId: "coffee", outletId: "bar",
       quantity: 2, pricePerPurchaseUnit: 999, totalValue: 1998, countedBy: "spoof", countedAt: new Date(), isCounted: true }], "spoof", 4);
     expect(mocks.call).toHaveBeenCalledWith("mutateHotelStockCount", { hotelUid: "hotel-a", stockCountId: "stock-a",
-      locationId: "store", expectedRevision: 4, action: "save-location", countedItems: [
+      locationId: "store", expectedLocationRevision: 4, requestId: expect.any(String), action: "save-location", countedItems: [
         { supplierProductId: "coffee", outletId: "bar", quantity: 2, isCounted: true }] });
     expect(mocks.getDoc).not.toHaveBeenCalled();
   });
@@ -23,8 +79,8 @@ describe("server-owned stock mutation adapter", () => {
     await finishStockCountLocation("hotel-a", "stock-a", "store", [], [{ supplierProductId: "p", outletId: "o", countedBy: "fake" }], "spoof", 3);
     await finishStockCount("hotel-a", "stock-a", "spoof", 4);
     expect(mocks.call.mock.calls[0][1]).toEqual({ hotelUid: "hotel-a", stockCountId: "stock-a", locationId: "store",
-      action: "finish-location", expectedRevision: 3, countedItems: [], templateItemsToAdd: [{ supplierProductId: "p", outletId: "o" }] });
-    expect(mocks.call.mock.calls[1][1]).toEqual({ hotelUid: "hotel-a", stockCountId: "stock-a", action: "finish-count", expectedRevision: 4 });
+      action: "finish-location", expectedLocationRevision: 3, requestId: expect.any(String), countedItems: [], templateItemsToAdd: [{ supplierProductId: "p", outletId: "o" }] });
+    expect(mocks.call.mock.calls[1][1]).toEqual({ hotelUid: "hotel-a", stockCountId: "stock-a", action: "finish-count", expectedRevision: 4, requestId: expect.any(String) });
   });
   it("reuses creation identity after a lost response without submitting client snapshots", async () => {
     const input = { name: "Weekly", type: "Weekly", createdBy: "spoof",
