@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { ChevronDown, PackageSearch, Trash2 } from "lucide-react";
 import { useScopedAsync } from "../../hooks/useScopedAsync";
 import { getPurchaseRequestContext } from "../../services/firebasePurchaseRequests";
 import { purchaseRequestMoney, purchaseRequestPriceReviewReason, purchaseRequestPriceValidity, purchaseRequestUnitPrice, requestLineTotalMinor } from "../../utils/purchaseRequests";
@@ -38,16 +38,31 @@ export default function PurchaseRequestLineEditor({ line, index, suppliers, hote
   const [pickerOpen, setPickerOpen] = useState(false);
   const selectedSupplier = suppliers.find((supplier) => supplier.id === line.supplierId && supplier.active !== false);
   const unavailableSupplier = Boolean(line.supplierId && !selectedSupplier);
-  return <article aria-label={`Purchase line ${index + 1}`} className="rounded-xl border border-stone-200 p-4">
-    <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold uppercase text-stone-500">Line {index + 1} · {line.kind === "supplier" ? "Supplier product" : "Free line"}</p><button type="button" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center text-stone-600 hover:text-red-800" aria-label={`Remove line ${index + 1}`} disabled={locked} onClick={onRemove}><Trash2 size={18} /></button></div>
-    <div className="flex flex-wrap items-end gap-3"><label className="min-w-0 flex-1 text-sm font-medium">Line {index + 1} supplier<select className={field} value={line.supplierId} disabled={locked} onChange={(event) => { setPickerOpen(false); onSupplierChange(event.target.value); }}><option value="">Choose a supplier</option>{unavailableSupplier && <option value={line.supplierId}>{line.supplierName || line.supplierId} · Unavailable</option>}{suppliers.filter((supplier) => supplier.active !== false).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></label><button type="button" className="ht-button-secondary" disabled={locked || !selectedSupplier} aria-expanded={pickerOpen} onClick={() => setPickerOpen((value) => !value)}>Choose supplier product</button></div>
+  const [detailsOpen, setDetailsOpen] = useState(() => !line.supplierId || !line.description?.trim() || !line.unit?.trim() || unavailableSupplier);
+  const lineTotalMinor = requestLineTotalMinor([line]);
+  return <article aria-label={`Purchase line ${index + 1}`} className="relative py-3">
+    <div className="grid grid-cols-2 gap-x-3 gap-y-2 min-[900px]:grid-cols-[minmax(0,1fr)_5.5rem_8rem_7rem_2.75rem] min-[900px]:items-start">
+      <label className="col-span-2 min-w-0 pr-12 text-sm font-medium min-[900px]:col-span-1 min-[900px]:pr-0"><span className="min-[900px]:sr-only">Line {index + 1} description</span><input className={`${field} min-[900px]:mt-0`} value={line.description} maxLength={500} disabled={locked} placeholder="Product or service description" onChange={(event) => onChange({ description: event.target.value })} /></label>
+      <label className="min-w-0 text-sm font-medium"><span className="min-[900px]:sr-only">Quantity</span><input type="number" min="0.000001" max="1000000" step="0.000001" className={`${field} min-[900px]:mt-0`} value={line.quantity} disabled={locked} onChange={(event) => onChange({ quantity: event.target.value })} /></label>
+      <label className="min-w-0 text-sm font-medium"><span className="min-[900px]:sr-only">Net unit price ({currency})</span><input type="number" min="0" max="1000000" step="0.000001" className={`${field} min-[900px]:mt-0`} value={line.unitPrice} disabled={locked} onChange={(event) => onChange({ unitPrice: event.target.value })} /></label>
+      <div className="col-span-2 flex min-h-[44px] min-w-0 items-center justify-between gap-2 text-sm min-[900px]:col-span-1 min-[900px]:justify-end"><span className="text-stone-500 min-[900px]:sr-only">Line total</span><span className="min-w-0 break-words text-right font-semibold tabular-nums">{lineTotalMinor == null ? "—" : purchaseRequestMoney(lineTotalMinor, currency)}</span></div>
+      <button type="button" className="absolute right-0 top-3 inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-stone-500 hover:bg-red-50 hover:text-red-800 disabled:opacity-50 min-[900px]:static" aria-label={`Remove line ${index + 1}`} disabled={locked} onClick={onRemove}><Trash2 size={17} /></button>
+      <div className="col-span-2 flex flex-wrap items-start gap-x-4 gap-y-1 min-[900px]:col-span-5">
+        <details className="group min-w-0 flex-1 basis-48" open={detailsOpen} onToggle={(event) => setDetailsOpen(event.currentTarget.open)}>
+          <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 text-xs text-stone-600 min-[900px]:min-h-[32px] [&::-webkit-details-marker]:hidden" aria-label={`Line ${index + 1} details`}>
+            <span className="min-w-0 flex-1 break-words">{selectedSupplier?.name || line.supplierName || (line.supplierId ? "Supplier unavailable" : "Select supplier")}{line.unit ? ` · ${line.unit}` : ""}</span><span className="font-medium text-stone-700">Details</span><ChevronDown size={14} className="shrink-0 transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="mb-1 mt-2 grid gap-3 rounded-lg bg-stone-50 p-3 sm:grid-cols-[minmax(0,1fr)_9rem]">
+            <label className="min-w-0 text-sm font-medium">Line {index + 1} supplier<select className={field} value={line.supplierId} disabled={locked} onChange={(event) => { setPickerOpen(false); onSupplierChange(event.target.value); }}><option value="">Choose a supplier</option>{unavailableSupplier && <option value={line.supplierId}>{line.supplierName || line.supplierId} · Unavailable</option>}{suppliers.filter((supplier) => supplier.active !== false).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></label>
+            <label className="min-w-0 text-sm font-medium">Unit<input className={field} value={line.unit} disabled={locked} onChange={(event) => onChange({ unit: event.target.value })} maxLength={50} /></label>
+          </div>
+        </details>
+        <button type="button" className="inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-1 text-xs font-medium text-brand-800 hover:bg-brand-50 disabled:cursor-not-allowed disabled:text-stone-400 min-[900px]:min-h-[32px]" disabled={locked || !selectedSupplier} aria-expanded={pickerOpen} onClick={() => setPickerOpen((value) => !value)}><PackageSearch size={15} />Choose supplier product</button>
+      </div>
+    </div>
     {unavailableSupplier && <p className="mt-2 text-xs text-amber-900">This saved supplier is no longer available. Choose an active supplier before saving this line.</p>}
-    <p className="mt-2 text-xs text-stone-600">Changing the supplier clears this line's product, purchase pack and quoted price. Its description and quantity stay unchanged.</p>
-    {line.supplierChanged && <p role="status" className="mt-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-950">Supplier changed. Choose a product or enter a new net quotation and unit for this line.</p>}
-    {pickerOpen && selectedSupplier && <SupplierProductPicker key={`${scopeKey}:${line.id}:${line.supplierId}`} hotelUid={hotelUid} scopeKey={scopeKey} lineId={line.id} supplierId={line.supplierId} currency={currency} locked={locked} onChoose={(product, option) => { onChooseProduct(product, option); setPickerOpen(false); }} onCancel={() => setPickerOpen(false)} />}
-    <label className="mt-3 block text-sm font-medium">Line {index + 1} description<input className={field} value={line.description} maxLength={500} disabled={locked} onChange={(event) => onChange({ description: event.target.value })} /></label>
-    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3"><label className="text-sm font-medium">Quantity<input type="number" min="0.000001" max="1000000" step="0.000001" className={field} value={line.quantity} disabled={locked} onChange={(event) => onChange({ quantity: event.target.value })} /></label><label className="text-sm font-medium">Net unit price ({currency})<input type="number" min="0" max="1000000" step="0.000001" className={field} value={line.unitPrice} disabled={locked} onChange={(event) => onChange({ unitPrice: event.target.value })} /></label><label className="text-sm font-medium">Unit<input className={field} value={line.unit} disabled={locked} onChange={(event) => onChange({ unit: event.target.value })} maxLength={50} /></label></div>
+    {line.supplierChanged && <p role="status" className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-950">Supplier changed. Choose a product or enter a new net quotation and unit for this line.</p>}
+    {pickerOpen && selectedSupplier && <SupplierProductPicker key={`${scopeKey}:${line.id}:${line.supplierId}`} hotelUid={hotelUid} scopeKey={scopeKey} lineId={line.id} supplierId={line.supplierId} currency={currency} locked={locked} onChoose={(product, option) => { onChooseProduct(product, option); setPickerOpen(false); setDetailsOpen(false); }} onCancel={() => setPickerOpen(false)} />}
     <PriceReview product={line.priceReview} currency={currency} />
-    <p className="mt-3 text-right text-sm font-semibold">{purchaseRequestMoney(requestLineTotalMinor([line]), currency)} net</p>
   </article>;
 }
