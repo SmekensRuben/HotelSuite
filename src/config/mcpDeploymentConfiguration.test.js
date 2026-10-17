@@ -17,10 +17,12 @@ const issuer = "https://hotel-toolkit.web.app";
 const client = { client_id: "codex-private", client_name: 'Codex "Hotel" O\'Reilly \\ Pilot #1',
   redirect_uris: ["http://127.0.0.1/callback"], token_endpoint_auth_method: "none" };
 const baseEnv = () => ({ FIREBASE_PROJECT_ID: "hotel-toolkit", FIREBASE_WORKLOAD_IDENTITY_PROVIDER: FUNCTIONS_PROVIDER,
-  FIREBASE_DEPLOY_SERVICE_ACCOUNT: FUNCTIONS_DEPLOY_ACCOUNT, FUNCTIONS_APP_BASE_URL: appOrigin });
+  FIREBASE_DEPLOY_SERVICE_ACCOUNT: FUNCTIONS_DEPLOY_ACCOUNT, FUNCTIONS_APP_BASE_URL: appOrigin,
+  RELEASE_MODE: "development", RELEASE_SHA: "a".repeat(40) });
 const activeEnv = () => ({ ...baseEnv(), HOTEL_MCP_ENABLED: "true", HOTEL_MCP_PUBLIC_ORIGIN: issuer,
   HOTEL_MCP_CLIENTS_JSON: JSON.stringify([client], null, 2), HOTEL_MCP_ALLOWED_ORIGINS_JSON: '["https://browser.example.com"]' });
-const disabled = { APP_BASE_URL: appOrigin, HOTEL_MCP_ENABLED: "false", HOTEL_MCP_PUBLIC_ORIGIN: "",
+const disabled = { DEPLOYMENT_ENV: "production", RELEASE_MODE: "development", RELEASE_SHA: "a".repeat(40),
+  APP_BASE_URL: appOrigin, HOTEL_MCP_ENABLED: "false", HOTEL_MCP_PUBLIC_ORIGIN: "",
   HOTEL_MCP_CLIENTS_JSON: "[]", HOTEL_MCP_ALLOWED_ORIGINS_JSON: "[]" };
 
 describe("MCP repository-variable activation", () => {
@@ -31,8 +33,24 @@ describe("MCP repository-variable activation", () => {
       expect(deploy.env[key]).toBe(`\${{ vars.${key} }}`);
     }
     expect(deploy.env.FUNCTIONS_APP_BASE_URL).toBe(appOrigin);
-    expect(deploy.steps.find((step) => step.run === "bash scripts/firebase/check-functions-runtime.sh").if).toBe("steps.release.outputs.deploy == 'true'");
-    expect(deploy.steps.find((step) => step.run === "node scripts/firebase/deploy-reviewed-functions.mjs").if).toBe("steps.current.outputs.deploy == 'true'");
+    expect(workflow.jobs.select.outputs.deploy).toBe("${{ steps.release.outputs.deploy }}");
+    expect(deploy.if).toContain("needs.select.outputs.deploy == 'true'");
+    expect(deploy.steps.findIndex((step) => step.run === "bash scripts/firebase/check-functions-runtime.sh"))
+      .toBeLessThan(deploy.steps.findIndex((step) => step.run === "node scripts/firebase/deploy-reviewed-functions.mjs"));
+  });
+
+  it.each(["development", "controlled"])("keeps explicit production configuration in %s mode", mode => {
+    expect(functionsRuntimeParameters({ ...baseEnv(), RELEASE_MODE: mode })).toMatchObject({
+      DEPLOYMENT_ENV: "production", RELEASE_MODE: mode, RELEASE_SHA: "a".repeat(40), APP_BASE_URL: appOrigin,
+    });
+  });
+
+  it.each([undefined, "", "dev", " controlled "])("rejects unspecified or invalid release policy %s", mode => {
+    expect(() => functionsRuntimeParameters({ ...baseEnv(), RELEASE_MODE: mode })).toThrow("RELEASE_MODE");
+  });
+
+  it("requires a complete deployment version", () => {
+    expect(() => functionsRuntimeParameters({ ...baseEnv(), RELEASE_SHA: "main" })).toThrow("commit SHA");
   });
 
   it.each([undefined, "", "false"])("keeps MCP disabled for activation=%s even with incomplete stored settings", (flag) => {

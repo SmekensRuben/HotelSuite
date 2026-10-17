@@ -6,7 +6,7 @@ const { digest, text } = require("./validation");
 const { writePlatformAudit } = require("./platformAudit");
 const { requireSaasRollout } = require("./saasRollout");
 const { runtimePolicy } = require("./environmentPolicy");
-const { CONFIGURATION_PATH, validatePurchasingMonitoringConfiguration } = require("./purchasingMonitoringConfig");
+const { CONFIGURATION_PATH, purchasingMonitoringAllowed, validatePurchasingMonitoringConfiguration } = require("./purchasingMonitoringConfig");
 
 const PROCESSES = Object.freeze({ "purchase-requests": "purchaserequests", orders: "orders", "stock-counts": "stockcounts",
   contracts: "contracts", "supplier-imports": "supplierproducts", "catalog-sync": "catalogproducts" });
@@ -22,16 +22,17 @@ function unexpectedErrorCode(error) {
 }
 
 async function recordPurchasingError(request, { hotelUid, process, code, origin }, services = {}) {
-  const db = services.firestore || admin.firestore();
-  const runtime = services.runtimePolicy || runtimePolicy();
   hotelUid = requireDocumentId(hotelUid, "hotelUid");
   if (!Object.hasOwn(PROCESSES, process) || !CODES.has(code) || !["frontend", "backend"].includes(origin)) {
     throw new HttpsError("invalid-argument", "Use an allowed purchasing workflow and error code.");
   }
+  const db = services.firestore || admin.firestore();
+  const runtime = services.runtimePolicy || runtimePolicy();
   const now = services.now?.() ?? Date.now(), day = new Date(now).toISOString().slice(0, 10);
   return db.runTransaction(async (tx) => {
     await requireSaasRollout(db, tx);
     await requireHotelPermission(db, request, hotelUid, PROCESSES[process], "read", tx, services.auth);
+    if (!purchasingMonitoringAllowed()) return { hotelUid, accepted: false, reason: "monitoring-disabled" };
     const marker = await tx.get(db.doc(CONFIGURATION_PATH));
     if (!marker.exists) return { hotelUid, accepted: false, reason: "monitoring-disabled" };
     let configuration;

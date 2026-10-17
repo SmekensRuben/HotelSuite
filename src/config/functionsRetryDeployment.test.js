@@ -18,6 +18,7 @@ const inventory = () => ({ status: "success", result: [endpoint(), imageEndpoint
 const functionExports = () => ({ [id]: { __endpoint: { ...endpoint(), region: ["us-west1"],
   eventTrigger: { ...endpoint().eventTrigger, retry: true } } }, [imageId]: { __endpoint: { ...imageEndpoint(), region: ["us-west1"] } } });
 const env = () => ({ GITHUB_ACTIONS: "true", FIREBASE_FUNCTIONS_DEPLOY_ENABLED: "true", FIREBASE_PROJECT_ID: "hotel-toolkit",
+  RELEASE_MODE: "development", RELEASE_SHA: "a".repeat(40),
   FIREBASE_WORKLOAD_IDENTITY_PROVIDER: FUNCTIONS_PROVIDER, FIREBASE_DEPLOY_SERVICE_ACCOUNT: FUNCTIONS_DEPLOY_ACCOUNT,
   FUNCTIONS_APP_BASE_URL: "https://hotel-toolkit--hotel-toolkit.europe-west4.hosted.app" });
 
@@ -96,7 +97,7 @@ describe("reviewed import retry release", () => {
       expect(() => planReviewedRetryActivation(functionExports(), value)).toThrow();
     }
   });
-  it.each(["GITHUB_ACTIONS", "FIREBASE_FUNCTIONS_DEPLOY_ENABLED", "FIREBASE_PROJECT_ID"])("stops before any command with invalid %s", field => {
+  it.each(["GITHUB_ACTIONS", "FIREBASE_FUNCTIONS_DEPLOY_ENABLED", "FIREBASE_PROJECT_ID", "RELEASE_MODE", "RELEASE_SHA"])("stops before any command with invalid %s", field => {
     const run = vi.fn();
     expect(() => deployReviewedFunctions({ env: { ...env(), [field]: "wrong" }, run, loadFunctions: functionExports })).toThrow();
     expect(run).not.toHaveBeenCalled();

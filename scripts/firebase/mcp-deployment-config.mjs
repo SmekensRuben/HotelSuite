@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { normalizePublicHotelMcpConfig } from "../../functions/src/hotelMcpConfig.js";
 import { requireFunctionsConfiguration } from "./functions-release-policy.mjs";
+import { requireReleaseMode, requireReleaseSha } from "./release-mode-policy.mjs";
 
 function jsonParameter(env, key) {
   const value = env[key] || "[]";
@@ -16,7 +17,8 @@ export function functionsRuntimeParameters(env) {
   if (flag !== undefined && flag !== "" && flag !== "false" && flag !== "true") {
     throw new Error("HOTEL_MCP_ENABLED must be exactly true or false, or unset to keep MCP disabled.");
   }
-  const parameters = { APP_BASE_URL: appOrigin, HOTEL_MCP_ENABLED: "false", HOTEL_MCP_PUBLIC_ORIGIN: "",
+  const parameters = { DEPLOYMENT_ENV: "production", RELEASE_MODE: requireReleaseMode(env.RELEASE_MODE),
+    RELEASE_SHA: requireReleaseSha(env.RELEASE_SHA), APP_BASE_URL: appOrigin, HOTEL_MCP_ENABLED: "false", HOTEL_MCP_PUBLIC_ORIGIN: "",
     HOTEL_MCP_CLIENTS_JSON: "[]", HOTEL_MCP_ALLOWED_ORIGINS_JSON: "[]" };
   // Disabling must also work when an operator is repairing invalid activation settings.
   if (flag !== "true") return parameters;
