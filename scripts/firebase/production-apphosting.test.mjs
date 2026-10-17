@@ -137,3 +137,62 @@ test("HTTP failures do not expose tokens or provider response payloads", async (
   const request = createProductionRequest("private-token", async () => ({ ok: false, status: 403, json: async () => ({ error: "private-token confidential-response-content" }) }));
   await assert.rejects(request("hosting", BACKEND), error => !error.message.includes("private-token") && !error.message.includes("confidential-response-content"));
 });
+
+test("production metadata GET retries dropped connections with the same target and identity", async () => {
+  const calls = [], pauses = []; let tokenReads = 0;
+  const request = createProductionRequest(async () => { tokenReads++; return "private-token"; }, async (url, options) => {
+    calls.push({ url: String(url), options });
+    if (calls.length < 3) throw new TypeError("socket closed private-token confidential-response-content");
+    return { ok: true, status: 200, json: async () => ({ name: BACKEND }) };
+  }, { pause: async ms => pauses.push(ms) });
+  assert.deepEqual(await request("hosting", BACKEND, { params: { pageToken: "opaque + token" } }), { name: BACKEND });
+  assert.equal(calls.length, 3); assert.equal(tokenReads, 1); assert.deepEqual(pauses, [250, 500]);
+  assert.equal(new Set(calls.map(call => call.url)).size, 1);
+  assert.equal(new URL(calls[0].url).searchParams.get("pageToken"), "opaque + token");
+  for (const call of calls) {
+    assert.equal(call.options.method, "GET"); assert.equal(call.options.headers.Authorization, "Bearer private-token");
+    assert.equal(call.options.headers["X-Goog-User-Project"], PROJECT); assert.equal(call.options.body, undefined);
+  }
+  assert.notEqual(calls[0].options.signal, calls[1].options.signal);
+});
+
+test("persistent transport failures are bounded and production mutations or credential failures never retry", async () => {
+  for (const method of ["GET", "POST", "PATCH", "PUT", "DELETE"]) {
+    let calls = 0; const pauses = [];
+    const request = createProductionRequest("private-token", async () => { calls++; throw new Error("private-token confidential-response-content"); },
+      { pause: async ms => pauses.push(ms) });
+    await assert.rejects(request("hosting", BACKEND, { method }), error => /transport error/.test(error.message)
+      && !/private-token|confidential-response-content/.test(error.message));
+    assert.equal(calls, method === "GET" ? 3 : 1); assert.deepEqual(pauses, method === "GET" ? [250, 500] : []);
+  }
+  let calls = 0;
+  const request = createProductionRequest(() => { throw new Error("private-token"); }, async () => { calls++; });
+  await assert.rejects(request("hosting", BACKEND), error => /credential lookup failed/.test(error.message) && !error.message.includes("private-token"));
+  assert.equal(calls, 0);
+});
+
+test("HTTP failures, missing resources and malformed JSON are never retried or accepted as rollout evidence", async () => {
+  for (const status of [400, 401, 403, 404, 429, 503]) {
+    let calls = 0;
+    const request = createProductionRequest("private-token", async () => { calls++; return { ok: false, status }; });
+    await assert.rejects(request("hosting", BACKEND), new RegExp(`HTTP ${status}`)); assert.equal(calls, 1);
+    if (status === 404) { assert.equal(await request("hosting", BACKEND, { allowMissing: true }), null); assert.equal(calls, 2); }
+  }
+  let calls = 0;
+  const request = createProductionRequest("private-token", async () => { calls++; return { ok: true, json: async () => { throw new Error("private-token"); } }; });
+  await assert.rejects(request("hosting", BACKEND), /invalid JSON/); assert.equal(calls, 1);
+});
+
+test("a dropped post-rollout evidence read recovers without starting another deployment", async () => {
+  const state = fixture(); let published = false, drops = 0;
+  const request = createProductionRequest("private-token", async (url, options) => {
+    const endpoint = new URL(url), hosting = endpoint.hostname === "firebaseapphosting.googleapis.com";
+    const name = endpoint.pathname.replace(hosting ? /^\/v1beta\// : /^\/v1\//, "");
+    if (published && hosting && name === BACKEND && drops++ === 0) throw new TypeError("fetch failed");
+    const result = await state.request(hosting ? "hosting" : "repository", name, { method: options.method });
+    return { ok: true, status: 200, json: async () => result };
+  }, { pause: async () => {} });
+  const result = await publishProductionHosting({ request, sha: SHA, run: async args => { await state.run(args); published = true; }, timeoutMs: 1000, pollMs: 1 });
+  assert.equal(result.sha, SHA); assert.equal(result.servingPercent, 100);
+  assert.equal(state.calls.filter(call => call.cli).length, 1); assert.ok(drops > 0);
+});
