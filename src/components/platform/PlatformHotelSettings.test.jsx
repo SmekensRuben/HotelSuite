@@ -8,6 +8,7 @@ const api = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), readiness: vi.fn() 
 vi.mock("../../services/firebasePlatform", () => ({ getPlatformHotel: api.get, updatePlatformHotel: api.save, startPlatformSupport: vi.fn(), platformError: (error) => error.message }));
 vi.mock("../../services/firebaseOnboarding", () => ({ getHotelSetupReadiness: api.readiness }));
 vi.mock("./HotelDemoDataPanel", () => ({ default: () => null }));
+vi.mock("./PurchasingMonitoringPanel", () => ({ default: () => null }));
 const dto = { hotelUid: "hotel-a", name: "Hotel A", revision: 3, timeZone: null, legacyTimeZone: null, currency: null,
   settingsFingerprint: "a".repeat(64), contactName: "", contactEmail: "", memberCount: 0, administrators: [], subscription: null };
 const readiness = { status: "pending", computedAtMillis: 1, integrity: { issueCount: 0, issues: [] }, recentInvitations: [], checks: [

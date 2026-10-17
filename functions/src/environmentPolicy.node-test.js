@@ -34,7 +34,10 @@ function inspectDeployment(projectId, deploymentEnvironment) {
       const secrets = Object.fromEntries(Object.entries(endpoints).filter(([, value]) => value?.__endpoint?.secretEnvironmentVariables?.length)
         .map(([name, value]) => [name, value.__endpoint.secretEnvironmentVariables.map(item => item.key)]));
       const scheduled = Object.entries(endpoints).filter(([, value]) => value?.__endpoint?.scheduleTrigger);
-      const results = process.env.DEPLOYMENT_ENV === 'production' ? [] : await Promise.all(scheduled.map(async ([name, handler]) => ({name, result: await handler.run({})})));
+      // The internal monitoring evaluator is intentionally allowed in staging;
+      // its database behavior is verified by the emulator monitoring suite.
+      const providerWorkers = scheduled.filter(([name]) => name !== 'checkPlatformImportHealth');
+      const results = process.env.DEPLOYMENT_ENV === 'production' ? [] : await Promise.all(providerWorkers.map(async ([name, handler]) => ({name, result: await handler.run({})})));
       const declaredSecrets = require('firebase-functions/params').declaredParams.filter(param => param.constructor.name === 'SecretParam').map(param => param.name);
       console.log(JSON.stringify({ secrets, declaredSecrets, scheduled: scheduled.map(([name]) => name), results }));
     })().catch(error => { console.error(error); process.exitCode = 1; });`;
@@ -46,12 +49,13 @@ function inspectDeployment(projectId, deploymentEnvironment) {
   return JSON.parse(result.stdout.trim().split("\n").at(-1));
 }
 
-test("the staging deployment binds no provider secrets and all exported scheduled workers skip before accessing Firebase", () => {
+test("staging binds no provider secrets and scheduled provider workers skip before accessing Firebase", () => {
   const deployment = inspectDeployment(STAGING_FIREBASE_PROJECT_ID, "staging");
   assert.deepEqual(deployment.secrets, {});
   assert.deepEqual(deployment.declaredSecrets, []);
   assert.ok(deployment.scheduled.length >= 12);
-  assert.equal(deployment.results.length, deployment.scheduled.length);
+  assert.ok(deployment.scheduled.includes("checkPlatformImportHealth"));
+  assert.equal(deployment.results.length, deployment.scheduled.length - 1);
   for (const { name, result } of deployment.results) assert.deepEqual(result, { skipped: true, reason: "scheduled-workers-disabled", environment: "staging" }, name);
 });
 

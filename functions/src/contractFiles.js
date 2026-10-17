@@ -1,4 +1,5 @@
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { withPurchasingTelemetry } = require("./purchasingTelemetry");
 const { createHash } = require("node:crypto");
 const { admin } = require("./config");
 const { requireHotelPermission } = require("./authorization");
@@ -231,4 +232,4 @@ async function contractDocumentHandler(req, res, services = {}) {
   }
 }
 module.exports = { MAX_FILE_BYTES, strictId, contractDate, filesOf, contractView, contractInput, listHotelContractsHandler, listContractFollowersHandler, saveHotelContractHandler, readContractFile, uploadContractDocument, contractDocumentHandler,
-  listHotelContracts: onCall(options, listHotelContractsHandler), listContractFollowers: onCall(options, listContractFollowersHandler), saveHotelContract: onCall(options, saveHotelContractHandler), contractDocument: onRequest(options, contractDocumentHandler) };
+  listHotelContracts: onCall(options, withPurchasingTelemetry(listHotelContractsHandler, "contracts")), listContractFollowers: onCall(options, listContractFollowersHandler), saveHotelContract: onCall(options, withPurchasingTelemetry(saveHotelContractHandler, "contracts")), contractDocument: onRequest(options, contractDocumentHandler) };

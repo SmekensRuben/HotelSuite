@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { withPurchasingTelemetry } = require("./purchasingTelemetry");
 const { admin } = require("./config");
 const { requireHotelPermission, normalizedPermissions, permissionAllows } = require("./authorization");
 const { requireDocumentId } = require("./subscriptions");
@@ -685,4 +686,4 @@ module.exports = { getHotelPurchaseRequestContextHandler, listHotelPurchaseReque
   getHotelPurchaseBudgetsHandler, saveHotelPurchaseBudgetsHandler: guardedCommand(saveHotelPurchaseBudgetsHandler, "purchasebudgets", "update"), getHotelPurchaseRequestSettingsHandler,
   saveHotelPurchaseRequestSettingsHandler: guardedCommand(saveHotelPurchaseRequestSettingsHandler, "purchasebudgets", "settings"),
   purchaseRequestInternals: { authorize, storedSettings, storedRequest, draftInputFromSnapshot, draftSnapshot, currentApprover, canonicalDigest, requestPath, settingsPath, budgetPath } };
-for (const name of ["getHotelPurchaseRequestContext", "listHotelPurchaseRequests", "getHotelPurchaseRequest", "mutateHotelPurchaseRequest", "getHotelPurchaseBudgets", "saveHotelPurchaseBudgets", "getHotelPurchaseRequestSettings", "saveHotelPurchaseRequestSettings"]) module.exports[name] = onCall(options, gated(module.exports[`${name}Handler`]));
+for (const name of ["getHotelPurchaseRequestContext", "listHotelPurchaseRequests", "getHotelPurchaseRequest", "mutateHotelPurchaseRequest", "getHotelPurchaseBudgets", "saveHotelPurchaseBudgets", "getHotelPurchaseRequestSettings", "saveHotelPurchaseRequestSettings"]) module.exports[name] = onCall(options, gated(withPurchasingTelemetry(module.exports[`${name}Handler`], "purchase-requests")));

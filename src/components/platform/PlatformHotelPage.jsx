@@ -5,6 +5,7 @@ import { usePlatformQuery, usePlatformScope } from "../../hooks/usePlatformQuery
 import { Title, QueryState, Status, Moment, button, primary, field, panel } from "./PlatformShared";
 import HotelSetupChecklist from "./HotelSetupChecklist";
 import HotelDemoDataPanel from "./HotelDemoDataPanel";
+import PurchasingMonitoringPanel from "./PurchasingMonitoringPanel";
 import { Combobox } from "../ui/combobox";
 import { currencyChoices, timeZoneChoices, validTimeZoneChoice } from "../../utils/propertySettingChoices";
 
@@ -47,6 +48,7 @@ export default function PlatformHotelPage() {
     {message && <p role={message.error ? "alert" : "status"} className={`${panel} mb-4`}>{message.text}</p>}
     <QueryState query={query}>{query.data && <div className="grid gap-6 xl:grid-cols-2">
       <div className="xl:col-span-2"><HotelSetupChecklist hotelUid={hotelUid} refreshKey={`${query.data.revision}:${demoRefresh}`} /></div>
+      <div className="xl:col-span-2"><PurchasingMonitoringPanel hotelUid={hotelUid} /></div>
       <form ref={propertyForm} id="property-and-contact" onSubmit={save} className={`${panel} scroll-mt-24`}><h2 className="text-lg font-semibold">Property and contact</h2><p className="mt-1 text-xs text-slate-500">Permanent hotel ID: {hotelUid}</p>
         <label className="mt-4 block text-sm font-medium">Hotel name<input required disabled={busy} maxLength={200} className={field} value={form.name || ""} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">

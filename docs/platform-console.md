@@ -1,5 +1,9 @@
 # Platform administration and import monitoring
 
+Purchasing & Inventory now shares this console's incidents and evaluator. See
+[monitoring coverage](purchasing-monitoring.md) and the
+[environment activation and production checklist](purchasing-monitoring-release.md).
+
 A verified platform administrator can use `/platform` without any hotel assignment.
 The same sign-in serves two distinct workspaces. Platform authority is checked from
 current Firebase Auth on every administrative callable. Hotel work requires a

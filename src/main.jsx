@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './index.css';
-import ErrorBoundary from "components/shared/ErrorBoundary"; 
+import ErrorBoundary, { PurchasingErrorBoundary } from "components/shared/ErrorBoundary";
 import { HotelProvider } from "./contexts/HotelContext"; // ✅ import
 import './i18n';
 
@@ -12,7 +12,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <BrowserRouter>
       <ErrorBoundary>
         <HotelProvider>
-          <App />
+          <PurchasingErrorBoundary><App /></PurchasingErrorBoundary>
         </HotelProvider>
       </ErrorBoundary>
     </BrowserRouter>         

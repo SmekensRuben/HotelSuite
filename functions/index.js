@@ -114,6 +114,8 @@ for (const module of ["platformConsole", "platformMonitoring", "platformSupport"
   }
 }
 exports.syncPlatformImportTelemetry = require("./src/importTelemetry").syncPlatformImportTelemetry;
+exports.reportHotelPurchasingError = require("./src/purchasingTelemetry").reportHotelPurchasingError;
+exports.resolvePlatformWorkflowIncident = require("./src/purchasingTelemetry").resolvePlatformWorkflowIncident;
 
 // Explicit, platform-only fictional data for the reserved test hotel.
 exports.manageHotelDemoData = require("./src/demoData").manageHotelDemoData;

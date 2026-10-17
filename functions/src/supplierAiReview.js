@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { withPurchasingTelemetry } = require("./purchasingTelemetry");
 const { admin } = require("./config");
 const { requireDocumentId } = require("./subscriptions");
 const { digest, revision } = require("./validation");
@@ -589,11 +590,11 @@ async function applyHotelSupplierImportFormatHandler(request, services = {}) {
 }
 
 const options = { region: "us-central1", cors: true, timeoutSeconds: 120 };
-const readHotelSupplierAiImportWorkspace = onCall(options, gated(readHotelSupplierAiImportWorkspaceHandler));
-const decideHotelSupplierAiImportRows = onCall(options, gated(decideHotelSupplierAiImportRowsHandler));
-const completeHotelSupplierAiImportReview = onCall(options, gated(completeHotelSupplierAiImportReviewHandler));
-const applyHotelSupplierAiImportMapping = onCall(options, gated(applyHotelSupplierAiImportMappingHandler));
-const applyHotelSupplierImportFormat = onCall(options, gated(applyHotelSupplierImportFormatHandler));
+const readHotelSupplierAiImportWorkspace = onCall(options, gated(withPurchasingTelemetry(readHotelSupplierAiImportWorkspaceHandler, "supplier-imports")));
+const decideHotelSupplierAiImportRows = onCall(options, gated(withPurchasingTelemetry(decideHotelSupplierAiImportRowsHandler, "supplier-imports")));
+const completeHotelSupplierAiImportReview = onCall(options, gated(withPurchasingTelemetry(completeHotelSupplierAiImportReviewHandler, "supplier-imports")));
+const applyHotelSupplierAiImportMapping = onCall(options, gated(withPurchasingTelemetry(applyHotelSupplierAiImportMappingHandler, "supplier-imports")));
+const applyHotelSupplierImportFormat = onCall(options, gated(withPurchasingTelemetry(applyHotelSupplierImportFormatHandler, "supplier-imports")));
 module.exports = { REVIEW_VERSION, MAX_REVIEW_BATCH, emptyReviewState, adjustReviewState, validateReviewState, publicReviewCounts,
   reviewStatus, canApprove, bulkEligible, publicReview, indexRow, writeIndex, requireSettledFormat,
   readHotelSupplierAiImportWorkspaceHandler, decideHotelSupplierAiImportRowsHandler, completeHotelSupplierAiImportReviewHandler, applyHotelSupplierAiImportMappingHandler,

@@ -1,6 +1,7 @@
 import { collection, db, doc, getDoc, getDocs, functions, httpsCallable, auth } from "../firebaseConfig";
 
 import { poolProcurementRead } from "./procurementReadPool";
+import { reportPurchasingError } from "./firebasePurchasingTelemetry";
 
 export const STOCK_COUNT_TYPES = ["Ad Hoc", "Daily", "Weekly", "Month-End"];
 export const STOCK_COUNT_STATUSES = ["Started", "In Progress", "Finished"];
@@ -254,6 +255,7 @@ async function sendStockCountMutation(payload, storageKey) {
     clearOwnCommand();
     return result.data;
   } catch (error) {
+    if (auth.currentUser === requestedActor) reportPurchasingError(payload.hotelUid, "stock-counts", error);
     if (auth.currentUser === requestedActor && error?.details?.countMutationUncommitted === true) clearOwnCommand();
     notifyCountCreation();
     throw error;
@@ -344,6 +346,7 @@ export async function createStockCount(hotelUid, input) {
     sessionStorage.removeItem(storageKey); notifyCountCreation();
     return { id: result.data.stockCountId, ...result.data };
   } catch (error) {
+    reportPurchasingError(hotelUid, "stock-counts", error);
     if (error?.details?.countRequestUncommitted === true) sessionStorage.removeItem(storageKey);
     notifyCountCreation();
     throw error;

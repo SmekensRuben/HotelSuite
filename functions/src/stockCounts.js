@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { withPurchasingTelemetry } = require("./purchasingTelemetry");
 const { admin } = require("./config");
 const { requireHotelPermission } = require("./authorization");
 const { requireDocumentId, requireHotelSubscription } = require("./subscriptions");
@@ -430,5 +431,5 @@ async function mutateHotelStockCountHandler(request, services = {}) {
 const options = { region: "us-central1", cors: true, maxInstances: 5, concurrency: 8, timeoutSeconds: 120 };
 module.exports = { countsInput, canonicalValue, createHotelStockCountHandler, mutateHotelStockCountHandler,
   listHotelStockCountSourcesHandler, listHotelStockCountSources: onCall(options, gated(listHotelStockCountSourcesHandler)),
-  createHotelStockCount: onCall(options, gated(createHotelStockCountHandler)),
-  mutateHotelStockCount: onCall(options, gated(mutateHotelStockCountHandler)) };
+  createHotelStockCount: onCall(options, gated(withPurchasingTelemetry(createHotelStockCountHandler, "stock-counts"))),
+  mutateHotelStockCount: onCall(options, gated(withPurchasingTelemetry(mutateHotelStockCountHandler, "stock-counts"))) };
