@@ -134,6 +134,17 @@ export function planStagingRetryInitialization(endpoints, inventory) {
   return planned;
 }
 
+export function requireAppHostingBuildName(value, config) {
+  const match = typeof value === "string"
+    && value.match(/^projects\/([^/]+)\/locations\/([^/]+)\/backends\/([^/]+)\/builds\/([A-Za-z0-9_-]+)$/);
+  if (!match || ![STAGING_PROJECT, config.projectNumber].includes(match[1])
+    || match[2] !== config.region || match[3] !== config.backendId) {
+    throw new Error("The App Hosting build must belong to the configured staging project, region and backend.");
+  }
+  // Firebase can return the same resource with either its project ID or number.
+  return `${config.backendName}/builds/${match[4]}`;
+}
+
 export function requireAppHostingEvidence({ backend, traffic, rollout, build, archiveUri, config }) {
   const names = [config.backendName, config.backendName.replace(`projects/${STAGING_PROJECT}/`, `projects/${config.projectNumber}/`)];
   if (!names.includes(backend?.name) || backend.environment !== "staging" || backend.codebase?.repository
@@ -143,14 +154,16 @@ export function requireAppHostingEvidence({ backend, traffic, rollout, build, ar
   }
   if (traffic?.rolloutPolicy?.disabled !== true) throw new Error("Automatic staging App Hosting rollouts must be disabled.");
   if (!archiveUri) return;
+  const buildName = requireAppHostingBuildName(build?.name, config);
   if (!new RegExp(`^gs://firebaseapphosting-sources-${config.projectNumber}-${config.region}(?:-[a-z0-9]+)?/[^/]+\\.zip$`).test(archiveUri)
-    || !names.some(name => build?.name?.startsWith(`${name}/builds/`)) || build.state !== "READY"
-    || build.source?.archive?.userStorageUri !== archiveUri || rollout?.build !== build.name
+    || build.state !== "READY"
+    || build.source?.archive?.userStorageUri !== archiveUri || requireAppHostingBuildName(rollout?.build, config) !== buildName
     || rollout.state !== "SUCCEEDED") {
     throw new Error("The completed App Hosting rollout must reference this release's uploaded staging source archive.");
   }
   const splits = traffic.current?.splits;
-  if (!Array.isArray(splits) || splits.length !== 1 || splits[0].build !== build.name || Number(splits[0].percent) !== 100) {
+  if (!Array.isArray(splits) || splits.length !== 1
+    || requireAppHostingBuildName(splits[0]?.build, config) !== buildName || Number(splits[0].percent) !== 100) {
     throw new Error("All current App Hosting traffic must serve the verified release build.");
   }
 }
