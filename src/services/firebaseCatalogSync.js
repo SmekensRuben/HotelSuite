@@ -1,4 +1,5 @@
 import { auth, functions, httpsCallable } from "../firebaseConfig";
+import { reportPurchasingError } from "./firebasePurchasingTelemetry";
 import { procurementReadScope, invalidateProcurementReads } from "./procurementReadPool";
 import { catalogSyncId as id, catalogSyncRevision as revision, catalogSyncMessage, catalogSyncChoices, projectCatalogSyncWorkspace } from "../utils/catalogSyncWorkspace";
 
@@ -24,7 +25,7 @@ function remove(keyName) { memory.get(auth.currentUser)?.delete(keyName); try { 
 async function invoke(endpoint, hotelUid, payload, operation) {
   operation.assert();
   try { const { data } = await httpsCallable(functions, endpoint)({ hotelUid, ...payload }); operation.assert(); if (data?.hotelUid !== hotelUid || (payload.jobId && data.jobId !== payload.jobId)) throw new Error("The catalog sync response belongs to another hotel or review."); return data; }
-  catch (failure) { operation.assert(); throw Object.assign(new Error(catalogSyncMessage(failure?.message)), { code: failure?.code, details: failure?.details }); }
+  catch (failure) { operation.assert(); reportPurchasingError(hotelUid, "catalog-sync", failure); throw Object.assign(new Error(catalogSyncMessage(failure?.message)), { code: failure?.code, details: failure?.details }); }
 }
 const sessionResource = (supplierId) => `workspace:${encodeURIComponent(supplierId || "all")}`;
 export function getCatalogSyncRecovery(hotelUid, supplierId = null) {

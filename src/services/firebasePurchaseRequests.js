@@ -1,5 +1,6 @@
 import { auth, functions, httpsCallable } from "../firebaseConfig";
 import { invalidateProcurementReads, procurementReadScope } from "./procurementReadPool";
+import { reportPurchasingError } from "./firebasePurchasingTelemetry";
 
 const pending = new WeakMap();
 const validId = (value) => typeof value === "string" && value.length > 0 && value.length <= 200 && !/[\/\u0000-\u001f]/.test(value);
@@ -51,7 +52,7 @@ async function invoke(endpoint, hotelUid, input, operation) {
     operation.assert();
     if (!data || typeof data !== "object" || data.hotelUid !== hotelUid) throw new Error("The response belongs to another hotel or could not be verified.");
     return data;
-  } catch (failure) { operation.assert(); throw Object.assign(new Error(message(failure)), { code: failure?.code, details: failure?.details }); }
+  } catch (failure) { operation.assert(); reportPurchasingError(hotelUid, "purchase-requests", failure); throw Object.assign(new Error(message(failure)), { code: failure?.code, details: failure?.details }); }
 }
 async function query(endpoint, hotelUid, input = {}) { return invoke(endpoint, hotelUid, input, capture(hotelUid)); }
 async function command(endpoint, hotelUid, resource, input) {

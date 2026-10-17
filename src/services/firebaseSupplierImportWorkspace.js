@@ -1,5 +1,6 @@
 import { normalizeSupplierFormatInterpretation } from "../utils/supplierImportFormat";
 import { auth, functions, httpsCallable } from "../firebaseConfig";
+import { reportPurchasingError } from "./firebasePurchasingTelemetry";
 import { invalidateProcurementReads, poolProcurementRead, procurementReadScope } from "./procurementReadPool";
 import { PURCHASE_UNITS, SUPPLIER_IMPORT_FILTERS, projectSupplierImportRow, projectSupplierImportWorkspace, projectReviewCounts } from "../utils/supplierImportWorkspace";
 
@@ -19,6 +20,7 @@ async function invoke(name, hotelUid, input, captured = capture(hotelUid)) {
   try { ({ data } = await httpsCallable(functions, name)({ hotelUid, ...input })); }
   catch (error) {
     captured.assertCurrent();
+    reportPurchasingError(hotelUid, "supplier-imports", error);
     throw Object.assign(new Error(typeof error?.message === "string" && !privateMessage.test(error.message) ? error.message : "The import could not be verified. Ask your hotel administrator for assistance."), { code: error?.code });
   }
   captured.assertCurrent();

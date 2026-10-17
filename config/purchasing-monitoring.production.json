@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "projectId": "hotel-toolkit",
+  "environment": "production",
+  "enabled": false,
+  "thresholds": {
+    "pendingMinutes": 15,
+    "processingMinutes": 30,
+    "supplierConfirmationHours": 24,
+    "reviewHours": 48,
+    "backlogCount": 20,
+    "retryCount": 3,
+    "limitWarningRatio": 0.8,
+    "staleScanMinutes": 60,
+    "scheduledWorkerHours": 30
+  },
+  "maxHotelsPerRun": 25,
+  "maxDocumentsPerSource": 50,
+  "evaluatorStaleMinutes": 45
+}

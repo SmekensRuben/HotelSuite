@@ -350,9 +350,9 @@ const sendContractCancellationReminders = onSchedule(
     timeZone: "Europe/Brussels",
     secrets: [RESEND_API_KEY, RESEND_FROM],
   },
-  async () => {
+  require("./purchasingWorkerTelemetry").withPurchasingWorkerTelemetry("contract-reminders", async () => {
     await processContractCancellationReminders();
-  }
+  })
 );
 
 async function runContractCancellationRemindersNowHandler(event, services = {}) {

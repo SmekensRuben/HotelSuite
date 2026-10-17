@@ -2,6 +2,7 @@ import { projectSupplierFormatCandidate, projectSupplierSourceInterpretation } f
 import { supplierAiImportSummary, supplierAiImportSettings } from "../utils/supplierAiImportSummary";
 import { currencyChoices } from "../utils/propertySettingChoices";
 import { auth, functions, httpsCallable } from "../firebaseConfig";
+import { reportPurchasingError } from "./firebasePurchasingTelemetry";
 import { invalidateProcurementReads, poolProcurementRead, procurementReadScope } from "./procurementReadPool";
 
 export const MAX_SUPPLIER_AI_IMPORT_BYTES = 10 * 1024 * 1024;
@@ -220,7 +221,7 @@ async function command(name, hotelUid, input) {
   const captured = context(hotelUid); captured.assertCurrent();
   let data;
   try { ({ data } = await httpsCallable(functions, name)({ hotelUid, ...input })); }
-  catch (failure) { captured.assertCurrent(); throw Object.assign(new Error(publicMessage(failure?.message, "The import request could not be verified. Reopen the original import.")), { code: failure?.code }); }
+  catch (failure) { captured.assertCurrent(); reportPurchasingError(hotelUid, "supplier-imports", failure); throw Object.assign(new Error(publicMessage(failure?.message, "The import request could not be verified. Reopen the original import.")), { code: failure?.code }); }
   captured.assertCurrent();
   if (data?.hotelUid !== hotelUid || data?.jobId !== input.jobId) throw new Error("The import response could not be verified. Reopen the original import.");
   const result = { hotelUid: data.hotelUid, jobId: data.jobId };

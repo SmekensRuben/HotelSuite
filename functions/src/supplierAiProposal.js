@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { withPurchasingTelemetry } = require("./purchasingTelemetry");
 const { admin } = require("./config");
 const { requireHotelPermission } = require("./authorization");
 const { requireDocumentId } = require("./subscriptions");
@@ -664,9 +665,9 @@ async function commitHotelSupplierAiImportRowsHandler(request, services = {}) {
 }
 
 const options = { region: "us-central1", cors: true, timeoutSeconds: 120 };
-const readHotelSupplierAiImportRows = onCall(options, gated(readHotelSupplierAiImportRowsHandler));
-const correctHotelSupplierAiImportRow = onCall(options, gated(correctHotelSupplierAiImportRowHandler));
-const commitHotelSupplierAiImportRows = onCall(options, gated(commitHotelSupplierAiImportRowsHandler));
+const readHotelSupplierAiImportRows = onCall(options, gated(withPurchasingTelemetry(readHotelSupplierAiImportRowsHandler, "supplier-imports")));
+const correctHotelSupplierAiImportRow = onCall(options, gated(withPurchasingTelemetry(correctHotelSupplierAiImportRowHandler, "supplier-imports")));
+const commitHotelSupplierAiImportRows = onCall(options, gated(withPurchasingTelemetry(commitHotelSupplierAiImportRowsHandler, "supplier-imports")));
 module.exports = { AI_PROPOSAL_POLICY_VERSION, MAX_AI_ROWS, MAX_CONFIRM_ROWS, AI_SUPPLIER_SCHEMA, AI_SUPPLIER_SCHEMA_V2, AI_SUPPLIER_SCHEMA_V3, validateRawSupplierAiRows,
   buildSupplierAiCandidate, reconcileSupplierAiRows, readHotelSupplierAiImportRowsHandler, correctHotelSupplierAiImportRowHandler, commitHotelSupplierAiImportRowsHandler,
   readHotelSupplierAiImportRows, correctHotelSupplierAiImportRow, commitHotelSupplierAiImportRows,

@@ -7,7 +7,7 @@ import PlatformHotelPage from "./PlatformHotelPage";
 import PlatformSupportPage from "./PlatformSupportPage";
 import PlatformIncidentsPage from "./PlatformIncidentsPage";
 
-const api = vi.hoisted(() => Object.fromEntries(["listPlatformHotels", "getPlatformHotel", "getPlatformMonitoring", "retryPlatformImport", "savePlatformImportMonitor", "refreshPlatformMonitoring", "startPlatformSupport", "getPlatformSupport", "endPlatformSupport", "listPlatformIncidents", "acknowledgePlatformIncident"].map((name) => [name, vi.fn()])));
+const api = vi.hoisted(() => Object.fromEntries(["listPlatformHotels", "getPlatformHotel", "getPlatformMonitoring", "getPlatformPurchasingMonitoring", "retryPlatformImport", "savePlatformImportMonitor", "refreshPlatformMonitoring", "startPlatformSupport", "getPlatformSupport", "endPlatformSupport", "listPlatformIncidents", "acknowledgePlatformIncident"].map((name) => [name, vi.fn()])));
 vi.mock("../../services/firebasePlatform", () => ({ ...api, platformError: () => "Platform request unavailable" }));
 const hotel = (id) => ({ hotelUid: id, name: `Hotel ${id}`, revision: 0, timeZone: null, contactName: "", contactEmail: "", administrators: [], memberCount: 0, subscription: null });
 const monitoring = { computedAtMillis: Date.now(), monitors: [{ id: "arrivals", label: "Daily arrivals", fileType: "arrivals", sourceEnabled: true, policy: null, health: { status: "not-configured", run: null, deadlineMillis: null, expectedBusinessDate: null } }], observations: [], recoveries: [] };
@@ -15,6 +15,7 @@ beforeEach(() => {
   vi.clearAllMocks(); api.listPlatformHotels.mockResolvedValue({ hotels: [], nextCursor: null });
   api.getPlatformHotel.mockImplementation(async (id) => hotel(id));
   api.getPlatformMonitoring.mockResolvedValue(monitoring);
+  api.getPlatformPurchasingMonitoring.mockResolvedValue({ hotelUid: "a", monitoring: { environment: "staging", enabled: false, status: "paused" }, health: null });
   api.listPlatformIncidents.mockResolvedValue({ incidents: [], nextCursor: null });
 });
 afterEach(cleanup);

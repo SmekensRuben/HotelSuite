@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { withPurchasingTelemetry } = require("./purchasingTelemetry");
 const { admin } = require("./config");
 const { requireHotelPermission } = require("./authorization");
 const { requireDocumentId } = require("./subscriptions");
@@ -385,8 +386,8 @@ async function applyHotelCatalogSyncHandler(request, services = {}) {
   });
 }
 const options = { region: "us-central1", cors: true, timeoutSeconds: 120, memory: "512MiB", concurrency: 4, maxInstances: 5 };
-const readHotelCatalogSyncWorkspace = onCall(options, gated(readHotelCatalogSyncWorkspaceHandler));
-const applyHotelCatalogSync = onCall(options, gated(applyHotelCatalogSyncHandler));
+const readHotelCatalogSyncWorkspace = onCall(options, gated(withPurchasingTelemetry(readHotelCatalogSyncWorkspaceHandler, "catalog-sync")));
+const applyHotelCatalogSync = onCall(options, gated(withPurchasingTelemetry(applyHotelCatalogSyncHandler, "catalog-sync")));
 module.exports = { CATALOG_SYNC_VERSION, MAX_SYNC_ROWS, MAX_CATALOG_POOL, MAX_SOURCE_SCAN, readHotelCatalogSyncWorkspaceHandler, applyHotelCatalogSyncHandler,
   readHotelCatalogSyncWorkspace, applyHotelCatalogSync, catalogSyncInternals: { authorizeSync, requireSyncJob, publicRow, publicWorkspace,
     validateSyncCompatibility, supplierFacts, physicalFacts, jobPath, workspaceRows, loadMatchingPool } };

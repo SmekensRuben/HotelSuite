@@ -11,11 +11,13 @@ export const listPlatformHotels = (afterHotelUid = null) => call("listPlatformHo
 export const getPlatformHotel = (hotelUid) => call("getPlatformHotel", { hotelUid });
 export const updatePlatformHotel = (input) => call("updatePlatformHotel", input);
 export const getPlatformMonitoring = (hotelUid) => call("getPlatformMonitoring", { hotelUid });
+export const getPlatformPurchasingMonitoring = (hotelUid) => call("getPlatformPurchasingMonitoring", { hotelUid });
 export const savePlatformImportMonitor = (input) => call("savePlatformImportMonitor", input);
 export const refreshPlatformMonitoring = (hotelUid) => call("refreshPlatformMonitoring", { hotelUid });
 export const listPlatformAudit = (afterId = null, hotelUid = null) => call("listPlatformAudit", { afterId, hotelUid });
 export const listPlatformIncidents = (afterId = null) => call("listPlatformIncidents", { afterId });
 export const acknowledgePlatformIncident = (incidentId, reason) => call("acknowledgePlatformIncident", { incidentId, reason });
+export const resolvePlatformWorkflowIncident = (incidentId, expectedLastDetectedAtMillis, reason) => call("resolvePlatformWorkflowIncident", { incidentId, expectedLastDetectedAtMillis, reason });
 export const startPlatformSupport = (hotelUid, reason, requestId) => call("startPlatformSupport", { hotelUid, reason, requestId });
 export const getPlatformSupport = (hotelUid, sessionId) => call("getPlatformSupport", { hotelUid, sessionId });
 export const endPlatformSupport = (sessionId) => call("endPlatformSupport", { sessionId });

@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { withPurchasingTelemetry } = require("./purchasingTelemetry");
 const { admin } = require("./config");
 const { requireHotelPermission, permissionAllows, normalizedPermissions } = require("./authorization");
 const { requireDocumentId } = require("./subscriptions");
@@ -412,7 +413,7 @@ function sameOrderContract(current, frozen, order) {
     === digest(frozen.inventoryTerms, frozen.priceBasis, frozen.vatRate);
 }
 module.exports = { dateOnly, deliveryDate, cartInput, canonicalLines, sameOrderContract, orderPriceContract, orderPriceFingerprint, orderBusinessDate, previewOrdersFromCartHandler, createOrdersFromCartHandler, updateOrderHandler, deleteOrderHandler, confirmOrderHandler, setOutletApproversHandler, saveSupplierOutletAccountHandler,
-  previewOrdersFromCart: onCall(options, gated(previewOrdersFromCartHandler)),
-  createOrdersFromCart: onCall(options, gated(createOrdersFromCartHandler)), updateHotelOrder: onCall(options, gated(updateOrderHandler)),
-  deleteHotelOrder: onCall(options, gated(deleteOrderHandler)), confirmHotelOrder: onCall(options, gated(confirmOrderHandler)), setHotelOutletApprovers: onCall(options, gated(setOutletApproversHandler)),
+  previewOrdersFromCart: onCall(options, gated(withPurchasingTelemetry(previewOrdersFromCartHandler, "orders"))),
+  createOrdersFromCart: onCall(options, gated(withPurchasingTelemetry(createOrdersFromCartHandler, "orders"))), updateHotelOrder: onCall(options, gated(withPurchasingTelemetry(updateOrderHandler, "orders"))),
+  deleteHotelOrder: onCall(options, gated(withPurchasingTelemetry(deleteOrderHandler, "orders"))), confirmHotelOrder: onCall(options, gated(withPurchasingTelemetry(confirmOrderHandler, "orders"))), setHotelOutletApprovers: onCall(options, gated(setOutletApproversHandler)),
   saveSupplierOutletAccount: onCall(options, gated(saveSupplierOutletAccountHandler)) };

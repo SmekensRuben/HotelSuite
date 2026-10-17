@@ -1,5 +1,6 @@
 import { normalizeOrderPriceBasis } from "../utils/orderPricing";
 import { auth, functions, httpsCallable } from "../firebaseConfig";
+import { reportPurchasingError } from "./firebasePurchasingTelemetry";
 import {
   db,
   collection,
@@ -72,7 +73,8 @@ export async function deleteOrder(hotelUid, orderId) {
 }
 
 export async function confirmOrder(hotelUid, orderId, expectedRevision, requestId) {
-  return (await httpsCallable(functions, "confirmHotelOrder")({ hotelUid, orderId, expectedRevision, requestId })).data;
+  try { return (await httpsCallable(functions, "confirmHotelOrder")({ hotelUid, orderId, expectedRevision, requestId })).data; }
+  catch (error) { reportPurchasingError(hotelUid, "orders", error); throw error; }
 }
 
 export async function previewOrdersFromShoppingCart(hotelUid, shoppingCartId, deliveryDate, expectedCartRevision) {
@@ -127,6 +129,7 @@ async function submitSavedCart(input) {
     notifyCartSubmission();
     return data;
   } catch (error) {
+    if (auth.currentUser === actor) reportPurchasingError(input.hotelUid, "orders", error);
     if (error?.details?.orderRequestUncommitted === true && localStorage.getItem(key) === JSON.stringify(input)) localStorage.removeItem(key);
     notifyCartSubmission();
     throw error;

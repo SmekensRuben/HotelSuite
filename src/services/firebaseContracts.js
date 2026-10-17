@@ -1,4 +1,5 @@
 import { functions, httpsCallable, auth } from "../firebaseConfig";
+import { reportPurchasingError } from "./firebasePurchasingTelemetry";
 
 export function calculateCancelBefore(endDate, terminationPeriodDays) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(endDate || "")) return "";
@@ -7,7 +8,10 @@ export function calculateCancelBefore(endDate, terminationPeriodDays) {
   date.setUTCDate(date.getUTCDate() - Math.floor(days));
   return date.toISOString().slice(0, 10);
 }
-const call = async (name, data) => (await httpsCallable(functions, name)(data)).data;
+const call = async (name, data) => {
+  try { return (await httpsCallable(functions, name)(data)).data; }
+  catch (error) { reportPurchasingError(data.hotelUid, "contracts", error); throw error; }
+};
 export async function getContracts(hotelUid) {
   if (!hotelUid) return [];
   const contracts = [], seen = new Set();

@@ -54,6 +54,9 @@ jobs:
       - name: Staging isolation, release and bootstrap safeguards
         run: npm run test:staging
 
+      - name: Purchasing monitoring release safeguards
+        run: node --test scripts/firebase/purchasing-monitoring*.test.mjs
+
       - name: Settings migration safeguards
         run: node --test scripts/migrate-domain-settings.test.mjs
 
