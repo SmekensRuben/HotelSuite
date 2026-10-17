@@ -31,17 +31,30 @@ export function canonicalProductionResource(name) {
   return name.replace(`projects/${PROJECT_NUMBER}/`, `projects/${PROJECT}/`);
 }
 
-export function createProductionRequest(getToken, fetchRequest = fetch) {
+export function createProductionRequest(getToken, fetchRequest = fetch, { pause = ms => new Promise(resolvePause => setTimeout(resolvePause, ms)) } = {}) {
   return async (api, name, { method = "GET", body, params = {}, allowMissing = false } = {}) => {
     const roleCatalog = api === "iam" && ["roles/firebaseapphosting.admin", "roles/developerconnect.readTokenAccessor"].includes(name);
     const path = roleCatalog ? name : canonicalProductionResource(name);
     if (!API[api]) throw new Error("Unexpected production API.");
     const url = new URL(path, API[api]);
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+    let token;
+    try { token = typeof getToken === "function" ? await getToken() : getToken; }
+    catch { throw new Error(`Production ${api} credential lookup failed; no credential or provider payload was printed.`); }
+    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "X-Goog-User-Project": PROJECT };
+    // A dropped connection after the blocking rollout CLI can fail the first
+    // evidence read. Only metadata GETs may retry; mutations remain single-shot.
+    const attempts = method === "GET" ? 3 : 1;
     let response;
-    try { response = await fetchRequest(url, { method, headers: { Authorization: `Bearer ${typeof getToken === "function" ? await getToken() : getToken}`,
-      "Content-Type": "application/json", "X-Goog-User-Project": PROJECT }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(30000) }); }
-    catch { throw new Error(`Production ${api} request failed (transport error); no credential or provider payload was printed.`); }
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        response = await fetchRequest(url, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(30000) });
+        break;
+      } catch {
+        if (attempt === attempts) throw new Error(`Production ${api} request failed (transport error after ${attempts} attempt${attempts === 1 ? "" : "s"}); no credential or provider payload was printed.`);
+        await pause(250 * attempt);
+      }
+    }
     if (allowMissing && response.status === 404) return null;
     if (!response.ok) throw new Error(`Production ${api} request failed (HTTP ${response.status}); no credential or provider payload was printed.`);
     try { return await response.json(); } catch { throw new Error(`Production ${api} returned invalid JSON.`); }
