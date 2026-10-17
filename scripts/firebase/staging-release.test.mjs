@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { planStagingRetryInitialization, requireAppHostingEvidence, requireFrontendMarker, requireFunctionsSha, requireSelectedSource,
   requireStagingAliases, requireStagingConfiguration, requireStagingWorkflow, STAGING_DEPLOY_ACCOUNT, STAGING_PROJECT, STAGING_REPOSITORY, STAGING_WORKFLOW_REF } from "./staging-release-policy.mjs";
-import { resolveSelectedSha } from "./staging-release.mjs";
+import { readAppHostingJson, resolveSelectedSha } from "./staging-release.mjs";
 
 const sha = "a".repeat(40);
 const otherSha = "b".repeat(40);
@@ -20,6 +20,58 @@ const stagingEnv = {
   STAGING_APPHOSTING_REGION: "europe-west4", STAGING_APP_BASE_URL: `https://${STAGING_PROJECT}--${STAGING_PROJECT}.europe-west4.hosted.app`,
 };
 const config = requireStagingConfiguration(stagingEnv);
+
+test("App Hosting evidence reads recover from a dropped connection without changing target or identity", async () => {
+  const path = `${config.backendName}/traffic`, requests = [], waits = [], data = { rolloutPolicy: { disabled: true } };
+  const result = await readAppHostingJson(path, "private-test-token", {
+    request: async (url, options) => {
+      requests.push({ url, options });
+      if (requests.length === 1) throw new TypeError("fetch failed");
+      return { ok: true, json: async () => data };
+    },
+    pause: async ms => { waits.push(ms); },
+  });
+  assert.deepEqual(result, data);
+  assert.equal(requests.length, 2);
+  assert.equal(waits.length, 1);
+  for (const { url, options } of requests) {
+    assert.equal(url, `https://firebaseapphosting.googleapis.com/v1beta/${path}`);
+    assert.equal(options.method, "GET");
+    assert.equal(options.headers.Authorization, "Bearer private-test-token");
+    assert.ok(options.signal instanceof AbortSignal);
+  }
+});
+
+test("persistent App Hosting connection failures stop after three attempts without printing credentials", async () => {
+  let requests = 0, waits = 0;
+  await assert.rejects(readAppHostingJson(config.backendName, "private-test-token", {
+    request: async () => { requests++; throw new Error("private-test-token"); },
+    pause: async () => { waits++; },
+  }), error => {
+    assert.match(error.message, /three network attempts.*paused/);
+    assert.equal(error.message.includes("private-test-token"), false);
+    return true;
+  });
+  assert.equal(requests, 3);
+  assert.equal(waits, 2);
+});
+
+test("HTTP failures and invalid App Hosting response bodies are never retried or accepted", async () => {
+  for (const status of [400, 401, 403, 404, 503]) {
+    let requests = 0;
+    await assert.rejects(readAppHostingJson(config.backendName, "private-test-token", {
+      request: async () => { requests++; return { ok: false, status }; },
+      pause: async () => assert.fail("Do not retry an HTTP refusal."),
+    }), new RegExp(`failed \\(${status}\\)`));
+    assert.equal(requests, 1);
+  }
+  let requests = 0;
+  await assert.rejects(readAppHostingJson(config.backendName, "private-test-token", {
+    request: async () => { requests++; return { ok: true, json: async () => { throw new SyntaxError("private-test-token"); } }; },
+    pause: async () => assert.fail("Do not retry invalid evidence."),
+  }), /not valid JSON.*paused/);
+  assert.equal(requests, 1);
+});
 
 test("Firebase alias lookup cannot redirect an explicit staging project to production", () => {
   assert.doesNotThrow(() => requireStagingAliases({ projects: { default: "test-breakfast", staging: STAGING_PROJECT } }));
