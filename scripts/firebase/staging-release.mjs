@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } 
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { planStagingRetryInitialization, requireAppHostingEvidence, requireFrontendMarker, requireFunctionsSha, requireSelectedSource, requireSha, requireStagingAliases,
+import { planStagingRetryInitialization, requireAppHostingBuildName, requireAppHostingEvidence, requireFrontendMarker, requireFunctionsSha, requireSelectedSource, requireSha, requireStagingAliases,
   requireStagingConfiguration, requireStagingWorkflow, STAGING_PROJECT, STAGING_REPOSITORY } from "./staging-release-policy.mjs";
 
 const controllerRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -185,8 +185,7 @@ async function deploy(source, sha, reportPath) {
   const newRollouts = (await listRollouts(config)).filter(item => !knownRollouts.has(item.name));
   if (newRollouts.length !== 1) throw new Error("Concurrent or missing App Hosting rollout detected; activation is refused.");
   const rollout = newRollouts[0];
-  if (!rollout.build?.startsWith(`${backend.name}/builds/`)) throw new Error("The rollout build belongs to another backend.");
-  const build = await apiGet(rollout.build);
+  const build = await apiGet(requireAppHostingBuildName(rollout.build, config));
   const freshTraffic = await apiGet(`${config.backendName}/traffic`);
   requireAppHostingEvidence({ backend, traffic: freshTraffic, rollout, build, archiveUri: archives[0], config });
   const markerResponse = await fetch(`${config.origin}/release.json?sha=${sha}`, { cache: "no-store", redirect: "error", signal: AbortSignal.timeout(30000) });

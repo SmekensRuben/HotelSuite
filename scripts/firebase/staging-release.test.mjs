@@ -110,6 +110,50 @@ test("App Hosting evidence must bind the exact upload to completed build and all
   ]) assert.throws(() => requireAppHostingEvidence({ ...hostingEvidence, ...change }));
 });
 
+test("App Hosting accepts mixed project ID and number references for the same staging build", () => {
+  const numericBackend = config.backendName.replace(`projects/${STAGING_PROJECT}/`, `projects/${number}/`);
+  const buildNames = [build.name, `${numericBackend}/builds/release-1`];
+  for (const backendName of [config.backendName, numericBackend]) {
+    for (const buildName of buildNames) {
+      for (const rolloutBuild of buildNames) {
+        for (const trafficBuild of buildNames) {
+          assert.doesNotThrow(() => requireAppHostingEvidence({
+            ...hostingEvidence,
+            backend: { ...hostingEvidence.backend, name: backendName },
+            build: { ...build, name: buildName },
+            rollout: { ...hostingEvidence.rollout, build: rolloutBuild },
+            traffic: { ...hostingEvidence.traffic, current: { splits: [{ build: trafficBuild, percent: 100 }] } },
+          }));
+        }
+      }
+    }
+  }
+});
+
+test("project alias handling refuses foreign, different or malformed App Hosting build references", () => {
+  for (const invalidName of [
+    build.name.replace(`projects/${STAGING_PROJECT}/`, "projects/hotel-toolkit/"),
+    build.name.replace(`projects/${STAGING_PROJECT}/`, "projects/358734544002/"),
+    build.name.replace(`projects/${STAGING_PROJECT}/`, `projects/${number}1/`),
+    build.name.replace("locations/europe-west4/", "locations/us-central1/"),
+    build.name.replace(`backends/${STAGING_PROJECT}/`, "backends/other-backend/"),
+    build.name.replace("release-1", "release-2"),
+    `${build.name}/extra`, `${build.name}?version=other`, build.name.replace("release-1", ".."),
+    "release-1", "", undefined,
+  ]) {
+    for (const change of [
+      { build: { ...build, name: invalidName } },
+      { rollout: { ...hostingEvidence.rollout, build: invalidName } },
+      { traffic: { ...hostingEvidence.traffic, current: { splits: [{ build: invalidName, percent: 100 }] } } },
+    ]) assert.throws(() => requireAppHostingEvidence({ ...hostingEvidence, ...change }));
+  }
+  for (const splits of [[], [{ build: build.name, percent: 0 }],
+    [{ build: build.name, percent: 100 }, { build: build.name, percent: 0 }]]) {
+    assert.throws(() => requireAppHostingEvidence({ ...hostingEvidence,
+      traffic: { ...hostingEvidence.traffic, current: { splits } } }));
+  }
+});
+
 const retrySource = () => Object.fromEntries(["processImportedFileToFirestore", "processSupplierProductImage"].map(id => [id, {
   platform: "gcfv2", region: ["us-west1"], eventTrigger: { eventType: "google.cloud.storage.object.v1.finalized", retry: true,
     eventFilters: { bucket: `${STAGING_PROJECT}.firebasestorage.app` } },
