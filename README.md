@@ -10,7 +10,7 @@ For the Purchasing & Inventory module, explicit per-hotel entitlements, combined
 
 For platform administration without a hotel assignment, per-hotel import monitoring, notifications and controlled support, see [Platform console and release procedure](docs/platform-console.md). The changed access boundary requires the reviewed one-time `saas-platform-v3` Rules rollout.
 
-For automatic Functions deployment after successful main-branch verification and the one-time keyless Cloud Shell setup, see [Functions continuous deployment](docs/functions-continuous-deployment.md).
+For the central `RELEASE_MODE` setting, automatic development releases and the controlled transition before the first customer, see [Production release modes](docs/release-modes.md). The existing [Functions continuous deployment guide](docs/functions-continuous-deployment.md) documents the keyless identity and runtime prerequisites.
 
 ## Local setup
 1. Install [Node.js](https://nodejs.org/) 22 and npm 10.9.9, matching the root `package.json` engines used by GitHub and App Hosting.
@@ -57,9 +57,9 @@ Production retains `VITE_DEPLOYMENT_ENV=production` and `EXPECTED_FIREBASE_PROJE
 
 Callables must be deployed to the same Firebase project as the selected browser configuration. Adding an Auth authorized domain is a separate project setting; build success alone does not configure sign-in redirects. See `docs/firebase-environments.md`.
 
-GitHub verification remains separate from deployment. The owner authorized a dedicated Functions workflow for verified merges to `main`, explicitly targeting `hotel-toolkit` with temporary Workload Identity credentials. One-time Google setup and the activation variable must be completed before it can deploy. Vercel and Firebase App Hosting independently deploy the frontend; App Hosting released `5fc6be6` successfully. External frontend rollouts do not deploy Functions or Rules.
+GitHub verification remains separate from deployment. After the one-time [release-path setup](docs/production-apphosting-release-setup.md), the existing production workflow owns both Functions and exact-commit App Hosting publication, explicitly targeting `hotel-toolkit` with temporary Workload Identity credentials. Set `RELEASE_MODE` explicitly; an absent or invalid value blocks release. Disable independent App Hosting automatic rollouts and verify alternate deployment integrations before relying on either mode. The repository disables Vercel Git deployments of `main`. These prepared controls have not been applied to production during implementation.
 
-`.github/workflows/verify.yml` runs on pull requests and `main`, uses the tracked fictional `.env.test` fixture, and has no production-secret or deployment step. `.github/workflows/deploy-functions.yml` waits for successful push verification, skips stale releases and keeps runtime secrets in Google Secret Manager. See [the activation and recovery guide](docs/functions-continuous-deployment.md).
+`.github/workflows/verify.yml` runs on pull requests and `main`, uses the tracked fictional `.env.test` fixture, and has no production-secret or deployment step. `.github/workflows/deploy-functions.yml` waits for successful push verification, skips stale releases, applies the selected release policy and keeps runtime secrets in Google Secret Manager. See [the activation and recovery guide](docs/functions-continuous-deployment.md).
 
 The Firebase Hosting and Cloud Shell release procedure is documented in `docs/firebase-delivery-target.md`. The implemented per-hotel subscription foundation, migration order and remaining sales blockers are in [docs/subscription-readiness.md](docs/subscription-readiness.md). Functions automation does not publish Rules, provision subscriptions or migrate memberships.
 

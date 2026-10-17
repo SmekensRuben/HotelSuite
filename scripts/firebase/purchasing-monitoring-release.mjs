@@ -174,10 +174,13 @@ export async function inspectPurchasingMonitoring({ request, options, configurat
   const scheduler = await request({ api: "scheduler", path: resources.schedulerName });
   if (scheduler.name !== resources.schedulerName || scheduler.state !== "ENABLED" || !["every 15 minutes", "*/15 * * * *"].includes(scheduler.schedule)
     || scheduler.httpTarget?.httpMethod !== "POST" || scheduler.httpTarget?.uri !== fn.serviceConfig.uri
-    || scheduler.httpTarget?.oidcToken?.serviceAccountEmail !== resources.runtimeAccount) throw new Error("The evaluator's enabled 15-minute Scheduler/OIDC configuration must match the deployed Function.");
+    || scheduler.httpTarget?.oidcToken?.serviceAccountEmail !== resources.runtimeAccount
+    || scheduler.httpTarget?.oidcToken?.audience && scheduler.httpTarget.oidcToken.audience !== fn.serviceConfig.uri) throw new Error("The evaluator's enabled 15-minute Scheduler/OIDC configuration must match the deployed Function.");
   const invokerPolicy = await request({ api: "run", path: `${fn.serviceConfig.service}:getIamPolicy` });
   if (!unconditionalRole(invokerPolicy, "roles/run.invoker", runtimeMember) && !unconditionalRole(iam, "roles/run.invoker", runtimeMember)) throw new Error("The Scheduler identity lacks Cloud Run Invoker on the evaluator. Repair the exact service IAM before activation.");
   if (invokerPolicy.bindings?.some(binding => binding.members?.some(member => ["allUsers", "allAuthenticatedUsers"].includes(member)))) throw new Error("The scheduled evaluator must not have public Cloud Run invocation access.");
+  if (iam.bindings?.some(binding => ["roles/run.invoker", "roles/run.servicesInvoker"].includes(binding.role)
+    && binding.members?.some(member => ["allUsers", "allAuthenticatedUsers"].includes(member)))) throw new Error("The scheduled evaluator must not inherit public Cloud Run invocation access from project IAM.");
   const release = await request({ api: "rules", path: `${base}/releases/cloud.firestore` });
   if (!release.rulesetName?.startsWith(`${base}/rulesets/`)) throw new Error("Unexpected Firestore Rules release resource.");
   const rules = await request({ api: "rules", path: release.rulesetName });
@@ -208,11 +211,14 @@ export async function inspectPurchasingMonitoring({ request, options, configurat
   if (marker) validatePurchasingMonitoringConfiguration(firestoreData(marker), { projectId });
   const heartbeat = await request({ api: "firestore", path: `${database}/documents/platformConfiguration/importMonitoringWorker`, allowMissing: true });
   return { resources, iam, missingRoles, requiredIndexes, metrics, policies, marker, heartbeat,
+    runtimeEnvironment: fn.serviceConfig.environmentVariables || {},
     summary: { projectId, environment: configuration.environment, releaseSha: options.sha, missingRuntimeRoles: missingRoles,
       indexes: requiredIndexes.map(({ collectionGroup, state }) => ({ collectionGroup, state })), schedulerVerified: true, rulesVerified: true,
       metricsPresent: metrics.filter(entry => entry.current).length, policiesPresent: policies.filter(entry => entry.current).length,
       configured: Boolean(marker), enabled: firestoreData(marker).enabled === true } };
 }
+
+export { requirePrepared, listAll, ownedPolicy };
 
 function requirePrepared(inspection) {
   if (inspection.missingRoles.length || inspection.requiredIndexes.some(index => index.state !== "READY")

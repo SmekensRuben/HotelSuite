@@ -7,6 +7,12 @@ const THRESHOLD_BOUNDS = Object.freeze({ pendingMinutes: [1, 1440], processingMi
   supplierConfirmationHours: [1, 720], reviewHours: [1, 720], backlogCount: [1, 1000], retryCount: [1, 100],
   limitWarningRatio: [0.1, 1], staleScanMinutes: [15, 1440], scheduledWorkerHours: [1, 168] });
 
+// Older deployments did not declare a release mode. Preserve their behavior;
+// only an explicit supported mode changes the additional monitoring policy.
+function purchasingMonitoringAllowed(env = process.env) {
+  return env.RELEASE_MODE === undefined || env.RELEASE_MODE === "controlled";
+}
+
 function validatePurchasingMonitoringConfiguration(value, { projectId, requireEnabled = false } = {}) {
   const environment = PROJECT_ENVIRONMENTS[projectId];
   if (!environment || !value || typeof value !== "object" || Array.isArray(value)
@@ -37,11 +43,14 @@ function validatePurchasingMonitoringConfiguration(value, { projectId, requireEn
     evaluatorStaleMinutes: value.evaluatorStaleMinutes };
 }
 
-async function readPurchasingMonitoringConfiguration(db, { projectId } = {}) {
+async function readPurchasingMonitoringConfiguration(db, { projectId, env = process.env } = {}) {
+  if (!purchasingMonitoringAllowed(env)) return { enabled: false,
+    reason: env.RELEASE_MODE === "development" ? "release-mode-development" : "release-mode-invalid",
+    projectId, environment: PROJECT_ENVIRONMENTS[projectId] || "blocked" };
   const snapshot = await db.doc(CONFIGURATION_PATH).get();
   if (!snapshot.exists) return { enabled: false, reason: "not-configured", projectId, environment: PROJECT_ENVIRONMENTS[projectId] || "blocked" };
   return validatePurchasingMonitoringConfiguration(snapshot.data(), { projectId });
 }
 
 module.exports = { CONFIGURATION_PATH, POLICY_VERSION, PROJECT_ENVIRONMENTS, DEFAULT_PURCHASING_THRESHOLDS,
-  validatePurchasingMonitoringConfiguration, readPurchasingMonitoringConfiguration };
+  purchasingMonitoringAllowed, validatePurchasingMonitoringConfiguration, readPurchasingMonitoringConfiguration };

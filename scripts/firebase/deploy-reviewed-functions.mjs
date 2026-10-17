@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { FUNCTIONS_PROJECT, requireFunctionsConfiguration } from "./functions-release-policy.mjs";
 import { requireRetryInventory, planReviewedRetryActivation } from "./functions-retry-policy.mjs";
+import { requireReleaseMode, requireReleaseSha } from "./release-mode-policy.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const firebaseCli = fileURLToPath(new URL("../../node_modules/firebase-tools/lib/bin/firebase.js", import.meta.url));
@@ -65,6 +66,8 @@ export function deployReviewedFunctions({ env = process.env, run = runFirebase,
     throw new Error("Reviewed Functions deployment requires the enabled GitHub release workflow.");
   }
   requireFunctionsConfiguration(env);
+  requireReleaseMode(env.RELEASE_MODE);
+  requireReleaseSha(env.RELEASE_SHA);
   const inventory = JSON.parse(run(["functions:list", "--project", FUNCTIONS_PROJECT, "--non-interactive", "--json"], { capture: true }));
   const deployed = requireRetryInventory(inventory);
   const functionExports = loadFunctions({ projectId: FUNCTIONS_PROJECT, storageBucket: deployed.eventTrigger.eventFilters.bucket });

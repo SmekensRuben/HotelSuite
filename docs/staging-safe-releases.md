@@ -1,5 +1,7 @@
 # Staging and safe releases
 
+The [central production release policy](release-modes.md) determines when staging acceptance is required. `development` retains this staging facility without requiring it for every change; `controlled` requires successful protected staging delivery and acceptance of the exact application tree being released.
+
 Status: 2026-10-16. This work prepares an isolated staging release path in the
 existing `SmekensRuben/HotelSuite` repository. The implementation session had no
 authenticated Google Cloud/Firebase operator, so **no staging project, billing

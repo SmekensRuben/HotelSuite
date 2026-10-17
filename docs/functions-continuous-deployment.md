@@ -1,12 +1,14 @@
 # Functions deployment after a main merge
 
+For the current central policy, read [Production release modes](release-modes.md) first. It supersedes the older independent frontend rollout behavior: after one-time platform setup, this workflow publishes Functions and the pinned App Hosting frontend together. `RELEASE_MODE` must be explicitly `development` or `controlled`; no mode is enabled automatically. The identity and runtime prerequisites below still apply.
+
 ## Current setup
 
 The owner authorized automatic Functions deployments on 2026-10-09. This decision supersedes the previous Functions deployment freeze; it does not enable automatic Rules, index, Storage Rules or data migrations.
 
 `.github/workflows/deploy-functions.yml` waits for **Verify HotelSuite** to complete successfully for a push to `main`. It deploys the exact verified commit to Firebase project **hotel-toolkit**. A manual **Run workflow** on `main` can retry the current release, but also requires a successful verification run for that exact commit. PR verification cannot authorize a deployment.
 
-Deployments are serialized without cancelling an in-flight Firebase release. The workflow checks the current `main` SHA before setup and immediately before deployment; queued stale releases are skipped. Firebase CLI is installed from the repository lockfile, runs non-interactively and deploys only Functions. The release wrapper may confirm the reviewed import retry transition with a narrowly scoped deployment; the full Functions release never forces removal. A successful release lists the deployed functions and records its SHA in the job summary.
+Deployments are serialized without cancelling an in-flight Firebase release. The workflow checks the current `main` SHA before setup and immediately before deployment; queued stale releases are skipped. Firebase CLI is installed from the repository lockfile and runs non-interactively. The Functions phase deploys only Functions; the final App Hosting phase independently verifies the exact frontend build and serving traffic. The release wrapper may confirm the reviewed import retry transition with a narrowly scoped deployment; the full Functions release never forces removal. A successful release lists the deployed functions and records its SHA in the job summary.
 
 On 2026-10-09 the owner completed the Google setup in Cloud Shell, enabled deployment, bootstrapped Eventarc and configured preview-only artifact retention in all three deployment regions. Run `37956475706` (attempt 3) completed successfully for verified main `adf7fb6`: authentication, runtime checks, Functions deployment and inventory verification all passed. The inventory contained all 23 then-exported Functions. The agent browser could not access Cloud Shell or Google Cloud IAM; operator commands were executed by the owner. Subsequent verified main merges deploy Functions automatically. Artifact retention remains in dry-run, so it does not yet delete images or reduce accumulated artifact storage.
 
@@ -18,6 +20,7 @@ GitHub obtains temporary Application Default Credentials through the official Go
 | --- | --- |
 | `FIREBASE_WORKLOAD_IDENTITY_PROVIDER` | `projects/358734544002/locations/global/workloadIdentityPools/hotelsuite-github/providers/main-deploy` |
 | `FIREBASE_DEPLOY_SERVICE_ACCOUNT` | `github-functions-deploy@hotel-toolkit.iam.gserviceaccount.com` |
+| `RELEASE_MODE` | Explicitly `development` or `controlled`; see the release modes guide |
 | `FIREBASE_FUNCTIONS_DEPLOY_ENABLED` | `false` until Google setup and real runtime configuration are ready, then `true` |
 
 The project is fixed explicitly in the workflow; `.firebaserc` is not used to select the deployment target. `APP_BASE_URL` is a public HTTPS origin written into an ignored `functions/.env.hotel-toolkit` during deployment. Update it when the canonical application domain changes.

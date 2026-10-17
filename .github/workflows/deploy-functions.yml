@@ -1,4 +1,4 @@
-name: Deploy Firebase Functions
+name: Deploy HotelSuite production
 
 on:
   workflow_run:
@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  select:
     if: >-
       github.repository == 'SmekensRuben/HotelSuite' && github.ref == 'refs/heads/main' &&
       (github.event_name == 'workflow_dispatch' ||
@@ -26,12 +26,77 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.id == 1161047380))
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 10
+    outputs:
+      deploy: ${{ steps.release.outputs.deploy }}
+      sha: ${{ steps.release.outputs.sha }}
+      mode: ${{ steps.release.outputs.mode }}
+      staging_sha: ${{ steps.evidence.outputs.staging_sha }}
+      tree: ${{ steps.evidence.outputs.tree }}
+      staging_run_id: ${{ steps.evidence.outputs.staging_run_id }}
+      artifact_id: ${{ steps.evidence.outputs.artifact_id }}
+    env:
+      RELEASE_MODE: ${{ vars.RELEASE_MODE }}
+      FIREBASE_PROJECT_ID: hotel-toolkit
+      FIREBASE_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.FIREBASE_WORKLOAD_IDENTITY_PROVIDER }}
+      FIREBASE_DEPLOY_SERVICE_ACCOUNT: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
+      FIREBASE_FUNCTIONS_DEPLOY_ENABLED: ${{ vars.FIREBASE_FUNCTIONS_DEPLOY_ENABLED }}
+      FUNCTIONS_APP_BASE_URL: https://hotel-toolkit--hotel-toolkit.europe-west4.hosted.app
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: "package.json"
+      - name: Select verified main and explicit release mode
+        id: release
+        run: node scripts/firebase/check-functions-release.mjs
+      - name: Pin controlled staging evidence before production approval
+        id: evidence
+        if: steps.release.outputs.deploy == 'true'
+        env:
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+        run: node scripts/firebase/check-controlled-release.mjs
+
+  approval:
+    needs: select
+    if: needs.select.outputs.deploy == 'true' && needs.select.outputs.mode == 'controlled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Configure required reviewers once; native review history is checked again
+    # before the deployment job can request Google credentials.
+    environment: production
+    steps:
+      - name: Accept the pinned staging application tree
+        env:
+          RELEASE_SHA: ${{ needs.select.outputs.sha }}
+          RELEASE_TREE: ${{ needs.select.outputs.tree }}
+          STAGING_RUN_ID: ${{ needs.select.outputs.staging_run_id }}
+        run: |
+          printf 'Approved production commit `%s`, tree `%s`, staging run `%s`.\n' "$RELEASE_SHA" "$RELEASE_TREE" "$STAGING_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: [select, approval]
+    if: >-
+      always() && needs.select.result == 'success' && needs.select.outputs.deploy == 'true' &&
+      (needs.select.outputs.mode == 'development' || needs.approval.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: read
       actions: read
       id-token: write
     env:
+      RELEASE_MODE: ${{ vars.RELEASE_MODE }}
+      EXPECTED_RELEASE_MODE: ${{ needs.select.outputs.mode }}
+      RELEASE_SHA: ${{ needs.select.outputs.sha }}
+      STAGING_RUN_ID: ${{ needs.select.outputs.staging_run_id }}
+      STAGING_ARTIFACT_ID: ${{ needs.select.outputs.artifact_id }}
+      STAGING_ACCEPTED_SHA: ${{ needs.select.outputs.staging_sha }}
+      RELEASE_TREE: ${{ needs.select.outputs.tree }}
       FIREBASE_PROJECT_ID: hotel-toolkit
       FIREBASE_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.FIREBASE_WORKLOAD_IDENTITY_PROVIDER }}
       FIREBASE_DEPLOY_SERVICE_ACCOUNT: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
@@ -46,32 +111,30 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ needs.select.outputs.sha }}
           persist-credentials: false
-
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: "package.json"
 
-      - name: Check verified main release and deployment configuration
+      - name: Recheck verified main and release configuration
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/firebase/check-functions-release.mjs
+      - name: Validate pinned evidence and native production review before authentication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/firebase/check-controlled-release.mjs --require-approval
 
       - name: Install locked dependencies
-        if: steps.release.outputs.deploy == 'true'
         run: |
           build_npm_version=$(node -p 'require("./package.json").engines.npm')
           npm install --global "npm@${build_npm_version}"
           npm ci
           npm --prefix functions ci
-
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
-        if: steps.release.outputs.deploy == 'true'
-
       - name: Authenticate with temporary Google Cloud credentials
-        if: steps.release.outputs.deploy == 'true'
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: hotel-toolkit
@@ -79,25 +142,48 @@ jobs:
           service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
           create_credentials_file: true
 
+      - name: Check actual App Hosting identity and disabled automatic rollouts
+        run: node scripts/firebase/production-apphosting.mjs preflight --project hotel-toolkit --sha "$RELEASE_SHA"
       - name: Check runtime configuration and prepare Functions parameters
-        if: steps.release.outputs.deploy == 'true'
         run: bash scripts/firebase/check-functions-runtime.sh
-
-      - name: Confirm this release is still current
-        id: current
-        if: steps.release.outputs.deploy == 'true'
+      - name: Check installed controlled monitoring readiness
+        if: env.RELEASE_MODE == 'controlled'
+        run: node scripts/firebase/release-monitoring.mjs preflight --project hotel-toolkit --sha "$RELEASE_SHA"
+      - name: Inspect development Purchasing monitoring pause
+        if: env.RELEASE_MODE == 'development'
+        run: node scripts/firebase/release-monitoring.mjs pause --project hotel-toolkit --sha "$RELEASE_SHA" --dry-run
+      - name: Confirm pinned main, mode and acceptance before cloud mutations
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/firebase/check-functions-release.mjs
-
+        run: node scripts/firebase/check-controlled-release.mjs --require-approval
+      - name: Pause only additional Purchasing monitoring in development
+        if: env.RELEASE_MODE == 'development'
+        run: node scripts/firebase/release-monitoring.mjs pause --project hotel-toolkit --sha "$RELEASE_SHA" --apply
       - name: Deploy Functions to hotel-toolkit
-        if: steps.current.outputs.deploy == 'true'
         # Only the reviewed import retry transition may use a scoped --force.
         # The full release still refuses implicit function deletions.
         run: node scripts/firebase/deploy-reviewed-functions.mjs
-
       - name: Record deployed Functions inventory
-        if: steps.current.outputs.deploy == 'true'
         run: |
           npx --no-install firebase functions:list --project hotel-toolkit --non-interactive
-          printf 'Deployed Functions from `%s` to `hotel-toolkit`.\n' "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Functions deployment completed for `%s` to `hotel-toolkit`.\n' "$RELEASE_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Record verification baseline after successful Functions deployment
+        # Evidence from the old revision while the new build deployed cannot qualify.
+        run: printf 'FUNCTIONS_DEPLOY_COMPLETED_AT=%s\n' "$(node -e 'process.stdout.write(String(Date.now()))')" >> "$GITHUB_ENV"
+      - name: Wait for live controlled monitoring after this deployment
+        if: env.RELEASE_MODE == 'controlled'
+        run: |
+          deadline=$((SECONDS + 2700))
+          until node scripts/firebase/release-monitoring.mjs verify --project hotel-toolkit --sha "$RELEASE_SHA" --not-before-millis "$FUNCTIONS_DEPLOY_COMPLETED_AT"; do
+            if (( SECONDS >= deadline )); then
+              echo 'Controlled monitoring verification timed out. Frontend was not published; inspect the Functions release and monitoring before starting a new run.' >&2
+              exit 1
+            fi
+            sleep 10
+          done
+      - name: Recheck pinned release before frontend publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/firebase/check-controlled-release.mjs --require-approval
+      - name: Publish and verify exact App Hosting release
+        run: node scripts/firebase/production-apphosting.mjs publish --project hotel-toolkit --sha "$RELEASE_SHA"

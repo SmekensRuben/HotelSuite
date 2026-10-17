@@ -57,6 +57,9 @@ jobs:
       - name: Purchasing monitoring release safeguards
         run: node --test scripts/firebase/purchasing-monitoring*.test.mjs
 
+      - name: Development and controlled release safeguards
+        run: node --test scripts/firebase/release-mode-policy.test.mjs scripts/firebase/release-monitoring.test.mjs scripts/firebase/production-apphosting.test.mjs scripts/firebase/saas-release-check.test.mjs
+
       - name: Settings migration safeguards
         run: node --test scripts/migrate-domain-settings.test.mjs
 

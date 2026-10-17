@@ -13,6 +13,7 @@ const verified = { name: "Verify HotelSuite", head_sha: sha, head_branch: "main"
 const release = () => ({ eventName: "workflow_run", event: { workflow_run: structuredClone(verified) }, repository: "SmekensRuben/HotelSuite",
   ref: "refs/heads/main", checkedOutSha: sha, mainSha: sha, verifiedRuns: [structuredClone(verified)] });
 const env = () => ({ FIREBASE_PROJECT_ID: "hotel-toolkit", FIREBASE_WORKLOAD_IDENTITY_PROVIDER: FUNCTIONS_PROVIDER,
+  RELEASE_MODE: "development", RELEASE_SHA: sha,
   FIREBASE_DEPLOY_SERVICE_ACCOUNT: FUNCTIONS_DEPLOY_ACCOUNT, FUNCTIONS_APP_BASE_URL: "https://hotel-toolkit--hotel-toolkit.europe-west4.hosted.app" });
 const require = createRequire(import.meta.url);
 const { loadUserEnvs } = require("firebase-tools/lib/functions/env");
@@ -145,6 +146,7 @@ describe("AI runtime secret metadata preflight", () => {
     try {
       mkdirSync(join(directory, "scripts/firebase"), { recursive: true }); mkdirSync(join(directory, "functions/src"), { recursive: true });
       writeFileSync(join(directory, "scripts/firebase/functions-release-policy.mjs"), readFileSync("scripts/firebase/functions-release-policy.mjs"));
+      writeFileSync(join(directory, "scripts/firebase/release-mode-policy.mjs"), readFileSync("scripts/firebase/release-mode-policy.mjs"));
       writeFileSync(join(directory, "scripts/firebase/mcp-deployment-config.mjs"), readFileSync("scripts/firebase/mcp-deployment-config.mjs"));
       writeFileSync(join(directory, "functions/src/hotelMcpConfig.js"), readFileSync("functions/src/hotelMcpConfig.js"));
       const policy = mode === "missing" ? { bindings: [] } : { bindings: [{ role: "roles/secretmanager.secretAccessor",
@@ -170,7 +172,8 @@ esac
         expect(statSync(dotenvPath).mode & 0o777).toBe(0o600);
         // Exercise the real locked CLI parser and resolver without cloud endpoints or secrets.
         const userEnvs = loadUserEnvs({ functionsSource: join(directory, "functions"), projectDir: directory, projectId: "hotel-toolkit" });
-        expect(userEnvs).toEqual({ APP_BASE_URL: env().FUNCTIONS_APP_BASE_URL, HOTEL_MCP_ENABLED: "false",
+        expect(userEnvs).toEqual({ DEPLOYMENT_ENV: "production", RELEASE_MODE: "development", RELEASE_SHA: sha,
+          APP_BASE_URL: env().FUNCTIONS_APP_BASE_URL, HOTEL_MCP_ENABLED: "false",
           HOTEL_MCP_PUBLIC_ORIGIN: "", HOTEL_MCP_CLIENTS_JSON: "[]", HOTEL_MCP_ALLOWED_ORIGINS_JSON: "[]" });
         const { envs, secretRefs } = await resolveMcpDeploymentParams(userEnvs);
         expect(envs.HOTEL_MCP_ENABLED.asBoolean()).toBe(false);
