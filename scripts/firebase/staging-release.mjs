@@ -86,13 +86,29 @@ function firebase(source, args, { json = false, capture = false } = {}) {
   return run(process.execPath, command, { cwd: source, capture });
 }
 
+export async function readAppHostingJson(path, token, { request = fetch, pause = ms => new Promise(resolveWait => setTimeout(resolveWait, ms)) } = {}) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    let response;
+    try {
+      response = await request(`https://firebaseapphosting.googleapis.com/v1beta/${path}`, {
+        method: "GET", headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30000),
+      });
+    } catch {
+      if (attempt === 3) throw new Error("App Hosting evidence request failed after three network attempts; staging remains paused.");
+      await pause(250 * attempt);
+      continue;
+    }
+    // Retry transport failures only. An HTTP refusal or invalid response must
+    // never be treated as successful release evidence.
+    if (!response.ok) throw new Error(`App Hosting evidence request failed (${response.status}).`);
+    try { return await response.json(); }
+    catch { throw new Error("App Hosting evidence response is not valid JSON; staging remains paused."); }
+  }
+}
+
 async function apiGet(path) {
   const token = execFileSync("gcloud", ["auth", "print-access-token"], { encoding: "utf8" }).trim();
-  const response = await fetch(`https://firebaseapphosting.googleapis.com/v1beta/${path}`, {
-    headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30000),
-  });
-  if (!response.ok) throw new Error(`App Hosting evidence request failed (${response.status}).`);
-  return response.json();
+  return readAppHostingJson(path, token);
 }
 
 async function listRollouts(config) {
