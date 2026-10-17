@@ -97,31 +97,55 @@ const normalizedFields = fields => {
   return result;
 };
 
+export async function requestStagingIndexPage(token, pageToken, fetchPage = fetch) {
+  if (typeof token !== "string" || !token.trim()) throw new Error("A short-lived staging credential is required for index verification.");
+  if (pageToken !== undefined && (typeof pageToken !== "string" || !pageToken)) throw new Error("Invalid Firestore index page token.");
+  // Match the Firebase CLI's database-wide composite-index inventory request.
+  // Let the service choose its supported page size and follow every page token.
+  const url = new URL(`https://firestore.googleapis.com/v1/projects/${STAGING_PROJECT}/databases/(default)/collectionGroups/-/indexes`);
+  if (pageToken) url.searchParams.set("pageToken", pageToken);
+  let response;
+  try { response = await fetchPage(url, { headers: { Authorization: `Bearer ${token}`, "X-Goog-User-Project": STAGING_PROJECT }, signal: AbortSignal.timeout(30000) }); }
+  catch { throw new Error("Staging index verification failed; no credential was printed."); }
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const error = (await response.json()).error;
+      if (typeof error?.message === "string") {
+        detail = error.message.replaceAll(token, "[redacted]");
+        if (pageToken) detail = detail.replaceAll(pageToken, "[redacted]");
+        detail = detail.replace(/[\r\n\t]/g, " ").slice(0, 240);
+      }
+    } catch { /* An unreadable error body must still block activation. */ }
+    throw new Error(`Staging index verification failed (HTTP ${response.status})${detail ? `: ${detail}` : "."}`);
+  }
+  return response.json();
+}
+
 export async function verifyStagingIndexes(request, manifest) {
   if (!Array.isArray(manifest.indexes) || (manifest.fieldOverrides?.length ?? 0) !== 0) throw new Error("The staging index verifier requires an explicit index manifest without field overrides.");
-  let verified = 0;
   for (const group of new Set(manifest.indexes.map(index => index.collectionGroup))) {
     if (!/^[A-Za-z0-9_-]+$/.test(group)) throw new Error("Invalid staging index collection group.");
-    const indexes = [];
-    let pageToken;
-    const seen = new Set();
-    do {
-      const page = await request(`projects/${STAGING_PROJECT}/databases/(default)/collectionGroups/${group}/indexes`, pageToken);
-      if (!Array.isArray(page.indexes ?? [])) throw new Error("Invalid Firestore index response.");
-      indexes.push(...(page.indexes || []));
-      pageToken = page.nextPageToken;
-      if (indexes.length > 2000 || (pageToken && (typeof pageToken !== "string" || seen.has(pageToken)))) throw new Error("Index inventory exceeded the reviewed bounds.");
-      if (pageToken) seen.add(pageToken);
-    } while (pageToken);
-    for (const expected of manifest.indexes.filter(index => index.collectionGroup === group)) {
-      const match = indexes.find(index => index.name?.startsWith(`projects/${STAGING_PROJECT}/databases/(default)/collectionGroups/${group}/indexes/`)
-        && index.queryScope === expected.queryScope && Array.isArray(index.fields)
-        && JSON.stringify(normalizedFields(index.fields)) === JSON.stringify(normalizedFields(expected.fields)));
-      if (match?.state !== "READY") throw new Error(`A reviewed staging index for ${group} is missing or not READY.`);
-      verified++;
-    }
   }
-  return verified;
+  if (!manifest.indexes.length) return 0;
+  const indexes = [];
+  let pageToken;
+  const seen = new Set();
+  do {
+    const page = await request(`projects/${STAGING_PROJECT}/databases/(default)/collectionGroups/-/indexes`, pageToken);
+    if (!Array.isArray(page.indexes ?? [])) throw new Error("Invalid Firestore index response.");
+    indexes.push(...(page.indexes || []));
+    pageToken = page.nextPageToken;
+    if (indexes.length > 2000 || seen.size >= 100 || (pageToken && (typeof pageToken !== "string" || seen.has(pageToken)))) throw new Error("Index inventory exceeded the reviewed bounds.");
+    if (pageToken) seen.add(pageToken);
+  } while (pageToken);
+  for (const expected of manifest.indexes) {
+    const match = indexes.find(index => index.name?.startsWith(`projects/${STAGING_PROJECT}/databases/(default)/collectionGroups/${expected.collectionGroup}/indexes/`)
+      && index.queryScope === expected.queryScope && Array.isArray(index.fields)
+      && JSON.stringify(normalizedFields(index.fields)) === JSON.stringify(normalizedFields(expected.fields)));
+    if (match?.state !== "READY") throw new Error(`A reviewed staging index for ${expected.collectionGroup} is missing or not READY.`);
+  }
+  return manifest.indexes.length;
 }
 
 export async function inspectStagingAccess(db, auth, { permissions, modules }) {
@@ -250,6 +274,7 @@ async function main() {
   try {
     let rulesets;
     if (["preflight", "ready"].includes(options.phase)) {
+      if (options.phase === "preflight") await requestStagingIndexPage(token);
       const projectPolicy = JSON.parse(execute("gcloud", ["projects", "get-iam-policy", STAGING_PROJECT, "--format=json"], "inspect staging project IAM"));
       if (projectPolicy.bindings?.some(binding => binding.members?.some(member => ["allUsers", "allAuthenticatedUsers"].includes(member)))) {
         throw new Error("Public staging project IAM requires review before private workflow activation.");
@@ -264,16 +289,7 @@ async function main() {
     }
     if (["rules", "ready"].includes(options.phase)) rulesets = await verifyStagingRules(getSecurityRules(app), source.sources);
     if (options.phase === "ready") {
-      await verifyStagingIndexes(async (path, pageToken) => {
-        const url = new URL(`https://firestore.googleapis.com/v1/${path}`);
-        url.searchParams.set("pageSize", "200");
-        if (pageToken) url.searchParams.set("pageToken", pageToken);
-        let response;
-        try { response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, "X-Goog-User-Project": STAGING_PROJECT }, signal: AbortSignal.timeout(30000) }); }
-        catch { throw new Error("Staging index verification failed; no credential was printed."); }
-        if (!response.ok) throw new Error(`Staging index verification failed (HTTP ${response.status}).`);
-        return response.json();
-      }, source.indexes);
+      await verifyStagingIndexes((_path, pageToken) => requestStagingIndexPage(token, pageToken), source.indexes);
     }
     const evidence = options.evidencePath ? JSON.parse(await readFile(options.evidencePath, "utf8")) : undefined;
     const result = await changeStagingActivation({ ...options, db, operator, fieldValue: FieldValue, rulesVersion: source.rulesVersion, rulesets, evidence });

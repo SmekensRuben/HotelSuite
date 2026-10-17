@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   STAGING_PROJECT, STAGING_BUCKET, RULES_PROPAGATION_MS, requireStagingTarget, parseStagingActivationArgs,
-  requireReleaseEvidence, requireRulesPropagation, verifyStagingRules, verifyStagingIndexes, inspectStagingAccess, changeStagingActivation,
+  requireReleaseEvidence, requireRulesPropagation, verifyStagingRules, requestStagingIndexPage, verifyStagingIndexes, inspectStagingAccess, changeStagingActivation,
 } from "./staging-activation.mjs";
 
 const SHA = "a".repeat(40), OTHER_SHA = "b".repeat(40), NUMBER = "123456789012";
@@ -85,13 +85,68 @@ test("every manifest index must be READY in the staging project; implicit name f
   const manifest = { indexes: [expected], fieldOverrides: [] };
   const index = { ...expected, fields: [...expected.fields, { fieldPath: "__name__", order: "ASCENDING" }], state: "READY",
     name: `projects/${STAGING_PROJECT}/databases/(default)/collectionGroups/inventoryMovements/indexes/one` };
-  assert.equal(await verifyStagingIndexes(async path => { assert.ok(path.startsWith(`projects/${STAGING_PROJECT}/`)); return { indexes: [index] }; }, manifest), 1);
+  assert.equal(await verifyStagingIndexes(async path => { assert.equal(path, `projects/${STAGING_PROJECT}/databases/(default)/collectionGroups/-/indexes`); return { indexes: [index] }; }, manifest), 1);
   for (const patch of [{ state: "CREATING" }, { name: index.name.replace(STAGING_PROJECT, "hotel-toolkit") },
     { fields: [...expected.fields, { fieldPath: "__name__", order: "DESCENDING" }] },
     { fields: [{ fieldPath: "hotelUid", order: "ASCENDING" }] }]) {
     await assert.rejects(verifyStagingIndexes(async () => ({ indexes: [{ ...index, ...patch }] }), manifest), /missing or not READY/);
   }
   await assert.rejects(verifyStagingIndexes(async () => ({ indexes: [], nextPageToken: "repeat" }), manifest), /bounds/);
+});
+
+test("index HTTP requests use the Firebase CLI inventory route and service pagination defaults", async () => {
+  const page = { indexes: [], nextPageToken: "next +/=" }, requests = [];
+  const fetchPage = async (url, options) => {
+    requests.push({ url, options });
+    assert.equal(url.origin, "https://firestore.googleapis.com");
+    assert.equal(url.pathname, `/v1/projects/${STAGING_PROJECT}/databases/(default)/collectionGroups/-/indexes`);
+    assert.equal(url.searchParams.has("pageSize"), false);
+    assert.equal(options.headers.Authorization, "Bearer private-test-token");
+    assert.equal(options.headers["X-Goog-User-Project"], STAGING_PROJECT);
+    assert.ok(options.signal instanceof AbortSignal);
+    return { ok: true, json: async () => page };
+  };
+  assert.deepEqual(await requestStagingIndexPage("private-test-token", undefined, fetchPage), page);
+  await requestStagingIndexPage("private-test-token", page.nextPageToken, fetchPage);
+  assert.equal(requests[0].url.search, "");
+  assert.equal(requests[1].url.searchParams.get("pageToken"), page.nextPageToken);
+  assert.equal(requests[1].url.searchParams.size, 1);
+});
+
+test("index HTTP failures block activation with useful diagnostics while redacting credentials", async () => {
+  const token = "private-test-token", pageToken = "private-page-token";
+  await assert.rejects(requestStagingIndexPage(token, pageToken, async () => ({ ok: false, status: 400,
+    json: async () => ({ error: { message: `Invalid request\n${token} ${pageToken}` } }) })), error => {
+    assert.match(error.message, /HTTP 400.*Invalid request/);
+    assert.ok(!error.message.includes(token) && !error.message.includes(pageToken));
+    assert.equal(error.message.includes("\n"), false);
+    return true;
+  });
+  await assert.rejects(requestStagingIndexPage(token, undefined, async () => { throw new Error(token); }), /no credential was printed/);
+  await assert.rejects(requestStagingIndexPage(token, undefined, async () => ({ ok: false, status: 403,
+    json: async () => { throw new Error(token); } })), /HTTP 403/);
+  await assert.rejects(requestStagingIndexPage("", undefined, async () => assert.fail("No request without a credential.")), /credential is required/);
+});
+
+test("database-wide index verification follows every page and matches each reviewed collection independently", async () => {
+  const fields = [{ fieldPath: "locationId", order: "ASCENDING" }, { fieldPath: "sequence", order: "ASCENDING" }];
+  const expected = ["inventoryMovements", "inventoryCheckpoints"].map(collectionGroup => ({ collectionGroup, queryScope: "COLLECTION", fields }));
+  const indexes = expected.map(index => ({ ...index, state: "READY",
+    name: `projects/${STAGING_PROJECT}/databases/(default)/collectionGroups/${index.collectionGroup}/indexes/one` }));
+  const requests = [];
+  assert.equal(await verifyStagingIndexes(async (path, token) => {
+    assert.equal(path, `projects/${STAGING_PROJECT}/databases/(default)/collectionGroups/-/indexes`);
+    requests.push(token);
+    return token ? { indexes: [indexes[1]] } : { indexes: [indexes[0]], nextPageToken: "second" };
+  }, { indexes: expected }), 2);
+  assert.deepEqual(requests, [undefined, "second"]);
+  await assert.rejects(verifyStagingIndexes(async () => ({ indexes: [indexes[0]] }), { indexes: expected }), /inventoryCheckpoints.*missing/);
+  await assert.rejects(verifyStagingIndexes(async () => ({ indexes: Array(2001).fill(indexes[0]) }), { indexes: expected }), /bounds/);
+  let pages = 0;
+  await assert.rejects(verifyStagingIndexes(async () => ({ indexes: [], nextPageToken: String(++pages) }), { indexes: expected }), /bounds/);
+  assert.ok(pages <= 101);
+  await assert.rejects(verifyStagingIndexes(async () => assert.fail("Reject an invalid collection before requesting metadata."),
+    { indexes: [{ ...expected[0], collectionGroup: "../production" }] }), /Invalid staging index collection/);
 });
 
 test("Rules propagation gate is tied to selected SHA, current release IDs and server timestamp", () => {
